@@ -450,7 +450,7 @@
       "id": "folder.create",
       "domain": "folder",
       "title": "Create folder",
-      "description": "Create an empty folder owned by the user, e.g. for a new client. Put decks in it with deck.create (folderId) or deck.moveToFolder, fonts with folder.fonts.upload. Undo: folder.delete.",
+      "description": "Create a folder owned by the user, e.g. for a new client — no decks yet, the default colours and text styles (token.list). Put decks in it with deck.create (folderId) or deck.moveToFolder, fonts with folder.fonts.upload. Undo: folder.delete.",
       "role": "owner",
       "effects": ["server"],
       "undo": "undoable",
@@ -1622,6 +1622,104 @@
       "hosts": ["browser", "server"]
     },
     {
+      "id": "text.style.createFromObject",
+      "domain": "text",
+      "title": "Create a text style from a box",
+      "description": "Add a text style to the deck's folder that reproduces a text box's (or a table's) typography — family, weight, size, line height, spacing, colour (a folder colour stays linked), case — and link the box to it, so other text can take it with text.style.apply. The name must be new in the folder (the defaults include Title, Body, Quote, Caption…; token.list). Needs the folder owner. Returns the new style id. Undo unlinks the box; the style stays in the folder until token.delete.",
+      "role": "editor",
+      "effects": ["doc", "server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["server"]
+    },
+    {
+      "id": "text.style.updateFromObject",
+      "domain": "text",
+      "title": "Update a text style from a box",
+      "description": "Make the text style a text box (or table) is linked to match the box: its typography becomes the style, and every other text linked to the style in the folder follows (except fields set by hand there). The box then matches its style exactly. Only when the user asked for the style to change. Needs the folder owner. Returns the style and its previous values (token.update with them undoes the style change).",
+      "role": "editor",
+      "effects": ["doc", "server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["server"]
+    },
+    {
+      "id": "token.create",
+      "domain": "token",
+      "title": "Add a design token",
+      "description": "Add a colour or a text style to the folder, for every deck in it. A colour is { name, value }; a folder holds at most 24 colours. A text style names what linked text takes — family, weight, size, lineHeight (multiple of the size), letterSpacing, paragraph spacing, colour (a hex or a folder colour), textTransform; apply it with text.style.apply; its name must be new in the folder (token.list). Returns the new id. Undo: token.delete. Folder owner only.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/folders/:folderId/tokens/:category"
+        }
+      ]
+    },
+    {
+      "id": "token.delete",
+      "domain": "token",
+      "title": "Delete a design token",
+      "description": "Remove a colour, text style or effect style from the folder. Anything still using it keeps its current look but no longer follows the token (check token.usages first). The folder's built-in text styles cannot be deleted. Cannot be undone (it returns the token, so it can be made again); confirm with the user first.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/folders/:folderId/tokens/:category/:tokenId"
+        }
+      ]
+    },
+    {
+      "id": "token.list",
+      "domain": "token",
+      "title": "List a folder's tokens",
+      "description": "The folder's design tokens with their ids: colours, text styles (`builtin` ones cannot be deleted; a colour is a hex or { $token: \"colors.<id>\" }) and effect styles (stored, not applied to anything yet). A deck's folder is its `folderId` (deck.get). Link text to a style with text.style.apply (by name works too). Folder owner only.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"]
+    },
+    {
+      "id": "token.seedDefaults",
+      "domain": "token",
+      "title": "Add the default tokens",
+      "description": "Give a folder that has no colours and no text styles the default palette and text styles (Title, Heading 1–3, Body, …, \"Footnotes and pages\"), and bring an older folder's default styles up to date. New folders get them when created; a folder that already has colours or text styles is not refilled. Cannot be undone — the default text styles are built in (token.delete refuses them); confirm with the user first.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "idempotent": true,
+      "hosts": ["server"]
+    },
+    {
+      "id": "token.update",
+      "domain": "token",
+      "title": "Change a design token",
+      "description": "Change a colour or a text style of the folder. Everything linked to it follows in every deck and component master of the folder, open or not: text boxes and tables linked to a text style take its new values (except fields set by hand on them), and a colour reaches the text of styles that use it. Only when the user asked for the folder-wide change; to restyle one box use text.setBoxTypography. `null` removes an optional text-style field. Returns the previous values (token.update with them undoes it) and what was re-styled.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "idempotent": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "PATCH",
+          "path": "/folders/:folderId/tokens/:category/:tokenId"
+        }
+      ]
+    },
+    {
       "id": "token.usages",
       "domain": "token",
       "title": "Where a token is used",
@@ -1641,77 +1739,6 @@
     }
   ],
   "knownMissing": [
-    {
-      "capability": "text.style.createFromObject",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/state/FolderDocProvider.tsx"
-    },
-    {
-      "capability": "token.textStyle.update",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/state/FolderDocProvider.tsx, apps/web/src/components/DeckShell.tsx (propagation)",
-      "note": "propagation to linked text moves server-side"
-    },
-    {
-      "capability": "token.textStyle.create",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/state/FolderDocProvider.tsx (addToken), apps/web/src/pages/FolderSettings.tsx"
-    },
-    {
-      "capability": "token.textStyle.delete",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/state/FolderDocProvider.tsx (deleteToken), apps/web/src/pages/FolderSettings.tsx"
-    },
-    {
-      "capability": "token.color.update",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/state/FolderDocProvider.tsx"
-    },
-    {
-      "capability": "token.color.create",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/state/FolderDocProvider.tsx (addToken), apps/web/src/pages/FolderSettings.tsx",
-      "note": "with the 24-colour cap"
-    },
-    {
-      "capability": "token.color.delete",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/state/FolderDocProvider.tsx (deleteToken), apps/web/src/pages/FolderSettings.tsx"
-    },
-    {
-      "capability": "token.effectStyle.create",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/state/FolderDocProvider.tsx (addToken)",
-      "note": "the folder document and FolderDocProvider support effect styles; no editor UI creates them yet"
-    },
-    {
-      "capability": "token.effectStyle.update",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/state/FolderDocProvider.tsx (updateToken)",
-      "note": "the folder document and FolderDocProvider support effect styles; no editor UI edits them yet"
-    },
-    {
-      "capability": "token.effectStyle.delete",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/state/FolderDocProvider.tsx (deleteToken)",
-      "note": "the folder document and FolderDocProvider support effect styles; no editor UI deletes them yet"
-    },
-    {
-      "capability": "token.seedDefaults",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/state/FolderDocProvider.tsx"
-    },
     {
       "capability": "component.promote",
       "phase": "A2",

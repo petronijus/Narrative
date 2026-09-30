@@ -2,7 +2,9 @@
  * commands/src/testing/fixtureTokens.ts — the fixture deck's folder tokens:
  * a brand palette and the text styles every new folder is seeded with that
  * commands look up by name (the page-number style), with a colour linked to
- * a colour token so resolution through a style is exercised too.
+ * a colour token so resolution through a style is exercised too; an unused
+ * colour, a default style from before the `builtin` flag and a shadow style
+ * give the token commands' examples something to work on.
  */
 
 import type { FolderTokensSnapshot } from '@narrative/slide-model'
@@ -20,6 +22,8 @@ export function createFixtureFolderTokens(): FolderTokensSnapshot {
         value: '#2040c0',
       },
       ink: { id: 'ink', name: 'Ink', value: '#222222' },
+      // Used by nothing (token.delete's example).
+      retired: { id: 'retired', name: 'Retired red', value: '#c03030' },
     },
     textStyles: {
       title: { id: 'title', name: 'Title', family: 'Inter', weight: 700, size: 72, builtin: true },
@@ -35,8 +39,17 @@ export function createFixtureFolderTokens(): FolderTokensSnapshot {
         textTransform: 'uppercase',
         builtin: true,
       },
+      // Seeded before the `builtin` flag existed (token.seedDefaults brings it up to date).
+      body: { id: 'body', name: 'Body', family: 'Inter', weight: 400, size: 24 },
     },
-    effectStyles: {},
+    effectStyles: {
+      soft: {
+        id: 'soft',
+        name: 'Soft shadow',
+        kind: 'shadow',
+        params: { color: '#000000', blur: 24, offsetX: 0, offsetY: 8, opacity: 0.2 },
+      },
+    },
   }
 }
 

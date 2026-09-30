@@ -188,7 +188,17 @@ Deploy dokončen.
    imgproxy URL, `VITE_BUILD_VERSION`) were baked in **at build time** by
    `build-push.sh` from `infra/.env.prod`
 5. Runs Drizzle DB migrations
-6. `docker compose up -d --remove-orphans`
+6. `docker compose up -d --remove-orphans` — once listening, the server also
+   runs any pending one-time **data** migrations in the background
+   (`apps/server/src/services/dataMigrations.ts`; completed ones are rows in
+   `app_data_migrations`, migration 0026). These change documents rather
+   than the schema, through the sync server, so open editors receive them as
+   ordinary edits. Watch for `data migration: completed` (with a report) or
+   `data migration: failed; retried on the next start` in
+   `docker compose logs server`; a failed one leaves no row and runs again on
+   the next start. The first, `2026-09-30-folder-tokens-on-server` (0.10.14),
+   seeds folders without tokens, brings older seeds up to date and re-styles
+   linked text that lags its text style.
 7. Waits 15s, then runs healthchecks (API, Caddy, optionally cloudflared)
 8. **Prunes old release images** — `infra/scripts/prune-images.sh` keeps the
    deployed tag plus two previous per image (server / video-worker / web),
@@ -302,6 +312,9 @@ Two caveats:
   the schema, rolling the image back may leave the old code facing a newer
   schema. If a migration broke something, write a new migration to undo it —
   don't manually drop tables.
+- **Data migrations are forward-only too.** A completed one is not undone
+  by a rollback (its row stays in `app_data_migrations` and it never runs
+  again); what it changed in documents is ordinary document history.
 - **Config is not in the image.** If the bad deploy also changed the Caddyfile
   or compose files, rsync the older config too, or the old image runs behind
   the new proxy config.

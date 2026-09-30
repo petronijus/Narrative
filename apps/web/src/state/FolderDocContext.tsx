@@ -1,45 +1,26 @@
 /**
  * state/FolderDocContext.tsx
  *
- * M16 P2 — React context for a folder's design-token Y.Doc.
- *
- * Separated from FolderDocProvider.tsx for react-refresh compliance.
+ * React context for a folder's design-token document (`folder:<id>`),
+ * separated from FolderDocProvider.tsx for react-refresh compliance.
  *
  * The context exposes:
- *   - `doc`: the live Y.Doc for `folder:<folderId>`
- *   - `tokens`: a live plain-JSON snapshot of `{ colors, textStyles, effectStyles }`
- *     that re-renders subscribers whenever the Y.Doc changes
+ *   - `doc`: the live Y.Doc — read-only for the editor since A2.12 (tokens
+ *     change through the server, state/folderTokenWriter.ts);
+ *   - `tokens`: the folder's tokens (slide-model `readFolderTokens`) with the
+ *     user's pending changes over them, re-rendering subscribers on change.
  *
  * Consumed by:
- *   - `useFolderTokens()` — hook for read access to all token categories
- *   - `FolderDocProvider` — mutation helpers (addToken, updateToken, deleteToken)
- *   - `TokensContext` — renderer's synchronous colour resolver
+ *   - `useFolderTokens()` — read access to all token categories
+ *   - `useFolderTokenWriter()` — changing tokens (FolderDocProvider)
+ *   - `TokensContext` — the renderer's synchronous colour resolver
  */
 
 import { createContext } from 'react'
 import type * as Y from 'yjs'
-import type {
-  ColorTokenSnapshot,
-  TextStyleTokenSnapshot,
-  EffectStyleTokenSnapshot,
-} from '@narrative/slide-model'
+import type { FolderTokensSnapshot } from '@narrative/slide-model'
 
-export interface FolderTokensSnapshot {
-  colors: Record<string, ColorTokenSnapshot>
-  textStyles: Record<string, TextStyleTokenSnapshot>
-  effectStyles: Record<string, EffectStyleTokenSnapshot>
-  /**
-   * CRDT-replicated set of component ids that have been deleted from this
-   * folder. Written by the client that calls `api.deleteComponent` via
-   * `markComponentDeleted(folderId, componentId)`. Every peer observing the
-   * folder Y.Doc receives the write and can sweep its open deck accordingly.
-   *
-   * Stored as a Y.Array of strings on the folder doc (key `deletedComponentIds`).
-   * Duplicate entries are possible when two peers concurrently delete the same
-   * master — consumers should deduplicate via a Set.
-   */
-  deletedComponentIds: ReadonlySet<string>
-}
+export type { FolderTokensSnapshot }
 
 export interface FolderDocContextValue {
   /** The live Hocuspocus Y.Doc for `folder:<folderId>`. */
@@ -61,5 +42,5 @@ export const FolderDocContext = createContext<FolderDocContextValue | null>(null
 // ---------------------------------------------------------------------------
 
 export function emptyTokensSnapshot(): FolderTokensSnapshot {
-  return { colors: {}, textStyles: {}, effectStyles: {}, deletedComponentIds: new Set() }
+  return { colors: {}, textStyles: {}, effectStyles: {} }
 }

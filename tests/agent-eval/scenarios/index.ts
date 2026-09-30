@@ -44,6 +44,9 @@ import tableHeaderGradient from './tableHeaderGradient.js'
 import productRenameEverywhere from './productRenameEverywhere.js'
 import subtitlePlainRestyle from './subtitlePlainRestyle.js'
 import yearFixSecondOccurrence from './yearFixSecondOccurrence.js'
+import folderStylesApply from './folderStylesApply.js'
+import titleStyleFolderwide from './titleStyleFolderwide.js'
+import quoteStyleFromBox from './quoteStyleFromBox.js'
 
 export const SCENARIOS: readonly AnyScenario[] = [
   slideDuplicateRetitle,
@@ -85,6 +88,9 @@ export const SCENARIOS: readonly AnyScenario[] = [
   productRenameEverywhere,
   subtitlePlainRestyle,
   yearFixSecondOccurrence,
+  folderStylesApply,
+  titleStyleFolderwide,
+  quoteStyleFromBox,
 ]
 
 export function scenarioById(id: string): AnyScenario | undefined {

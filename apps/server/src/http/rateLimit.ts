@@ -155,6 +155,19 @@ export const agentRouteRateLimit: { rateLimit: RateLimitOptions } = {
   rateLimit: { max: AGENT_RATE_LIMIT.max, timeWindow: AGENT_RATE_LIMIT.timeWindowMs },
 }
 
+/**
+ * Folder token writes per caller: a change re-styles every deck of the
+ * folder (services/tokens.ts queues and merges them per folder, this bounds
+ * how many a script can queue). The page sends at most one request in
+ * flight per token (state/folderTokenWriter.ts).
+ */
+export const TOKEN_WRITE_RATE_LIMIT = { max: 120, timeWindowMs: MINUTE_MS } as const
+
+/** Route `config` for POST / PATCH / DELETE /folders/:folderId/tokens/…. */
+export const tokenWriteRouteRateLimit: { rateLimit: RateLimitOptions } = {
+  rateLimit: { max: TOKEN_WRITE_RATE_LIMIT.max, timeWindow: TOKEN_WRITE_RATE_LIMIT.timeWindowMs },
+}
+
 /** Route `config` for POST /access-tokens. */
 export const tokenCreateRouteRateLimit: { rateLimit: RateLimitOptions } = {
   rateLimit: { max: TOKEN_CREATE_RATE_LIMIT.max, timeWindow: TOKEN_CREATE_RATE_LIMIT.timeWindowMs },

@@ -34,7 +34,8 @@ The user asked: <request>
      `object_path_fromShape`, then `object_path_setAnchors`; move a line's
      or arrow's end → `object_line_setEndpoints` (all in slide px);
    - change font, size, colour of a whole box → `text_setBoxTypography`;
-     give it a folder text style → `text_style_apply`;
+     give it a folder text style → `text_style_apply`; change the style
+     itself for the whole folder (only when asked) → `token_update`;
    - restyle some words → `text_format` with a `match` range; change some
      words → `text_edit` at their offsets, or `text_replace` for every
      occurrence;

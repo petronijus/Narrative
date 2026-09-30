@@ -3,7 +3,7 @@
  *
  * Shared helper: rehydrate a Y.Doc by applying a sequence of binary updates.
  *
- * Originally inlined in routes/tokenUsages.ts (M16 P4). M16 P6 adds
+ * Originally inlined in routes/tokens.ts (M16 P4). M16 P6 adds
  * routes/components.ts → /components/:id/instance-count which needs the
  * same primitive, so we extract it here.
  *

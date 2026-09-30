@@ -195,6 +195,7 @@ describe('command metadata quality', () => {
       'share.invites.list',
       'share.links.list',
       'share.permissions.list',
+      'token.list',
       'token.usages',
     ]
     expect(serverReads.filter((id) => registry.get(id)?.readOnly !== true)).toEqual([])

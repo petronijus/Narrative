@@ -1,272 +1,156 @@
 /**
- * state/FolderDocProvider.test.tsx
+ * state/FolderDocProvider.test.tsx — the folder token provider against a
+ * stand-in for the sync server's client (HocuspocusProvider is replaced by
+ * a fake that syncs when the test says so, so no WebSocket is opened).
  *
- * M16 P2 — Tests for useFolderTokens() hook.
- *
- * Strategy:
- *   - Mount a minimal FolderDocProvider variant that wraps FolderDocContext directly
- *     (bypasses HocuspocusProvider, which would open a real WebSocket).
- *   - Inject a real Y.Doc with a controlled tokens Y.Map.
- *   - Assert useFolderTokens() returns the correct snapshot.
- *   - Mutate the Y.Doc and assert the hook re-renders with updated values.
- *
- * We test the context + snapshot builder in isolation — Hocuspocus connectivity
- * is intentionally not covered (that requires a running server or a more complex mock).
+ *   - opening a folder writes NOTHING to its document (A2.12: seeding and
+ *     migration happen on the server; the provider used to write both
+ *     whenever a folder was viewed);
+ *   - the tokens follow the document, and a change the page asked for shows
+ *     over them until the document has it;
+ *   - what commands get: nothing before the first sync, null for a folder
+ *     without tokens.
  */
 
-import { describe, it, expect } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
-import React from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import * as Y from 'yjs'
-import { FolderDocContext, emptyTokensSnapshot } from './FolderDocContext.js'
-import { useFolderTokens } from './FolderDocProvider.js'
-import type { FolderDocContextValue } from './FolderDocContext.js'
-import { useState, useEffect } from 'react'
+import { addFolderToken, updateFolderToken } from '@narrative/slide-model'
 
-// ---------------------------------------------------------------------------
-// Test provider — wraps FolderDocContext with a real Y.Doc
-// ---------------------------------------------------------------------------
+/** The fake provider instances, newest last. */
+const providers: Array<{ document: Y.Doc; name: string; sync: () => void }> = []
 
-/**
- * A test-only provider that subscribes to a Y.Doc's tokens map and feeds
- * updates into FolderDocContext — mirrors the core logic of FolderDocProvider
- * without the HocuspocusProvider dependency.
- */
-function TestFolderDocProvider({ doc, children }: { doc: Y.Doc; children: React.ReactNode }) {
-  const [tokens, setTokens] = useState(emptyTokensSnapshot)
-
-  useEffect(() => {
-    const tokensMap = doc.getMap<unknown>('tokens')
-
-    function buildSnapshot() {
-      const colorsMap = tokensMap.get('colors') as Y.Map<Y.Map<unknown>> | undefined
-      const textStylesMap = tokensMap.get('textStyles') as Y.Map<Y.Map<unknown>> | undefined
-      const effectStylesMap = tokensMap.get('effectStyles') as Y.Map<Y.Map<unknown>> | undefined
-
-      const colors: Record<string, { id: string; name: string; value: string }> = {}
-      if (colorsMap) {
-        colorsMap.forEach((m, id) => {
-          const v = m.get('value')
-          const n = m.get('name')
-          if (typeof v === 'string' && typeof n === 'string') {
-            colors[id] = { id, name: n, value: v }
-          }
-        })
-      }
-
-      const textStyles: Record<string, { id: string; name: string }> = {}
-      if (textStylesMap) {
-        textStylesMap.forEach((m, id) => {
-          const n = m.get('name')
-          if (typeof n === 'string') textStyles[id] = { id, name: n }
-        })
-      }
-
-      const effectStyles: Record<
-        string,
-        { id: string; name: string; kind: 'shadow' | 'blur'; params: Record<string, unknown> }
-      > = {}
-      if (effectStylesMap) {
-        effectStylesMap.forEach((m, id) => {
-          const n = m.get('name')
-          const k = m.get('kind')
-          if (typeof n === 'string' && (k === 'shadow' || k === 'blur')) {
-            effectStyles[id] = { id, name: n, kind: k, params: {} }
-          }
-        })
-      }
-
-      return { colors, textStyles, effectStyles, deletedComponentIds: new Set<string>() }
+vi.mock('@hocuspocus/provider', () => ({
+  HocuspocusProvider: class {
+    constructor(opts: { name: string; document: Y.Doc; onSynced?: () => void }) {
+      providers.push({
+        document: opts.document,
+        name: opts.name,
+        sync: () => opts.onSynced?.(),
+      })
     }
+    destroy() {}
+  },
+}))
 
-    const handler = () => {
-      setTokens(buildSnapshot())
-    }
-
-    tokensMap.observeDeep(handler)
-    // Initial snapshot
-    setTokens(buildSnapshot())
-
-    return () => {
-      tokensMap.unobserveDeep(handler)
-    }
-  }, [doc])
-
-  const value: FolderDocContextValue = { doc, tokens, synced: true }
-
-  return <FolderDocContext value={value}>{children}</FolderDocContext>
+const updateToken = vi.fn()
+// One client for the page's lifetime, as the real useApi() gives.
+const api = {
+  createToken: vi.fn(),
+  updateToken,
+  deleteToken: vi.fn(),
+  listTokenUsages: vi.fn(),
 }
+vi.mock('../api/client.js', () => ({ useApi: () => api }))
 
-// ---------------------------------------------------------------------------
-// Test component that renders token data
-// ---------------------------------------------------------------------------
+const { FolderDocProvider, useFolderTokens, useFolderTokensForCommands, useFolderTokenWriter } =
+  await import('./FolderDocProvider.js')
 
-function TokenDisplay() {
+function Probe() {
   const tokens = useFolderTokens()
-  const colorIds = Object.keys(tokens.colors).sort().join(',')
-  const textStyleIds = Object.keys(tokens.textStyles).sort().join(',')
+  const forCommands = useFolderTokensForCommands()
+  const writer = useFolderTokenWriter()
   return (
     <div>
-      <span data-testid="color-ids">{colorIds}</span>
-      <span data-testid="textstyle-ids">{textStyleIds}</span>
-      {Object.values(tokens.colors).map((c) => (
-        <span key={c.id} data-testid={`color-value-${c.id}`}>
-          {c.value}
-        </span>
-      ))}
+      <span data-testid="brand">{tokens.colors['brand']?.value ?? '-'}</span>
+      <span data-testid="commands">
+        {forCommands === undefined ? 'unknown' : forCommands === null ? 'none' : 'tokens'}
+      </span>
+      <button
+        type="button"
+        onClick={() => void writer?.update('colors', 'brand', { value: '#00ff00' })}
+      >
+        green
+      </button>
     </div>
   )
 }
 
-// ---------------------------------------------------------------------------
-// Helpers: set up Y.Doc with tokens
-// ---------------------------------------------------------------------------
-
-function addColorToken(doc: Y.Doc, id: string, name: string, value: string) {
-  const tokensMap = doc.getMap<unknown>('tokens')
-  doc.transact(() => {
-    let colorsMap = tokensMap.get('colors') as Y.Map<Y.Map<unknown>> | undefined
-    if (!colorsMap) {
-      colorsMap = new Y.Map()
-      tokensMap.set('colors', colorsMap as unknown)
-    }
-    const m = new Y.Map<unknown>()
-    m.set('id', id)
-    m.set('name', name)
-    m.set('value', value)
-    colorsMap.set(id, m)
+/** The document the provider opened, with `init` as the server's content, synced. */
+function openFolder(init?: (doc: Y.Doc) => void) {
+  render(
+    <FolderDocProvider folderId="folder_1">
+      <Probe />
+    </FolderDocProvider>,
+  )
+  const provider = providers[providers.length - 1]!
+  expect(provider.name).toBe('folder:folder_1')
+  const writes: unknown[] = []
+  const server = new Y.Doc()
+  init?.(server)
+  act(() => {
+    Y.applyUpdate(provider.document, Y.encodeStateAsUpdate(server), 'remote')
   })
+  provider.document.on('update', (_u: Uint8Array, origin: unknown) => writes.push(origin))
+  act(() => provider.sync())
+  return { doc: provider.document, writes }
 }
 
-function addTextStyleToken(doc: Y.Doc, id: string, name: string) {
-  const tokensMap = doc.getMap<unknown>('tokens')
-  doc.transact(() => {
-    let textStylesMap = tokensMap.get('textStyles') as Y.Map<Y.Map<unknown>> | undefined
-    if (!textStylesMap) {
-      textStylesMap = new Y.Map()
-      tokensMap.set('textStyles', textStylesMap as unknown)
-    }
-    const m = new Y.Map<unknown>()
-    m.set('id', id)
-    m.set('name', name)
-    textStylesMap.set(id, m)
-  })
-}
+afterEach(() => {
+  cleanup()
+  providers.length = 0
+  updateToken.mockReset()
+})
 
-function deleteColorToken(doc: Y.Doc, id: string) {
-  const tokensMap = doc.getMap<unknown>('tokens')
-  doc.transact(() => {
-    const colorsMap = tokensMap.get('colors') as Y.Map<Y.Map<unknown>> | undefined
-    if (colorsMap) colorsMap.delete(id)
-  })
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-describe('useFolderTokens', () => {
-  it('returns empty snapshot when doc has no tokens', () => {
-    const doc = new Y.Doc()
-
-    render(
-      <TestFolderDocProvider doc={doc}>
-        <TokenDisplay />
-      </TestFolderDocProvider>,
-    )
-
-    expect(screen.getByTestId('color-ids').textContent).toBe('')
-    expect(screen.getByTestId('textstyle-ids').textContent).toBe('')
+describe('FolderDocProvider', () => {
+  it('writes nothing to a folder without tokens when it is opened', () => {
+    const { writes } = openFolder()
+    expect(writes).toEqual([])
+    expect(screen.getByTestId('commands').textContent).toBe('none')
   })
 
-  it('returns colors when tokens Y.Map has color entries', () => {
-    const doc = new Y.Doc()
-    addColorToken(doc, 'red', 'Red', '#ff0000')
-    addColorToken(doc, 'blue', 'Blue', '#0000ff')
-
-    render(
-      <TestFolderDocProvider doc={doc}>
-        <TokenDisplay />
-      </TestFolderDocProvider>,
-    )
-
-    const colorIds = screen.getByTestId('color-ids').textContent
-    expect(colorIds).toContain('blue')
-    expect(colorIds).toContain('red')
-    expect(screen.getByTestId('color-value-red').textContent).toBe('#ff0000')
-    expect(screen.getByTestId('color-value-blue').textContent).toBe('#0000ff')
-  })
-
-  it('re-renders when a color token is added after initial mount', () => {
-    const doc = new Y.Doc()
-
-    render(
-      <TestFolderDocProvider doc={doc}>
-        <TokenDisplay />
-      </TestFolderDocProvider>,
-    )
-
-    // Initially empty
-    expect(screen.getByTestId('color-ids').textContent).toBe('')
-
-    // Add token
-    act(() => {
-      addColorToken(doc, 'green', 'Green', '#00ff00')
+  it('writes nothing to a folder seeded by an older build', () => {
+    const { writes } = openFolder((doc) => {
+      // The legacy name, without the `builtin` flag: the server migrates it.
+      addFolderToken(doc, 'textStyles', 'fn', { name: 'Footnote', size: 12 })
     })
-
-    expect(screen.getByTestId('color-ids').textContent).toContain('green')
-    expect(screen.getByTestId('color-value-green').textContent).toBe('#00ff00')
+    expect(writes).toEqual([])
   })
 
-  it('re-renders when a color token is deleted', () => {
-    const doc = new Y.Doc()
-    addColorToken(doc, 'toDelete', 'To Delete', '#aaaaaa')
-
+  it('gives commands nothing before the first sync', () => {
     render(
-      <TestFolderDocProvider doc={doc}>
-        <TokenDisplay />
-      </TestFolderDocProvider>,
+      <FolderDocProvider folderId="folder_1">
+        <Probe />
+      </FolderDocProvider>,
     )
-
-    expect(screen.getByTestId('color-ids').textContent).toContain('toDelete')
-
-    act(() => {
-      deleteColorToken(doc, 'toDelete')
-    })
-
-    expect(screen.getByTestId('color-ids').textContent).toBe('')
+    expect(screen.getByTestId('commands').textContent).toBe('unknown')
   })
 
-  it('re-renders when a textStyle token is added', () => {
-    const doc = new Y.Doc()
-
-    render(
-      <TestFolderDocProvider doc={doc}>
-        <TokenDisplay />
-      </TestFolderDocProvider>,
-    )
-
-    act(() => {
-      addTextStyleToken(doc, 'heading', 'Heading')
+  it("follows the document's tokens", () => {
+    const { doc } = openFolder((d) => {
+      addFolderToken(d, 'colors', 'brand', { name: 'Brand', value: '#2040c0' })
     })
-
-    expect(screen.getByTestId('textstyle-ids').textContent).toContain('heading')
+    expect(screen.getByTestId('brand').textContent).toBe('#2040c0')
+    expect(screen.getByTestId('commands').textContent).toBe('tokens')
+    act(() => {
+      updateFolderToken(doc, 'colors', 'brand', { value: '#123456' })
+    })
+    expect(screen.getByTestId('brand').textContent).toBe('#123456')
   })
 
-  it('throws when useFolderTokens is used outside FolderDocProvider', () => {
-    // Suppress React error boundary output
-    const consoleError = console.error
-    console.error = () => {}
-
-    function BadComponent() {
-      useFolderTokens()
-      return null
-    }
-
-    expect(() => render(<BadComponent />)).toThrow(
-      'useFolderTokens must be used inside <FolderDocProvider>',
+  it('shows a change the page asked for until the document has it', async () => {
+    let finish: () => void = () => undefined
+    updateToken.mockImplementation(
+      () => new Promise((resolve) => (finish = () => resolve({ decks: 0 }))),
     )
+    const { doc, writes } = openFolder((d) => {
+      addFolderToken(d, 'colors', 'brand', { name: 'Brand', value: '#2040c0' })
+    })
+    act(() => screen.getByText('green').click())
+    expect(screen.getByTestId('brand').textContent).toBe('#00ff00')
+    expect(updateToken).toHaveBeenCalledWith('folder_1', 'colors', 'brand', { value: '#00ff00' })
 
-    console.error = consoleError
+    // The server's write arrives as a remote update; the page wrote nothing itself.
+    const server = new Y.Doc()
+    Y.applyUpdate(server, Y.encodeStateAsUpdate(doc))
+    const before = Y.encodeStateVector(server)
+    updateFolderToken(server, 'colors', 'brand', { value: '#00ff00' })
+    await act(async () => {
+      finish()
+      Y.applyUpdate(doc, Y.encodeStateAsUpdate(server, before), 'remote')
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(screen.getByTestId('brand').textContent).toBe('#00ff00')
+    expect(writes).toEqual(['remote'])
   })
 })

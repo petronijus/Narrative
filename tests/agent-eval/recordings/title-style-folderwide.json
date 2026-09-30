@@ -1,0 +1,303 @@
+{
+  "scenario": "title-style-folderwide",
+  "tag": "ev91a660",
+  "recordedAt": "2026-09-30T09:11:22.344Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.285 (Claude Code)",
+  "fixture": {
+    "folderId": "CLaDFykmUhb4",
+    "a": {
+      "deckId": "dj9MuFF7VLg-",
+      "title": "Kickoff ev91a660",
+      "heading": "-HLRrcYjDWTj00f4xnxzj",
+      "note": "u6bZ96W1G8cV1xXi8FyaK"
+    },
+    "b": {
+      "deckId": "uY9kfIGPFjCT",
+      "title": "Retrospective ev91a660",
+      "heading": "aQJI1xj_HGhu_7Ur4MVv_"
+    }
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "In the folder of the Narrative deck \"Kickoff ev91a660\" (deckId dj9MuFF7VLg-), make the Title text style 88 px and weight 800 — every title in the folder should follow.",
+        "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__token_list,mcp__narrative-eval__token_update,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__deck_get,mcp__narrative-eval__ReadMcpResourceTool",
+              "max_results": 5
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
+          {
+            "tool": "deck_get",
+            "command": "deck.get",
+            "input": {
+              "deckId": "dj9MuFF7VLg-"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "dj9MuFF7VLg-",
+              "title": "Kickoff ev91a660",
+              "folderId": "CLaDFykmUhb4",
+              "ownerUserId": "dev-user",
+              "thumbnailUrl": null,
+              "createdAt": "2026-09-30T09:11:06.754Z",
+              "updatedAt": "2026-09-30T09:11:06.754Z",
+              "viewerRole": "owner"
+            },
+            "text": "{\"id\":\"dj9MuFF7VLg-\",\"title\":\"Kickoff ev91a660\",\"folderId\":\"CLaDFykmUhb4\",\"ownerUserId\":\"dev-user\",\"thumbnailUrl\":null,\"createdAt\":\"2026-09-30T09:11:06.754Z\",\"updatedAt\":\"2026-09-30T09:11:06.754Z\",\"viewerRole\":\"owner\"}"
+          },
+          {
+            "tool": "token_list",
+            "command": "token.list",
+            "input": {
+              "folderId": "CLaDFykmUhb4"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "colors": [
+                {
+                  "id": "4AXrYLP4pd",
+                  "name": "Primary",
+                  "value": "#3b82f6"
+                },
+                {
+                  "id": "RXPSy6BPD9",
+                  "name": "Secondary",
+                  "value": "#8b5cf6"
+                },
+                {
+                  "id": "MqwxoUL5kQ",
+                  "name": "Tertiary",
+                  "value": "#ec4899"
+                },
+                {
+                  "id": "uAt-W05e40",
+                  "name": "White",
+                  "value": "#ffffff"
+                },
+                {
+                  "id": "L1EZnXB0Wk",
+                  "name": "Neutral 100",
+                  "value": "#f1f5f9"
+                },
+                {
+                  "id": "F406DL0KSI",
+                  "name": "Neutral 300",
+                  "value": "#cbd5e1"
+                },
+                {
+                  "id": "NrEIBXHbSa",
+                  "name": "Neutral 500",
+                  "value": "#64748b"
+                },
+                {
+                  "id": "8lffW63Ysz",
+                  "name": "Neutral 700",
+                  "value": "#334155"
+                },
+                {
+                  "id": "oxvieOKAII",
+                  "name": "Neutral 900",
+                  "value": "#0f172a"
+                },
+                {
+                  "id": "MLTMHEmkKk",
+                  "name": "Black",
+                  "value": "#000000"
+                }
+              ],
+              "textStyles": [
+                {
+                  "id": "us9cuUlGjq",
+                  "name": "Title",
+                  "family": "Inter",
+                  "weight": 700,
+                  "size": 96,
+                  "lineHeight": 1,
+                  "letterSpacing": -0.02,
+                  "color": {
+                    "$token": "colors.4AXrYLP4pd"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "X-qpA0Vtrl",
+                  "name": "Chapter",
+                  "family": "Inter",
+                  "weight": 700,
+                  "size": 72,
+                  "lineHeight": 1.05,
+                  "letterSpacing": -0.015,
+                  "color": {
+                    "$token": "colors.oxvieOKAII"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "0q0U2HhRaR",
+                  "name": "Heading 1",
+                  "family": "Inter",
+                  "weight": 700,
+                  "size": 48,
+                  "lineHeight": 1.1,
+                  "letterSpacing": -0.01,
+                  "color": {
+                    "$token": "colors.oxvieOKAII"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "v_BDA4qNXC",
+                  "name": "Heading 2",
+                  "family": "Inter",
+                  "weight": 600,
+                  "size": 36,
+                  "lineHeight": 1.15,
+                  "letterSpacing": -0.01,
+                  "color": {
+                    "$token": "colors.oxvieOKAII"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "sIZ3OoDwwn",
+                  "name": "Heading 3",
+                  "family": "Inter",
+                  "weight": 600,
+                  "size": 28,
+                  "lineHeight": 1.2,
+                  "letterSpacing": 0,
+                  "color": {
+                    "$token": "colors.oxvieOKAII"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "1YPf1_OEco",
+                  "name": "Body",
+                  "family": "Inter",
+                  "weight": 400,
+                  "size": 20,
+                  "lineHeight": 1.5,
+                  "letterSpacing": 0,
+                  "color": {
+                    "$token": "colors.8lffW63Ysz"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "XLOUa5f4nF",
+                  "name": "Bullet",
+                  "family": "Inter",
+                  "weight": 400,
+                  "size": 20,
+                  "lineHeight": 1.6,
+                  "letterSpacing": 0,
+                  "color": {
+                    "$token": "colors.8lffW63Ysz"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "qG7WkWV4yn",
+                  "name": "Quote",
+                  "family": "Inter",
+                  "weight": 500,
+                  "size": 24,
+                  "lineHeight": 1.35,
+                  "letterSpacing": -0.005,
+                  "color": {
+                    "$token": "colors.8lffW63Ysz"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "RbjyMD0IAK",
+                  "name": "Caption",
+                  "family": "Inter",
+                  "weight": 400,
+                  "size": 14,
+                  "lineHeight": 1.4,
+                  "letterSpacing": 0.01,
+                  "color": {
+                    "$token": "colors.NrEIBXHbSa"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "BUooR82KP-",
+                  "name": "Footnotes and pages",
+                  "family": "Inter",
+                  "weight": 400,
+                  "size": 11,
+                  "lineHeight": 1.4,
+                  "letterSpacing": 0.04,
+                  "color": {
+                    "$token": "colors.NrEIBXHbSa"
+                  },
+                  "builtin": true
+                }
+              ],
+              "effectStyles": []
+            },
+            "text": "{\"colors\":[{\"id\":\"4AXrYLP4pd\",\"name\":\"Primary\",\"value\":\"#3b82f6\"},{\"id\":\"RXPSy6BPD9\",\"name\":\"Secondary\",\"value\":\"#8b5cf6\"},{\"id\":\"MqwxoUL5kQ\",\"name\":\"Tertiary\",\"value\":\"#ec4899\"},{\"id\":\"uAt-W05e40\",\"name\":\"White\",\"value\":\"#ffffff\"},{\"id\":\"L1EZnXB0Wk\",\"name\":\"Neutral 100\",\"value\":\"#f1f5f9\"},{\"id\":\"F406DL0KSI\",\"name\":\"Neutral 300\",\"value\":\"#cbd5e1\"},{\"id\":\"NrEIBXHbSa\",\"name\":\"Neutral 500\",\"value\":\"#64748b\"},{\"id\":\"8lffW63Ysz\",\"name\":\"Neutral 700\",\"value\":\"#334155\"},{\"id\":\"oxvieOKAII\",\"name\":\"Neutral 900\",\"value\":\"#0f172a\"},{\"id\":\"MLTMHEmkKk\",\"name\":\"Black\",\"value\":\"#000000\"}],\"textStyles\":[{\"id\":\"us9cuUlGjq\",\"name\":\"Title\",\"family\":\"Inter\",\"weight\":700,\"size\":96,\"lineHeight\":1,\"letterSpacing\":-0.02,\"color\":{\"$token\":\"colors.4AXrYLP4pd\"},\"builtin\":true},{\"id\":\"X-qpA0Vtrl\",\"name\":\"Chapter\",\"family\":\"Inter\",\"weight\":700,\"size\":72,\"lineHeight\":1.05,\"letterSpacing\":-0.015,\"color\":{\"$token\":\"colors.oxvieOKAII\"},\"builtin\":true},{\"id\":\"0q0U2HhRaR\",\"name\":\"Heading 1\",\"family\":\"Inter\",\"weight\":700,\"size\":48,\"lineHeight\":1.1,\"letterSpacing\":-0.01,\"color\":{\"$token\":\"colors.oxvieOKAII\"},\"builtin\":true},{\"id\":\"v_BDA4qNXC\",\"name\":\"Heading 2\",\"family\":\"Inter\",\"weight\":600,\"size\":36,\"lineHeight\":1.15,\"letterSpacing\":-0.01,\"color\":{\"$token\":\"colors.oxvieOKAII\"},\"builtin\":true},{\"id\":\"sIZ3OoDwwn\",\"name\":\"Heading 3\",\"family\":\"Inter\",\"weight\":600,\"size\":28,\"lineHeight\":1.2,\"letterSpacing\":0,\"color\":{\"$token\":\"colors.oxvieOKAII\"},\"builtin\":true},{\"id\":\"1YPf1_OEco\",\"name\":\"Body\",\"family\":\"Inter\",\"weight\":400,\"size\":20,\"lineHeight\":1.5,\"letterSpacing\":0,\"color\":{\"$token\":\"colors.8lffW63Ysz\"},\"builtin\":true},{\"id\":\"XLOUa5f4nF\",\"name\":\"Bullet\",\"family\":\"Inter\",\"weight\":400,\"size\":20,\"lineHeight\":1.6,\"letterSpacing\":0,\"color\":{\"$token\":\"colors.8lffW63Ysz\"},\"builtin\":true},{\"id\":\"qG7WkWV4yn\",\"name\":\"Quote\",\"family\":\"Inter\",\"weight\":500,\"size\":24,\"lineHeight\":1.35,\"letterSpacing\":-0.005,\"color\":{\"$token\":\"colors.8lffW63Ysz\"},\"builtin\":true},{\"id\":\"RbjyMD0IAK\",\"name\":\"Caption\",\"family\":\"Inter\",\"weight\":400,\"size\":14,\"lineHeight\":1.4,\"letterSpacing\":0.01,\"color\":{\"$token\":\"colors.NrEIBXHbSa\"},\"builtin\":true},{\"id\":\"BUooR82KP-\",\"name\":\"Footnotes and pages\",\"family\":\"Inter\",\"weight\":400,\"size\":11,\"lineHeight\":1.4,\"letterSpacing\":0.04,\"color\":{\"$token\":\"colors.NrEIBXHbSa\"},\"builtin\":true}],\"effectStyles\":[]}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "dj9MuFF7VLg-",
+              "request": "Make the folder's Title text style 88 px, weight 800"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_kotfafhmDyuRY9N0"
+            },
+            "text": "{\"runId\":\"run_kotfafhmDyuRY9N0\"}"
+          },
+          {
+            "tool": "token_update",
+            "command": "token.update",
+            "input": {
+              "folderId": "CLaDFykmUhb4",
+              "category": "textStyles",
+              "tokenId": "us9cuUlGjq",
+              "size": 88,
+              "weight": 800
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "previous": {
+                "weight": 700,
+                "size": 96
+              },
+              "propagated": {
+                "decks": 2,
+                "components": 0,
+                "objects": 2,
+                "failed": []
+              }
+            },
+            "text": "{\"previous\":{\"weight\":700,\"size\":96},\"propagated\":{\"decks\":2,\"components\":0,\"objects\":2,\"failed\":[]}}"
+          }
+        ],
+        "finalText": "I changed the **Title** text style for the whole folder that \"Kickoff ev91a660\" is in. It's now **88 px** instead of 96 px, and weight **800** instead of 700.\n\nThe change reached 2 text boxes across 2 decks, with no failures. No component masters use the style. The other Title settings (Inter, line height 1, letter spacing −0.02, Primary colour) are unchanged.\n\nOnly text linked to the Title style follows it. A title that isn't linked to the style, or whose size or weight was set by hand, keeps its old look. I didn't search the decks for titles like that. I can find them and link them to the style if you want.\n\nThis was done as its own agent run, so you can undo it in one step.",
+        "turns": 6,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

@@ -28,6 +28,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { fileURLToPath } from 'url'
 import path from 'path'
 import { db, pool } from './db/client.js'
+import { runDataMigrations } from './services/dataMigrations.js'
 import { createHocuspocusServer } from './hocuspocus/index.js'
 import { registerHttpRoutes } from './http/registerRoutes.js'
 import {
@@ -417,3 +418,10 @@ await Promise.all([
     console.log(`[server] Hocuspocus WS running on ws://${HOST}:${HOCUSPOCUS_PORT}`)
   }),
 ])
+
+// One-time data migrations (services/dataMigrations.ts): in the background,
+// through the running sync server, so documents people have open get them
+// as ordinary edits. A failure is logged and retried on the next start.
+void runDataMigrations({ db, log: app.log, hocuspocus: () => hocuspocus }).catch((err: unknown) => {
+  app.log.error({ err }, 'data migrations could not run')
+})

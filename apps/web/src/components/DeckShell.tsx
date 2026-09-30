@@ -33,31 +33,25 @@
  *   open the folder Hocuspocus doc once folderId turns non-null.
  *   TokensProvider is mounted inside FolderDocGate to expose a synchronous
  *   colour resolver to the renderer tree.
+ *
+ * A2.12: a folder text-style change reaches the linked text of every deck
+ *   on the server (apps/server services/tokens.ts); the open deck receives
+ *   it as a remote update. The TextStylePropagator that did it here — only
+ *   in decks someone had open — is gone.
  */
 
-import { useState, useCallback, useLayoutEffect, useEffect, useRef } from 'react'
+import { useState, useCallback, useLayoutEffect, useEffect } from 'react'
 import { markDeckLoadStart } from '../state/loadTimings.js'
-import { TOKEN_PROPAGATION_ORIGIN } from '../state/origins.js'
 import { useParams, Navigate, Outlet } from 'react-router-dom'
 import { SlideDocProvider } from '../state/SlideDocProvider.js'
-import { useSlideDoc } from '../state/useSlideDoc.js'
 import { ActiveSlideProvider } from '../state/ActiveSlideContext.js'
-import { listSlides, getSlideObjectsCtx, updateObject } from '@narrative/slide-model'
-import { TEXT_STYLE_OVERRIDE_KEYS } from '@narrative/shared'
-import type { TextObject, SlideObjectPatch } from '@narrative/shared'
-import type { TextStyleTokenSnapshot } from '@narrative/slide-model'
-import { textStyleField } from '@narrative/commands'
 import { CanvasInstanceContext } from '../renderer/CanvasInstanceContext.js'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { DeckRoleProvider, useDeckRole } from '../state/DeckRoleContext.js'
 import { MediaUploadProvider } from '../state/useMediaUpload.js'
 import { RulersProvider } from '../state/RulersContext.js'
 import { SnappingProvider } from '../state/SnappingContext.js'
-import {
-  FolderDocProvider,
-  useFolderTokens,
-  useFolderTokensOptional,
-} from '../state/FolderDocProvider.js'
+import { FolderDocProvider, useFolderTokens } from '../state/FolderDocProvider.js'
 import { FolderFontsProvider } from '../state/useFolderFonts.js'
 import { FolderFontLoader } from '../state/FolderFontLoader.js'
 import { DeckFontsProvider } from '../state/useDeckFonts.js'
@@ -148,128 +142,6 @@ function ColourResolverInstaller() {
 // DeckShell
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// TextStylePropagator
-//
-// Watches the folder text-style tokens and re-applies any token field
-// change onto every TextObject in this deck that's linked to that
-// token (`textStyleId`), skipping fields the user has explicitly
-// overridden on a per-object basis (`textStyleOverrides`).
-//
-// What a style writes onto a linked box is the shared mapping
-// (@narrative/commands text/textStyle.ts), the same one the commands that
-// link a box to a style apply.
-//
-// Runs:
-//   1. On first sync (so reopening a deck reconciles every linked
-//      TextObject with the current token state).
-//   2. On every subsequent token change in the folder Y.Doc.
-// ---------------------------------------------------------------------------
-
-function TextStylePropagator() {
-  // Optional — FolderDocGate renders children with no provider when
-  // folderId hasn't loaded yet (and decks without a folder skip the
-  // provider entirely). Bail until tokens are available.
-  const tokens = useFolderTokensOptional()
-  const { deckCtx } = useSlideDoc()
-  const prevRef = useRef<Record<string, TextStyleTokenSnapshot> | null>(null)
-
-  useEffect(() => {
-    if (tokens === null) return
-    const prev = prevRef.current
-    prevRef.current = tokens.textStyles
-
-    // First mount with an empty token snapshot — wait for sync.
-    if (Object.keys(tokens.textStyles).length === 0 && prev === null) return
-
-    // Compute the set of token ids whose value diverges from the
-    // previous snapshot (or every id present, on first run).
-    const changedIds = new Set<string>()
-    if (prev === null) {
-      for (const id of Object.keys(tokens.textStyles)) changedIds.add(id)
-    } else {
-      const allIds = new Set<string>([...Object.keys(prev), ...Object.keys(tokens.textStyles)])
-      for (const id of allIds) {
-        const before = prev[id]
-        const after = tokens.textStyles[id]
-        // Cheap deep-ish equality: stringify the tracked fields.
-        const sigBefore = before
-          ? JSON.stringify([
-              before.family,
-              before.weight,
-              before.size,
-              before.lineHeight,
-              before.letterSpacing,
-              before.paragraphSpaceBefore,
-              before.paragraphSpaceAfter,
-              before.color,
-              before.textTransform,
-            ])
-          : null
-        const sigAfter = after
-          ? JSON.stringify([
-              after.family,
-              after.weight,
-              after.size,
-              after.lineHeight,
-              after.letterSpacing,
-              after.paragraphSpaceBefore,
-              after.paragraphSpaceAfter,
-              after.color,
-              after.textTransform,
-            ])
-          : null
-        if (sigBefore !== sigAfter) changedIds.add(id)
-      }
-    }
-    if (changedIds.size === 0) return
-
-    // Walk every slide and patch matching linked TextObjects. The
-    // mutation is read-modify-write, so we batch all writes in a
-    // single Yjs transaction at the deck-doc level for atomicity and
-    // a single observer fan-out.
-    //
-    // Untracked ON PURPOSE: TOKEN_PROPAGATION_ORIGIN is the outermost
-    // origin, so it overrides the LOCAL_ORIGIN of the updateObject calls
-    // inside and keeps this write off the deck's undo stack — Mod+Z must
-    // not desync linked text from its folder token (see state/origins.ts;
-    // propagation moves server-side in phase A2 of the agentic-layer plan).
-    const slides = listSlides(deckCtx)
-    deckCtx.doc.transact(() => {
-      for (const slide of slides) {
-        const objCtx = getSlideObjectsCtx(deckCtx, slide.id)
-        if (objCtx === null) continue
-        for (const obj of slide.objects) {
-          if (obj.type !== 'text') continue
-          const textObj = obj as TextObject & { textStyleId?: string }
-          const sid = textObj.textStyleId
-          if (sid === undefined || !changedIds.has(sid)) continue
-          const style = tokens.textStyles[sid]
-          if (style === undefined) continue
-          const overrides = new Set<string>(textObj.textStyleOverrides ?? [])
-          const patch: Record<string, unknown> = {}
-          for (const key of TEXT_STYLE_OVERRIDE_KEYS) {
-            if (overrides.has(key)) continue
-            const next = textStyleField(style, key, tokens)
-            if (next === undefined) continue
-            // Only emit when the value actually differs — avoids
-            // useless writes that would still trigger reconciler
-            // patches downstream.
-            const cur = (textObj as unknown as Record<string, unknown>)[key]
-            if (cur === next) continue
-            patch[key] = next
-          }
-          if (Object.keys(patch).length > 0) {
-            updateObject(objCtx, textObj.id, patch as SlideObjectPatch<TextObject>)
-          }
-        }
-      }
-    }, TOKEN_PROPAGATION_ORIGIN)
-  }, [tokens, deckCtx])
-
-  return null
-}
-
 // (removed) ComponentDeleteCascadeEffect — components are now stamps,
 // so deleting a master never needs to remove "instances" from decks
 // (there are no instances). Stamped primitives stay on the slide.
@@ -307,10 +179,6 @@ export function DeckShell() {
                   <RulersProvider>
                     <SnappingProvider>
                       <CanvasInstanceContext value={canvasInstance}>
-                        {/* Propagates folder text-style token edits onto
-                          every linked TextObject in this deck, skipping
-                          per-object override fields. */}
-                        <TextStylePropagator />
                         <Outlet
                           context={
                             { onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue

@@ -104,16 +104,15 @@ export function resolveTokenValue(ref: TokenRef, tokens: FolderTokensSnapshot): 
   const id = ref.$token.slice(dotIdx + 1)
   if (!category || !id) return null
 
+  // Own entries only: an id like "constructor" must not reach Object.prototype.
   if (category === 'colors') {
-    const token = tokens.colors[id]
-    if (!token) return null
-    return token.value
+    if (!Object.hasOwn(tokens.colors, id)) return null
+    return tokens.colors[id]!.value
   }
 
   if (category === 'textStyles') {
-    const token = tokens.textStyles[id]
-    if (!token) return null
-    const { color } = token
+    if (!Object.hasOwn(tokens.textStyles, id)) return null
+    const { color } = tokens.textStyles[id]!
     if (color === undefined) return null
     if (typeof color === 'string') return color
     // color is a TokenRef — resolve transitively (depth 2, no further recursion)
@@ -123,8 +122,7 @@ export function resolveTokenValue(ref: TokenRef, tokens: FolderTokensSnapshot): 
       const innerCat = color.$token.slice(0, innerDot)
       const innerId = color.$token.slice(innerDot + 1)
       if (innerCat === 'colors') {
-        const colorToken = tokens.colors[innerId]
-        return colorToken?.value ?? null
+        return Object.hasOwn(tokens.colors, innerId) ? tokens.colors[innerId]!.value : null
       }
       // Transitive ref into non-colors — guard against cycles, return null.
       return null

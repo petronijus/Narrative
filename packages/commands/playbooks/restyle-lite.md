@@ -18,10 +18,11 @@ Full brand restyling with style packs — layouts, the pack's components and
 `style.slides.restyle` (planned, not available yet) — comes later; this
 playbook uses what exists today.
 
-1. Read the folder's tokens: colours and text styles are visible on the
-   objects that already use them (`query.slide` shows `{ "$token": … }`
-   references); `token.usages` finds where a token is used. If the folder
-   has no tokens, say so and ask before inventing a palette.
+1. Read the folder's tokens with `token.list` (the deck's `folderId` from
+   `deck.get`; colours and text styles with their ids); `query.slide` shows
+   which objects already use them (`{ "$token": … }` references),
+   `token.usages` where one token is used. If the folder has no tokens, say
+   so and ask before inventing a palette.
 2. Classify each text box by role (headline, subline, copy, caption,
    footnote, page number) from its size, position and content.
 3. Map roles to the folder's text styles and colours:

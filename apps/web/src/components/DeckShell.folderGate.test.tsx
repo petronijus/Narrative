@@ -63,7 +63,6 @@ vi.mock('../state/FolderDocProvider.js', () => ({
     colors: {},
     textStyles: {},
     effectStyles: {},
-    deletedComponentIds: new Set<string>(),
   }),
   useFolderTokensOptional: () => null,
   useFolderTokensForCommands: () => undefined,

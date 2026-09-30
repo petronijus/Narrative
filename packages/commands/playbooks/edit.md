@@ -32,7 +32,8 @@ The user asked: {{request}}
      `object.path.fromShape`, then `object.path.setAnchors`; move a line's
      or arrow's end → `object.line.setEndpoints` (all in slide px);
    - change font, size, colour of a whole box → `text.setBoxTypography`;
-     give it a folder text style → `text.style.apply`;
+     give it a folder text style → `text.style.apply`; change the style
+     itself for the whole folder (only when asked) → `token.update`;
    - restyle some words → `text.format` with a `match` range; change some
      words → `text.edit` at their offsets, or `text.replace` for every
      occurrence;

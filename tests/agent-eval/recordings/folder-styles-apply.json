@@ -1,0 +1,153 @@
+{
+  "scenario": "folder-styles-apply",
+  "tag": "ev91a660",
+  "recordedAt": "2026-09-30T09:11:06.737Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.285 (Claude Code)",
+  "fixture": {
+    "folderId": "6j1jJLKLiKyY",
+    "deckId": "70js6gAklFM4",
+    "title": "Quarterly review ev91a660",
+    "heading": "vi1fcqD73FUX8K07DV24R",
+    "paragraph": "9HcDFlk_tChG2flTBfN4S"
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "On slide 1 of the Narrative deck \"Quarterly review ev91a660\" (deckId 70js6gAklFM4), use the folder's text styles: the heading \"Results\" as Title, the paragraph as Body.",
+        "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_slide,mcp__narrative-eval__text_style_apply,mcp__narrative-eval__token_list,mcp__narrative-eval__query_deck,ReadMcpResourceTool",
+              "max_results": 6
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "70js6gAklFM4",
+              "slide": {
+                "index": 0
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "PO-gJ2vsJXy6eWazldDMO",
+              "index": 0,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "vi1fcqD73FUX8K07DV24R",
+                  "type": "text",
+                  "x": 120,
+                  "y": 80,
+                  "width": 1680,
+                  "height": 140,
+                  "rotation": 0,
+                  "text": "Results",
+                  "fontSize": 50,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "fontFamily": "Arial"
+                },
+                {
+                  "id": "9HcDFlk_tChG2flTBfN4S",
+                  "type": "text",
+                  "x": 120,
+                  "y": 300,
+                  "width": 1680,
+                  "height": 300,
+                  "rotation": 0,
+                  "text": "Revenue grew in every region.",
+                  "fontSize": 20,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "fontFamily": "Arial"
+                }
+              ],
+              "animations": [],
+              "notes": ""
+            },
+            "text": "{\"id\":\"PO-gJ2vsJXy6eWazldDMO\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"vi1fcqD73FUX8K07DV24R\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":140,\"rotation\":0,\"text\":\"Results\",\"fontSize\":50,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Arial\"},{\"id\":\"9HcDFlk_tChG2flTBfN4S\",\"type\":\"text\",\"x\":120,\"y\":300,\"width\":1680,\"height\":300,\"rotation\":0,\"text\":\"Revenue grew in every region.\",\"fontSize\":20,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Arial\"}],\"animations\":[],\"notes\":\"\"}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "70js6gAklFM4",
+              "request": "Apply Title and Body text styles on slide 1"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_a7NrjH675586P4xB"
+            },
+            "text": "{\"runId\":\"run_a7NrjH675586P4xB\"}"
+          },
+          {
+            "tool": "text_style_apply",
+            "command": "text.style.apply",
+            "input": {
+              "deckId": "70js6gAklFM4",
+              "slide": {
+                "index": 0
+              },
+              "objects": ["vi1fcqD73FUX8K07DV24R"],
+              "style": "Title"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "style": {
+                "id": "SDksjZwXJp",
+                "name": "Title"
+              }
+            },
+            "text": "{\"style\":{\"id\":\"SDksjZwXJp\",\"name\":\"Title\"}}"
+          },
+          {
+            "tool": "text_style_apply",
+            "command": "text.style.apply",
+            "input": {
+              "deckId": "70js6gAklFM4",
+              "slide": {
+                "index": 0
+              },
+              "objects": ["9HcDFlk_tChG2flTBfN4S"],
+              "style": "Body"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "style": {
+                "id": "KfNkG24Kdy",
+                "name": "Body"
+              }
+            },
+            "text": "{\"style\":{\"id\":\"KfNkG24Kdy\",\"name\":\"Body\"}}"
+          }
+        ],
+        "finalText": "On slide 1 of \"Quarterly review ev91a660\", the \"Results\" heading now uses the folder's **Title** style and the paragraph \"Revenue grew in every region.\" uses **Body**. Both boxes are linked to their styles, so if a style changes later, these boxes will change with it. Any formatting that had been set by hand on them was replaced by the style's settings. I didn't read the slide back afterwards to check how it looks.\n\nAll of this was done as one agent run, so you can undo it in one step if you need to.",
+        "turns": 6,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

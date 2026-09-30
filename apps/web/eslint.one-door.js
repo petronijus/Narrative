@@ -74,10 +74,7 @@ export const ONE_DOOR_PENDING = [
   //   component stamping
   { file: 'apps/web/src/ui/Toolbar.tsx', step: 'A2.12' },
   { file: 'apps/web/src/ui/UploadDropZone.tsx', step: 'A2.12' },
-  //   text-style propagation to linked objects (moves server-side)
-  { file: 'apps/web/src/components/DeckShell.tsx', step: 'A2.12' },
-  // A2.12 — tokens, components, server propagation
-  { file: 'apps/web/src/state/FolderDocProvider.tsx', step: 'A2.12' },
+  // A2.12b — components: stamping and the master tree
   { file: 'apps/web/src/state/writeComponentMasterTree.ts', step: 'A2.12' },
   // A2.13 — close: the dev/e2e test hooks go through commands too
   { file: 'apps/web/src/state/testApi.ts', step: 'A2.13' },

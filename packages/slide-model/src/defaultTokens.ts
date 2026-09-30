@@ -1,8 +1,11 @@
 /**
- * state/defaultTokens.ts
+ * slide-model/src/defaultTokens.ts
  *
- * Default design-system tokens seeded into a folder Y.Doc the first time
- * it loads with both `colors` and `textStyles` empty.
+ * Default design-system tokens every folder starts with: the server seeds
+ * them into the folder document when the folder is created (and
+ * `token.seedDefaults` into one that has none — `seedDefaultTokens` in
+ * folderDoc.ts). Moved here from apps/web in A2.12, when seeding left the
+ * browser.
  *
  * The palette is intentionally curated (24 colors max) so a fresh folder
  * starts usable without overwhelming the picker.

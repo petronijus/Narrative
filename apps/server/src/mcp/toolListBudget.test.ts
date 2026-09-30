@@ -52,8 +52,12 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * A2.11 (2026-09-30): 169,000 → 177,000 for text.setBoxTypography 2.6 KB,
  * text.edit 2.4, text.style.apply 1.3 and text.replace 1.3 (object.update
  * lost its now-obsolete workaround notes).
+ * A2.12a (2026-09-30): 177,000 → 187,000 for token.update 2.8 KB, token.create
+ * 2.3, text.style.createFromObject 1.1, text.style.updateFromObject 1.1,
+ * token.delete 1.0, token.seedDefaults 0.9 and token.list 0.6 (186,157
+ * bytes measured in url mode, 128 tools).
  */
-export const TOOL_LIST_BUDGET_BYTES = 177_000
+export const TOOL_LIST_BUDGET_BYTES = 187_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

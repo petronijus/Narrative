@@ -17,7 +17,6 @@ import type {
   FolderSummary,
   FontFaceInfo,
 } from '@narrative/commands'
-import type { Database } from '../db/client.js'
 import { decks, folders, mediaAssets } from '../db/schema.js'
 import { purgeDeckBucketPrefix, purgeExplicitKeys } from '../media/bucketCleanup.js'
 import { buildS3Client, MEDIA_BUCKET, presignGetUrl } from '../media/s3Client.js'
@@ -28,6 +27,7 @@ import {
 } from '../media/assets.js'
 import { parseFontMetadata } from '../media/fontMetadata.js'
 import type { ServiceDeps } from './deps.js'
+import { seedNewFolder } from './tokens.js'
 import { badRequest, conflict, failed, notFound, unprocessable } from './errors.js'
 import {
   containsIgnoringCase,
@@ -108,9 +108,14 @@ function fontExtFromMime(mime: string, originalName?: string): string {
 
 /**
  * Find or create the "Drafts" folder for a user. On first deck creation for
- * a brand-new user (no existing folders), this auto-provisions it.
+ * a brand-new user (no existing folders), this auto-provisions it — with the
+ * default tokens, like every new folder.
  */
-export async function getOrProvisionDrafts(db: Database, userId: string): Promise<string> {
+export async function getOrProvisionDrafts(
+  deps: Pick<ServiceDeps, 'db' | 'log' | 'hocuspocus'>,
+  userId: string,
+): Promise<string> {
+  const { db } = deps
   const [existing] = await db
     .select({ id: folders.id })
     .from(folders)
@@ -124,6 +129,7 @@ export async function getOrProvisionDrafts(db: Database, userId: string): Promis
     .values({ id, ownerUserId: userId, name: 'Drafts', createdAt: new Date() })
     .returning({ id: folders.id })
   if (!created) throw new Error('Failed to provision Drafts folder')
+  await seedNewFolder(deps, created.id)
   return created.id
 }
 
@@ -236,6 +242,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
       .values({ id, ownerUserId: args.userId, name, createdAt: new Date() })
       .returning()
     if (!created) throw failed('Failed to create folder')
+    await seedNewFolder(deps, id)
     return { ...folderRecord(created), deckCount: 0 }
   }
 

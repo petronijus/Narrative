@@ -18,6 +18,8 @@
  *   GET  /decks?folderId           → filters by folder
  */
 
+import * as Y from 'yjs'
+import { DEFAULT_COLORS, DEFAULT_TEXT_STYLES, readFolderTokens } from '@narrative/slide-model'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { registerFolderRoutes } from './folders.js'
@@ -323,9 +325,24 @@ describe('POST /folders', () => {
     })
 
     expect(res.statusCode).toBe(201)
-    const body = JSON.parse(res.body) as { name: string; ownerUserId: string }
+    const body = JSON.parse(res.body) as { id: string; name: string; ownerUserId: string }
     expect(body.name).toBe('Projects')
     expect(body.ownerUserId).toBe('dev-user')
+
+    // A2.12: the new folder's document got the default tokens (written as a
+    // delta row: no sync server runs in this test).
+    const seed = (db as unknown as { _lastInserted: () => unknown })._lastInserted() as {
+      folderId: string
+      update: Uint8Array
+    }
+    expect(seed.folderId).toBe(body.id)
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, seed.update)
+    const tokens = readFolderTokens(doc)
+    expect(Object.values(tokens.textStyles).map((t) => t.name)).toEqual(
+      expect.arrayContaining(DEFAULT_TEXT_STYLES.map((t) => t.name)),
+    )
+    expect(Object.keys(tokens.colors)).toHaveLength(DEFAULT_COLORS.length)
   })
 
   it('returns 400 when name is missing', async () => {

@@ -9,7 +9,7 @@
 import { nanoid } from 'nanoid'
 import * as Y from 'yjs'
 import { and, desc, eq, inArray, sql, type SQL } from 'drizzle-orm'
-import { createSlideDoc } from '@narrative/slide-model'
+import { createSlideDoc, readFolderTokens } from '@narrative/slide-model'
 import type {
   ActiveEditorsEntry,
   CreatedDeck,
@@ -43,7 +43,7 @@ import {
 } from './shared.js'
 import { getOrProvisionDrafts } from './folders.js'
 import { readDocCopy, writeLiveDoc } from './liveDocs.js'
-import { applyTokenRebinding, planTokenRebinding, tokensSnapshot } from './tokenRebind.js'
+import { applyTokenRebinding, planTokenRebinding } from './tokenRebind.js'
 import { copyStoredObject, stageDeckCopy, stageObjectInsert } from './deckInsert.js'
 import { discardDeckMedia, registerDeckMedia } from '../pptx/importDeck.js'
 
@@ -303,7 +303,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
       if (folder.ownerUserId !== ownerUserId) throw forbidden()
       targetFolderId = folder.id
     } else {
-      targetFolderId = await getOrProvisionDrafts(db, ownerUserId)
+      targetFolderId = await getOrProvisionDrafts(deps, ownerUserId)
     }
 
     const id = nanoid(12)
@@ -380,7 +380,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
               .from(folders)
               .where(and(eq(folders.id, source.folderId), eq(folders.ownerUserId, args.userId)))
               .limit(1)
-      targetFolderId = own?.id ?? (await getOrProvisionDrafts(db, args.userId))
+      targetFolderId = own?.id ?? (await getOrProvisionDrafts(deps, args.userId))
     }
     const title =
       args.title !== undefined
@@ -535,7 +535,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
         readDocCopy(deps, 'folder', destFolderId),
       ])
       try {
-        plan = planTokenRebinding(tokensSnapshot(sourceDoc), tokensSnapshot(destDoc))
+        plan = planTokenRebinding(readFolderTokens(sourceDoc), readFolderTokens(destDoc))
       } finally {
         sourceDoc.destroy()
         destDoc.destroy()

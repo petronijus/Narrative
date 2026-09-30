@@ -223,6 +223,21 @@ export type {
   FolderTokensSnapshot,
 } from './tokens.js'
 
+// Folder token document (A2.12)
+export {
+  TOKEN_CATEGORIES,
+  addFolderToken,
+  deleteFolderToken,
+  hasNoTokens,
+  migrateFolderTokens,
+  readFolderTokens,
+  seedDefaultTokens,
+  updateFolderToken,
+  type TokenCategory,
+} from './folderDoc.js'
+export { DEFAULT_COLORS, DEFAULT_TEXT_STYLES, MAX_COLORS } from './defaultTokens.js'
+export type { DefaultColor, DefaultTextStyle } from './defaultTokens.js'
+
 // Token usage scanner (M16 P4)
 export { scanDeckDoc, scanComponentDoc, scanFolderDoc } from './scanTokenUsages.js'
 export type {

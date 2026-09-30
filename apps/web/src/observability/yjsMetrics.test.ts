@@ -9,7 +9,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as Y from 'yjs'
 import { createYjsMetrics } from './yjsMetrics.js'
 import { LOCAL_ORIGIN } from '@narrative/slide-model'
-import { TOKEN_PROPAGATION_ORIGIN } from '../state/origins.js'
 
 // Minimální mock pro HocuspocusProvider
 function createMockProvider() {
@@ -96,23 +95,6 @@ describe('createYjsMetrics', () => {
     const stats = tracker.stats()
     expect(stats.updatesSent).toBe(1)
     expect(stats.bytesSent).toBeGreaterThan(0)
-    expect(stats.updatesReceived).toBe(0)
-
-    tracker.destroy()
-    doc.destroy()
-  })
-
-  it('counts the untracked token-propagation write as sent, not received', () => {
-    // TOKEN_PROPAGATION_ORIGIN is a local write kept off the undo stack on
-    // purpose; naming its origin must not turn it into "remote" traffic.
-    const tracker = createYjsMetrics(doc, provider as never)
-
-    doc.transact(() => {
-      doc.getArray('objects').push([new Y.Map()])
-    }, TOKEN_PROPAGATION_ORIGIN)
-
-    const stats = tracker.stats()
-    expect(stats.updatesSent).toBe(1)
     expect(stats.updatesReceived).toBe(0)
 
     tracker.destroy()

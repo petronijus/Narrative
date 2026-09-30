@@ -30,8 +30,9 @@ describe('query.deck', () => {
           id: 's2',
           index: 1,
           name: 'Numbers',
+          title: 'Results',
           transition: 'none',
-          objectCount: 4,
+          objectCount: 5,
           animationCount: 0,
         },
         {

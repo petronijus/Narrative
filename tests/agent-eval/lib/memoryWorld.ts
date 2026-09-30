@@ -19,12 +19,18 @@
  *   - share links — a list per deck;
  *   - folder / deck font lists and folder component lists — always empty
  *     (nothing is ever uploaded or created there);
+ *   - folder tokens — one folder document per folder, seeded with the
+ *     default tokens when the folder is made (as the server does since
+ *     A2.12); token.list / create / update / delete / seedDefaults through
+ *     the same slide-model writers and field parsers as the server, and a
+ *     token change carried into the folder's decks (`propagateTextStyles`,
+ *     outside any run, as the server's propagation is);
  *   - the ServerHost's confirmation gate — a `confirm: 'always'` command
  *     runs only with the harness's explicit `confirm: [id]` (like a script
  *     on POST /commands); an agent call is refused (`confirmation_required`,
  *     or `not_confirmed` with a `confirmationId`), because the memory world
  *     has no confirm page on which a person could approve it.
- * Everything else (media, PPTX, components, fonts, tokens, sharing by
+ * Everything else (media, PPTX, components, fonts, token usages, sharing by
  * email) throws `UnsupportedInWorld`: a recording that needs it is not
  * replayable, and the smoke test says so instead of faking an answer.
  *
@@ -35,9 +41,26 @@
 
 import * as Y from 'yjs'
 import { z } from 'zod'
-import { agentOrigin, createSlideDoc, type DeckMutationContext } from '@narrative/slide-model'
+import {
+  addFolderToken,
+  agentOrigin,
+  createSlideDoc,
+  deleteFolderToken,
+  hasNoTokens,
+  migrateFolderTokens,
+  readFolderTokens,
+  seedDefaultTokens,
+  updateFolderToken,
+  type DeckMutationContext,
+} from '@narrative/slide-model'
 import {
   CommandError,
+  InvalidTokenFields,
+  parseNewTokenFields,
+  parseTokenPatch,
+  propagateTextStyles,
+  stylesUsingColor,
+  textStyleNameTaken,
   commandReadsFolderFonts,
   commandReadsFolderTokens,
   commandUsesDocument,
@@ -69,6 +92,8 @@ const T0 = Date.parse('2026-09-27T10:00:00.000Z')
 const HARNESS_SESSION = 'harness'
 const AGENT_SESSION = 'agent'
 const AUTOMATIC_RUN = '(automatic run)'
+/** Origin of a token change carried into decks: no run's (the server's TOKEN_PROPAGATION_ORIGIN). */
+const TOKEN_PROPAGATION = { kind: 'token-propagation' }
 
 interface MemDeck {
   record: DeckWithRole
@@ -132,6 +157,9 @@ export class MemoryWorld implements World {
 
   private readonly decks = new Map<string, MemDeck>()
   private readonly folders = new Map<string, FolderSummary>()
+  /** Each folder's token document (`folder:<id>`). */
+  private readonly folderDocs = new Map<string, Y.Doc>()
+  private tokenCounter = 0
   private readonly links = new Map<string, ShareLinkEntry[]>()
   private readonly editors = new Map<string, OpenEditorState>()
   private readonly runs = new Map<string, MemRun>()
@@ -162,7 +190,30 @@ export class MemoryWorld implements World {
   private addFolder(name: string): string {
     const id = this.nextId('folder')
     this.folders.set(id, { id, name, createdAt: this.now(), deckCount: 0 })
+    // A new folder comes with the default tokens (services/folders.ts create).
+    const doc = new Y.Doc()
+    seedDefaultTokens(doc, () => this.newTokenId())
+    this.folderDocs.set(id, doc)
     return id
+  }
+
+  private folderTokensOf(folderId: string | null) {
+    const doc = folderId === null ? undefined : this.folderDocs.get(folderId)
+    if (doc === undefined) return null
+    const tokens = readFolderTokens(doc)
+    return hasNoTokens(tokens) ? null : tokens
+  }
+
+  private newTokenId(): string {
+    this.tokenCounter++
+    return `tok_${this.tokenCounter}`
+  }
+
+  private folderDoc(folderId: string): Y.Doc {
+    const doc = this.folderDocs.get(folderId)
+    if (doc === undefined)
+      throw new CommandError('not_found', `folder '${folderId}' does not exist`)
+    return doc
   }
 
   // -------------------------------------------------------------------------
@@ -356,6 +407,96 @@ export class MemoryWorld implements World {
       return []
     }
 
+    // Folder tokens, as services/tokens.ts keeps them (owner = the eval user).
+    const fields = <T>(parse: () => T): T => {
+      try {
+        return parse()
+      } catch (err) {
+        if (err instanceof InvalidTokenFields) throw new CommandError('invalid_input', err.message)
+        throw err
+      }
+    }
+    const own = (tokens: object, id: string) => Object.hasOwn(tokens, id)
+    s.tokens.list = async ({ folderId }) => readFolderTokens(this.folderDoc(folderId))
+    s.tokens.create = async ({ folderId, category, fields: raw }) => {
+      const doc = this.folderDoc(folderId)
+      const stored = fields(() => parseNewTokenFields(category, raw))
+      if (category === 'textStyles') stored['builtin'] = false
+      if (
+        category === 'textStyles' &&
+        textStyleNameTaken(readFolderTokens(doc), String(stored['name']))
+      )
+        throw new CommandError(
+          'conflict',
+          `the folder already has a text style named "${String(stored['name'])}"`,
+        )
+      const tokenId = this.newTokenId()
+      addFolderToken(doc, category, tokenId, stored)
+      return { tokenId }
+    }
+    s.tokens.update = async ({ folderId, category, tokenId, patch: raw }) => {
+      const doc = this.folderDoc(folderId)
+      const patch = fields(() => parseTokenPatch(category, raw))
+      if (Object.keys(patch).length === 0)
+        throw new CommandError('invalid_input', 'Pass at least one field to change')
+      const before = readFolderTokens(doc)[category] as unknown as Record<
+        string,
+        Record<string, unknown>
+      >
+      if (!own(before, tokenId))
+        throw new CommandError('not_found', `No ${category} token '${tokenId}' in this folder`)
+      const token = before[tokenId]!
+      if (
+        category === 'textStyles' &&
+        typeof patch['name'] === 'string' &&
+        textStyleNameTaken(readFolderTokens(doc), patch['name'], tokenId)
+      )
+        throw new CommandError(
+          'conflict',
+          `the folder already has a text style named "${patch['name']}"`,
+        )
+      const previous = Object.fromEntries(Object.keys(patch).map((k) => [k, token[k] ?? null]))
+      updateFolderToken(doc, category, tokenId, patch)
+      const tokens = readFolderTokens(doc)
+      const looks = Object.keys(patch).some((k) => k !== 'name')
+      const styleIds = new Set(
+        !looks ? [] : category === 'textStyles' ? [tokenId] : stylesUsingColor(tokens, tokenId),
+      )
+      const propagated = { decks: 0, components: 0, objects: 0, failed: [] as string[] }
+      for (const deck of this.decks.values()) {
+        if (deck.record.folderId !== folderId || styleIds.size === 0) continue
+        let changed = 0
+        deck.doc.doc.transact(() => {
+          changed = propagateTextStyles(deck.doc, tokens, styleIds)
+        }, TOKEN_PROPAGATION)
+        if (changed > 0) {
+          propagated.decks++
+          propagated.objects += changed
+        }
+      }
+      return { previous, propagated }
+    }
+    s.tokens.delete = async ({ folderId, category, tokenId }) => {
+      const doc = this.folderDoc(folderId)
+      const tokens = readFolderTokens(doc)[category] as unknown as Record<
+        string,
+        Record<string, unknown>
+      >
+      if (!own(tokens, tokenId))
+        throw new CommandError('not_found', `No ${category} token '${tokenId}' in this folder`)
+      const token = tokens[tokenId]!
+      if (category === 'textStyles' && token['builtin'] === true)
+        throw new CommandError('conflict', `"${String(token['name'])}" is a built-in text style`)
+      deleteFolderToken(doc, category, tokenId)
+      return { deleted: true as const, token }
+    }
+    s.tokens.seedDefaults = async ({ folderId }) => {
+      const doc = this.folderDoc(folderId)
+      const seeded = seedDefaultTokens(doc, () => this.newTokenId())
+      const migrated = migrateFolderTokens(doc)
+      return { seeded, migrated }
+    }
+
     s.sharing.listLinks = async ({ deckId }) =>
       (this.links.get(deckId) ?? []).filter((l) => !l.revoked)
     s.sharing.createLink = async ({ deckId, userId, role, expiresAt }) => {
@@ -504,11 +645,9 @@ export class MemoryWorld implements World {
       origin: run?.origin ?? { kind: 'agent-eval-read' },
       ...(run !== undefined ? { run: { runId: run.id, surface: 'mcp' as const } } : {}),
       ...(deck !== undefined && (commandUsesDocument(def) || writes) ? { deck: deck.doc } : {}),
-      // The folders an eval creates were never opened in an editor, which is
-      // what seeds a folder's tokens: the live server reports none for them
-      // (agent/folderTokens.ts), and so does this world.
+      // The deck's folder tokens, as the server reads them (agent/folderTokens.ts).
       ...(deck !== undefined && commandReadsFolderTokens(this.registry, args.command, args.input)
-        ? { folderTokens: null }
+        ? { folderTokens: this.folderTokensOf(deck.record.folderId) }
         : {}),
       // Nor did anyone upload fonts to them.
       ...(deck !== undefined && commandReadsFolderFonts(this.registry, args.command, args.input)

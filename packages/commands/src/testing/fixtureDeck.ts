@@ -8,7 +8,8 @@
  * `ga`+`gb` (group `grp1`), a three-item bullet list `t2` ("Revenue",
  * "Costs", "Margin"), an image `img2` masked to an ellipse, and animations
  * `a1` (fadeIn on `r1`) then `a2` (fadeIn on `e1`); on `s2` a locked
- * rectangle `lock1`, a 2x3 table `tbl2` whose top row is one merged cell, a
+ * rectangle `lock1`, a heading `hd1` linked to the "Title" text style (its
+ * size set by hand), a 2x3 table `tbl2` whose top row is one merged cell, a
  * line `ln1` from (100, 900) to (500, 900) and an open path `pa1` (a curved
  * stroke through (1200, 800), (1400, 700), (1600, 800)); `s3` is empty; a
  * deck guide `gd1`.
@@ -181,7 +182,19 @@ export function createFixtureDeck(): DeckMutationContext {
 
   const s2 = getSlideObjectsCtx(deck, 's2')
   if (s2 === null) throw new Error('fixture: slide s2 missing')
-  addObjects(s2, [rect('lock1', 1600, 60, { locked: true, name: 'Logo' })])
+  // A heading linked to the "Title" text style, its size set by hand.
+  const heading: TextObject = {
+    ...text,
+    id: 'hd1',
+    y: 60,
+    text: 'Results',
+    fontFamily: 'Inter',
+    fontWeight: 700,
+    fontSize: 64,
+    textStyleId: 'title',
+    textStyleOverrides: ['fontSize'],
+  }
+  addObjects(s2, [rect('lock1', 1600, 60, { locked: true, name: 'Logo' }), heading])
   const tbl2 = addTable(s2, { x: 200, y: 300, width: 900, height: 200, rows: 2, cols: 3 })
   renameById(s2.objects, tbl2, 'tbl2')
   mergeTableCells(s2, 'tbl2', { r0: 0, c0: 0, r1: 0, c1: 2 })

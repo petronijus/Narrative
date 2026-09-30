@@ -8,7 +8,9 @@
  *   Text styles — list of text style rows with an editor panel
  *   Effect styles — shadow + blur presets
  *
- * Wraps with FolderDocProvider so token mutations land on the folder Y.Doc.
+ * Wraps with FolderDocProvider for the folder's tokens. Changes go to the
+ * server (useFolderTokenWriter, state/folderTokenWriter.ts), which carries
+ * them into every deck and component master of the folder.
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
@@ -23,7 +25,7 @@ import { HexColorPicker } from 'react-colorful'
 import {
   FolderDocProvider,
   useFolderTokens,
-  useFolderMutations,
+  useFolderTokenWriter,
   useTokenUsages,
 } from '../state/FolderDocProvider.js'
 import type { TokenUsage } from '../state/FolderDocProvider.js'
@@ -31,8 +33,11 @@ import { FolderFontsProvider, useFolderFonts } from '../state/useFolderFonts.js'
 import { SYSTEM_FONTS } from '@narrative/commands'
 import { FolderFontLoader } from '../state/FolderFontLoader.js'
 import type { FolderSummary } from '../api/client.js'
-import { MAX_COLORS } from '../state/defaultTokens.js'
-import type { ColorTokenSnapshot, TextStyleTokenSnapshot } from '@narrative/slide-model'
+import {
+  MAX_COLORS,
+  type ColorTokenSnapshot,
+  type TextStyleTokenSnapshot,
+} from '@narrative/slide-model'
 
 // ---------------------------------------------------------------------------
 // Tab type
@@ -597,7 +602,6 @@ interface ComponentsTabProps {
 function ComponentsTab({ folderId }: ComponentsTabProps) {
   const api = useApi()
   const navigate = useNavigate()
-  const { markComponentDeleted } = useFolderMutations()
   const [components, setComponents] = useState<ComponentSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -656,20 +660,8 @@ function ComponentsTab({ folderId }: ComponentsTabProps) {
                 await refresh()
               }}
               onDelete={async () => {
+                // Stamped copies on slides are plain objects and stay as they are.
                 await api.deleteComponent(component.id)
-                // Replicate deletion signal to all peers via the folder
-                // Y.Doc so every open editor (including remote clients)
-                // sweeps matching ComponentInstance objects from their deck.
-                // This is the authoritative cross-peer path.
-                markComponentDeleted(component.id)
-                // Also dispatch a local window event as a fast-path for the
-                // originating client (handled synchronously before the CRDT
-                // observer round-trip).
-                window.dispatchEvent(
-                  new CustomEvent('narrative:component-deleted', {
-                    detail: { componentId: component.id },
-                  }),
-                )
                 invalidateFolderComponentsCache(folderId)
                 await refresh()
               }}
@@ -844,7 +836,9 @@ interface ColorsTabProps {
 
 function ColorsTab({ folderId }: ColorsTabProps) {
   const snapshot = useFolderTokens()
-  const { addToken, updateToken, deleteToken } = useFolderMutations()
+  const writer = useFolderTokenWriter()
+  const [error, setError] = useState<string | null>(null)
+  const report = useCallback((e: unknown) => setError(errorMessage(e)), [])
   const colorsList = Object.values(snapshot.colors)
   const atCap = colorsList.length >= MAX_COLORS
 
@@ -857,13 +851,15 @@ function ColorsTab({ folderId }: ColorsTabProps) {
   )
 
   const handleAddColor = () => {
-    if (atCap) return
-    addToken('colors', { name: 'New color', value: '#3b82f6' })
+    if (atCap || writer === null) return
+    setError(null)
+    writer.create('colors', { name: 'New color', value: '#3b82f6' }).catch(report)
   }
 
   const handleDeleteConfirm = () => {
-    if (deleteTargetId !== null) {
-      deleteToken('colors', deleteTargetId)
+    if (deleteTargetId !== null && writer !== null) {
+      setError(null)
+      writer.remove('colors', deleteTargetId).catch(report)
     }
     setDeleteTargetId(null)
   }
@@ -888,7 +884,7 @@ function ColorsTab({ folderId }: ColorsTabProps) {
             variant="ghost"
             className="gap-1.5"
             onClick={handleAddColor}
-            disabled={atCap}
+            disabled={atCap || writer === null}
             aria-label="Add new color token"
           >
             <Plus className="h-4 w-4" aria-hidden="true" />
@@ -896,6 +892,8 @@ function ColorsTab({ folderId }: ColorsTabProps) {
           </Button>
         </div>
       </div>
+
+      <TokenErrorBanner error={error} onDismiss={() => setError(null)} />
 
       {colorsList.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -916,7 +914,11 @@ function ColorsTab({ folderId }: ColorsTabProps) {
             <ColorSwatch
               key={color.id}
               color={color}
-              onUpdate={(patch) => updateToken('colors', color.id, patch)}
+              onUpdate={(patch) => {
+                if (writer === null) return
+                setError(null)
+                writer.update('colors', color.id, patch).catch(report)
+              }}
               onDeleteRequest={() => setDeleteTargetId(color.id)}
             />
           ))}
@@ -1070,7 +1072,9 @@ interface TextStylesTabProps {
 
 function TextStylesTab({ folderId }: TextStylesTabProps) {
   const snapshot = useFolderTokens()
-  const { addToken, updateToken, deleteToken } = useFolderMutations()
+  const writer = useFolderTokenWriter()
+  const [error, setError] = useState<string | null>(null)
+  const report = useCallback((e: unknown) => setError(errorMessage(e)), [])
   const stylesList = Object.values(snapshot.textStyles)
   const colorsList = Object.values(snapshot.colors)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -1085,24 +1089,38 @@ function TextStylesTab({ folderId }: TextStylesTabProps) {
   const selected = selectedId !== null ? (snapshot.textStyles[selectedId] ?? null) : null
 
   const handleAdd = () => {
-    const id = addToken('textStyles', {
-      name: 'New style',
-      family: 'Inter, sans-serif',
-      weight: 400,
-      size: 16,
-      lineHeight: 1.5,
-      letterSpacing: 0,
-      color: '#111111',
-    })
-    setSelectedId(id)
+    if (writer === null) return
+    setError(null)
+    // Text styles are applied by name: a folder never has two of one name.
+    const taken = new Set(stylesList.map((s) => s.name.trim().toLowerCase()))
+    let name = 'New style'
+    for (let n = 2; taken.has(name.toLowerCase()); n++) name = `New style ${n}`
+    writer
+      .create('textStyles', {
+        name,
+        family: 'Inter, sans-serif',
+        weight: 400,
+        size: 16,
+        lineHeight: 1.5,
+        letterSpacing: 0,
+        color: '#111111',
+      })
+      .then(setSelectedId, report)
   }
 
   const handleDeleteConfirm = () => {
-    if (deleteTargetId !== null) {
-      deleteToken('textStyles', deleteTargetId)
+    if (deleteTargetId !== null && writer !== null) {
+      setError(null)
+      writer.remove('textStyles', deleteTargetId).catch(report)
       if (selectedId === deleteTargetId) setSelectedId(null)
     }
     setDeleteTargetId(null)
+  }
+
+  const handleUpdate = (patch: TextStylePatch) => {
+    if (writer === null || selected === null) return
+    setError(null)
+    writer.update('textStyles', selected.id, patch).catch(report)
   }
 
   return (
@@ -1114,6 +1132,7 @@ function TextStylesTab({ folderId }: TextStylesTabProps) {
           <button
             type="button"
             onClick={handleAdd}
+            disabled={writer === null}
             aria-label="Add text style"
             className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           >
@@ -1194,12 +1213,9 @@ function TextStylesTab({ folderId }: TextStylesTabProps) {
 
       {/* Editor panel */}
       <div className="flex-1 overflow-y-auto px-8 py-6">
+        <TokenErrorBanner error={error} onDismiss={() => setError(null)} />
         {selected !== null ? (
-          <TextStyleEditor
-            style={selected}
-            colors={colorsList}
-            onUpdate={(patch) => updateToken('textStyles', selected.id, patch)}
-          />
+          <TextStyleEditor style={selected} colors={colorsList} onUpdate={handleUpdate} />
         ) : (
           <div className="flex h-full items-center justify-center">
             <p className="text-sm text-muted-foreground">Select a style to edit</p>
@@ -1224,10 +1240,22 @@ function TextStylesTab({ folderId }: TextStylesTabProps) {
 // TextStyleEditor
 // ---------------------------------------------------------------------------
 
+/** A change to a text style: a new value, or `null` to remove an optional field. */
+type TextStylePatch = {
+  [K in Exclude<keyof TextStyleTokenSnapshot, 'id' | 'builtin'>]?: TextStyleTokenSnapshot[K] | null
+}
+
 interface TextStyleEditorProps {
   style: TextStyleTokenSnapshot
   colors: ColorTokenSnapshot[]
-  onUpdate: (patch: Partial<Omit<TextStyleTokenSnapshot, 'id'>>) => void
+  onUpdate: (patch: TextStylePatch) => void
+}
+
+/** A number typed into a field, or null while it is not one yet ("-", ""). */
+function typedNumber(raw: string): number | null {
+  if (raw.trim() === '') return null
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : null
 }
 
 function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
@@ -1289,33 +1317,23 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
     { value: 800, label: 'Extra bold 800' },
     { value: 900, label: 'Black 900' },
   ]
-  const weightOptions =
+  const currentWeight = style.weight ?? 400
+  const available =
     allowedWeights === null
       ? allWeights
       : allWeights.filter((w) => allowedWeights.includes(w.value))
-
-  // If the persisted weight isn't in the allowed set (e.g. user just
-  // switched from a 100..900 stack to a folder font that only ships
-  // 400/700), nudge the token to the nearest available so the preview
-  // and rendered text stay coherent. Run as an effect so the write is
-  // outside render.
-  useEffect(() => {
-    if (allowedWeights === null) return
-    const cur = style.weight ?? 400
-    if (allowedWeights.includes(cur)) return
-    let best = allowedWeights[0] ?? 400
-    let bestDelta = Math.abs(cur - best)
-    for (const w of allowedWeights) {
-      const d = Math.abs(cur - w)
-      if (d < bestDelta) {
-        best = w
-        bestDelta = d
-      }
-    }
-    onUpdate({ weight: best })
-    // Intentionally not depending on onUpdate — would loop on stable refs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [primaryFamily, style.weight, allowedWeights?.join(',')])
+  // A weight the family does not ship (the family changed after it was set)
+  // stays listed and selected, marked, until the owner picks another — the
+  // page does not rewrite the style because it was opened.
+  const weightOptions = available.some((w) => w.value === currentWeight)
+    ? available
+    : [
+        ...available,
+        {
+          value: currentWeight,
+          label: `${allWeights.find((w) => w.value === currentWeight)?.label ?? currentWeight} (not in this family)`,
+        },
+      ].sort((x, y) => x.value - y.value)
 
   return (
     <div className="flex flex-col gap-4">
@@ -1353,7 +1371,7 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
             value={currentFamily}
             onChange={(e) => {
               const v = e.target.value
-              onUpdate(v === '' ? {} : { family: v })
+              onUpdate({ family: v === '' ? null : v })
             }}
             className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
             aria-label="Font family"
@@ -1414,7 +1432,10 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
             type="number"
             min={1}
             value={style.size ?? 16}
-            onChange={(e) => onUpdate({ size: Math.max(1, Number(e.target.value)) })}
+            onChange={(e) => {
+              const n = typedNumber(e.target.value)
+              if (n !== null) onUpdate({ size: Math.max(1, n) })
+            }}
             className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
             aria-label="Font size"
           />
@@ -1427,7 +1448,10 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
             min={0.5}
             step={0.05}
             value={style.lineHeight ?? 1.5}
-            onChange={(e) => onUpdate({ lineHeight: Math.max(0.5, Number(e.target.value)) })}
+            onChange={(e) => {
+              const n = typedNumber(e.target.value)
+              if (n !== null) onUpdate({ lineHeight: Math.max(0.5, n) })
+            }}
             className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
             aria-label="Line height"
           />
@@ -1439,7 +1463,10 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
             type="number"
             step={0.01}
             value={style.letterSpacing ?? 0}
-            onChange={(e) => onUpdate({ letterSpacing: Number(e.target.value) })}
+            onChange={(e) => {
+              const n = typedNumber(e.target.value)
+              if (n !== null) onUpdate({ letterSpacing: n })
+            }}
             className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
             aria-label="Letter spacing"
           />
@@ -1452,9 +1479,10 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
             min={0}
             step={1}
             value={style.paragraphSpaceBefore ?? 0}
-            onChange={(e) =>
-              onUpdate({ paragraphSpaceBefore: Math.max(0, Number(e.target.value)) })
-            }
+            onChange={(e) => {
+              const n = typedNumber(e.target.value)
+              if (n !== null) onUpdate({ paragraphSpaceBefore: Math.max(0, n) })
+            }}
             className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
             aria-label="Paragraph space before"
           />
@@ -1467,7 +1495,10 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
             min={0}
             step={1}
             value={style.paragraphSpaceAfter ?? 0}
-            onChange={(e) => onUpdate({ paragraphSpaceAfter: Math.max(0, Number(e.target.value)) })}
+            onChange={(e) => {
+              const n = typedNumber(e.target.value)
+              if (n !== null) onUpdate({ paragraphSpaceAfter: Math.max(0, n) })
+            }}
             className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
             aria-label="Paragraph space after"
           />
@@ -1480,7 +1511,7 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
             value={style.textTransform ?? 'none'}
             onChange={(e) => {
               const v = e.target.value as 'none' | 'uppercase' | 'lowercase' | 'capitalize'
-              onUpdate(v === 'none' ? {} : { textTransform: v })
+              onUpdate({ textTransform: v })
             }}
             className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
             aria-label="Text case"
@@ -1676,6 +1707,34 @@ function DeleteTokenModal({
           </Button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// TokenErrorBanner — a refused token change, where the change was made
+// ---------------------------------------------------------------------------
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error && e.message !== '' ? e.message : 'The change could not be saved'
+}
+
+function TokenErrorBanner({ error, onDismiss }: { error: string | null; onDismiss: () => void }) {
+  if (error === null) return null
+  return (
+    <div
+      role="alert"
+      className="mb-4 flex items-start justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive-foreground"
+    >
+      <span>{error}</span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        className="shrink-0 rounded-md p-0.5 hover:bg-destructive/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+      >
+        <X className="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
     </div>
   )
 }

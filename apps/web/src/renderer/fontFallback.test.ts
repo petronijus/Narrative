@@ -149,4 +149,18 @@ describe('cssFontFamily', () => {
     const out = cssFontFamily('42 Display')
     expect(out?.startsWith('"42 Display"')).toBe(true)
   })
+
+  it('cannot be broken out of: quotes, backslashes and line breaks are escaped', () => {
+    // Family names reach a <style> element in the HTMLText SVG.
+    expect(cssFontFamily('"x"; } * { color: red } a {, serif')).toBe(
+      '"\\"x\\"; } * { color: red } a {", serif',
+    )
+    expect(cssFontFamily('Evil\\, serif')).toBe('"Evil\\\\", serif')
+    expect(cssFontFamily('Line\nbreak, serif')).toBe('"Line\\a break", serif')
+  })
+
+  it('re-quotes a quoted name, and keeps a quoted generic a name', () => {
+    expect(cssFontFamily("'Proseware Pro', sans-serif")).toBe('"Proseware Pro", sans-serif')
+    expect(cssFontFamily('"serif", serif')).toBe('"serif", serif')
+  })
 })

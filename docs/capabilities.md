@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **121**. Known missing: **19**. Deliberately excluded: **20**.
+Commands: **128**. Known missing: **8**. Deliberately excluded: **20**.
 
 ## agent
 
@@ -191,45 +191,41 @@ Commands: **121**. Known missing: **19**. Deliberately excluded: **20**.
 
 ## text
 
-| Command                 | What it does          | Role   | Undo     | Confirm | Hints      |
-| ----------------------- | --------------------- | ------ | -------- | ------- | ---------- |
-| `text.edit`             | Edit text in place    | editor | undoable | never   |            |
-| `text.format`           | Format text range     | editor | undoable | never   | idempotent |
-| `text.list`             | Set list formatting   | editor | undoable | never   |            |
-| `text.replace`          | Find and replace text | editor | undoable | never   |            |
-| `text.set`              | Set text              | editor | undoable | never   | idempotent |
-| `text.setBoxTypography` | Set box typography    | editor | undoable | never   | idempotent |
-| `text.style.apply`      | Apply text style      | editor | undoable | never   | idempotent |
+| Command                       | What it does                   | Role   | Undo     | Confirm | Hints      |
+| ----------------------------- | ------------------------------ | ------ | -------- | ------- | ---------- |
+| `text.edit`                   | Edit text in place             | editor | undoable | never   |            |
+| `text.format`                 | Format text range              | editor | undoable | never   | idempotent |
+| `text.list`                   | Set list formatting            | editor | undoable | never   |            |
+| `text.replace`                | Find and replace text          | editor | undoable | never   |            |
+| `text.set`                    | Set text                       | editor | undoable | never   | idempotent |
+| `text.setBoxTypography`       | Set box typography             | editor | undoable | never   | idempotent |
+| `text.style.apply`            | Apply text style               | editor | undoable | never   | idempotent |
+| `text.style.createFromObject` | Create a text style from a box | editor | undoable | never   |            |
+| `text.style.updateFromObject` | Update a text style from a box | editor | undoable | never   |            |
 
 ## token
 
-| Command        | What it does          | Role  | Undo | Confirm | Hints     |
-| -------------- | --------------------- | ----- | ---- | ------- | --------- |
-| `token.usages` | Where a token is used | owner | n/a  | never   | read-only |
+| Command              | What it does           | Role  | Undo         | Confirm | Hints      |
+| -------------------- | ---------------------- | ----- | ------------ | ------- | ---------- |
+| `token.create`       | Add a design token     | owner | undoable     | never   |            |
+| `token.delete`       | Delete a design token  | owner | irreversible | always  |            |
+| `token.list`         | List a folder's tokens | owner | n/a          | never   | read-only  |
+| `token.seedDefaults` | Add the default tokens | owner | irreversible | always  | idempotent |
+| `token.update`       | Change a design token  | owner | undoable     | never   | idempotent |
+| `token.usages`       | Where a token is used  | owner | n/a          | never   | read-only  |
 
 ## Known missing
 
-| Capability                    | Phase | Today in                                                                                      | Note                                                                                                                                                                                       |
-| ----------------------------- | ----- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `text.style.createFromObject` | A2    | apps/web/src/state/FolderDocProvider.tsx                                                      |                                                                                                                                                                                            |
-| `token.textStyle.update`      | A2    | apps/web/src/state/FolderDocProvider.tsx, apps/web/src/components/DeckShell.tsx (propagation) | propagation to linked text moves server-side                                                                                                                                               |
-| `token.textStyle.create`      | A2    | apps/web/src/state/FolderDocProvider.tsx (addToken), apps/web/src/pages/FolderSettings.tsx    |                                                                                                                                                                                            |
-| `token.textStyle.delete`      | A2    | apps/web/src/state/FolderDocProvider.tsx (deleteToken), apps/web/src/pages/FolderSettings.tsx |                                                                                                                                                                                            |
-| `token.color.update`          | A2    | apps/web/src/state/FolderDocProvider.tsx                                                      |                                                                                                                                                                                            |
-| `token.color.create`          | A2    | apps/web/src/state/FolderDocProvider.tsx (addToken), apps/web/src/pages/FolderSettings.tsx    | with the 24-colour cap                                                                                                                                                                     |
-| `token.color.delete`          | A2    | apps/web/src/state/FolderDocProvider.tsx (deleteToken), apps/web/src/pages/FolderSettings.tsx |                                                                                                                                                                                            |
-| `token.effectStyle.create`    | A2    | apps/web/src/state/FolderDocProvider.tsx (addToken)                                           | the folder document and FolderDocProvider support effect styles; no editor UI creates them yet                                                                                             |
-| `token.effectStyle.update`    | A2    | apps/web/src/state/FolderDocProvider.tsx (updateToken)                                        | the folder document and FolderDocProvider support effect styles; no editor UI edits them yet                                                                                               |
-| `token.effectStyle.delete`    | A2    | apps/web/src/state/FolderDocProvider.tsx (deleteToken)                                        | the folder document and FolderDocProvider support effect styles; no editor UI deletes them yet                                                                                             |
-| `token.seedDefaults`          | A2    | apps/web/src/state/FolderDocProvider.tsx                                                      |                                                                                                                                                                                            |
-| `component.promote`           | A2    | apps/web/src/state/writeComponentMasterTree.ts; `POST /folders/:folderId/components`          | the master tree is written with insertObjectsWithRichText (keeps rich text and cell bodies)                                                                                                |
-| `deck.exportPdf`              | A3    | new                                                                                           |                                                                                                                                                                                            |
-| `deck.exportPng`              | A3    | new                                                                                           |                                                                                                                                                                                            |
-| `deck.refreshThumbnail`       | A3    | apps/web/src/ui/SlidesPanel.tsx; `PUT /decks/:id/thumbnail`                                   | the browser renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                       |
-| `component.refreshThumbnail`  | A3    | apps/web/src/pages/ComponentMasterEditor.tsx; `PUT /components/:id/thumbnail`                 | the master editor renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                 |
-| `query.render`                | A3    | new                                                                                           |                                                                                                                                                                                            |
-| `component.create`            | A4    | new                                                                                           | create a master from objects or a spec; the pack compiler uses it only for the few recurring blocks (pagination, headline, subline, copy, a repeated column/grid) — layouts stay pack data |
-| `component.restamp`           | A4    | new                                                                                           | reapply a changed master to the stamps made from it, keeping their slot content (needs component provenance)                                                                               |
+| Capability                   | Phase | Today in                                                                             | Note                                                                                                                                                                                       |
+| ---------------------------- | ----- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `component.promote`          | A2    | apps/web/src/state/writeComponentMasterTree.ts; `POST /folders/:folderId/components` | the master tree is written with insertObjectsWithRichText (keeps rich text and cell bodies)                                                                                                |
+| `deck.exportPdf`             | A3    | new                                                                                  |                                                                                                                                                                                            |
+| `deck.exportPng`             | A3    | new                                                                                  |                                                                                                                                                                                            |
+| `deck.refreshThumbnail`      | A3    | apps/web/src/ui/SlidesPanel.tsx; `PUT /decks/:id/thumbnail`                          | the browser renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                       |
+| `component.refreshThumbnail` | A3    | apps/web/src/pages/ComponentMasterEditor.tsx; `PUT /components/:id/thumbnail`        | the master editor renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                 |
+| `query.render`               | A3    | new                                                                                  |                                                                                                                                                                                            |
+| `component.create`           | A4    | new                                                                                  | create a master from objects or a spec; the pack compiler uses it only for the few recurring blocks (pagination, headline, subline, copy, a repeated column/grid) — layouts stay pack data |
+| `component.restamp`          | A4    | new                                                                                  | reapply a changed master to the stamps made from it, keeping their slot content (needs component provenance)                                                                               |
 
 ## Deliberately excluded
 

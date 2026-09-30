@@ -468,3 +468,158 @@ describe('deck.exportPptx', () => {
     expect(out).toMatchObject({ delivery: 'url', filename: 'Fixture deck.pptx' })
   })
 })
+
+describe('token.*', () => {
+  const folderCtx = () => ctx({ target: { folderId: FIXTURE_FOLDER_ID } })
+  type Listed = {
+    colors: Array<{ id: string; name: string; value: string }>
+    textStyles: Array<Record<string, unknown> & { id: string; name: string }>
+  }
+  const list = (c: ReturnType<typeof ctx>) =>
+    runCommand(registry, c, 'token.list', {}) as Promise<Listed>
+
+  it("lists the folder's tokens with their ids", async () => {
+    const out = await list(folderCtx())
+    expect(out.colors.map((t) => t.id)).toEqual(['brandBlue', 'ink', 'retired'])
+    expect(out.textStyles.find((t) => t.id === 'title')).toMatchObject({
+      name: 'Title',
+      builtin: true,
+    })
+  })
+
+  it('creates a token stored normalised, a text style marked as made by a person', async () => {
+    const c = folderCtx()
+    const { tokenId } = (await runCommand(registry, c, 'token.create', {
+      category: 'colors',
+      name: 'Accent',
+      value: '#F80',
+    })) as { tokenId: string }
+    expect((await list(c)).colors.find((t) => t.id === tokenId)?.value).toBe('#ff8800')
+    expect(callsTo(c, 'tokens').at(-2)?.args).toMatchObject({
+      folderId: FIXTURE_FOLDER_ID,
+      category: 'colors',
+      fields: { name: 'Accent', value: '#ff8800' },
+    })
+  })
+
+  it('changes a token, clears a field with null and returns the previous values', async () => {
+    const c = folderCtx()
+    const out = (await runCommand(registry, c, 'token.update', {
+      category: 'textStyles',
+      tokenId: 'title',
+      size: 80,
+      family: null,
+    })) as { previous: Record<string, unknown> }
+    expect(out.previous).toEqual({ size: 72, family: 'Inter' })
+    const title = (await list(c)).textStyles.find((t) => t.id === 'title')!
+    expect(title['size']).toBe(80)
+    expect(title).not.toHaveProperty('family')
+  })
+
+  it('refuses a family that could break out of CSS, and effect styles', async () => {
+    const c = folderCtx()
+    const bad = await failure(
+      runCommand(registry, c, 'token.update', {
+        category: 'textStyles',
+        tokenId: 'title',
+        family: 'Inter; } * { color: red',
+      }),
+    )
+    expect(bad.code).toBe('invalid_input')
+    const effect = await failure(
+      runCommand(registry, c, 'token.create', {
+        category: 'effectStyles',
+        name: 'Glow',
+        kind: 'blur',
+        params: { radius: 4 },
+      }),
+    )
+    expect(effect.code).toBe('invalid_input')
+  })
+
+  it('deletes a token (returning it) but never a built-in text style', async () => {
+    const c = folderCtx()
+    const out = await runCommand(registry, c, 'token.delete', {
+      category: 'colors',
+      tokenId: 'retired',
+    })
+    expect(out).toMatchObject({ deleted: true, token: { id: 'retired', name: 'Retired red' } })
+    const builtin = await failure(
+      runCommand(registry, c, 'token.delete', { category: 'textStyles', tokenId: 'title' }),
+    )
+    expect(builtin.code).toBe('conflict')
+  })
+})
+
+describe('text.style.createFromObject / updateFromObject', () => {
+  const objectOf = (c: ReturnType<typeof ctx>, slide: number, id: string) =>
+    getSlideObjectsCtx(c.deck!, listSlides(c.deck!)[slide]!.id)!
+      .objects.toArray()
+      .find((m) => m.get('id') === id)!
+      .toJSON()
+
+  it("makes a style of a box's typography and links the box to it exactly", async () => {
+    const c = ctx()
+    const out = (await runCommand(registry, c, 'text.style.createFromObject', {
+      slide: 's1',
+      object: 't1',
+      name: 'Quote',
+    })) as { styleId: string }
+    const tokens = await c.services.tokens.list({ userId: 'u1', folderId: FIXTURE_FOLDER_ID })
+    expect(tokens.textStyles[out.styleId]).toMatchObject({
+      name: 'Quote',
+      size: 40,
+      weight: 400,
+      color: '#111111',
+      textTransform: 'none',
+    })
+    expect(objectOf(c, 0, 't1')).toMatchObject({
+      textStyleId: out.styleId,
+      textStyleOverrides: [],
+    })
+  })
+
+  it("pushes a linked box's look into its style and clears the box's overrides", async () => {
+    const c = ctx()
+    const out = (await runCommand(registry, c, 'text.style.updateFromObject', {
+      slide: 's2',
+      object: 'hd1',
+    })) as { style: string; previous: Record<string, unknown> }
+    expect(out.style).toBe('Title')
+    expect(out.previous).toMatchObject({ size: 72 })
+    const tokens = await c.services.tokens.list({ userId: 'u1', folderId: FIXTURE_FOLDER_ID })
+    expect(tokens.textStyles['title']).toMatchObject({ size: 64, weight: 700 })
+    expect(objectOf(c, 1, 'hd1')['textStyleOverrides']).toEqual([])
+  })
+
+  it('refuses an unlinked box, a shape, and a box whose typography no style may hold', async () => {
+    const unlinked = await failure(
+      runCommand(registry, ctx(), 'text.style.updateFromObject', { slide: 's1', object: 't1' }),
+    )
+    expect(unlinked.code).toBe('conflict')
+    const shape = await failure(
+      runCommand(registry, ctx(), 'text.style.createFromObject', {
+        slide: 's1',
+        object: 'r1',
+        name: 'Nope',
+      }),
+    )
+    expect(shape.code).toBe('invalid_input')
+    // A collaborator can write any value into a box; the style refuses it.
+    const c = ctx()
+    getSlideObjectsCtx(c.deck!, 's1')!
+      .objects.toArray()
+      .find((m) => m.get('id') === 't1')!
+      .set('fontFamily', 'x"; } * { color: red')
+    const invalid = await failure(
+      runCommand(registry, c, 'text.style.createFromObject', {
+        slide: 's1',
+        object: 't1',
+        name: 'Hostile',
+      }),
+    )
+    expect(invalid.code).toBe('invalid_input')
+    const tokens = await c.services.tokens.list({ userId: 'u1', folderId: FIXTURE_FOLDER_ID })
+    expect(Object.values(tokens.textStyles).map((t) => t.name)).not.toContain('Hostile')
+  })
+})

@@ -95,8 +95,9 @@ export const folderCreate = defineCommand({
   domain: 'folder',
   title: 'Create folder',
   description:
-    'Create an empty folder owned by the user, e.g. for a new client. Put decks in it with deck.create (folderId) ' +
-    'or deck.moveToFolder, fonts with folder.fonts.upload. Undo: folder.delete.',
+    'Create a folder owned by the user, e.g. for a new client — no decks yet, the default colours and text styles ' +
+    '(token.list). Put decks in it with deck.create (folderId) or deck.moveToFolder, fonts with ' +
+    'folder.fonts.upload. Undo: folder.delete.',
   input: z.strictObject({ name: NameSchema }),
   output: FolderOutput.extend({ deckCount: z.number() }),
   role: 'owner',

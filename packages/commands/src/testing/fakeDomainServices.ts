@@ -27,9 +27,22 @@ import {
   addObjects,
   addSlide,
   applyFormat,
+  addFolderToken,
   createSlideDoc,
+  deleteFolderToken,
   getSlideObjectsCtx,
+  MAX_COLORS,
+  migrateFolderTokens,
+  readFolderTokens,
+  seedDefaultTokens,
+  TOKEN_CATEGORIES,
+  updateFolderToken,
+  type FolderTokensSnapshot,
+  type TokenCategory,
 } from '@narrative/slide-model'
+import { createFixtureFolderTokens } from './fixtureTokens.js'
+import { InvalidTokenFields, parseNewTokenFields, parseTokenPatch } from '../commands/tokens.js'
+import { textStyleNameTaken } from '../text/textStyle.js'
 import type { TextObject, RectangleObject } from '@narrative/shared'
 import { CommandError } from '../errors.js'
 import { applyInsertPlan } from '../insert/plan.js'
@@ -135,10 +148,52 @@ export type DomainFakes = Pick<
   snapshot(): Record<string, unknown>
 }
 
+/**
+ * A folder document holding `tokens` (slide-model folderDoc.ts) — the
+ * token fakes read and write it with the functions the server uses.
+ */
+function folderDocWith(tokens: FolderTokensSnapshot): Y.Doc {
+  const doc = new Y.Doc()
+  for (const category of TOKEN_CATEGORIES) {
+    for (const [id, token] of Object.entries(tokens[category])) {
+      const { id: _id, ...fields } = token as { id: string } & Record<string, unknown>
+      addFolderToken(doc, category, id, fields)
+    }
+  }
+  return doc
+}
+
 export function createDomainFakes(
   world: FakeWorld,
   recorder: (service: keyof ServerServices) => Recorder,
 ): DomainFakes {
+  // The fixture folder's tokens are the ones the contract suite gives
+  // commands as `ctx.folderTokens`; the other folders have none yet.
+  const folderDocs = new Map<string, Y.Doc>([
+    [world.folderId, folderDocWith(createFixtureFolderTokens())],
+  ])
+  const folderDoc = (folderId: string): Y.Doc => {
+    let doc = folderDocs.get(folderId)
+    if (doc === undefined) {
+      doc = new Y.Doc()
+      folderDocs.set(folderId, doc)
+    }
+    return doc
+  }
+  const requireToken = (folderId: string, category: TokenCategory, tokenId: string) => {
+    const tokens = readFolderTokens(folderDoc(folderId))[category]
+    if (!Object.hasOwn(tokens, tokenId)) throw notFound(`${category} token`, tokenId)
+    return tokens[tokenId]!
+  }
+  /** Invalid fields are `invalid_input`, as the real service answers. */
+  const validTokenFields = (parse: () => Record<string, unknown>) => {
+    try {
+      return parse()
+    } catch (err) {
+      if (err instanceof InvalidTokenFields) throw new CommandError('invalid_input', err.message)
+      throw err
+    }
+  }
   const u1 = world.userId
   const folders = new Map<string, FolderRecord>([
     [world.folderId, { id: world.folderId, ownerUserId: u1, name: 'Client A', createdAt: T0 }],
@@ -253,6 +308,7 @@ export function createDomainFakes(
         decks: [...decks],
         components: [...components],
         folderFonts: [...folderFonts],
+        folderTokens: [...folderDocs].map(([id, doc]) => [id, readFolderTokens(doc)]),
         permissions,
         invites,
         links,
@@ -782,6 +838,79 @@ export function createDomainFakes(
             },
           ],
         }
+      },
+      async list(args) {
+        rTokens('list', args)
+        requireFolder(args.folderId)
+        return readFolderTokens(folderDoc(args.folderId))
+      },
+      async create(args) {
+        rTokens('create', args)
+        requireFolder(args.folderId)
+        const fields = validTokenFields(() => parseNewTokenFields(args.category, args.fields))
+        if (args.category === 'textStyles') fields['builtin'] = false
+        const doc = folderDoc(args.folderId)
+        if (
+          args.category === 'colors' &&
+          Object.keys(readFolderTokens(doc).colors).length >= MAX_COLORS
+        )
+          throw new CommandError('conflict', `a folder holds at most ${MAX_COLORS} colours`)
+        if (
+          args.category === 'textStyles' &&
+          textStyleNameTaken(readFolderTokens(doc), String(fields['name']))
+        )
+          throw new CommandError(
+            'conflict',
+            `a text style named "${String(fields['name'])}" exists`,
+          )
+        const tokenId = fresh('tok')
+        addFolderToken(doc, args.category, tokenId, fields)
+        return { tokenId }
+      },
+      async update(args) {
+        rTokens('update', args)
+        requireFolder(args.folderId)
+        const patch = validTokenFields(() => parseTokenPatch(args.category, args.patch))
+        if (Object.keys(patch).length === 0)
+          throw new CommandError('invalid_input', 'Pass at least one field to change')
+        const token = requireToken(args.folderId, args.category, args.tokenId) as unknown as Record<
+          string,
+          unknown
+        >
+        if (
+          args.category === 'textStyles' &&
+          typeof patch['name'] === 'string' &&
+          textStyleNameTaken(
+            readFolderTokens(folderDoc(args.folderId)),
+            patch['name'],
+            args.tokenId,
+          )
+        )
+          throw new CommandError('conflict', `a text style named "${patch['name']}" exists`)
+        const previous = Object.fromEntries(Object.keys(patch).map((k) => [k, token[k] ?? null]))
+        updateFolderToken(folderDoc(args.folderId), args.category, args.tokenId, patch)
+        // Propagation into the decks is the server's (apps/server services/tokens.ts).
+        return { previous, propagated: { decks: 1, components: 0, objects: 1, failed: [] } }
+      },
+      async delete(args) {
+        rTokens('delete', args)
+        requireFolder(args.folderId)
+        const token = requireToken(args.folderId, args.category, args.tokenId)
+        if (args.category === 'textStyles' && (token as { builtin?: boolean }).builtin === true)
+          throw new CommandError(
+            'conflict',
+            `"${token.name}" is one of the folder's built-in text styles and cannot be deleted`,
+          )
+        deleteFolderToken(folderDoc(args.folderId), args.category, args.tokenId)
+        return { deleted: true as const, token: { ...token } }
+      },
+      async seedDefaults(args) {
+        rTokens('seedDefaults', args)
+        requireFolder(args.folderId)
+        const doc = folderDoc(args.folderId)
+        const seeded = seedDefaultTokens(doc, () => fresh('tok'))
+        const migrated = migrateFolderTokens(doc)
+        return { seeded, migrated }
       },
     },
   }

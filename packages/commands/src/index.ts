@@ -140,6 +140,14 @@ export { MAX_TABLE_TRACKS, MIN_TRACK_PX } from './commands/tables.js'
 export { MAX_BODY_LENGTH, displayRangeOf } from './text/body.js'
 export { displayOffsetOf, rawOffsetOf } from './text/edit.js'
 export { BOX_TYPOGRAPHY_KEYS } from './commands/typography.js'
+export {
+  InvalidTokenFields,
+  parseNewTokenFields,
+  parseTokenPatch,
+  tokenCreate,
+  tokenDelete,
+  tokenUpdate,
+} from './commands/tokens.js'
 export type { TextTarget } from './text/target.js'
 export {
   STANDARD_WEIGHTS,
@@ -155,6 +163,11 @@ export {
 export {
   PAGE_NUMBER_TEXT_STYLE_NAME,
   findTextStyleByName,
+  hexOf,
+  propagateTextStyles,
+  stylesUsingColor,
   textStyleField,
   textStyleFields,
+  textStyleFieldsFromObject,
+  textStyleNameTaken,
 } from './text/textStyle.js'

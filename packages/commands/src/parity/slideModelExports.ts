@@ -18,6 +18,11 @@ export type SlideModelExportKind = 'writer' | 'reader' | 'infrastructure'
 export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>> = {
   // writers
   addAnimation: 'writer',
+  addFolderToken: 'writer',
+  deleteFolderToken: 'writer',
+  migrateFolderTokens: 'writer',
+  seedDefaultTokens: 'writer',
+  updateFolderToken: 'writer',
   addGuide: 'writer',
   addObject: 'writer',
   addObjects: 'writer',
@@ -102,6 +107,12 @@ export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>>
   getGroupMembers: 'reader',
   getParagraphDeltas: 'reader',
   getParagraphs: 'reader',
+  readFolderTokens: 'reader',
+  hasNoTokens: 'reader',
+  TOKEN_CATEGORIES: 'reader',
+  DEFAULT_COLORS: 'reader',
+  DEFAULT_TEXT_STYLES: 'reader',
+  MAX_COLORS: 'reader',
   getPlainString: 'reader',
   // The notes fragment the editor binds to; null for a slide without one (never installs it).
   getSlideNotesFragment: 'reader',

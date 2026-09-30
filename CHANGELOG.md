@@ -4,6 +4,79 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.14 — Folder tokens on the server (2026-09-30)
+
+### Added
+
+- **Agents can manage a folder's design tokens:** `token.list` (with their
+  ids), `token.create` and `token.update` for colours and text styles
+  (`token.update` returns the previous values, so a change can be undone),
+  `token.delete` (returns what it removed) and `token.seedDefaults`.
+  `text.style.createFromObject` makes a text style from a box and links the
+  box to it; `text.style.updateFromObject` pushes a box's look into the style
+  it is linked to. All folder-owner only.
+
+### Changed
+
+- **A text style or colour change reaches every deck of the folder at once**
+  — the decks someone has open and the ones nobody has, component masters
+  and tables linked to the style included. Before, a deck caught up only
+  when someone next opened it, and tables never did.
+- **New folders get the default colours and text styles when they are
+  created**, including folders an agent creates; existing folders are
+  brought up to date once by the server when it starts. Opening a folder no
+  longer writes anything to it.
+- **Folder Settings and the Inspector's "Update preset" / "Create new text
+  style" save through the server.** A refused change is shown where it was
+  made (it used to be impossible to refuse). "System default" as a style's
+  family and "As typed" as its case can now be chosen — both were silently
+  ignored. A weight the style's family does not ship stays listed, marked,
+  instead of being rewritten the moment the style is opened.
+
+### Security
+
+- Every token write is validated where it is stored, whoever asks — a text
+  style made from a box can no longer carry values the style schema refuses
+  (a family name that ends a CSS declaration, a size of 1e6). Font family
+  names are escaped wherever the renderer writes them into CSS.
+- A token change that changes nothing re-styles nothing; changes to one
+  folder are carried into its decks one sweep at a time, merged while one
+  runs, and the token routes are rate-limited and accept a signed-in
+  session only from Narrative's own origin.
+- A token id is looked up among the folder's own tokens only (an id such as
+  `constructor` no longer resolves through the object prototype).
+- A text style someone creates named like a default one ("Body") is no
+  longer taken for a default by the next seeding and made undeletable.
+
+### Fixed
+
+- **Two text styles of one folder can no longer share a name.** Styles are
+  applied by name, so a second "Quote" made the name point at the wrong
+  one. Creating or renaming a style to a taken name is refused, and Folder
+  Settings numbers new styles ("New style 2").
+
+### Internal
+
+- A2.12a: the folder document is read and written in one place
+  (`packages/slide-model/src/folderDoc.ts`; the default tokens moved there
+  from `apps/web`). The server's TokenService writes it through the sync
+  server and carries text-style changes into the folder's decks and
+  component masters (`propagateToFolder`, origin `TOKEN_PROPAGATION_ORIGIN`,
+  a document is written only when a dry run on a copy changes it). The
+  browser's `TextStylePropagator`, the seeding and migration in
+  `FolderDocProvider` and the dead `deletedComponentIds` signal are gone;
+  `DeckShell` and `FolderDocProvider` leave the one-door exemption list.
+  The page writes tokens through `POST/PATCH/DELETE
+/folders/:folderId/tokens/…` (claimed by the token commands) with
+  `state/folderTokenWriter.ts`: one request in flight per token, changes
+  made meanwhile merged into one follow-up, pending changes shown until the
+  folder document has them. One-time document migrations run after start
+  (`services/dataMigrations.ts`, table `app_data_migrations`, migration
+  0026, at most three tries each); the first seeds and brings up to date
+  every folder and re-styles linked text that lags its style. The agent
+  eval's memory world models folder tokens; three new scenarios
+  (`folder-styles-apply`, `title-style-folderwide`, `quote-style-from-box`).
+
 ## 0.10.13 — Text through commands (2026-09-30)
 
 ### Added

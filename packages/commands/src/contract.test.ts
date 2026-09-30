@@ -88,6 +88,10 @@ function structure(value: unknown): unknown {
  */
 const REPORTS_ITS_OWN_CHANGE: Readonly<Record<string, string>> = {
   'deck.moveToFolder': '`moved` is false on a repeat: the deck already is in that folder',
+  'token.update':
+    '`previous` holds the value the first run set: the repeat replaced it with itself',
+  'token.seedDefaults':
+    '`seeded` / `migrated` are false on a repeat: nothing is left to add or bring up to date',
 }
 
 /** Every id that exists in the fixture deck. */
@@ -104,6 +108,7 @@ const FIXTURE_IDS = new Set([
   'tbl1',
   'tbl2',
   'lock1',
+  'hd1',
   'ga',
   'gb',
   'a1',

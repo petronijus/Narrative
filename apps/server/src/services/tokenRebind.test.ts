@@ -15,7 +15,7 @@ import {
   type FolderTokensSnapshot,
 } from '@narrative/slide-model'
 import type { RectangleObject, TextObject } from '@narrative/shared'
-import { applyTokenRebinding, planTokenRebinding, tokensSnapshot } from './tokenRebind.js'
+import { applyTokenRebinding, planTokenRebinding } from './tokenRebind.js'
 
 const SOURCE: FolderTokensSnapshot = {
   colors: {
@@ -163,21 +163,6 @@ describe('applyTokenRebinding', () => {
     expect(r1.get('fill')).toEqual({ $token: 'colors.c_brand' })
     expect((second.get('background') as { color: unknown }).color).toEqual({
       $token: 'colors.d_brand_a',
-    })
-  })
-
-  it('reads a folder document into a snapshot', () => {
-    const folder = new Y.Doc()
-    const colors = new Y.Map<unknown>()
-    folder.getMap('tokens').set('colors', colors)
-    const brand = new Y.Map<unknown>()
-    colors.set('c1', brand)
-    brand.set('name', 'Brand')
-    brand.set('value', '#123456')
-    expect(tokensSnapshot(folder)).toEqual({
-      colors: { c1: { id: 'c1', name: 'Brand', value: '#123456' } },
-      textStyles: {},
-      effectStyles: {},
     })
   })
 })

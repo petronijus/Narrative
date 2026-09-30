@@ -16,7 +16,13 @@
  */
 
 import { useMemo } from 'react'
-import type { AgentRunSummary, RevertRunResult } from '@narrative/commands'
+import type {
+  AgentRunSummary,
+  RevertRunResult,
+  EditableTokenCategory,
+  TokenCategory,
+  TokenPropagation,
+} from '@narrative/commands'
 
 const API_URL = import.meta.env['VITE_API_URL'] ?? 'http://localhost:3001'
 
@@ -196,6 +202,30 @@ export interface ApiClient {
    * a few seconds for large folders — callers should show a loading indicator.
    */
   listTokenUsages(folderId: string, category: string, tokenId: string): Promise<TokenUsage[]>
+  /**
+   * Add a token to the folder document (`fields` as the `token.create`
+   * command takes them, without the category). Resolves with its id once
+   * the server has written it; the folder document brings it to every
+   * editor. Throws `ApiError` (400 invalid fields, 409 colour cap).
+   */
+  createToken(
+    folderId: string,
+    category: EditableTokenCategory,
+    fields: Record<string, unknown>,
+  ): Promise<string>
+  /**
+   * Change a token (`null` removes an optional field). The server carries
+   * the change into every deck and component master of the folder before
+   * it answers. Throws `ApiError`.
+   */
+  updateToken(
+    folderId: string,
+    category: EditableTokenCategory,
+    tokenId: string,
+    patch: Record<string, unknown>,
+  ): Promise<TokenPropagation>
+  /** Remove a token. Throws `ApiError` (404 unknown, 409 a built-in text style). */
+  deleteToken(folderId: string, category: TokenCategory, tokenId: string): Promise<void>
 
   // ---------------------------------------------------------------------------
   // Agentic A1 — personal access tokens (session cookie only)
@@ -953,6 +983,37 @@ export function createApiClient(): ApiClient {
         `/folders/${folderId}/tokens/${encodeURIComponent(category)}/${encodeURIComponent(tokenId)}/usages`,
       )
       return data.usages
+    },
+
+    createToken: async (folderId, category, fields) => {
+      const res = await request(`/folders/${folderId}/tokens/${encodeURIComponent(category)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fields),
+      })
+      if (!res.ok) throw await apiError(res)
+      return ((await res.json()) as { tokenId: string }).tokenId
+    },
+
+    updateToken: async (folderId, category, tokenId, patch) => {
+      const res = await request(
+        `/folders/${folderId}/tokens/${encodeURIComponent(category)}/${encodeURIComponent(tokenId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        },
+      )
+      if (!res.ok) throw await apiError(res)
+      return ((await res.json()) as { propagated: TokenPropagation }).propagated
+    },
+
+    deleteToken: async (folderId, category, tokenId) => {
+      const res = await request(
+        `/folders/${folderId}/tokens/${encodeURIComponent(category)}/${encodeURIComponent(tokenId)}`,
+        { method: 'DELETE' },
+      )
+      if (!res.ok) throw await apiError(res)
     },
 
     // -------------------------------------------------------------------------

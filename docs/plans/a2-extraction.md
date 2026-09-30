@@ -493,43 +493,154 @@ after the mechanism has been proven on simpler surfaces.
     ($4.77, the first full costed run).
   - tools/list budget 169,000 → 177,000 bytes.
 
-## Where we stand (2026-09-30, after A2.11)
+- 2026-09-30: **A2.12a done** (released 0.10.14) — folder tokens on the
+  server. A2.12 is split: **a** tokens and propagation, **b** components
+  (`component.promote`, browser stamping, master ↔ deck media). New
+  `token.create` / `token.update` / `token.delete` / `token.seedDefaults`,
+  `text.style.createFromObject` / `text.style.updateFromObject`,
+  `token.list`. `DeckShell` and `FolderDocProvider` are off the exemption
+  list. Decisions:
+  - **One command per verb, the category in the input** — not the planned
+    `token.{color,textStyle,effectStyle}.*` nine: the categories share every
+    rule (owner only, one folder document, the same undo) and differ only in
+    fields, which a discriminated union carries. Nine tools would have cost
+    ≈ 3× the tools/list bytes for no extra safety.
+  - **The folder document has one reader and one set of writers**
+    (slide-model `folderDoc.ts`), used by the server, the fakes and the
+    editor; the default tokens moved there from `apps/web`. The server's
+    `tokensSnapshot` (which kept malformed entries and live `Y.Map` params)
+    is gone; a token's id is its key in the category map.
+  - **Seeding happens when a folder is created** (and Drafts when it is
+    provisioned); existing folders are brought up to date by a **one-time
+    data migration** that runs after the server starts. Data migrations are
+    new infrastructure (`services/dataMigrations.ts`, table
+    `app_data_migrations`, migration 0026): they change documents, so they
+    must go through the sync server like any edit, which a SQL migration
+    cannot; a completed one is recorded with its report, a failed one is
+    not and runs again on the next start. On the dev database the first
+    one found 17 folders, all already seeded (browsers had opened them),
+    and re-styled one linked text box that lagged its style.
+  - **Propagation is the server's.** A text-style change (or a colour a
+    style uses) re-styles the linked text boxes **and table defaults** in
+    every deck and component master of the folder, open or not
+    (`propagateToFolder`: a dry run on a copy, the live write only when it
+    changes something, `TOKEN_PROPAGATION_ORIGIN` — on nobody's undo stack,
+    in no agent run). The browser's `TextStylePropagator` only reached
+    decks someone opened later, never tables, and wrote on every open.
+    Undo of a token change is `token.update` back, which propagates the
+    same way.
+  - **The page writes tokens through routes the commands claim**
+    (`POST/PATCH/DELETE /folders/:folderId/tokens/…`), not through
+    `POST /commands`: that door runs as an agent (a run in the Agent
+    activity popover), and a person's edit in Folder Settings is not one.
+    `state/folderTokenWriter.ts` validates with the command's schema, keeps
+    one request in flight per token and merges what changed meanwhile into
+    one follow-up (a colour-picker drag sends a handful of requests, each
+    re-styling the folder), and shows pending changes over the document's
+    tokens until the document has them. The Inspector's preset actions wait
+    for the folder document to show the new style (`whenTokens`) and then
+    link the box with `text.style.apply`, given those tokens explicitly
+    (`useCommand().run(…, { folderTokens })`) — the snapshot the click's
+    render captured is older.
+  - **`token.list` was missing**: nothing told an agent a token's id, so
+    `token.update` / `token.delete` were unusable except right after
+    `token.create`. First drafted as a document query (`query.tokens`,
+    viewer role); the security review pointed out it would hand every deck
+    viewer the whole owner-only folder, and the parity review that an empty
+    folder could not be read at all — so it is a folder-scope, owner-only
+    server read. `restyle-lite` reads it first (the folder is `deck.get`'s
+    `folderId`).
+  - **Effect styles are read and deleted, not created or changed**: nothing
+    applies one (no renderer, no UI), so offering to make them would promise
+    an effect that never appears. The folder document keeps them.
+  - **Validation lives in the store, not in the doors.** The security
+    review found `text.style.createFromObject` / `updateFromObject` passing
+    a box's raw values (any collaborator can write those) into the folder
+    and on into every deck. `parseNewTokenFields` / `parseTokenPatch`
+    (commands `tokens.ts`) run in the TokenService for every caller, and
+    the page's writer uses the same parser. A family name may not contain
+    `; { } < > \` or control characters, and the renderer now escapes
+    family names in the HTMLText SVG's CSS whatever their source.
+  - **Bounded propagation**: a change that changes nothing writes and
+    re-styles nothing; propagation runs one per folder, requests arriving
+    meanwhile merge into one next run that reads the folder afresh (also
+    keeps two quick changes from leaving decks on different values); the
+    routes are rate-limited (120/min) and need Narrative's origin for a
+    session (`requireSameOrigin`, as `POST /commands`).
+  - **Undo of token changes**: `token.update` and
+    `text.style.updateFromObject` return the previous values and
+    `token.delete` the removed token (so they are in the agent's op log);
+    `token.seedDefaults` is honestly irreversible (confirm always) — its
+    styles are built in and cannot be deleted. Styles made by a person are
+    stored `builtin: false`, so a later seed never takes one named "Body"
+    for a default.
+  - **Data migrations try at most three times** (`attempts`, `last_error`
+    in `app_data_migrations`): a document that can never be migrated would
+    otherwise make every restart sweep every folder.
+  - **Text style names are unique in a folder** (create and rename refuse a
+    taken name, `conflict`). Found by the first live run of
+    `quote-style-from-box`: the default styles include "Quote", the agent
+    made a second "Quote" from the box, and `text.style.apply` by name then
+    linked the other quotes to the old one. The Inspector's dialog already
+    refused a taken name; Folder Settings now names a new style
+    "New style 2", "New style 3", … . Existing duplicates are left as they
+    are (by-name lookup takes the first).
+  - The eval's memory world models folder tokens (seeded folders, the
+    token service, propagation into its decks), so the three new scenarios
+    replay.
+  - Found on the way: Folder Settings silently ignored "System default"
+    family and "As typed" case (both sent an empty change), and rewrote a
+    style's weight as soon as it was opened when its family lacked that cut
+    — now the weight stays listed, marked. Deleting a component wrote a
+    `deletedComponentIds` signal and a window event nothing had read since
+    component instances were dropped; both removed.
+  - The dev server's automatic migration is drizzle's own migrator, which
+    skips a journal entry whose `when` is older than the newest recorded
+    migration; `db:migrate` records the time it ran, so hand-written
+    entries need the current time (drizzle README). `db:migrate` itself
+    fails on the local database at 0003 (the file changed after it was
+    applied) — pre-existing, dev only.
+  - Verified: full e2e 169 passed / 15 skipped before the review fixes
+    (new `folder-tokens.spec.ts`: a Folder Settings change reaching an open
+    and a closed deck, the Inspector's two preset actions); full agent eval
+    42/42 ($5.52) after them — `heading-one-font` failed once because its
+    grader compared a whole family stack ("Inter, system-ui, sans-serif",
+    what the Inspector's picker stores for Inter) with "Inter"; it now
+    compares the stack's primary family.
+  - tools/list budget 177,000 → 187,000 bytes: 186,157 measured (url
+    mode, 128 tools) — `token_update` 2.8 KB, `token_create` 2.3,
+    `text_style_createFromObject` 1.1, `text_style_updateFromObject` 1.1,
+    `token_delete` 1.0, `token_seedDefaults` 0.9, `token_list` 0.6.
 
-Done and released: A2.1–A2.11 and A2.7a (0.10.2–0.10.13; A2.11 in 0.10.13,
-2026-09-30). `ONE_DOOR_PENDING` holds 6 files (A2.12: `Toolbar`,
-`UploadDropZone`, `DeckShell`, `FolderDocProvider`,
-`writeComponentMasterTree`; A2.13: `testApi`), `knownMissing` 12 A2 entries
-(19 in all: A3 5, A4 2). 121 commands (74 document, 47 server-only).
+## Where we stand (2026-09-30, after A2.12a)
 
-**tools/list headroom is ≈ 470 bytes.** Measured 2026-09-30 during A2.11,
-before the last example tweak: ≈ 175,569 (form) / 176,529 (url) /
-176,433 bytes (link) for 121 tools against the 177,000 budget (was 169,000
-after A2.10). A2.11 added ≈ 7.7 KB: `text_setBoxTypography` 2,638,
-`text_edit` 2,416, `text_style_apply` 1,343, `text_replace` 1,334. Not
-re-measured after the tweak; the next command needs the per-step raise
-Petr agreed for A2.
+Done and released: A2.1–A2.11, A2.7a and A2.12a (0.10.2–0.10.14; A2.12a in
+0.10.14, 2026-09-30). `ONE_DOOR_PENDING` holds 4 files (A2.12b: `Toolbar`,
+`UploadDropZone`, `writeComponentMasterTree`; A2.13: `testApi`),
+`knownMissing` 1 A2 entry (`component.promote`; 8 in all: A3 5, A4 2). 128
+commands (76 document, 52 server-only). tools/list 186,157 bytes against the
+187,000 budget.
 
 Next, in order:
 
-1. **A2.12 Tokens, components, server propagation** — `token.*` CRUD and
-   `token.seedDefaults` on the server (folders an agent creates have no
-   tokens until someone opens them in a browser: no page-number style,
-   `folderTokens` null), `text.style.createFromObject`, `component.promote`
-   (the page-number dialog's component branch still calls
-   `promoteSelectionToComponent`), text-style propagation server-side
-   (DeckShell's TextStylePropagator), media copy when pasting between a
-   master and a deck. Also:
-   - the Inspector's Preset picker "Update preset" and "Create new text
-     style" still write the folder document through FolderDocProvider —
-     they move onto the token commands here;
-   - `text.style.apply` needs an eval scenario once tokens are seeded
-     server-side (eval folders have no text styles until then).
+1. **A2.12b Components** — `component.promote` on the server (the
+   page-number dialog's component branch and the Toolbar still call
+   `promoteSelectionToComponent`), component stamping from the browser
+   through `component.stamp` (`Toolbar`, `UploadDropZone`), the master tree
+   writes (`writeComponentMasterTree`), media copied when pasting between a
+   master and a deck.
 2. **A2.13 Close** — parity guard over shortcuts and menu ids, empty
    exemption list, `FINISHED_PHASES += 'A2'`, ADR 0010 status, handoff note;
-   then the holistic tools/list size review (budget 177,000 today).
+   then the holistic tools/list size review (budget 187,000 today).
 
 Open, outside the steps:
 
+- folder token writes made by an agent carry `SERVER_EDIT_ORIGIN` (the
+  origin of a person's server-side edit) and the propagation
+  `TOKEN_PROPAGATION_ORIGIN`, so an agent run's revert does not undo them;
+  the before-values are in the op's result (`previous`, the deleted
+  `token`) — a run-level undo for folder documents is not designed yet
+  (security review A2.12a, LOW-5);
 - a running Claude Code session only sees new MCP tools after `/mcp` →
   Reconnect (documented in the plugin README);
 - present mode ignores `videoTrigger` / `videoDelay` (see the A2.9 entry);

@@ -32,19 +32,28 @@ import {
   type SlideObjectPatch,
   type TableDefaults,
   type TableObject,
+  type TextObject,
 } from '@narrative/shared'
 import { defineCommand } from '../registry.js'
 import { CommandError } from '../errors.js'
 import {
+  ObjectIdSchema,
   ObjectIdsSchema,
   SlideRefSchema,
   objectsOf,
   requireDeck,
   requireObjects,
   resolveSlide,
+  type SlideRef,
 } from '../refs.js'
+import { requireServices } from '../services.js'
+import type { CommandContext } from '../types.js'
 import { textObjectBody } from '../text/target.js'
-import { findTextStyleByName, textStyleFields } from '../text/textStyle.js'
+import {
+  findTextStyleByName,
+  textStyleFields,
+  textStyleFieldsFromObject,
+} from '../text/textStyle.js'
 import { RUN_ATTR_KEYS, overridesAfter, snappedWeightForFamily } from '../text/typography.js'
 import { clearCellOverrides } from './tables.js'
 
@@ -181,7 +190,11 @@ function resolveStyle(
     throw new CommandError('conflict', "the folder's text styles cannot be read here")
   const styles = tokens === null ? [] : Object.values(tokens.textStyles)
   const style =
-    tokens?.textStyles[ref] ?? (tokens === null ? null : findTextStyleByName(tokens, ref))
+    tokens === null
+      ? null
+      : Object.hasOwn(tokens.textStyles, ref)
+        ? tokens.textStyles[ref]!
+        : findTextStyleByName(tokens, ref)
   if (style === null || style === undefined || tokens === null) {
     throw new CommandError(
       'not_found',
@@ -307,4 +320,199 @@ export const textStyleApply = defineCommand({
   },
 })
 
-export const typographyCommands = [textSetBoxTypography, textStyleApply]
+// ---------------------------------------------------------------------------
+// text.style.createFromObject / text.style.updateFromObject
+// ---------------------------------------------------------------------------
+
+/** The folder the command's deck or component master belongs to. */
+async function folderOfTarget(ctx: CommandContext): Promise<string> {
+  const services = requireServices(ctx)
+  const userId = ctx.actor.userId
+  if (ctx.target?.deckId !== undefined) {
+    const deck = await services.decks.get({ userId, deckId: ctx.target.deckId })
+    if (deck.folderId === null)
+      throw new CommandError('conflict', 'the deck is in no folder, so it has no text styles')
+    return deck.folderId
+  }
+  if (ctx.target?.componentId !== undefined) {
+    return (await services.components.access({ userId, componentId: ctx.target.componentId }))
+      .folderId
+  }
+  throw new CommandError('no_target', 'name the deck (deckId) or component master (componentId)')
+}
+
+interface TypographySource {
+  type: 'text' | 'table'
+  /** The fields a style made from it takes. */
+  fields: Record<string, unknown>
+  /** The text style it is linked to, if any. */
+  styleId: string | undefined
+}
+
+/** What a text box (or a table's defaults) shows, as text-style fields. */
+function typographySource(
+  ctx: CommandContext,
+  slideRef: SlideRef,
+  objectId: string,
+): TypographySource {
+  const deck = requireDeck(ctx)
+  const slide = resolveSlide(deck, slideRef)
+  const map = requireObjects(objectsOf(deck, slide), [objectId], slide.id).get(objectId)!
+  const type = map.get('type')
+  if (type === 'text') {
+    const obj = yMapToPlainObject<TextObject>(map)
+    const sid = obj.textStyleId
+    return {
+      type,
+      fields: textStyleFieldsFromObject(obj),
+      styleId: typeof sid === 'string' ? sid : undefined,
+    }
+  }
+  if (type === 'table') {
+    const defaults = yMapToPlainObject<TableObject>(map).defaults
+    return {
+      type,
+      fields: textStyleFieldsFromObject(defaults),
+      styleId: defaults.textStyleId,
+    }
+  }
+  throw new CommandError(
+    'invalid_input',
+    `object '${objectId}' is a ${String(type)}; text styles are made from text boxes and tables`,
+  )
+}
+
+/** Link the object to `styleId` as matching it exactly (no overrides). */
+function linkExactly(
+  ctx: CommandContext,
+  slideRef: SlideRef,
+  objectId: string,
+  type: 'text' | 'table',
+  styleId: string,
+): void {
+  const deck = requireDeck(ctx)
+  const objects = objectsOf(deck, resolveSlide(deck, slideRef))
+  const link = { textStyleId: styleId, textStyleOverrides: [] }
+  if (type === 'text')
+    bulkUpdateObjects(objects, [{ id: objectId, patch: link as SlideObjectPatch<SlideObject> }])
+  else setTableDefaultsPatch(objects, objectId, link as Partial<TableDefaults>)
+}
+
+const fromObjectBase = {
+  domain: 'text',
+  role: 'editor',
+  effects: ['doc', 'server'],
+  undo: 'undoable',
+  confirm: 'never',
+  hosts: ['server'],
+  acceptsComponent: true,
+} as const
+
+export const textStyleCreateFromObject = defineCommand({
+  ...fromObjectBase,
+  id: 'text.style.createFromObject',
+  title: 'Create a text style from a box',
+  description:
+    "Add a text style to the deck's folder that reproduces a text box's (or a table's) typography — family, " +
+    'weight, size, line height, spacing, colour (a folder colour stays linked), case — and link the box to it, so ' +
+    'other text can take it with text.style.apply. The name must be new in the folder (the defaults include ' +
+    'Title, Body, Quote, Caption…; token.list). Needs the folder owner. Returns the new style id. Undo unlinks ' +
+    'the box; the style stays in the folder until token.delete.',
+  input: z.strictObject({
+    slide: SlideRefSchema,
+    object: ObjectIdSchema,
+    name: z.string().trim().min(1).max(80),
+  }),
+  output: z.object({ styleId: z.string() }),
+  implementedWith: ['addFolderToken', 'bulkUpdateObjects', 'setTableDefaultsPatch'],
+  examples: [
+    {
+      title: 'Make a "Quote" style from a box',
+      input: { slide: 's1', object: 't1', name: 'Quote' },
+    },
+  ],
+  async load(ctx, input) {
+    const source = typographySource(ctx, input.slide, input.object)
+    const folderId = await folderOfTarget(ctx)
+    const { tokenId } = await requireServices(ctx).tokens.create({
+      userId: ctx.actor.userId,
+      folderId,
+      category: 'textStyles',
+      fields: { name: input.name, ...source.fields },
+    })
+    return { type: source.type, styleId: tokenId }
+  },
+  handler(ctx, input, loaded) {
+    linkExactly(ctx, input.slide, input.object, loaded.type, loaded.styleId)
+    return { styleId: loaded.styleId }
+  },
+})
+
+export const textStyleUpdateFromObject = defineCommand({
+  ...fromObjectBase,
+  id: 'text.style.updateFromObject',
+  title: 'Update a text style from a box',
+  description:
+    'Make the text style a text box (or table) is linked to match the box: its typography becomes the style, and ' +
+    'every other text linked to the style in the folder follows (except fields set by hand there). The box then ' +
+    'matches its style exactly. Only when the user asked for the style to change. Needs the folder owner. Returns ' +
+    'the style and its previous values (token.update with them undoes the style change).',
+  input: z.strictObject({ slide: SlideRefSchema, object: ObjectIdSchema }),
+  output: z.object({
+    styleId: z.string(),
+    style: z.string().describe("The style's name"),
+    previous: z.record(z.string(), z.unknown()),
+    propagated: z.object({
+      decks: z.number(),
+      components: z.number(),
+      objects: z.number(),
+      failed: z.array(z.string()),
+    }),
+  }),
+  implementedWith: [
+    'updateFolderToken',
+    'updateObject',
+    'bulkUpdateObjects',
+    'setTableDefaultsPatch',
+  ],
+  examples: [
+    { title: "Push a heading's look into its style", input: { slide: 's2', object: 'hd1' } },
+  ],
+  async load(ctx, input) {
+    const source = typographySource(ctx, input.slide, input.object)
+    if (source.styleId === undefined) {
+      throw new CommandError(
+        'conflict',
+        `object '${input.object}' is not linked to a text style; link it with text.style.apply or make one with text.style.createFromObject`,
+      )
+    }
+    const folderId = await folderOfTarget(ctx)
+    const services = requireServices(ctx)
+    const { previous, propagated } = await services.tokens.update({
+      userId: ctx.actor.userId,
+      folderId,
+      category: 'textStyles',
+      tokenId: source.styleId,
+      patch: source.fields,
+    })
+    const tokens = await services.tokens.list({ userId: ctx.actor.userId, folderId })
+    const style = tokens.textStyles[source.styleId]?.name ?? source.styleId
+    return { type: source.type, styleId: source.styleId, style, previous, propagated }
+  },
+  handler(ctx, input, loaded) {
+    linkExactly(ctx, input.slide, input.object, loaded.type, loaded.styleId)
+    return {
+      styleId: loaded.styleId,
+      style: loaded.style,
+      previous: loaded.previous,
+      propagated: loaded.propagated,
+    }
+  },
+})
+
+export const typographyCommands = [
+  textSetBoxTypography,
+  textStyleApply,
+  textStyleCreateFromObject,
+  textStyleUpdateFromObject,
+]

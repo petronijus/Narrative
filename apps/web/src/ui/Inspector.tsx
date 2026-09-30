@@ -110,6 +110,7 @@ import {
   BOX_TYPOGRAPHY_KEYS,
   PAGE_NUMBER_TEXT_STYLE_NAME,
   findTextStyleByName,
+  textStyleFieldsFromObject,
 } from '@narrative/commands'
 import { forCommand } from './commandPatch.js'
 import { isMaskableShape, listSlides } from '@narrative/slide-model'
@@ -150,7 +151,7 @@ import {
 import {
   useFolderTokens,
   useFolderTokensOptional,
-  useFolderMutations,
+  useFolderTokenWriter,
 } from '../state/FolderDocProvider.js'
 import { emptyTokensSnapshot } from '../state/FolderDocContext.js'
 import { isTokenRef, resolveTokenValue } from '@narrative/slide-model'
@@ -4016,7 +4017,8 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
   const listTarget = activeSlideId === null ? null : { slide: activeSlideId, command }
   // M16 P2: folder text style tokens
   const folderTokensSnapshot = useFolderTokens()
-  const { addToken, updateToken } = useFolderMutations()
+  const tokenWriter = useFolderTokenWriter()
+  const [presetError, setPresetError] = useState<string | null>(null)
   const textStylesList = Object.values(folderTokensSnapshot.textStyles)
   const [presetMenuOpen, setPresetMenuOpen] = useState(false)
   const presetMenuRef = useRef<HTMLDivElement>(null)
@@ -4089,6 +4091,44 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
       style: styleId,
       ...(reset ? { reset: true } : {}),
     })
+  }
+
+  // "Update preset" and "Create new text style": the box's typography
+  // becomes a folder text style on the server (which carries an update into
+  // every text linked to it, in every deck of the folder), then the box is
+  // linked to it exactly — with the tokens the folder document has once it
+  // shows the change, not the ones this render captured. The same as the
+  // `text.style.updateFromObject` / `createFromObject` commands agents run.
+  const linkToNewTokens = async (slide: string, styleId: string): Promise<void> => {
+    if (tokenWriter === null) return
+    const tokens = await tokenWriter.whenTokens((t) => t.textStyles[styleId] !== undefined)
+    command.tryRun(
+      'text.style.apply',
+      { slide, objects: [obj.id], style: styleId },
+      {
+        folderTokens: tokens,
+      },
+    )
+  }
+  const updatePresetFromBox = async (styleId: string): Promise<void> => {
+    if (isViewer || activeSlideId === null || tokenWriter === null) return
+    const slide = activeSlideId
+    setPresetError(null)
+    try {
+      await tokenWriter.update('textStyles', styleId, textStyleFieldsFromObject(obj))
+      await linkToNewTokens(slide, styleId)
+    } catch (e) {
+      setPresetError(e instanceof Error ? e.message : 'The text style could not be updated')
+    }
+  }
+  const createPresetFromBox = async (name: string): Promise<void> => {
+    if (isViewer || activeSlideId === null || tokenWriter === null) return
+    const slide = activeSlideId
+    const styleId = await tokenWriter.create('textStyles', {
+      name,
+      ...textStyleFieldsFromObject(obj),
+    })
+    await linkToNewTokens(slide, styleId)
   }
 
   return (
@@ -4177,36 +4217,12 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
                         <button
                           role="menuitem"
                           type="button"
+                          disabled={tokenWriter === null}
                           onClick={() => {
-                            // Push the current object's typography back
-                            // onto the linked token — same shape that
-                            // applyTextStyle would write in reverse.
-                            const currentColor =
-                              typeof obj.color === 'number'
-                                ? `#${obj.color.toString(16).padStart(6, '0')}`
-                                : undefined
-                            updateToken('textStyles', linkedTextStyle.id, {
-                              ...(typeof obj.fontFamily === 'string'
-                                ? { family: obj.fontFamily }
-                                : {}),
-                              ...(typeof obj.fontWeight === 'number'
-                                ? { weight: obj.fontWeight }
-                                : {}),
-                              ...(typeof obj.fontSize === 'number' ? { size: obj.fontSize } : {}),
-                              ...(typeof obj.lineHeight === 'number'
-                                ? { lineHeight: obj.lineHeight }
-                                : {}),
-                              ...(typeof obj.letterSpacing === 'number'
-                                ? { letterSpacing: obj.letterSpacing }
-                                : {}),
-                              paragraphSpaceBefore: obj.paragraphSpaceBefore ?? 0,
-                              paragraphSpaceAfter: obj.paragraphSpaceAfter ?? 0,
-                              ...(currentColor !== undefined ? { color: currentColor } : {}),
-                              textTransform: obj.textTransform ?? 'none',
-                            })
+                            void updatePresetFromBox(linkedTextStyle.id)
                             setPresetMenuOpen(false)
                           }}
-                          className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-accent"
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-accent disabled:opacity-40"
                         >
                           <Save className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
                           Update preset
@@ -4215,11 +4231,12 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
                       <button
                         role="menuitem"
                         type="button"
+                        disabled={tokenWriter === null}
                         onClick={() => {
                           setPresetMenuOpen(false)
                           setNewPresetOpen(true)
                         }}
-                        className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-accent"
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-accent disabled:opacity-40"
                       >
                         <Plus className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
                         Create new text style
@@ -4230,6 +4247,11 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
               )}
             </div>
           </div>
+        )}
+        {presetError !== null && (
+          <p role="alert" className="text-[11px] text-destructive" data-text-edit-keep-focus>
+            {presetError}
+          </p>
         )}
 
         <FontSizeField obj={obj} patch={patch} selAttrs={selAttrs} />
@@ -4674,30 +4696,8 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
           initialName={newPresetName}
           existingNames={textStylesList.map((s) => s.name)}
           onCancel={() => setNewPresetOpen(false)}
-          onConfirm={(name) => {
-            const currentColor =
-              typeof obj.color === 'number'
-                ? `#${obj.color.toString(16).padStart(6, '0')}`
-                : '#000000'
-            const newId = addToken('textStyles', {
-              name,
-              family: obj.fontFamily ?? 'Inter, system-ui, sans-serif',
-              weight: typeof obj.fontWeight === 'number' ? obj.fontWeight : 400,
-              size: typeof obj.fontSize === 'number' ? obj.fontSize : 16,
-              lineHeight: typeof obj.lineHeight === 'number' ? obj.lineHeight : 1.5,
-              letterSpacing: typeof obj.letterSpacing === 'number' ? obj.letterSpacing : 0,
-              ...(typeof obj.paragraphSpaceBefore === 'number' && obj.paragraphSpaceBefore > 0
-                ? { paragraphSpaceBefore: obj.paragraphSpaceBefore }
-                : {}),
-              ...(typeof obj.paragraphSpaceAfter === 'number' && obj.paragraphSpaceAfter > 0
-                ? { paragraphSpaceAfter: obj.paragraphSpaceAfter }
-                : {}),
-              color: currentColor,
-              ...(obj.textTransform !== undefined && obj.textTransform !== 'none'
-                ? { textTransform: obj.textTransform }
-                : {}),
-            })
-            patch({ textStyleId: newId } as unknown as SlideObjectPatch<TextObject>)
+          onConfirm={async (name) => {
+            await createPresetFromBox(name)
             setNewPresetOpen(false)
           }}
         />
@@ -4714,7 +4714,8 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
 interface NewTextStylePresetModalProps {
   initialName: string
   existingNames: ReadonlyArray<string>
-  onConfirm: (name: string) => void
+  /** Resolves when the style exists and the box is linked to it; a rejection is shown in the dialog. */
+  onConfirm: (name: string) => Promise<void>
   onCancel: () => void
 }
 
@@ -4725,6 +4726,8 @@ function NewTextStylePresetModal({
   onCancel,
 }: NewTextStylePresetModalProps) {
   const [name, setName] = useState(initialName)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -4749,7 +4752,16 @@ function NewTextStylePresetModal({
   const trimmed = name.trim()
   const lower = trimmed.toLowerCase()
   const collides = existingNames.some((n) => n.toLowerCase() === lower)
-  const valid = trimmed !== '' && !collides
+  const valid = trimmed !== '' && !collides && !saving
+  const confirm = () => {
+    if (!valid) return
+    setSaving(true)
+    setError(null)
+    onConfirm(trimmed).catch((e: unknown) => {
+      setSaving(false)
+      setError(e instanceof Error ? e.message : 'The text style could not be created')
+    })
+  }
 
   return (
     <div
@@ -4782,7 +4794,7 @@ function NewTextStylePresetModal({
           onKeyDown={(e) => {
             if (e.key === 'Enter' && valid) {
               e.preventDefault()
-              onConfirm(trimmed)
+              confirm()
             }
           }}
           maxLength={80}
@@ -4791,6 +4803,11 @@ function NewTextStylePresetModal({
         {collides && (
           <p className="mt-1.5 text-[11px] text-destructive">
             A text style with this name already exists.
+          </p>
+        )}
+        {error !== null && (
+          <p role="alert" className="mt-1.5 text-[11px] text-destructive">
+            {error}
           </p>
         )}
         <div className="mt-4 flex justify-end gap-2">
@@ -4803,11 +4820,11 @@ function NewTextStylePresetModal({
           </button>
           <button
             type="button"
-            onClick={() => valid && onConfirm(trimmed)}
+            onClick={confirm}
             disabled={!valid}
             className="btn-brand rounded-md px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Create
+            {saving ? 'Creating…' : 'Create'}
           </button>
         </div>
       </div>

@@ -1,9 +1,12 @@
 /**
- * routes/tokenUsages.test.ts
+ * routes/tokens.test.ts
  *
- * M16 P4 — Tests for GET /folders/:folderId/tokens/:category/:tokenId/usages
+ * GET /folders/:folderId/tokens/:category/:tokenId/usages (M16 P4), and the
+ * token writes POST / PATCH / DELETE (A2.12) — validated with the commands'
+ * input schemas, written as a delta row when no sync server runs in the
+ * process (services/liveDocs.ts; the live path is services/tokens.test.ts).
  *
- * Tests:
+ * Usage tests:
  *   - empty folder → 200 { usages: [] }
  *   - deck with a matching token ref on an object → 200 with deck entry
  *   - deck with no matching refs → 200 { usages: [] }
@@ -17,11 +20,28 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+// Session cookies `s-<user>-<n>` resolve to <user> (the origin guard test).
+vi.mock('../auth/session.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../auth/session.js')>()
+  return {
+    ...original,
+    lookupSession: vi.fn(async (_db: unknown, raw: string) => {
+      const m = /^s-([a-z-]+)-\d+$/.exec(raw)
+      return m ? { userSub: m[1]!, userEmail: `${m[1]}@example.com`, userName: null } : null
+    }),
+  }
+})
 import Fastify, { type FastifyInstance } from 'fastify'
 import * as Y from 'yjs'
-import { registerTokenUsageRoutes } from './tokenUsages.js'
+import { registerTokenRoutes } from './tokens.js'
 import { registerAuthPlugin } from '../auth/fastifyAuth.js'
 import type { Database } from '../db/client.js'
+import { addFolderToken, readFolderTokens } from '@narrative/slide-model'
+import { scriptedDb } from '../test-support/scriptedDb.js'
+import { registerSameOriginPolicy } from '../http/sameOrigin.js'
+
+const SPA = 'http://localhost:5173'
 
 // ---------------------------------------------------------------------------
 // Y.Doc helpers — build minimal docs and encode as updates
@@ -338,10 +358,11 @@ function makeMockDb(opts: MockDbOpts = {}): Database {
 // App builder
 // ---------------------------------------------------------------------------
 
-async function buildApp(db: Database): Promise<FastifyInstance> {
+async function buildApp(db: Database, bypass = true): Promise<FastifyInstance> {
   const app = Fastify({ logger: false })
-  registerAuthPlugin(app, { bypass: true, db })
-  await registerTokenUsageRoutes(app, db)
+  registerAuthPlugin(app, { bypass, db })
+  registerSameOriginPolicy(app, { allowedOrigins: [SPA] })
+  await registerTokenRoutes(app, db)
   await app.ready()
   return app
 }
@@ -543,5 +564,174 @@ describe('GET /folders/:folderId/tokens/:category/:tokenId/usages', () => {
     })
 
     expect(res.statusCode).toBe(404)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Token writes
+// ---------------------------------------------------------------------------
+
+describe('token writes', () => {
+  const folderRow = { id: 'folder-1', ownerUserId: 'dev-user', name: 'My folder' }
+
+  /** The stored folder document: one colour and a built-in text style (fixed bytes). */
+  const stored = (() => {
+    const doc = new Y.Doc()
+    addFolderToken(doc, 'colors', 'brand', { name: 'Brand', value: '#2040c0' })
+    addFolderToken(doc, 'textStyles', 'title', { name: 'Title', size: 72, builtin: true })
+    return Y.encodeStateAsUpdate(doc)
+  })()
+  const storedFolder = (): Array<{ update: Uint8Array }> => [{ update: stored }]
+
+  /** The folder document after the delta rows a request wrote. */
+  function folderAfter(writes: Array<{ table: string; values?: unknown }>) {
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, stored)
+    for (const w of writes)
+      if (w.table === 'folder_updates')
+        Y.applyUpdate(doc, (w.values as { update: Uint8Array }).update)
+    return readFolderTokens(doc)
+  }
+
+  it('POST adds a token (normalised as token.create stores it) → 201 { tokenId }', async () => {
+    const db = scriptedDb({ selects: [[folderRow], storedFolder()] })
+    const app = await buildApp(db.db)
+    const res = await app.inject({
+      method: 'POST',
+      url: '/folders/folder-1/tokens/colors',
+      payload: { name: 'Accent', value: '#F80' },
+    })
+    expect(res.statusCode).toBe(201)
+    const { tokenId } = res.json() as { tokenId: string }
+    expect(folderAfter(db.writes).colors[tokenId]).toEqual({
+      id: tokenId,
+      name: 'Accent',
+      value: '#ff8800',
+    })
+  })
+
+  it('POST refuses invalid fields with the issues, before touching the folder', async () => {
+    const db = scriptedDb()
+    const app = await buildApp(db.db)
+    const res = await app.inject({
+      method: 'POST',
+      url: '/folders/folder-1/tokens/textStyles',
+      payload: { name: 'Big', size: -3, bogus: 1 },
+    })
+    expect(res.statusCode).toBe(400)
+    const body = res.json() as { error: string; issues: Array<{ path: string[] }> }
+    expect(body.error).toBe('Invalid token')
+    expect(body.issues.map((i) => i.path.join('.'))).toEqual(expect.arrayContaining(['size']))
+    expect(db.writes).toEqual([])
+  })
+
+  it('POST refuses an unknown category', async () => {
+    const app = await buildApp(scriptedDb().db)
+    const res = await app.inject({
+      method: 'POST',
+      url: '/folders/folder-1/tokens/gradients',
+      payload: { name: 'X' },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('PATCH changes a token (null removes a field) and reports the propagation', async () => {
+    const db = scriptedDb({
+      // Ownership, the folder document; then the propagation reads the folder
+      // afresh and lists its decks and components.
+      selects: [[folderRow], storedFolder(), storedFolder(), [], []],
+    })
+    const app = await buildApp(db.db)
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/folders/folder-1/tokens/textStyles/title',
+      payload: { size: null, weight: 700 },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({
+      // What the fields were before: `token.update` with them undoes it.
+      previous: { size: 72, weight: null },
+      propagated: { decks: 0, components: 0, objects: 0, failed: [] },
+    })
+    const title = folderAfter(db.writes).textStyles['title']
+    expect(title).toMatchObject({ weight: 700 })
+    expect(title?.size).toBeUndefined()
+  })
+
+  it('PATCH refuses an empty change and an unknown token', async () => {
+    const empty = await (
+      await buildApp(scriptedDb().db)
+    ).inject({
+      method: 'PATCH',
+      url: '/folders/folder-1/tokens/colors/brand',
+      payload: {},
+    })
+    expect(empty.statusCode).toBe(400)
+    const db = scriptedDb({ selects: [[folderRow], storedFolder()] })
+    const unknown = await (
+      await buildApp(db.db)
+    ).inject({
+      method: 'PATCH',
+      url: '/folders/folder-1/tokens/colors/nope',
+      payload: { value: '#000000' },
+    })
+    expect(unknown.statusCode).toBe(404)
+    expect(db.writes).toEqual([])
+  })
+
+  it('DELETE removes a colour and refuses a built-in text style', async () => {
+    const db = scriptedDb({ selects: [[folderRow], storedFolder()] })
+    const res = await (
+      await buildApp(db.db)
+    ).inject({
+      method: 'DELETE',
+      url: '/folders/folder-1/tokens/colors/brand',
+    })
+    expect(res.statusCode).toBe(200)
+    expect(folderAfter(db.writes).colors['brand']).toBeUndefined()
+
+    const builtin = await (
+      await buildApp(scriptedDb({ selects: [[folderRow], storedFolder()] }).db)
+    ).inject({ method: 'DELETE', url: '/folders/folder-1/tokens/textStyles/title' })
+    expect(builtin.statusCode).toBe(409)
+  })
+
+  it('refuses a signed-in session from another origin before touching the folder', async () => {
+    const db = scriptedDb()
+    const app = await buildApp(db.db, false)
+    const cookie = 'narrative_session=s-dev-user-1'
+    for (const origin of [undefined, 'https://evil.example']) {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/folders/folder-1/tokens/colors/brand',
+        headers: { cookie, ...(origin === undefined ? {} : { origin }) },
+        payload: { value: '#000000' },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json()).toMatchObject({ error: 'forbidden_origin' })
+    }
+    expect(db.writes).toEqual([])
+  })
+
+  it('refuses a token id that is not one', async () => {
+    const res = await (
+      await buildApp(scriptedDb().db)
+    ).inject({
+      method: 'DELETE',
+      url: `/folders/folder-1/tokens/colors/${'x'.repeat(80)}`,
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it("refuses another user's folder", async () => {
+    const db = scriptedDb({ selects: [[{ ...folderRow, ownerUserId: 'someone-else' }]] })
+    const res = await (
+      await buildApp(db.db)
+    ).inject({
+      method: 'POST',
+      url: '/folders/folder-1/tokens/colors',
+      payload: { name: 'X', value: '#000000' },
+    })
+    expect(res.statusCode).toBe(403)
   })
 })

@@ -21,7 +21,7 @@ import {
   type CommandContext,
   type CommandInvocation,
 } from '@narrative/commands'
-import { LOCAL_ORIGIN } from '@narrative/slide-model'
+import { LOCAL_ORIGIN, type FolderTokensSnapshot } from '@narrative/slide-model'
 import { useSlideDoc } from './useSlideDoc.js'
 import { useDeckRole } from './DeckRoleContext.js'
 import { useAuth } from './AuthContext.js'
@@ -42,15 +42,26 @@ export type GroupRun = <T = unknown>(command: string, input: unknown) => T
  */
 const RACE_CODES = new Set(['not_found', 'conflict'])
 
+/** What a single dispatch sees differently from the page's context. */
+export interface RunOptions {
+  /**
+   * The folder tokens to run with, instead of the provider's snapshot: for
+   * a command that follows a token change the page has just made on the
+   * server (read with `FolderTokenWriter.whenTokens`), when the snapshot
+   * this render captured is older than the folder document.
+   */
+  folderTokens?: FolderTokensSnapshot
+}
+
 export interface CommandDispatch {
   /** Run one document command synchronously; throws `CommandError`. */
-  run: <T = unknown>(command: string, input: unknown) => T
+  run: <T = unknown>(command: string, input: unknown, options?: RunOptions) => T
   /**
    * `run`, for gestures that may race a collaborator: a `not_found` /
    * `conflict` refusal is logged and answered with `null` (nothing was
    * written), any other failure is thrown.
    */
-  tryRun: <T = unknown>(command: string, input: unknown) => T | null
+  tryRun: <T = unknown>(command: string, input: unknown, options?: RunOptions) => T | null
   /**
    * Several commands as ONE change and one undo step, without the fork an
    * atomic batch makes (see `runGroup`): for gestures that are more than
@@ -90,20 +101,25 @@ export function useCommand(): CommandDispatch {
     [userId, role, deckCtx, folderTokens, folderFonts],
   )
 
-  const run = useCallback(
-    <T = unknown>(command: string, input: unknown): T =>
-      runCommandSync(registry, ctx, command, input) as T,
+  const ctxFor = useCallback(
+    (options?: RunOptions): CommandContext =>
+      options?.folderTokens === undefined ? ctx : { ...ctx, folderTokens: options.folderTokens },
     [ctx],
   )
+  const run = useCallback(
+    <T = unknown>(command: string, input: unknown, options?: RunOptions): T =>
+      runCommandSync(registry, ctxFor(options), command, input) as T,
+    [ctxFor],
+  )
   const tryRun = useCallback(
-    <T = unknown>(command: string, input: unknown): T | null => {
+    <T = unknown>(command: string, input: unknown, options?: RunOptions): T | null => {
       try {
-        return runCommandSync(registry, ctx, command, input) as T
+        return runCommandSync(registry, ctxFor(options), command, input) as T
       } catch (e) {
         return raceOrThrow(e, command)
       }
     },
-    [ctx],
+    [ctxFor],
   )
   const group = useCallback(
     <T>(fn: (run: GroupRun) => T): T | null => {

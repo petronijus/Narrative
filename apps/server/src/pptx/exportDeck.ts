@@ -37,10 +37,9 @@ import type { Slide, SlideObject } from '@narrative/shared'
 import { decks, mediaAssets } from '../db/schema.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { writeDeck, type AssetLoader } from './ooxml/writeDeck.js'
-import { getSlideNotesDoc, type NotesDoc } from '@narrative/slide-model'
+import { getSlideNotesDoc, readFolderTokens, type NotesDoc } from '@narrative/slide-model'
 import type { ServiceDeps } from '../services/deps.js'
 import { readDocCopy } from '../services/liveDocs.js'
-import { tokensSnapshot } from '../services/tokenRebind.js'
 
 export const PPTX_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.presentationml.presentation'
@@ -172,7 +171,7 @@ async function loadFolderTokens(
   const doc = await readDocCopy(deps, 'folder', folderId)
   try {
     if (!(doc.getMap('tokens') instanceof Y.Map) || doc.getMap('tokens').size === 0) return null
-    return tokensSnapshot(doc)
+    return readFolderTokens(doc)
   } finally {
     doc.destroy()
   }

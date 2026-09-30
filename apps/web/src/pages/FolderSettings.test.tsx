@@ -79,7 +79,7 @@ vi.mock('../ui/FontFamilySelect.js', () => ({
 // ---------------------------------------------------------------------------
 
 type TokenCategory = 'colors' | 'textStyles' | 'effectStyles'
-type TokenInit = Record<string, unknown>
+type TokenFields = Record<string, unknown>
 
 let mockColors: Record<string, { id: string; name: string; value: string }> = {}
 let mockTextStyles: Record<
@@ -92,6 +92,19 @@ let mockEffectStyles: Record<
 > = {}
 let idCounter = 0
 
+// The page re-renders when the folder document changes; the mock store
+// does the same through useSyncExternalStore.
+let tokenVersion = 0
+const tokenListeners = new Set<() => void>()
+const notifyTokens = () => {
+  tokenVersion++
+  tokenListeners.forEach((l) => l())
+}
+const subscribeTokens = (l: () => void) => {
+  tokenListeners.add(l)
+  return () => tokenListeners.delete(l)
+}
+
 const mockTokenSnapshot = () => ({
   colors: mockColors as Record<string, { id: string; name: string; value: string }>,
   textStyles: mockTextStyles as Record<string, { id: string; name: string }>,
@@ -101,51 +114,52 @@ const mockTokenSnapshot = () => ({
   >,
 })
 
-vi.mock('../state/FolderDocProvider', () => {
+/** The server as the page's token writer sees it: every change lands in the mock store. */
+const mockWriter = {
+  create: vi.fn(async (category: TokenCategory, fields: TokenFields) => {
+    const id = `mock-id-${++idCounter}`
+    if (category === 'colors') {
+      mockColors[id] = {
+        id,
+        name: String(fields['name'] ?? ''),
+        value: String(fields['value'] ?? '#ffffff'),
+      }
+    } else if (category === 'textStyles') {
+      mockTextStyles[id] = {
+        id,
+        name: String(fields['name'] ?? ''),
+        ...(fields['family'] ? { family: String(fields['family']) } : {}),
+      }
+    }
+    notifyTokens()
+    return id
+  }),
+  update: vi.fn(async (category: TokenCategory, id: string, patch: TokenFields) => {
+    if (category === 'colors' && mockColors[id]) {
+      mockColors[id] = {
+        ...mockColors[id],
+        ...(patch as Partial<{ id: string; name: string; value: string }>),
+      }
+      notifyTokens()
+    }
+  }),
+  remove: vi.fn(async (category: TokenCategory, id: string) => {
+    if (category === 'colors') delete mockColors[id]
+    else if (category === 'textStyles') delete mockTextStyles[id]
+    else if (category === 'effectStyles') delete mockEffectStyles[id]
+    notifyTokens()
+  }),
+}
+
+vi.mock('../state/FolderDocProvider', async () => {
+  const { useSyncExternalStore } = await import('react')
   return {
     FolderDocProvider: ({ children }: { folderId: string; children: React.ReactNode }) => children,
-    useFolderTokens: () => mockTokenSnapshot(),
-    useFolderMutations: () => ({
-      addToken: (category: TokenCategory, init: TokenInit) => {
-        const id = `mock-id-${++idCounter}`
-        if (category === 'colors') {
-          mockColors[id] = {
-            id,
-            name: String(init['name'] ?? ''),
-            value: String(init['value'] ?? '#ffffff'),
-          }
-        } else if (category === 'textStyles') {
-          mockTextStyles[id] = {
-            id,
-            name: String(init['name'] ?? ''),
-            ...(init['family'] ? { family: String(init['family']) } : {}),
-          }
-        } else if (category === 'effectStyles') {
-          mockEffectStyles[id] = {
-            id,
-            name: String(init['name'] ?? ''),
-            kind: String(init['kind'] ?? 'shadow'),
-            params: (init['params'] as Record<string, unknown>) ?? {},
-          }
-        }
-        return id
-      },
-      updateToken: (category: TokenCategory, id: string, patch: Partial<TokenInit>) => {
-        if (category === 'colors' && mockColors[id]) {
-          mockColors[id] = {
-            ...mockColors[id],
-            ...(patch as Partial<{ id: string; name: string; value: string }>),
-          }
-        }
-      },
-      deleteToken: (category: TokenCategory, id: string) => {
-        if (category === 'colors') delete mockColors[id]
-        else if (category === 'textStyles') delete mockTextStyles[id]
-        else if (category === 'effectStyles') delete mockEffectStyles[id]
-      },
-      listUsages: () => [],
-      markComponentDeleted: vi.fn(),
-    }),
+    useFolderTokens: () => {
+      useSyncExternalStore(subscribeTokens, () => tokenVersion)
+      return mockTokenSnapshot()
+    },
+    useFolderTokenWriter: () => mockWriter,
     useTokenUsages: () => ({ usages: [], loading: false }),
   }
 })
@@ -252,8 +266,9 @@ describe('FolderSettings page', () => {
 
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(mockColors['c1']).toBeUndefined()
     })
-    expect(mockColors['c1']).toBeUndefined()
+    expect(mockWriter.remove).toHaveBeenCalledWith('colors', 'c1')
   })
 
   it('cancels token deletion on Cancel', async () => {

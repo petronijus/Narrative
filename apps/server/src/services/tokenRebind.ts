@@ -245,20 +245,3 @@ export function applyTokenRebinding(
   else for (const slide of slides) walkMap(slide)
   return counts
 }
-
-/** Read a folder document's token maps as a plain snapshot (empty maps when it has none). */
-export function tokensSnapshot(folderDoc: Y.Doc): FolderTokensSnapshot {
-  const out: FolderTokensSnapshot = { colors: {}, textStyles: {}, effectStyles: {} }
-  const tokens = folderDoc.getMap<unknown>('tokens')
-  for (const category of ['colors', 'textStyles', 'effectStyles'] as const) {
-    const catMap = tokens.get(category)
-    if (!(catMap instanceof Y.Map)) continue
-    for (const [id, tokenY] of catMap as Y.Map<unknown>) {
-      if (!(tokenY instanceof Y.Map)) continue
-      const plain: Record<string, unknown> = { id }
-      for (const [k, v] of tokenY as Y.Map<unknown>) plain[k] = v
-      ;(out[category] as Record<string, unknown>)[id] = plain
-    }
-  }
-  return out
-}

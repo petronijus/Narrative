@@ -44,8 +44,14 @@ at runtime** — they exist only for drizzle-kit codegen, which we don't use.
    ```json
    { "idx": <N>, "version": "7", "when": <epoch-ms>, "tag": "NNNN_short_name", "breakpoints": true }
    ```
-   `idx` must be the next integer; `when` is cosmetic (the migrator sorts by
-   `idx`). Keep `tag` exactly equal to the filename without `.sql`.
+   `idx` must be the next integer. Use the current time for `when`
+   (`date +%s%3N`): `db:migrate` (production) ignores it — it sorts by `idx`
+   and tracks files by hash — but the dev server's automatic migration is
+   drizzle's own migrator, which applies only entries whose `when` is later
+   than the newest `created_at` in `drizzle.__drizzle_migrations`. Rows that
+   `db:migrate` recorded carry the time they ran, so a hand-picked older
+   `when` is silently skipped in dev (seen 2026-09-30 with 0026). Keep `tag`
+   exactly equal to the filename without `.sql`.
 4. (Optional but recommended) mirror the change in
    [`../src/db/schema.ts`](../src/db/schema.ts) so the ORM model stays accurate.
    The schema file is the source of truth for drizzle's _types_; the SQL +

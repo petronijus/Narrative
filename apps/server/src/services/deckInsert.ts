@@ -50,6 +50,7 @@ import {
   hydrateSlideDoc,
   type DeckMutationContext,
   type ObjectsMutationContext,
+  readFolderTokens,
 } from '@narrative/slide-model'
 import {
   applyInsertPlan,
@@ -71,12 +72,7 @@ import { discardDeckMedia, registerDeckMedia, type StagedDeckMedia } from '../pp
 import type { ServiceDeps } from './deps.js'
 import { badRequest, forbidden, notFound } from './errors.js'
 import { readDocCopy, SERVER_EDIT_ORIGIN, writeLiveDoc } from './liveDocs.js'
-import {
-  applyTokenRebinding,
-  planTokenRebinding,
-  tokensSnapshot,
-  type RebindCounts,
-} from './tokenRebind.js'
+import { applyTokenRebinding, planTokenRebinding, type RebindCounts } from './tokenRebind.js'
 
 type MediaRow = typeof mediaAssets.$inferInsert
 const ASSET_KEYS = new Set(['assetId', 'posterAssetId'])
@@ -400,7 +396,7 @@ async function rewriteForTarget(
         readDocCopy(deps, 'folder', args.targetFolderId),
       ])
       try {
-        const plan = planTokenRebinding(tokensSnapshot(srcFolder), tokensSnapshot(dstFolder))
+        const plan = planTokenRebinding(readFolderTokens(srcFolder), readFolderTokens(dstFolder))
         scratch.transact(() => {
           tokens = applyTokenRebinding(scratch, plan, records)
         })

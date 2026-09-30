@@ -784,3 +784,15 @@ export type AgentRun = typeof agentRuns.$inferSelect
 export type NewAgentRun = typeof agentRuns.$inferInsert
 export type AgentOp = typeof agentOps.$inferSelect
 export type NewAgentOp = typeof agentOps.$inferInsert
+
+/**
+ * One-time data migrations (services/dataMigrations.ts): tries, completion
+ * (null until done), report, last error. Migration 0026.
+ */
+export const appDataMigrations = pgTable('app_data_migrations', {
+  id: text('id').primaryKey(),
+  attempts: integer('attempts').default(0).notNull(),
+  completedAt: timestamp('completed_at'),
+  report: jsonb('report'),
+  lastError: text('last_error'),
+})

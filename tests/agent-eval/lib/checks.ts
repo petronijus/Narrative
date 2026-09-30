@@ -234,10 +234,15 @@ export function effectiveRuns(obj: ObjectView): EffectiveRun[] {
   return out
 }
 
-/** Font family names compare case-insensitively and without quotes. */
+/**
+ * Font family names compare case-insensitively and without quotes. A stack
+ * ("Inter, system-ui, sans-serif" — what the Inspector's font picker stores
+ * for Inter) is its primary family: that is the font it renders in.
+ */
 export function sameFamily(a: string | undefined, b: string): boolean {
   if (a === undefined) return false
-  return a.replace(/["']/g, '').trim().toLowerCase() === b.toLowerCase()
+  const primary = a.split(',')[0]!
+  return primary.replace(/["']/g, '').trim().toLowerCase() === b.toLowerCase()
 }
 
 // ---------------------------------------------------------------------------

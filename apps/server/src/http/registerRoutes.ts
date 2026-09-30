@@ -18,7 +18,7 @@ import type { Database } from '../db/client.js'
 import { registerDeckRoutes } from '../routes/decks.js'
 import { registerFolderRoutes } from '../routes/folders.js'
 import { registerComponentRoutes } from '../routes/components.js'
-import { registerTokenUsageRoutes } from '../routes/tokenUsages.js'
+import { registerTokenRoutes } from '../routes/tokens.js'
 import { registerSharingRoutes } from '../routes/sharing.js'
 import { registerPptxImportRoutes } from '../routes/pptxImport.js'
 import { registerPptxExportRoutes } from '../routes/pptxExport.js'
@@ -79,7 +79,7 @@ export async function registerHttpRoutes(app: FastifyInstance, deps: HttpRouteDe
   await registerComponentRoutes(app, db)
 
   // Token usage scanning (M16 P4)
-  await registerTokenUsageRoutes(app, db)
+  await registerTokenRoutes(app, db)
 
   // Sharing routes (permissions + share links)
   await registerSharingRoutes(app, db)

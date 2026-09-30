@@ -18,7 +18,6 @@
 import type { Doc as YDoc } from 'yjs'
 import { LOCAL_ORIGIN } from '@narrative/slide-model'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
-import { TOKEN_PROPAGATION_ORIGIN } from '../state/origins.js'
 
 export interface YjsMetrics {
   updatesReceived: number
@@ -57,11 +56,7 @@ export function createYjsMetrics(doc: YDoc, provider: HocuspocusProvider): YjsMe
    */
   function onUpdate(update: Uint8Array, origin: unknown): void {
     const byteLength = update.byteLength
-    const isLocal =
-      origin === null ||
-      origin === undefined ||
-      origin === LOCAL_ORIGIN ||
-      origin === TOKEN_PROPAGATION_ORIGIN
+    const isLocal = origin === null || origin === undefined || origin === LOCAL_ORIGIN
     if (isLocal) {
       updatesSent++
       bytesSent += byteLength

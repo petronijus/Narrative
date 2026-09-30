@@ -14,12 +14,11 @@
 import { eq } from 'drizzle-orm'
 import type * as Y from 'yjs'
 import type { CommandTarget } from '@narrative/commands'
-import type { FolderTokensSnapshot } from '@narrative/slide-model'
+import { readFolderTokens, type FolderTokensSnapshot } from '@narrative/slide-model'
 import type { Database } from '../db/client.js'
 import { components, decks } from '../db/schema.js'
 import type { ServiceDeps } from '../services/deps.js'
 import { readDocCopy } from '../services/liveDocs.js'
-import { tokensSnapshot } from '../services/tokenRebind.js'
 
 /** The target's folder tokens; null when it has no folder or the folder has no tokens yet. */
 export type FolderTokensReader = (target: CommandTarget) => Promise<FolderTokensSnapshot | null>
@@ -59,7 +58,7 @@ export function createFolderTokensReader(sources: FolderTokensSources): FolderTo
     if (folderId === null) return null
     const doc = await sources.readFolder(folderId)
     try {
-      const snapshot = tokensSnapshot(doc)
+      const snapshot = readFolderTokens(doc)
       const empty =
         Object.keys(snapshot.colors).length === 0 &&
         Object.keys(snapshot.textStyles).length === 0 &&

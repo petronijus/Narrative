@@ -118,7 +118,11 @@ text.
 
 ## Components and styles
 
-- Prefer the folder's text styles and colour tokens over literal values.
+- Prefer the folder's text styles and colour tokens over literal values
+  (`token_list` names them). Changing a style or colour itself
+  (`token_update`, `text_style_updateFromObject`) restyles every deck of
+  the folder — do it only when the user asks for the folder-wide change;
+  for one deck, restyle its boxes.
 - Components are shared building blocks (for example the page number,
   headline, subline, copy block, a repeated column grid). Use the ones the
   folder has for those roles. **Do not create a component for a one-off.**
