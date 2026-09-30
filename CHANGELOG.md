@@ -4,6 +4,20 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## Unreleased
+
+### Changed
+
+- **Agents load a smaller tool list**: the input shapes that recur on many
+  MCP tools (the slide reference on 72 tools, colours, the table cell,
+  object id lists) are written compactly in each schema and explained once
+  in the server instructions (`apps/server/src/mcp/sharedShapes.ts`).
+  `tools/list` shrinks from 188,697 to 173,650 bytes (−8 %); descriptions
+  and example calls are unchanged, and the full agent eval stayed 44/44.
+  Commands accept exactly the same input as before (`{ "id": … }` as a
+  slide reference included). The size budget drops from 189,000 to
+  175,000 bytes.
+
 ## 0.10.15 — Components through commands; A2 closed (2026-09-30)
 
 ### Added

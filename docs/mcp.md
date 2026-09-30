@@ -279,7 +279,13 @@ hand-written:
   on 2026-09-29 (166,020 / 166,980 / 166,884 for 116 tools after A2.9, same day), with
   the `instructions` at 4,030 bytes after A2.10 (of which 2,258 are the shared fields;
   was 3,945 / 2,173; not re-measured after A2.11, whose playbook edits may have moved
-  it). `mcp/toolListBudget.test.ts` fails past 189,000 bytes (since A2.12b, 2026-09-30:
+  it). `mcp/toolListBudget.test.ts` fails past 175,000 bytes since the post-A2 review
+  (2026-09-30): the shapes that recur on many tools — the slide reference on 72, colours,
+  the table cell, object id lists — are written compactly in each schema and explained
+  once in the instructions (`mcp/sharedShapes.ts`, like `mcp/vocabulary.ts` for field
+  descriptions), 188,697 → 173,650 bytes in url mode for 129 tools; descriptions and
+  example calls unchanged, the full live eval 44/44 before and after (332 → 326 turns).
+  Before that it failed past 189,000 bytes (since A2.12b, 2026-09-30:
   187,617 (form) / 188,697 (url) / 188,589 bytes (link) for 129 tools measured
   2026-09-30 after A2.13, whose `object_create` `id` field added ≈ 290 bytes
   (`object_create` 12,003 bytes); 188,407 in url mode after A2.12b; 187,000 after A2.12a with 186,157 for 128
@@ -467,9 +473,9 @@ The production image ships the playbook files (`apps/server/Dockerfile` copies
   Postgres (`vitest.integration.config.ts`, not part of `pnpm test`).
 - `packages/commands/src/playbooks/playbooks.test.ts` — playbook frontmatter,
   placeholders and command mentions.
-- `apps/server/src/mcp/toolListBudget.test.ts` — `tools/list` ≤ 189,000 bytes in every
-  confirmation mode (since A2.12b, 2026-09-30; 188,697 measured in url mode for 129 tools
-  after A2.13, 188,407 after A2.12b;
+- `apps/server/src/mcp/toolListBudget.test.ts` — `tools/list` ≤ 175,000 bytes in every
+  confirmation mode (since the post-A2 review, 2026-09-30: 173,650 in url mode for 129
+  tools; 189,000 before, with 188,697 measured after A2.13, 188,407 after A2.12b;
   187,000 after A2.12a, 177,000 after A2.11, 169,000 after A2.10, 132,000 on
   2026-09-28, raised per A2 step since; 160,000 before), ≤ 16,000 per tool, `$ref`s
   self-contained. Measured 2026-09-30 during A2.11, before its last example tweak:

@@ -71,6 +71,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js'
 import type { ElicitationSupport } from './confirm.js'
 import { compactInputSchema } from './schemaCompact.js'
 import { SHARED_DESCRIPTIONS } from './vocabulary.js'
+import { compactSharedShapes } from './sharedShapes.js'
 import {
   commandFetchesUrls,
   rewriteCommandMentionsAsToolNames,
@@ -275,7 +276,15 @@ function rewriteSchemaDescriptions(value: unknown): unknown {
  */
 export function commandInputJsonSchema(
   def: AnyCommandDef,
-  { keepShared = false }: { keepShared?: boolean } = {},
+  {
+    keepShared = false,
+    keepShapes = keepShared,
+  }: {
+    /** Keep the shared field descriptions and shapes (vocabulary.ts, sharedShapes.ts). */
+    keepShared?: boolean
+    /** Keep only the shared shapes: the schema as sharedShapes.ts matches it. */
+    keepShapes?: boolean
+  } = {},
 ): { root: JsonSchema; forms: string[] } {
   let raw: JsonSchema
   try {
@@ -287,7 +296,11 @@ export function commandInputJsonSchema(
   }
   const { root, forms } = objectRoot(stripSchemaDialect(raw), def.id)
   const compact = compactInputSchema(rewriteSchemaDescriptions(root) as JsonSchema)
-  return { root: keepShared ? compact : (stripSharedDescriptions(compact) as JsonSchema), forms }
+  // The shared descriptions and shapes are said once in the instructions
+  // (vocabulary.ts, sharedShapes.ts); `keepShared` shows them in full.
+  if (keepShared) return { root: compact, forms }
+  const stripped = stripSharedDescriptions(compact) as JsonSchema
+  return { root: keepShapes ? stripped : (compactSharedShapes(stripped) as JsonSchema), forms }
 }
 
 function targetArgumentsFor(
@@ -355,9 +368,11 @@ function exampleCall(
   scope: CommandScope,
   root: JsonSchema,
   hasForms: boolean,
+  /** The input schema before the shared shapes are compacted: what decides whether an example is needed. */
+  fullRoot: JsonSchema = root,
 ): string | null {
   const example = def.examples[0]
-  if (example === undefined || !needsExample(root, hasForms)) return null
+  if (example === undefined || !needsExample(fullRoot, hasForms)) return null
   const target =
     scope === 'deck' ? { deckId: '<deckId>' } : scope === 'folder' ? { folderId: '<folderId>' } : {}
   const input =
@@ -407,6 +422,9 @@ function buildEntry(def: AnyCommandDef): ToolEntry {
   const scope = def.scope ?? 'deck'
   const name = toolNameForCommand(def.id)
   const { root, forms } = commandInputJsonSchema(def)
+  // Whether a tool shows an example call is decided on the full shapes: a
+  // compacted slide reference is still an input a model gets wrong.
+  const { root: fullRoot } = commandInputJsonSchema(def, { keepShapes: true })
   const inputProps = (root['properties'] ?? {}) as Record<string, JsonSchema>
   const own = new Set(Object.keys(inputProps))
   if (own.has('confirmationId'))
@@ -426,7 +444,7 @@ function buildEntry(def: AnyCommandDef): ToolEntry {
       rewriteCommandMentionsAsToolNames(def.description),
       forms.length > 0 ? `Input forms (send exactly one): ${forms.join(' | ')}.` : null,
       confirmationLine(def, mode),
-      exampleCall(def, scope, root, forms.length > 0),
+      exampleCall(def, scope, root, forms.length > 0, fullRoot),
     ]
       .filter((x): x is string => x !== null)
       .join('\n\n')

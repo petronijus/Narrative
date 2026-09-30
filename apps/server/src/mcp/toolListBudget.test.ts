@@ -59,8 +59,14 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * A2.12b (2026-09-30): 187,000 → 189,000 for component.promote 1.4 KB,
  * object.insertFromDeck's `fromComponent` and the media commands on a
  * component master (188,407 bytes measured in url mode, 129 tools).
+ * After A2 (2026-09-30), the holistic review: 189,000 → 175,000. The shapes
+ * that recur on many tools (the slide reference on 72, colours, the table
+ * cell, object id lists) are written compactly and explained once in the
+ * instructions (sharedShapes.ts), the way vocabulary.ts already did for
+ * field descriptions: 188,697 → 173,650 bytes in url mode, 129 tools, the
+ * descriptions and example calls untouched (the full eval stayed 44/44).
  */
-export const TOOL_LIST_BUDGET_BYTES = 189_000
+export const TOOL_LIST_BUDGET_BYTES = 175_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

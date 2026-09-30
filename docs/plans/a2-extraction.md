@@ -843,18 +843,26 @@ State after A2.13:
   the manifest said 74 / 54 at 0.10.14.
 - 20 allowlist entries (18 at A1 close).
 - 82 catalogued user actions (53 `commands`, 28 `editorOnly`, 1 `planned`).
-- tools/list is 188,697 bytes (url mode) against the 189,000 budget.
+- tools/list was 188,697 bytes (url mode) against the 189,000 budget.
 
-Next, in order:
+Done since:
 
-1. **Release 0.10.15** (A2.12b + A2.13), with the A2.12b pre-deploy check.
-2. **The holistic tools/list size review.** Per Petr's call, the budget
-   only rose during A2 (132,000 → 189,000 bytes over 12 raises, itemised
-   in `apps/server/src/mcp/toolListBudget.test.ts`) and is reviewed as a
-   whole once A2 is done. Start from the largest tools (`object_create`
-   12,003 bytes in url mode on 2026-09-30), the repeated field
-   descriptions (`mcp/vocabulary.ts`) and the examples.
-3. **Then the MCP work.**
+1. **0.10.15 released** (A2.12b + A2.13) on 2026-09-30; production
+   reports `v0.10.15+f91b18e`, migrations 0027–0029 applied, the
+   component-media data migration found nothing to copy.
+2. **The holistic tools/list size review** (2026-09-30). Descriptions
+   (69 KB) carry the rules an agent needs and barely repeat, so they
+   stayed; the schemas (99 KB) repeated a few shapes on dozens of tools.
+   `mcp/sharedShapes.ts` writes those compactly (the slide reference as
+   `{ "type": ["string", "object"] }` on 72 tools, colours, the table
+   cell, object id lists) and says them once in the instructions, the
+   way `mcp/vocabulary.ts` does for field descriptions; whether a tool
+   shows an example call is still decided on the full shapes. 188,697 →
+   173,650 bytes (−8 %); budget 189,000 → 175,000. The full live eval
+   was 44/44 before and after (332 → 326 turns, 287 → 281 tool calls,
+   $5.65 → $5.43).
+
+Next: **the MCP work.**
 
 (Was, after A2.12b: "Next, 1. A2.13 Close — the parity guard over
 shortcuts and menu ids; `testApi.ts` through commands; `FINISHED_PHASES +=
