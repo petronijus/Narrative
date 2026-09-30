@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The fast lane (`just check`) with a memory: a content fingerprint of the
-# code it checks is recorded when it passes, so the same content is never
+# tree it checks is recorded when it passes, so the same content is never
 # checked twice — not by the Claude Code Stop hook after a turn, not by the
 # pre-push hook for the commit made from that tree, not for a tag pushed
 # after it. Shared by .claude/hooks/stop-gate.sh and tools/dev/pre-push.sh.
@@ -11,7 +11,7 @@
 #   check-cache.sh run [<log>]              `just check` unless the working tree is
 #                                          green; output to <log> (default: stdout)
 #
-# The fingerprint covers the paths below by content (git tree ids), so a
+# The fingerprint covers the tree by content (git tree ids), so a
 # commit of a green working tree is green too. One run at a time per clone
 # (a lock in the git dir); a second caller waits for it and reuses its result.
 set -uo pipefail
@@ -22,10 +22,11 @@ gitdir="$(git rev-parse --absolute-git-dir)"
 stamps="$gitdir/claude-check-green"
 lock="$gitdir/claude-check.lock"
 
-# What `just check` checks. Docs are formatted on write and checked by
-# fmt-check too, but a docs-only change does not need the whole lane again.
-paths=(apps packages tests tools scripts infra/scripts justfile lefthook.yml package.json
-  pnpm-lock.yaml eslint.config.js tsconfig.base.json .prettierrc .prettierignore)
+# What `just check` checks: the whole tree (formatting covers docs and
+# config too), so the fingerprint does as well — a cache that called content
+# green without having checked all of it would let an unformatted file
+# through (2026-09-30: .claude/settings.json). Ignored files stay out.
+paths=(.)
 
 hash() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1

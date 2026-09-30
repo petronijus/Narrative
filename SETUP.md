@@ -83,12 +83,11 @@ What this brings up (`infra/docker-compose.yml`):
 
 ## 5. DB migrations
 
-The dev server applies pending migrations when it starts (step 6), so there
-is nothing to run. `pnpm --filter server db:migrate` is the production
-migrator (tracks files by hash); on a database the dev server migrated it can
-refuse an older file whose SQL changed after it was applied (0003 on the
-Linux desktop, 2026-09-30) — the dev server's migrator is the one to trust
-locally.
+The dev server applies pending migrations when it starts (step 6) with the
+same migrator production runs (`pnpm --filter server db:migrate`,
+`apps/server/src/db/runMigrations.ts`), so there is nothing to run, a fresh
+database included. (Until 2026-09-30 the dev server used drizzle's own
+migrator, which could not get a fresh database past the enum migrations.)
 
 ## 6. Start the dev stack
 
@@ -219,7 +218,7 @@ lefthook's hooks never run — `just doctor` flags it).
 `CLAUDE.md`, which adds the Claude-only part). `.claude/settings.json`
 wires three hooks: files written are formatted (`tools/dev/format.sh
 --edit`, Prettier only — ESLint costs ~5 s a call), writes of secrets,
-lockfiles and generated files are refused, and a turn whose code content
+lockfiles and generated files are refused, and a turn whose content
 has not passed before runs `just check`. Green content is remembered by
 `tools/dev/check-cache.sh` (content fingerprints in `.git/claude-check-green`,
 one run at a time per clone), so the pre-push hook skips a tree the Stop hook
@@ -237,6 +236,8 @@ already checked. Subagents in
 - **Vite serves stale code after a `git pull`** — `touch` the affected file, or stop+start `pnpm dev`. Vite occasionally caches transformed modules across hard reloads.
 - **Editor logs `Hocuspocus: authentication token required`** — `VITE_BYPASS_AUTH` differs from `BYPASS_AUTH`. Set both to the same value.
 - **Pre-commit hooks fail with permission errors** — you ran `pnpm install` as root. Re-clone, install as a normal user.
+- **`minio-init` cannot pull `minio/mc`** — MinIO's images are gone from Docker Hub and quay (pull access denied, 2026-09). `just services` then creates the bucket with any `minio/mc` image already on the machine; with none at all, create `narrative-media` with another S3 client or a cached image from another machine.
+- **Two compose projects (`infra-*` and `narrative-*` containers)** — the compose file has been named `narrative` since 2026-08; containers started before that belong to a project called `infra`, with its own volumes, and hold the ports `just services` needs. Back up what you need, then `cd infra && docker compose -p infra --env-file ../.env down -v` (the Linux desktop was moved on 2026-09-30; its old data is in `backups/2026-09-30-infra-project/`, gitignored).
 - **Git hooks do not run after pulling the lefthook change (2026-09-30)** — husky had set `core.hooksPath=.husky/_`, which still points git at the deleted husky hooks. `just setup` (unsets it and runs `lefthook install`); `just doctor` reports it.
 - **`npx playwright install` fails on Ubuntu 26.04** — `ERROR: Playwright does not support chromium on ubuntu26.04-x64` (same for the ffmpeg download that video capture needs). Playwright ships no managed build for this OS release yet, so a plain `pnpm --filter web test:e2e` fails. Install Google Chrome and use `just e2e` / `just eval`, which switch to it by themselves (`tools/dev/playwright-env.sh`); by hand:
   ```bash

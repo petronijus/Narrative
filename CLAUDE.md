@@ -16,7 +16,7 @@ is yours.
     it — and so is a shell command that prints key material (`cat .env`, a
     resolved `compose config`); changing an existing database migration asks
     first;
-  - when you finish a turn whose code content has not passed `just check`
+  - when you finish a turn whose content (code, config and docs) has not passed `just check`
     before, it runs (~1 min; `tools/dev/check-cache.sh` remembers green
     content, so neither a repeat nor the push of that content runs it again);
     if it fails you get the output and must fix it before stopping. The rows

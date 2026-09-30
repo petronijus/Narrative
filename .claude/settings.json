@@ -22,11 +22,7 @@
       "Bash(git ls-files *)",
       "Bash(shellcheck *)"
     ],
-    "ask": [
-      "Bash(just deploy *)",
-      "Bash(just eval *)",
-      "Bash(just eval)"
-    ],
+    "ask": ["Bash(just deploy *)", "Bash(just eval *)", "Bash(just eval)"],
     "deny": [
       "Read(./.env)",
       "Read(./.env.local)",
