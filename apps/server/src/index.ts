@@ -24,10 +24,10 @@
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import cookie from '@fastify/cookie'
-import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { fileURLToPath } from 'url'
 import path from 'path'
 import { db, pool } from './db/client.js'
+import { runMigrations } from './db/runMigrations.js'
 import { runDataMigrations } from './services/dataMigrations.js'
 import { createHocuspocusServer } from './hocuspocus/index.js'
 import { registerHttpRoutes } from './http/registerRoutes.js'
@@ -116,9 +116,13 @@ if (isDev) {
   const __dirname = path.dirname(__filename)
   const migrationsFolder = path.resolve(__dirname, '../drizzle')
 
+  // The production migrator (db/runMigrations.ts): drizzle's own
+  // `migrate()` cannot bring a fresh database past the enum migrations.
   try {
-    await migrate(db, { migrationsFolder })
-    console.log('[server] Dev migrations applied')
+    const report = await runMigrations(pool, migrationsFolder, (line) =>
+      console.log(`[server] migration: ${line}`),
+    )
+    console.log(`[server] Dev migrations applied (${report.applied.length} new)`)
   } catch (err) {
     console.error('[server] Migration error (continuing anyway):', err)
   }

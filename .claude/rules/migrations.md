@@ -7,9 +7,10 @@ paths:
 # Database migrations (apps/server/drizzle/README.md)
 
 - Hand-written SQL, never `drizzle-kit generate`. A new file
-  `NNNN_name.sql` plus a `meta/_journal.json` entry with the next `idx` and
-  `when` = the current time (`date +%s%3N`): the dev server's drizzle
-  migrator skips an entry older than the newest applied one.
+  `NNNN_name.sql` plus a `meta/_journal.json` entry with the next `idx`
+  (`when` = the current time, informational). One migrator everywhere
+  (`src/db/runMigrations.ts`): the dev server on start and `db:migrate` in
+  production, each file in its own statements, tracked by hash.
 - An applied migration never changes — production tracks migrations by the
   hash of their SQL. Mirror the change in `src/db/schema.ts`.
 - Changes to documents are not SQL migrations: they go in
