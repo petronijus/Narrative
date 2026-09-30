@@ -8,8 +8,9 @@ every coding agent (Claude Code, Cursor, Codex, …); humans start at
 
 Read before changing code: `docs/testing-strategy.md` (what the suites
 cover), `docs/agents.md` (areas and their owners), `SETUP.md` (setup,
-toolchain, troubleshooting). The agentic phase A2 is planned in
-`docs/plans/a2-extraction.md` — its "Where we stand" section is the status.
+toolchain, troubleshooting). The agentic layer is planned in
+`docs/plans/agentic-layer.md` (A0–A2 done); the status and next steps are
+the "Where we stand" section of `docs/plans/a2-extraction.md`.
 
 ## Hard rules
 
@@ -84,7 +85,7 @@ below that match it.
 | Auth, sharing, folders, cascade-delete                                                                                                | `just e2e -g "destructive-flows"`                                                                                                                                                                  |
 | Yjs mutations, Hocuspocus, sync                                                                                                       | `just e2e -g "multi-client-collab"` (**flaky since 2026-09-26**: "three clients … converge" failed 6/6 on clean 0.9.29 and 2/6 with A0 — compare with a clean baseline before blaming your change) |
 | Bundle entry points, dynamic imports, vendor chunks                                                                                   | `just size` (**Tiptap chunk 12.6 kB over budget, pre-existing** — grow no chunk)                                                                                                                   |
-| Hot edit / awareness / doc-growth paths                                                                                               | `just load` (warns on > 20% drift from `tests/load/baselines.json`)                                                                                                                                |
+| Hot edit / awareness / doc-growth paths                                                                                               | `just load` (warns on > 20% drift from a local `baselines.json`, copied from `tests/load/baselines.example.json` after a clean run)                                                                |
 | Editor render path (FCP / LCP / TTI)                                                                                                  | `just lighthouse`                                                                                                                                                                                  |
 | `packages/slide-model/src/{mutations,slides}.ts` deep changes                                                                         | `just mutate` — **broken since 2026-09-26** (`@stryker-mutator/vitest-runner` 8.x vs vitest 4): say so instead of skipping silently                                                                |
 

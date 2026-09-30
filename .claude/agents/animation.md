@@ -87,7 +87,8 @@ See `docs/plans/a2-extraction.md`, the A2.9 entry, for the full decisions.
 - **It mirrors the compiler's `resolvePosition`.** Change how the compiler
   positions steps and you change `layoutAnimationSteps` in the same change;
   `src/__tests__/timelineLayout.test.ts` pins the two against each other
-  (moved here from `apps/web/src/ui/AnimationTimeline.layout.test.ts`).
+  (moved here in A2.9 from apps/web's `AnimationTimeline.layout.test.ts`,
+  since deleted).
 - **Known gap, not in that contract:** the compiler anchors an `onClick`
   pause at `tl.duration()` (the end of everything before it), the layout at
   the previous step's end. They differ after an overlapping `withPrevious`,

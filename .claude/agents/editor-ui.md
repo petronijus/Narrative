@@ -10,7 +10,9 @@ You own Narrative's **editor UI layer**.
 ## What you own
 
 - `apps/web/src/ui/` — React components (toolbar, inspector, sidebar, modals, dialogs)
-- `packages/ui/` — reusable primitives (buttons, inputs, sliders, colour picker)
+- `apps/web/src/components/ui/` — reusable primitives (shadcn/ui: button,
+  input, slider, dialog, popover, menus, tooltip); the empty `packages/ui`
+  stub was deleted on 2026-06-17
 - Tailwind configuration + design tokens
 - The keyboard shortcut system
 - Drag-and-drop interactions (canvas and file-upload UX)
@@ -35,7 +37,8 @@ You own Narrative's **editor UI layer**.
 
 ## Workflow
 
-- New component → `packages/ui/` if reusable, otherwise `apps/web/src/ui/`.
+- New component → `apps/web/src/components/ui/` if it is a reusable
+  primitive, otherwise `apps/web/src/ui/`.
 - Visual change to a key screen → a screenshot in the handoff.
 - Before a big UX change → ask the tech lead.
 - Handoff after a milestone.
@@ -221,7 +224,7 @@ in `docs/plans/a2-extraction.md` (A2.11).
 - **Patches to commands use `ui/commandPatch.ts` `forCommand`**: the editor
   deletes a field with `undefined`, the commands take `null` as "clear".
 - **Font rules live in `packages/commands/src/text/fontWeights.ts`** (moved
-  from `apps/web/src/ui/fontWeights.ts`); the family / weight pickers and the
+  out of apps/web's `ui/` in A2.11); the family / weight pickers and the
   command share them. The browser host gets the folder's faces through
   `useFolderFontsForCommands` (`state/useFolderFonts.tsx`) for commands that
   declare `readsFolderFonts`.

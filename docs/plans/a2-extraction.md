@@ -456,7 +456,7 @@ after the mechanism has been proven on simpler surfaces.
     collapsed caret now also removes the inline formatting of that
     attribute, as it always did from a selected box.
   - **The font rules moved to `packages/commands`** (`text/fontWeights.ts`,
-    was `apps/web/src/ui/fontWeights.ts`), so the pickers and the command
+    formerly in apps/web's `ui/`), so the pickers and the command
     share them. The server reads a folder's faces from its font assets
     (`agent/folderFonts.ts`); a family that is not a system stack with the
     faces unknown is refused (`conflict`), never guessed.

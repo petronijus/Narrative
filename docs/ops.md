@@ -179,8 +179,9 @@ pnpm load:growth     # 1000 objects, initial sync
 - Doc sync, 1000 objects: ~18 ms (threshold: < 3000 ms)
 - Encoded doc size: ~228 KB (threshold: < 1 MB)
 
-`tests/load/runAll.mjs` also compares against `tests/load/baselines.json` and
-warns on > 20 % drift. Breakdown: `docs/handoff/spike-b-yjs-scale.md`.
+`tests/load/runAll.mjs` also warns on > 20 % drift from a local
+`baselines.json` next to it, when there is one (not committed; copy
+`tests/load/baselines.example.json` after a clean run). Breakdown: `docs/handoff/spike-b-yjs-scale.md`.
 
 ---
 

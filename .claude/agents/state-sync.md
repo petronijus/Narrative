@@ -113,8 +113,14 @@ at the end of agentic-layer phase A0. Was Czech.)_
 7. **Every transaction names its origin.** An origin-less `doc.transact(fn)`
    wrapping slide-model mutations re-attributes them to `null` and takes them
    out of undo history; a bare `Y.Text.format` does the same. Four undo bugs
-   in A0 were this. Deliberately untracked writes get a named origin
-   (`apps/web/src/state/origins.ts`).
+   in A0 were this. Deliberately untracked writes get a named origin,
+   declared next to their writer: `SERVER_EDIT_ORIGIN`
+   (`apps/server/src/services/liveDocs.ts`), `TOKEN_PROPAGATION_ORIGIN`
+   (`apps/server/src/services/tokens.ts`), the server host's read and
+   hydration origins (`apps/server/src/agent/serverHost.ts`). Undo tracks
+   only `LOCAL_ORIGIN` (`packages/slide-model/src/mutations.ts`). (The
+   editor's own origins file went in A2.12a, 2026-09-30, when token
+   propagation moved to the server.)
 8. **A command checks every precondition before its first write.** A Yjs
    transaction cannot be rolled back; the contract suite runs every command
    against missing ids and asserts the doc is byte-for-byte unchanged.

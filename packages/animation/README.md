@@ -95,7 +95,8 @@ report each step's `start` from it (A2.9, 2026-09-29).
 A change to `resolvePosition` must change `layoutAnimationSteps` in the
 same change: `src/__tests__/timelineLayout.test.ts` compiles step sequences
 with `compileSteps` and checks every tween starts where the layout says
-(moved here from `apps/web/src/ui/AnimationTimeline.layout.test.ts`).
+(moved here in A2.9 from apps/web's `AnimationTimeline.layout.test.ts`,
+since deleted).
 
 `onClick` is outside that contract on purpose: the compiler anchors the
 click pause at `tl.duration()` (the end of everything before it), the
@@ -169,7 +170,8 @@ const PRESET_REGISTRY = new Map<AnimationPreset, PresetFactory>([
 export type AnimationPreset = 'fadeIn' | 'slideIn' | 'myPreset'
 ```
 
-4. Napsat unit test v `src/__tests__/presets/myPreset.test.ts`.
+4. Write its unit test next to the others in `src/__tests__/presets/`
+   (`myPreset.test.ts`).
 
 ---
 

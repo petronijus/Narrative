@@ -1,15 +1,28 @@
 # PPTX fixtures
 
-Drop real-world `.pptx` files here to feed the M28 spike + future import
-tests. Files in this directory are **not committed** — see `.gitignore`
-at the repo root.
+Drop real-world `.pptx` files here to check the importer and exporter
+against decks the test suite cannot carry. Files in this directory are
+**not committed** — see `.gitignore` at the repo root (client decks stay
+out of the repo; a shared one lives in the private overlay).
 
-## What to drop for the Phase 1 spike
+## What they are for
 
-The spike (`apps/server/src/scripts/pptxSpike.ts`, runnable via
-`pnpm --filter @narrative/server pptx:spike`) auto-picks up every
-`*.pptx` in this directory and runs the parser against it, printing
-per-file long-tail histograms.
+- **The round trip** — `just pptx-roundtrip <deck>` imports a deck, exports
+  it, imports the export and lists every difference
+  (`apps/server/src/scripts/pptxRoundtrip.ts`); the target is 0
+  differences. Run it on a real deck whenever `apps/server/src/pptx/`
+  changes (AGENTS.md → When to run what).
+- **The import fidelity capture** — `apps/web/e2e/pptx-import-fidelity.spec.ts`
+  imports `<name>.pptx` from here (`PPTX_FIDELITY_DECK=<name>`, needs the
+  dev stack) and screenshots every slide; with LibreOffice renders under
+  `reference/<name>/`, `tests/pptx-import/generate-report.mjs` stitches
+  both into a side-by-side HTML report. A diagnostic, not a regression
+  test.
+
+(The Phase 1 spike that used to read every deck here and report tag
+histograms, `pptxSpike.ts` in apps/server, was removed on 2026-09-23 when
+one OOXML translation replaced the pptxgenjs exporter; the round trip took
+its place.)
 
 To exercise the realistic input surface, drop:
 
@@ -21,16 +34,6 @@ To exercise the realistic input surface, drop:
    and rasterised effects.
 3. A **Keynote** export — File → Export To → PowerPoint. Keynote's
    exporter is conservative and skews toward shapes + text.
-
-Three samples are enough to validate the mapping table. More can be
-added later.
-
-## What the spike reports
-
-For each file: ZIP entry count, slide count, distinct XML tags, hits
-on the M28 mapping table (MVP-covered / deferred / unknown), per-slide
-shape + fill + rotation breakdown. The output report lands at
-`<tmp>/narrative-pptx-spike/spike-findings.md`.
 
 ## What a good fixture must exercise (added 2026-09-08, after 0.9.1)
 
@@ -54,9 +57,9 @@ Template-derived exports (PowerPoint's own bundled templates, corporate
 templates) satisfy all three; hand-built one-slide decks usually satisfy none.
 Regression tests: `apps/server/src/pptx/parser.test.ts`.
 
-## Beyond the spike
+## Committed coverage
 
-Once Phase 2/3 land, this directory becomes the home of the
-`*.snapshot.json` golden files for the import tests. At that point we
-may commit a small (single-digit MB) curated subset to make CI
-reproducible. For now, fixtures are caller-supplied.
+What must hold for every deck is tested without fixtures: the feature
+matrix round trip (`apps/server/src/pptx/roundtrip.test.ts`) and the
+ECMA-376 schema validation of every exported part
+(`apps/server/src/pptx/ooxml/validate.test.ts`).

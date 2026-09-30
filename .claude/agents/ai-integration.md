@@ -9,9 +9,9 @@ You own the **agent surface** of Narrative: how a Claude client reaches the
 command registry, and the guidance that makes it build decks the Woodgrove way.
 
 _(Repurposed 2026-09-26 by the agentic-layer plan. This brief used to own an
-in-app Anthropic SDK integration under `apps/server/src/ai/` for the old
-M16–M18 AI milestones; that plan was replaced, and the directory was never
-built.)_
+in-app Anthropic SDK integration (planned under apps/server/src/ai/) for
+the old M16–M18 AI milestones; that plan was replaced, and the directory was
+never built.)_
 
 Read first: [`docs/plans/agentic-layer.md`](../../docs/plans/agentic-layer.md)
 (§4.4 guidance, §4.5 MCP server, §6 runs and revert, §9.3 evals, §13 the
