@@ -29,7 +29,12 @@ import {
   finalizeMediaUpload,
   UploadRejected,
 } from '../media/finalizeUpload.js'
-import { canUseComponentMedia, mediaOriginalPath, type MediaOwner } from '../media/mediaOwner.js'
+import {
+  canReadComponentMedia,
+  canWriteComponentMedia,
+  mediaOriginalPath,
+  type MediaOwner,
+} from '../media/mediaOwner.js'
 import {
   classifyUpload,
   extensionFromMimeOrFilename,
@@ -52,7 +57,7 @@ import {
   tooLarge,
   unsupportedType,
 } from './errors.js'
-import { requireOwnedFolder } from './shared.js'
+import { requireFolderContentReader } from './shared.js'
 import { UploadSessionLimitError } from '../media/uploadSessions.js'
 import { LARGE_DOWNLOAD_TIMEOUT_MS, withBinarySource, type BinaryFile } from './binarySource.js'
 
@@ -126,9 +131,11 @@ export function createMediaService(deps: ServiceDeps): MediaService {
 
   /**
    * The caller may read (`viewer`) or delete (`owner`) the asset. A component
-   * master's picture or video: only the owner of the component's folder, for
-   * both — the one person who may edit the master; a share token never
-   * counts. A deck's asset: the deck role, share links included, as always.
+   * master's picture or video is read by whoever may read its folder's
+   * content — a member, or anyone with access to one of the folder's decks,
+   * a share link included, so a stamp shows on a shared deck — and deleted
+   * by an editor of the folder. A deck's asset: the deck role, share links
+   * included, as always.
    */
   async function requireAssetAccess(
     asset: { deckId: string | null; componentId?: string | null },
@@ -138,7 +145,11 @@ export function createMediaService(deps: ServiceDeps): MediaService {
   ): Promise<void> {
     const componentId = asset.componentId ?? null
     if (componentId !== null) {
-      if (!(await canUseComponentMedia(db, componentId, userId))) throw forbidden('Forbidden')
+      const allowed =
+        required === 'viewer'
+          ? await canReadComponentMedia(db, componentId, userId, shareToken)
+          : await canWriteComponentMedia(db, componentId, userId)
+      if (!allowed) throw forbidden('Forbidden')
       return
     }
     await requireDeckRole(asset.deckId, userId, shareToken, required)
@@ -162,8 +173,8 @@ export function createMediaService(deps: ServiceDeps): MediaService {
   }): Promise<MediaUploadResult> {
     const { userId, owner, source } = args
     // A deck's editor role is the caller's to check (the host, the routes);
-    // a master is its folder owner's, as its document is.
-    if ('componentId' in owner && !(await canUseComponentMedia(db, owner.componentId, userId))) {
+    // a master's media is its folder editors', as its document is.
+    if ('componentId' in owner && !(await canWriteComponentMedia(db, owner.componentId, userId))) {
       throw notFound('Component not found')
     }
     const remote = source.kind !== 'bytes'
@@ -362,7 +373,8 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     }
     // Legacy deck-scoped row (should have been migrated by 0009): no caller expects it.
     if (!asset.folderId) throw notFound('Font asset is not folder-scoped')
-    await requireOwnedFolder(db, asset.folderId, args.userId)
+    // A deck guest loads its folder's fonts too: the deck renders with them.
+    await requireFolderContentReader(db, asset.folderId, args.userId, { bypass: deps.bypass })
     return {
       assetId: asset.id,
       url: await presignGetUrl(asset.storageKey, FONT_URL_TTL_SEC),
@@ -398,7 +410,7 @@ export function createMediaService(deps: ServiceDeps): MediaService {
   }): Promise<UploadSessionInfo> {
     const { owner } = args
     if ('componentId' in owner) {
-      if (!(await canUseComponentMedia(db, owner.componentId, args.userId))) {
+      if (!(await canWriteComponentMedia(db, owner.componentId, args.userId))) {
         throw notFound('Component not found')
       }
     } else {

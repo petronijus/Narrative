@@ -3,12 +3,13 @@
  * See ../services.ts for the pattern: the /folders/:id/components and
  * /components/:id routes and the `component.*` commands call these methods.
  *
- * A component is folder-scoped: only the folder's owner may read or change
- * it. Its master is a Yjs document named `component:<id>` with the deck
+ * A component is folder-scoped: the folder's members read it (viewer) and
+ * change it (editor); a guest of one deck in the folder does not see it. Its master is a Yjs document named `component:<id>` with the deck
  * schema and exactly one slide (see slide-model/src/stampComponent.ts).
  */
 
 import type { SlideRef } from '../refs.js'
+import type { Role } from '../types.js'
 
 export interface ComponentRecord {
   id: string
@@ -88,7 +89,7 @@ export interface ComponentService {
    * animations of the subtree) become the master, the pictures and videos
    * they show are copied into the component, and links to the deck's
    * slides are removed. The slide is not changed. The deck must live in a
-   * folder the user owns.
+   * folder in which the user is an editor.
    */
   promote(args: {
     userId: string
@@ -109,10 +110,11 @@ export interface ComponentService {
   /**
    * Authorise opening `component:<id>` as a document (how an agent edits a
    * master with the ordinary document commands). Throws `not_found` /
-   * `forbidden`; on success returns the folder and the role (always owner).
+   * `forbidden`; on success returns the folder and the user's role in it
+   * (viewer reads the master, editor changes it).
    */
   access(args: {
     userId: string
     componentId: string
-  }): Promise<{ componentId: string; folderId: string; role: 'owner'; documentName: string }>
+  }): Promise<{ componentId: string; folderId: string; role: Role; documentName: string }>
 }

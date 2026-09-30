@@ -215,7 +215,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     shareLink: async () => null,
     asset: async () => null,
     componentInFolder: async () => null,
-    ownedFolder: async () => null,
+    memberFolder: async () => null,
     folderDeckCount: async () => 0,
   }
   // The database's decks.folder_id / components.folder_id, in memory; the

@@ -136,7 +136,7 @@ describe('POST /components/:id/insert-objects', () => {
     return app
   }
 
-  it("pastes a deck's objects into the master (the service checks the folder owner)", async () => {
+  it("pastes a deck's objects into the master (the service checks the editor role in its folder)", async () => {
     const app = await buildComponentApp()
     const res = await app.inject({
       method: 'POST',
@@ -153,7 +153,7 @@ describe('POST /components/:id/insert-objects', () => {
     })
   })
 
-  it("passes on the refusal for a master that is not the user's", async () => {
+  it('passes on the refusal for a master the user cannot see', async () => {
     insertObjectsFrom.mockRejectedValue(notFound("Component 'cmp1' not found"))
     const app = await buildComponentApp()
     const res = await app.inject({

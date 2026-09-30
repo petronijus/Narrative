@@ -52,14 +52,17 @@ import { components, decks, folders, mediaAssets } from '../db/schema.js'
 import { discardOwnedMedia, registerOwnedMedia } from '../pptx/importDeck.js'
 import { purgeComponentBucketPrefix } from '../media/bucketCleanup.js'
 import type { ServiceDeps } from './deps.js'
-import { badRequest, conflict, forbidden, notFound } from './errors.js'
+import { ServiceError, badRequest, conflict, forbidden, notFound } from './errors.js'
 import { readDocCopy, SERVER_EDIT_ORIGIN, writeLiveDoc } from './liveDocs.js'
-import { requireOwnedFolder } from './shared.js'
+import { requireFolderRole } from './shared.js'
 import { copyMedia, pointAssetsAt, referencedAssets, rewriteForTarget } from './deckInsert.js'
 import { componentRecord, MAX_COMPONENT_NAME } from './components.js'
 
-/** The folder of `deckId`, which the user must own: where the deck's components live. */
-async function requireOwnedDeckFolder(
+/**
+ * The folder of `deckId`, where the deck's components live and in which the
+ * user must be an editor to add one.
+ */
+async function requireEditableDeckFolder(
   deps: ServiceDeps,
   deckId: string,
   userId: string,
@@ -74,16 +77,22 @@ async function requireOwnedDeckFolder(
     throw conflict('The deck is in no folder, which is where components live')
   }
   try {
-    await requireOwnedFolder(deps.db, deck.folderId, userId)
-  } catch {
-    throw forbidden("Components belong to the folder's owner; this deck's folder is not yours")
+    await requireFolderRole(deps.db, deck.folderId, userId, 'editor', { bypass: deps.bypass })
+  } catch (err) {
+    // Say why a component cannot be made here; anything but a refusal passes through.
+    if (err instanceof ServiceError && err.code === 'forbidden') {
+      throw forbidden(
+        "Components belong to the deck's folder; adding one needs the editor role in it",
+      )
+    }
+    throw err
   }
   return deck.folderId
 }
 
 /**
  * POST /folders/:folderId/components: a new, empty component of a folder
- * the user owns — its row, then its empty master slide written through the
+ * the user is an editor of — its row, then its empty master slide written through the
  * sync server, so the master editor opens a master, not an empty document.
  * The row goes again when the master cannot be written.
  */
@@ -92,7 +101,7 @@ export async function createEmptyComponent(
   args: { userId: string; folderId: string; name: string },
 ): Promise<ComponentRecord> {
   const { db } = deps
-  await requireOwnedFolder(db, args.folderId, args.userId)
+  await requireFolderRole(db, args.folderId, args.userId, 'editor', { bypass: deps.bypass })
   const name = args.name.trim()
   if (name.length > MAX_COMPONENT_NAME) {
     throw badRequest(`name too long (max ${MAX_COMPONENT_NAME})`)
@@ -158,7 +167,7 @@ export async function promoteComponent(
   if (name.length > MAX_COMPONENT_NAME) {
     throw badRequest(`name too long (max ${MAX_COMPONENT_NAME})`)
   }
-  const folderId = await requireOwnedDeckFolder(deps, deckId, userId)
+  const folderId = await requireEditableDeckFolder(deps, deckId, userId)
 
   // The master, built from a live copy of the deck in a scratch document.
   const source = await readDocCopy(deps, 'deck', deckId)
@@ -260,7 +269,7 @@ export async function promoteComponent(
 
 /**
  * `component.stamp`'s load phase: `master` (read with the deck's rule — a
- * component of the deck's folder, which the user owns) with its media
+ * component of the deck's folder, in which the user is a member) with its media
  * copied into the deck and registered there. `discard` removes the copies
  * when the stamp is not written.
  */

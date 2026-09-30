@@ -13,6 +13,8 @@ import {
   closeDeckConnections,
   closeUserConnections,
   closeConnectionsForDocument,
+  closeShareTokenConnections,
+  closeUserConnectionsOnDocument,
 } from './connections.js'
 import { setHocuspocusInstance } from './presence.js'
 
@@ -141,6 +143,40 @@ describe('CONN-1 connection teardown helpers', () => {
     // A revoked user's sessions must NOT kick anonymous share-link viewers.
     expect(shareViewer.close).not.toHaveBeenCalled()
     expect(otherUser.close).not.toHaveBeenCalled()
+  })
+
+  it('closeShareTokenConnections closes the token on its deck and its folder document, nobody else', () => {
+    const onDeck = conn({
+      userId: 'share:tok-abcd',
+      shareToken: 'tok-abcdefgh',
+      deckIdResolved: 'd1',
+    })
+    const onFolder = conn({ userId: 'share:tok-abcd', shareToken: 'tok-abcdefgh', folderId: 'f1' })
+    const otherToken = conn({ userId: 'share:zzzz0000', shareToken: 'other', folderId: 'f1' })
+    const member = conn({ userId: 'u1', folderId: 'f1' })
+    setHocuspocusInstance(
+      fakeServer({ 'deck:d1': [onDeck], 'folder:f1': [onFolder, otherToken, member] }),
+    )
+
+    expect(closeShareTokenConnections('tok-abcdefgh')).toBe(2)
+    expect(onDeck.close).toHaveBeenCalledOnce()
+    expect(onFolder.close).toHaveBeenCalledOnce()
+    expect(otherToken.close).not.toHaveBeenCalled()
+    expect(member.close).not.toHaveBeenCalled()
+  })
+
+  it('closeUserConnectionsOnDocument closes one user on exactly that document', () => {
+    const target = conn({ userId: 'u1', folderId: 'f1' })
+    const otherUser = conn({ userId: 'u2', folderId: 'f1' })
+    const sameUserElsewhere = conn({ userId: 'u1', deckIdResolved: 'd1' })
+    setHocuspocusInstance(
+      fakeServer({ 'folder:f1': [target, otherUser], 'deck:d1': [sameUserElsewhere] }),
+    )
+
+    expect(closeUserConnectionsOnDocument('folder:f1', 'u1')).toBe(1)
+    expect(target.close).toHaveBeenCalledOnce()
+    expect(otherUser.close).not.toHaveBeenCalled()
+    expect(sameUserElsewhere.close).not.toHaveBeenCalled()
   })
 
   it('closeConnectionsForDocument closes every connection on exactly that doc', () => {

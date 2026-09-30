@@ -1,254 +1,174 @@
 /**
  * hocuspocus/auth.folder.test.ts
  *
- * Tests for Hocuspocus onAuthenticate logic when the documentName starts with
- * `folder:<id>` (M16 P2).
- *
- * Strategy: inline the auth routing logic (same pattern as auth.test.ts) and
- * mock resolveFolderAccess / resolveDeckAccess for isolation.
- *
- * Coverage:
- *   - folder:<id> + owner JWT → auth passes, readOnly=false
- *   - folder:<id> + non-owner JWT → throws 'Forbidden'
- *   - folder:<id> + share_token → throws 'Forbidden' (no share-link for folders)
- *   - folder:<id> + no token → throws 'Invalid credentials'
- *   - deck:<id> (existing path) still routes to resolveDeckAccess, not folder
+ * The real `onAuthenticate` hook (hocuspocus/authenticate.ts) on a
+ * `folder:<id>` document — the folder's token document — under folder
+ * sharing (docs/plans/folder-sharing.md): its members connect with their
+ * folder role, a guest of one of its decks (a deck grant or a share link to
+ * one of them) connects so a shared deck renders with its folder's tokens.
+ * Every connection is read-only, the owner's included: tokens change only
+ * through the server (services/tokens.ts), which writes over its own direct
+ * connection. resolveFolderContentAccess and the session lookup are mocked;
+ * the hook itself runs unchanged.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { JwtVerifier, JwtPayload } from '../auth/jwt.js'
-import type { DeckAccessResult, FolderAccessResult } from '../auth/permissions.js'
-import type { Database } from '../db/client.js'
-
-// ---------------------------------------------------------------------------
-// Mocks
-// ---------------------------------------------------------------------------
 
 vi.mock('../auth/permissions.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../auth/permissions.js')>()
   return {
     ...original,
     resolveDeckAccess: vi.fn(),
-    resolveFolderAccess: vi.fn(),
+    resolveFolderContentAccess: vi.fn(),
+    resolveComponentAccess: vi.fn(),
   }
 })
 
-const { resolveDeckAccess, resolveFolderAccess } = await import('../auth/permissions.js')
-const deckMock = resolveDeckAccess as ReturnType<typeof vi.fn>
-const folderMock = resolveFolderAccess as ReturnType<typeof vi.fn>
-
-// ---------------------------------------------------------------------------
-// Inline auth logic (mirrors hocuspocus/index.ts onAuthenticate)
-// Re-inlined here so the test doesn't spin up a WS server.
-// ---------------------------------------------------------------------------
-
-interface AuthContext {
-  userId?: string
-  deckId?: string
-  folderId?: string
-  role?: string
-}
-
-interface AuthInput {
-  documentName: string
-  token?: string | undefined
-  shareToken?: string | null | undefined
-  connection: { context: AuthContext; readOnly: boolean }
-}
-
-async function runAuthenticate(
-  input: AuthInput,
-  opts: {
-    verifier: JwtVerifier | null
-    bypass: boolean
-    db: Database
-  },
-): Promise<void> {
-  const { documentName, token, shareToken, connection } = input
-  const { verifier, bypass, db } = opts
-
-  let userId: string | null = null
-
-  if (shareToken) {
-    // share-token path
-  } else if (bypass) {
-    userId = 'dev-user'
-  } else if (token) {
-    if (!verifier) throw new Error('Invalid credentials')
-    try {
-      const payload = await verifier.verify(token)
-      userId = payload.sub
-    } catch {
-      throw new Error('Invalid credentials')
-    }
-  } else {
-    throw new Error('Invalid credentials')
-  }
-
-  if (documentName.startsWith('folder:')) {
-    const folderId = documentName.slice('folder:'.length)
-
-    if (!userId) {
-      throw new Error('Forbidden')
-    }
-
-    const access = await resolveFolderAccess(db, { folderId, userId })
-    if (!access) {
-      throw new Error('Forbidden')
-    }
-
-    connection.context.userId = userId
-    connection.context.folderId = folderId
-    connection.context.role = access.role
-    connection.readOnly = false
-    return
-  }
-
-  // Deck path
-  const access = await resolveDeckAccess(db, {
-    deckId: documentName,
-    userId,
-    shareToken: shareToken ?? null,
-  })
-
-  if (!access) throw new Error('Forbidden')
-
-  const displayId = userId ?? `share:${shareToken?.slice(0, 8)}`
-  connection.context.userId = displayId
-  connection.context.deckId = documentName
-  connection.context.role = access.role
-  connection.readOnly = access.role === 'viewer'
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function makeVerifier(result: JwtPayload | 'throw'): JwtVerifier {
+vi.mock('../auth/session.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../auth/session.js')>()
   return {
-    verify: vi.fn(async (token: string) => {
-      if (result === 'throw') throw new Error('bad')
-      if (token === 'valid') return result
-      throw new Error('bad token')
-    }),
+    ...original,
+    lookupSession: vi.fn(async (_db: unknown, raw: string) =>
+      raw === 'good-session'
+        ? { userSub: 'member', userEmail: 'm@example.com', userName: null }
+        : null,
+    ),
   }
+})
+
+import {
+  resolveComponentAccess,
+  resolveDeckAccess,
+  resolveFolderContentAccess,
+} from '../auth/permissions.js'
+import { createOnAuthenticate, type WsAuthPayload } from './authenticate.js'
+import type { Database } from '../db/client.js'
+
+const folderAccess = vi.mocked(resolveFolderContentAccess)
+const deckAccess = vi.mocked(resolveDeckAccess)
+const componentAccess = vi.mocked(resolveComponentAccess)
+
+const DB = {} as Database
+const COOKIE = { cookie: 'narrative_session=good-session' }
+
+function payload(over: Partial<WsAuthPayload> & { params?: Record<string, string> } = {}) {
+  const { params, ...rest } = over
+  return {
+    documentName: 'folder:folder-1',
+    token: 'cookie',
+    requestParameters: new URLSearchParams(params ?? {}),
+    requestHeaders: COOKIE,
+    connection: { readOnly: false },
+    context: {} as Record<string, unknown>,
+    ...rest,
+  } satisfies WsAuthPayload
 }
 
-function makeMockDb(): Database {
-  return {} as unknown as Database
-}
+const authenticate = (bypass = false) => createOnAuthenticate({ db: DB, bypass })
 
-function makeConnection(): { context: AuthContext; readOnly: boolean } {
-  return { context: {}, readOnly: false }
-}
+beforeEach(() => {
+  vi.clearAllMocks()
+})
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+describe('onAuthenticate — folder:<id>', () => {
+  it('connects a folder editor read-only, with their role in the context', async () => {
+    folderAccess.mockResolvedValueOnce({ role: 'editor', via: 'folder' })
+    const data = payload()
+    await authenticate()(data)
 
-describe('onAuthenticate — folder:<id> routing', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
-  it('folder doc + owner JWT → auth passes, readOnly=false, context.folderId set', async () => {
-    const access: FolderAccessResult = { role: 'owner', reason: 'direct' }
-    folderMock.mockResolvedValueOnce(access)
-
-    const conn = makeConnection()
-    await runAuthenticate(
-      { documentName: 'folder:folder-1', token: 'valid', shareToken: null, connection: conn },
-      { verifier: makeVerifier({ sub: 'user-owner' }), bypass: false, db: makeMockDb() },
-    )
-
-    expect(conn.context.folderId).toBe('folder-1')
-    expect(conn.context.role).toBe('owner')
-    expect(conn.context.userId).toBe('user-owner')
-    expect(conn.readOnly).toBe(false)
-    // resolveDeckAccess should NOT have been called
-    expect(deckMock).not.toHaveBeenCalled()
-    // resolveFolderAccess should have been called with correct args
-    expect(folderMock).toHaveBeenCalledWith(makeMockDb(), {
+    expect(folderAccess).toHaveBeenCalledWith(DB, {
       folderId: 'folder-1',
-      userId: 'user-owner',
-    })
-  })
-
-  it('folder doc + non-owner JWT (resolveFolderAccess returns null) → throws Forbidden', async () => {
-    folderMock.mockResolvedValueOnce(null)
-
-    const conn = makeConnection()
-    await expect(
-      runAuthenticate(
-        { documentName: 'folder:folder-1', token: 'valid', shareToken: null, connection: conn },
-        { verifier: makeVerifier({ sub: 'other-user' }), bypass: false, db: makeMockDb() },
-      ),
-    ).rejects.toThrow('Forbidden')
-
-    expect(conn.readOnly).toBe(false) // never set (threw before)
-  })
-
-  it('folder doc + share_token → throws Forbidden (share-link not supported for folders)', async () => {
-    const conn = makeConnection()
-    await expect(
-      runAuthenticate(
-        {
-          documentName: 'folder:folder-1',
-          token: undefined,
-          shareToken: 'some-share-token',
-          connection: conn,
-        },
-        { verifier: null, bypass: false, db: makeMockDb() },
-      ),
-    ).rejects.toThrow('Forbidden')
-
-    expect(folderMock).not.toHaveBeenCalled()
-  })
-
-  it('folder doc + no token → throws Invalid credentials', async () => {
-    const conn = makeConnection()
-    await expect(
-      runAuthenticate(
-        { documentName: 'folder:folder-1', connection: conn },
-        { verifier: null, bypass: false, db: makeMockDb() },
-      ),
-    ).rejects.toThrow('Invalid credentials')
-  })
-
-  it('folder doc + bypass mode → uses dev-user, passes if owner', async () => {
-    folderMock.mockResolvedValueOnce({ role: 'owner', reason: 'direct' })
-
-    const conn = makeConnection()
-    await runAuthenticate(
-      { documentName: 'folder:folder-bypass', connection: conn },
-      { verifier: null, bypass: true, db: makeMockDb() },
-    )
-
-    expect(conn.context.userId).toBe('dev-user')
-    expect(conn.context.folderId).toBe('folder-bypass')
-    expect(folderMock).toHaveBeenCalledWith(makeMockDb(), {
-      folderId: 'folder-bypass',
-      userId: 'dev-user',
-    })
-  })
-
-  it('deck:<id> doc name still routes to resolveDeckAccess, not folder', async () => {
-    // Reset between tests
-    deckMock.mockResolvedValueOnce({ role: 'owner', reason: 'direct' } as DeckAccessResult)
-    folderMock.mockReset()
-
-    const conn = makeConnection()
-    await runAuthenticate(
-      { documentName: 'deck:deck-1', token: 'valid', shareToken: null, connection: conn },
-      { verifier: makeVerifier({ sub: 'user-1' }), bypass: false, db: makeMockDb() },
-    )
-
-    expect(conn.context.deckId).toBe('deck:deck-1')
-    expect(folderMock).not.toHaveBeenCalled()
-    expect(deckMock).toHaveBeenCalledWith(makeMockDb(), {
-      deckId: 'deck:deck-1',
-      userId: 'user-1',
+      userId: 'member',
       shareToken: null,
     })
+    expect(data.context).toMatchObject({ userId: 'member', folderId: 'folder-1', role: 'editor' })
+    expect(data.context).not.toHaveProperty('shareToken')
+    expect(data.connection.readOnly).toBe(true)
+    expect(deckAccess).not.toHaveBeenCalled()
+    expect(componentAccess).not.toHaveBeenCalled()
+  })
+
+  it('connects a folder owner read-only: the server writes the token document', async () => {
+    folderAccess.mockResolvedValueOnce({ role: 'owner', via: 'folder' })
+    const data = payload()
+    await authenticate()(data)
+    expect(data.context).toMatchObject({ role: 'owner' })
+    expect(data.connection.readOnly).toBe(true)
+  })
+
+  it('connects a folder viewer read-only', async () => {
+    folderAccess.mockResolvedValueOnce({ role: 'viewer', via: 'folder' })
+    const data = payload()
+    await authenticate()(data)
+    expect(data.context).toMatchObject({ role: 'viewer' })
+    expect(data.connection.readOnly).toBe(true)
+  })
+
+  it('connects a guest of one of its decks read-only, so the deck renders with its tokens', async () => {
+    folderAccess.mockResolvedValueOnce({ role: 'viewer', via: 'deck' })
+    const data = payload()
+    await authenticate()(data)
+    expect(data.context).toMatchObject({ userId: 'member', folderId: 'folder-1', role: 'viewer' })
+    expect(data.connection.readOnly).toBe(true)
+  })
+
+  it('connects a share link to one of its decks read-only, carrying the token for revocation', async () => {
+    folderAccess.mockResolvedValueOnce({ role: 'viewer', via: 'deck' })
+    const data = payload({ requestHeaders: {}, params: { share_token: 'tok-abcdefgh-rest' } })
+    await authenticate()(data)
+
+    expect(folderAccess).toHaveBeenCalledWith(DB, {
+      folderId: 'folder-1',
+      userId: null,
+      shareToken: 'tok-abcdefgh-rest',
+    })
+    expect(data.context).toMatchObject({
+      userId: 'share:tok-abcd',
+      folderId: 'folder-1',
+      role: 'viewer',
+      shareToken: 'tok-abcdefgh-rest',
+    })
+    expect(data.connection.readOnly).toBe(true)
+  })
+
+  it('refuses a user with no access to the folder or any of its decks', async () => {
+    folderAccess.mockResolvedValueOnce(null)
+    const data = payload()
+    await expect(authenticate()(data)).rejects.toThrow('Forbidden')
+    expect(data.context).toEqual({})
+  })
+
+  it('refuses a share link that leads to no deck of this folder', async () => {
+    folderAccess.mockResolvedValueOnce(null)
+    await expect(
+      authenticate()(payload({ requestHeaders: {}, params: { share_token: 'elsewhere' } })),
+    ).rejects.toThrow('Forbidden')
+  })
+
+  it('refuses a connection without credentials before any lookup', async () => {
+    await expect(authenticate()(payload({ requestHeaders: {} }))).rejects.toThrow(
+      'Invalid credentials',
+    )
+    expect(folderAccess).not.toHaveBeenCalled()
+  })
+
+  it('resolves BYPASS_AUTH as dev-user', async () => {
+    folderAccess.mockResolvedValueOnce({ role: 'owner', via: 'folder' })
+    const data = payload({ requestHeaders: {} })
+    await authenticate(true)(data)
+    expect(folderAccess).toHaveBeenCalledWith(DB, {
+      folderId: 'folder-1',
+      userId: 'dev-user',
+      shareToken: null,
+    })
+    expect(data.context).toMatchObject({ userId: 'dev-user' })
+  })
+
+  it('leaves deck:<id> documents to resolveDeckAccess', async () => {
+    deckAccess.mockResolvedValueOnce({ role: 'owner', reason: 'direct' })
+    const data = payload({ documentName: 'deck:deck-1' })
+    await authenticate()(data)
+    expect(data.context).toMatchObject({ deckIdResolved: 'deck-1' })
+    expect(folderAccess).not.toHaveBeenCalled()
   })
 })

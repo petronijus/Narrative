@@ -36,7 +36,13 @@ import { TOKEN_PROPAGATION_ORIGIN, createTokensService, ensureFolderTokens } fro
 
 const USER = 'u1'
 const FOLDER = 'f1'
-const folderRow = { id: FOLDER, ownerUserId: USER, name: 'Client' }
+const folderRow = { id: FOLDER, ownerUserId: 'someone-else', name: 'Client' }
+/**
+ * requireFolderRole's two answers for one token write: the folder, then the
+ * caller's role in it — an editor of someone else's folder (folder sharing:
+ * editors change the folder's tokens).
+ */
+const asEditor: unknown[][] = [[folderRow], [{ role: 'editor' }]]
 
 let hp: Hocuspocus
 let persistence: MemoryPersistence
@@ -142,7 +148,7 @@ describe('token writes', () => {
   it('adds a token to the live folder document', async () => {
     store('folder', FOLDER, folderDoc())
     const live = await openDoc('folder', FOLDER)
-    const { tokens } = service([[folderRow]])
+    const { tokens } = service([...asEditor])
     const { tokenId } = await tokens.create({
       userId: USER,
       folderId: FOLDER,
@@ -163,7 +169,7 @@ describe('token writes', () => {
     store('folder', FOLDER, doc)
     const live = await openDoc('folder', FOLDER)
     const origins = originsOf(live)
-    const { tokens } = service([[folderRow]])
+    const { tokens } = service([...asEditor])
     const err = await serviceErrorOf(
       tokens.create({
         userId: USER,
@@ -179,7 +185,7 @@ describe('token writes', () => {
   it('refuses to delete a built-in text style, deletes others', async () => {
     store('folder', FOLDER, folderDoc())
     const live = await openDoc('folder', FOLDER)
-    const { tokens } = service([[folderRow], [folderRow], [folderRow]])
+    const { tokens } = service([...asEditor, ...asEditor, ...asEditor])
     const builtin = await serviceErrorOf(
       tokens.delete({ userId: USER, folderId: FOLDER, category: 'textStyles', tokenId: 'title' }),
     )
@@ -209,7 +215,7 @@ describe('token writes', () => {
   it('keeps text style names unique in the folder (they are applied by name)', async () => {
     store('folder', FOLDER, folderDoc())
     const live = await openDoc('folder', FOLDER)
-    const { tokens } = service([[folderRow], [folderRow], [folderRow]])
+    const { tokens } = service([...asEditor, ...asEditor, ...asEditor])
     const taken = await serviceErrorOf(
       tokens.create({
         userId: USER,
@@ -240,16 +246,37 @@ describe('token writes', () => {
     expect(readFolderTokens(live).textStyles['body']?.name).toBe('BODY')
   })
 
-  it('refuses another user', async () => {
-    const { tokens } = service([[{ ...folderRow, ownerUserId: 'someone-else' }]])
-    const err = await serviceErrorOf(
-      tokens.create({
-        userId: USER,
-        folderId: FOLDER,
-        category: 'colors',
-        fields: { name: 'X', value: '#000000' },
-      }),
-    )
+  it('refuses a user outside the folder, and a viewer of it', async () => {
+    for (const roleRows of [[], [{ role: 'viewer' }]]) {
+      const { tokens, db } = service([[folderRow], roleRows])
+      const err = await serviceErrorOf(
+        tokens.create({
+          userId: USER,
+          folderId: FOLDER,
+          category: 'colors',
+          fields: { name: 'X', value: '#000000' },
+        }),
+      )
+      expect(err.status).toBe(403)
+      expect(db.writes).toEqual([])
+    }
+  })
+})
+
+describe('token reads', () => {
+  it("lists the folder's tokens for a guest of one of its decks: the deck renders with them", async () => {
+    store('folder', FOLDER, folderDoc())
+    await openDoc('folder', FOLDER)
+    // The folder; no role in it; a deck grant on one of its decks.
+    const { tokens, db } = service([[{ id: FOLDER }], [], [{ deckId: 'd1' }]])
+    const out = await tokens.list({ userId: 'guest', folderId: FOLDER })
+    expect(out.colors['brand']).toMatchObject({ name: 'Brand' })
+    expect(db.remaining().selects).toBe(0)
+  })
+
+  it('refuses the list to someone with no access to the folder or any of its decks', async () => {
+    const { tokens } = service([[{ id: FOLDER }], [], [], []])
+    const err = await serviceErrorOf(tokens.list({ userId: 'stranger', folderId: FOLDER }))
     expect(err.status).toBe(403)
   })
 })
@@ -266,7 +293,7 @@ describe('token propagation', () => {
     const origins = originsOf(openDeck)
 
     const { tokens } = service([
-      [folderRow],
+      ...asEditor,
       // The folder's decks and component masters.
       [{ id: 'd_open' }, { id: 'd_closed' }],
       [{ id: 'c1' }],
@@ -311,7 +338,7 @@ describe('token propagation', () => {
     await openDoc('folder', FOLDER)
     const deck = await openDoc('deck', 'd1')
     // Ownership for the change, then for reading which styles use the colour.
-    const { tokens } = service([[folderRow], [folderRow], [{ id: 'd1' }], []])
+    const { tokens } = service([...asEditor, ...asEditor, [{ id: 'd1' }], []])
     const { propagated } = await tokens.update({
       userId: USER,
       folderId: FOLDER,
@@ -334,7 +361,7 @@ describe('token propagation', () => {
     const deck = await openDoc('deck', 'd1')
     const folderWrites = originsOf(folder)
     const deckWrites = originsOf(deck)
-    const { tokens } = service([[folderRow], [folderRow], [folderRow], [{ id: 'd1' }], []])
+    const { tokens } = service([...asEditor, ...asEditor, ...asEditor, [{ id: 'd1' }], []])
     // A rename is written, but reaches no deck.
     await tokens.update({
       userId: USER,
@@ -376,10 +403,15 @@ describe('token propagation', () => {
     const deck = await openDoc('deck', 'd1')
     const deckWrites = originsOf(deck)
     // Three changes at once: the first run, then ONE run for the other two.
+    // The three folder checks run concurrently: three folder reads, then
+    // three role reads.
     const { tokens } = service([
       [folderRow],
       [folderRow],
       [folderRow],
+      [{ role: 'editor' }],
+      [{ role: 'editor' }],
+      [{ role: 'editor' }],
       [{ id: 'd1' }],
       [],
       [{ id: 'd1' }],
@@ -405,7 +437,7 @@ describe('token propagation', () => {
   it('refuses invalid fields and remembers who made a style', async () => {
     store('folder', FOLDER, folderDoc())
     const live = await openDoc('folder', FOLDER)
-    const { tokens } = service([[folderRow]])
+    const { tokens } = service([...asEditor])
     const bad = await serviceErrorOf(
       tokens.update({
         userId: USER,

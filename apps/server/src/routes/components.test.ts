@@ -5,12 +5,16 @@
  * Uses a mock Drizzle DB — no real Postgres.
  *
  * Auth: all tests run with BYPASS_AUTH=true semantics (dev-user synthesized).
+ * Access is the caller's role in the folder (folder_permissions — folder
+ * sharing, docs/plans/folder-sharing.md): viewers list components, editors
+ * create, rename and delete them.
  *
  * Coverage:
- *   GET  /folders/:folderId/components     → returns components for folder owner; 403 on wrong user; 404 on missing folder
- *   POST /folders/:folderId/components     → creates component (server-minted id); optional name; 403/404 guards
- *   PATCH /components/:id                  → renames; 400 on empty name; 403/404 guards
- *   DELETE /components/:id                 → 204 on success; 403/404 guards
+ *   GET  /folders/:folderId/components     → any member (a viewer too); 403 outside the folder; 404 on missing folder
+ *   POST /folders/:folderId/components     → creates component (server-minted id); optional name; editor needed; 403/404 guards
+ *   PATCH /components/:id                  → renames; 400 on empty name; editor needed; 403/404 guards
+ *   DELETE /components/:id                 → 204 on success; editor needed; 403/404 guards
+ *   PUT /components/:id/thumbnail          → editor needed; 403/404 guards before the body check
  */
 
 import { describe, it, expect, vi } from 'vitest'
@@ -18,6 +22,8 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import { registerComponentRoutes } from './components.js'
 import { registerAuthPlugin } from '../auth/fastifyAuth.js'
 import type { Database } from '../db/client.js'
+import type { DeckRole } from '../auth/permissions.js'
+import { getTableName, type Table } from 'drizzle-orm'
 
 // ---------------------------------------------------------------------------
 // Mock imgproxyUrl so tests don't need IMGPROXY_KEY/SALT
@@ -60,17 +66,31 @@ interface MockComponent {
 // Mock DB factory
 // ---------------------------------------------------------------------------
 
+/**
+ * A one-folder world, answering each select by the table it reads: the
+ * folder, its component, the caller's `folder_permissions` rows (`role`: the
+ * dev user's role in the folder, null for none) and no component media.
+ */
 function makeMockDb(
   opts: {
     folders?: MockFolder[]
     components?: MockComponent[]
+    role?: DeckRole | null
   } = {},
 ) {
   const folderStore: MockFolder[] = opts.folders ? [...opts.folders] : []
   const componentStore: MockComponent[] = opts.components ? [...opts.components] : []
+  const role = opts.role === undefined ? 'owner' : opts.role
   let lastInserted: unknown = null
   let lastUpdated: unknown = null
   let deletedId: string | null = null
+
+  const rowsFor = (table: string): unknown[] => {
+    if (table === 'folders') return folderStore.slice(0, 1)
+    if (table === 'components') return componentStore
+    if (table === 'folder_permissions') return role === null ? [] : [{ role }]
+    return []
+  }
 
   const db = {
     _lastInserted: () => lastInserted,
@@ -79,24 +99,19 @@ function makeMockDb(
     _componentStore: componentStore,
 
     select: vi.fn().mockImplementation(() => {
+      let table = ''
+      const rows = () => Promise.resolve(rowsFor(table))
       const chain = {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockImplementation(() => {
-              // Heuristic: if querying folders, return first folder; components → first component
-              const result = folderStore[0] ?? componentStore[0] ?? null
-              return Promise.resolve(result ? [result] : [])
-            }),
-            orderBy: vi.fn().mockResolvedValue([...componentStore]),
-            // Awaited as is: a component's media rows (none in these tests).
-            then: (onOk: (v: unknown) => unknown) => Promise.resolve([]).then(onOk),
-          }),
-          orderBy: vi.fn().mockResolvedValue([...componentStore]),
-          limit: vi.fn().mockImplementation(() => {
-            const result = folderStore[0] ?? null
-            return Promise.resolve(result ? [result] : [])
-          }),
+        from: vi.fn().mockImplementation((t: Table) => {
+          table = getTableName(t)
+          return chain
         }),
+        where: vi.fn().mockImplementation(() => chain),
+        orderBy: vi.fn().mockImplementation(rows),
+        limit: vi.fn().mockImplementation(async () => (await rows()).slice(0, 1)),
+        // Awaited as is: the folder_permissions rows, a component's media rows.
+        then: (onOk: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) =>
+          rows().then(onOk, onErr),
       }
       return chain
     }),
@@ -159,6 +174,7 @@ const ownerFolder: MockFolder = {
   createdAt: new Date('2026-01-01'),
 }
 
+/** Created by someone else: the dev user's access comes from their folder_permissions row only. */
 const foreignFolder: MockFolder = {
   id: 'folder-2',
   ownerUserId: 'other-user',
@@ -194,9 +210,22 @@ describe('GET /folders/:folderId/components', () => {
     expect(Array.isArray(body)).toBe(true)
   })
 
-  it('returns 403 for a foreign folder', async () => {
-    // Mock: folder exists but owned by other-user
-    const db = makeMockDb({ folders: [foreignFolder] })
+  it("lists a shared folder's components for a viewer of it", async () => {
+    const db = makeMockDb({
+      folders: [foreignFolder],
+      components: [{ ...existingComponent, folderId: 'folder-2' }],
+      role: 'viewer',
+    })
+    const app = await buildApp(db)
+
+    const res = await app.inject({ method: 'GET', url: '/folders/folder-2/components' })
+
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as { id: string }[]).map((c) => c.id)).toEqual(['comp-1'])
+  })
+
+  it('returns 403 for a folder the user is not a member of', async () => {
+    const db = makeMockDb({ folders: [foreignFolder], role: null })
     const app = await buildApp(db)
 
     const res = await app.inject({
@@ -276,8 +305,8 @@ describe('POST /folders/:folderId/components', () => {
     expect(body.name).toBe('Card')
   })
 
-  it('returns 403 for a folder owned by another user', async () => {
-    const db = makeMockDb({ folders: [foreignFolder] })
+  it('returns 403 for a folder the user is not a member of', async () => {
+    const db = makeMockDb({ folders: [foreignFolder], role: null })
     const app = await buildApp(db)
 
     const res = await app.inject({
@@ -288,6 +317,37 @@ describe('POST /folders/:folderId/components', () => {
     })
 
     expect(res.statusCode).toBe(403)
+  })
+
+  it('refuses a viewer of the folder: creating a component needs the editor role', async () => {
+    const db = makeMockDb({ folders: [foreignFolder], role: 'viewer' })
+    const app = await buildApp(db)
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/folders/folder-2/components',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ name: 'Test' }),
+    })
+
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toMatchObject({ error: expect.stringMatching(/editor/) })
+    expect(db._lastInserted()).toBeNull()
+  })
+
+  it('creates a component in a shared folder for an editor of it', async () => {
+    const db = makeMockDb({ folders: [foreignFolder], role: 'editor' })
+    const app = await buildApp(db)
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/folders/folder-2/components',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ name: 'Shared card' }),
+    })
+
+    expect(res.statusCode).toBe(201)
+    expect(res.json()).toMatchObject({ folderId: 'folder-2', name: 'Shared card' })
   })
 
   it('returns 404 for a missing folder', async () => {
@@ -311,8 +371,6 @@ describe('POST /folders/:folderId/components', () => {
 
 describe('PATCH /components/:id', () => {
   it('renames a component owned by the current user', async () => {
-    // checkComponentOwner needs: component lookup → folder lookup
-    // We craft the mock to respond consistently.
     const db = makeMockDb({ folders: [ownerFolder], components: [existingComponent] })
     const app = await buildApp(db)
 
@@ -355,8 +413,35 @@ describe('PATCH /components/:id', () => {
     expect(res.statusCode).toBe(400)
   })
 
+  it('renames it for an editor of the folder, and refuses a viewer', async () => {
+    const shared = { ...existingComponent, folderId: 'folder-2' }
+    const editorDb = makeMockDb({ folders: [foreignFolder], components: [shared], role: 'editor' })
+    const editor = await (
+      await buildApp(editorDb)
+    ).inject({
+      method: 'PATCH',
+      url: '/components/comp-1',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ name: 'Renamed' }),
+    })
+    expect(editor.statusCode).toBe(200)
+
+    const viewerDb = makeMockDb({ folders: [foreignFolder], components: [shared], role: 'viewer' })
+    const viewer = await (
+      await buildApp(viewerDb)
+    ).inject({
+      method: 'PATCH',
+      url: '/components/comp-1',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ name: 'Renamed' }),
+    })
+    expect(viewer.statusCode).toBe(403)
+    expect(viewer.json()).toMatchObject({ error: expect.stringMatching(/editor/) })
+    expect(viewerDb._lastUpdated()).toBeNull()
+  })
+
   it('returns 404 when component does not exist', async () => {
-    // Empty stores — select returns nothing, so checkComponentOwner returns 'not_found'
+    // Empty stores — the component lookup finds nothing
     const db = makeMockDb({ folders: [], components: [] })
     const app = await buildApp(db)
 
@@ -391,8 +476,25 @@ describe('DELETE /components/:id', () => {
     expect(purgeExplicitKeys).toHaveBeenCalledWith([], expect.anything())
   })
 
+  it('deletes it for an editor of the folder, and refuses a viewer', async () => {
+    const shared = { ...existingComponent, folderId: 'folder-2' }
+    const viewerDb = makeMockDb({ folders: [foreignFolder], components: [shared], role: 'viewer' })
+    const viewer = await (
+      await buildApp(viewerDb)
+    ).inject({ method: 'DELETE', url: '/components/comp-1' })
+    expect(viewer.statusCode).toBe(403)
+    expect(viewerDb._deletedId()).toBeNull()
+
+    const editorDb = makeMockDb({ folders: [foreignFolder], components: [shared], role: 'editor' })
+    const editor = await (
+      await buildApp(editorDb)
+    ).inject({ method: 'DELETE', url: '/components/comp-1' })
+    expect(editor.statusCode).toBe(204)
+    expect(editorDb._deletedId()).toBe('deleted')
+  })
+
   it('returns 404 when component does not exist', async () => {
-    // Empty stores — select returns nothing, so checkComponentOwner returns 'not_found'
+    // Empty stores — the component lookup finds nothing
     const db = makeMockDb({ folders: [], components: [] })
     const app = await buildApp(db)
 
@@ -404,14 +506,13 @@ describe('DELETE /components/:id', () => {
     expect(res.statusCode).toBe(404)
   })
 
-  it('returns 403 when component belongs to another user folder', async () => {
-    // Component exists but folder is owned by other-user
+  it('returns 403 when the component is in a folder the user is not a member of', async () => {
     const foreignComp: MockComponent = {
       ...existingComponent,
       id: 'comp-foreign',
       folderId: 'folder-2',
     }
-    const db = makeMockDb({ folders: [foreignFolder], components: [foreignComp] })
+    const db = makeMockDb({ folders: [foreignFolder], components: [foreignComp], role: null })
     const app = await buildApp(db)
 
     const res = await app.inject({
@@ -420,5 +521,59 @@ describe('DELETE /components/:id', () => {
     })
 
     expect(res.statusCode).toBe(403)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// PUT /components/:id/thumbnail — refusals come from requireComponentRole
+// (editor in the component's folder), answered through sendServiceError,
+// before the body is even looked at.
+// ---------------------------------------------------------------------------
+
+describe('PUT /components/:id/thumbnail', () => {
+  const put = async (db: Database) =>
+    (await buildApp(db)).inject({
+      method: 'PUT',
+      url: '/components/comp-1/thumbnail',
+      payload: { dataUrl: 'data:image/png;base64,AAAA' },
+    })
+
+  it('refuses a viewer of the folder with 403 naming the editor role', async () => {
+    const res = await put(
+      makeMockDb({ folders: [foreignFolder], components: [existingComponent], role: 'viewer' }),
+    )
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toEqual({ error: 'Forbidden: this needs the editor role in the folder' })
+  })
+
+  it('refuses a user outside the folder with 403', async () => {
+    const res = await put(
+      makeMockDb({ folders: [foreignFolder], components: [existingComponent], role: null }),
+    )
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toEqual({ error: 'Forbidden' })
+  })
+
+  it('answers a component that does not exist with 404', async () => {
+    const res = await put(makeMockDb({ folders: [], components: [] }))
+    expect(res.statusCode).toBe(404)
+    expect(res.json()).toEqual({ error: 'Component not found' })
+  })
+
+  it('lets an editor through to the body check', async () => {
+    const db = makeMockDb({
+      folders: [foreignFolder],
+      components: [existingComponent],
+      role: 'editor',
+    })
+    const res = await (
+      await buildApp(db)
+    ).inject({
+      method: 'PUT',
+      url: '/components/comp-1/thumbnail',
+      payload: { dataUrl: '' },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toEqual({ error: 'dataUrl is required' })
   })
 })

@@ -44,7 +44,7 @@ export interface TokenService {
   /**
    * Every reference to one folder token across the folder's decks, its
    * component masters and (for colours) its text styles. Read from the
-   * stored documents; folder owner only.
+   * stored documents; folder members only.
    */
   usages(args: {
     userId: string
@@ -52,12 +52,12 @@ export interface TokenService {
     category: TokenCategory
     tokenId: string
   }): Promise<{ usages: TokenUsage[] }>
-  /** The folder's tokens. Folder owner only. */
+  /** The folder's tokens: its members and the guests of its decks read them. */
   list(args: { userId: string; folderId: string }): Promise<FolderTokensSnapshot>
   /**
    * Add a token to the folder document. `fields` are validated here
    * (`parseNewTokenFields`, `invalid_input` otherwise) — whoever calls.
-   * Refuses a colour past the folder's cap. Folder owner only.
+   * Refuses a colour past the folder's cap. Folder editors only.
    */
   create(args: {
     userId: string

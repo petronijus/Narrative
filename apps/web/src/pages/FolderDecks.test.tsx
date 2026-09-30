@@ -68,8 +68,14 @@ vi.mock('../api/client.js', () => ({
 const FOLDER_ID = 'folder-work'
 
 const MOCK_FOLDERS: FolderSummary[] = [
-  { id: 'folder-drafts', name: 'Drafts', deckCount: 2, createdAt: '2026-01-01T00:00:00Z' },
-  { id: FOLDER_ID, name: 'Work', deckCount: 2, createdAt: '2026-01-02T00:00:00Z' },
+  {
+    id: 'folder-drafts',
+    name: 'Drafts',
+    deckCount: 2,
+    createdAt: '2026-01-01T00:00:00Z',
+    role: 'owner',
+  },
+  { id: FOLDER_ID, name: 'Work', deckCount: 2, createdAt: '2026-01-02T00:00:00Z', role: 'owner' },
 ]
 
 const MOCK_DECKS: DeckSummary[] = [

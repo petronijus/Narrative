@@ -16,6 +16,12 @@
  * - When slideIds shrinks, removed debouncers are cleaned up and their entries
  *   are removed from the returned Map.
  * - Slide deletion (slideId disappears from slideIds): entry removed from Map.
+ * - The folder's colour tokens are an input too (renderer/colourResolver.ts):
+ *   when the resolver changes — the tokens arrive after the first renders,
+ *   or someone edits the palette — the slides whose token colours resolve
+ *   differently are re-rendered. The first slide's thumbnail is uploaded as
+ *   the deck's preview (SlidesPanel), so one rendered before the tokens
+ *   arrived must not stay the last one.
  *
  * Usage:
  *   const thumbnails = useSlideThumbnails(slideIds)
@@ -26,6 +32,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { subscribeToDeckSlideEvents } from '@narrative/slide-model'
 import { yMapToPlainObject } from '@narrative/slide-model'
 import { createThumbnailRenderer } from '../renderer/thumbnails.js'
+import { subscribeColourResolver, tokenColoursDiffer } from '../renderer/colourResolver.js'
 import type { ThumbnailRenderer } from '../renderer/thumbnails.js'
 import type { SlideMutationContext } from '@narrative/slide-model'
 import type { SlideObject, SlideBackground } from '@narrative/shared'
@@ -301,6 +308,27 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
     },
     [enqueue, pump],
   )
+
+  // ---------------------------------------------------------------------------
+  // Colour tokens — re-render the slides a resolver change repaints
+  // ---------------------------------------------------------------------------
+
+  // Every rendered (or queued) thumbnail resolved its token colours with the
+  // resolver installed at the time; each change is handled here as it is
+  // installed, so comparing the previous and the next resolution finds
+  // exactly the stale ones. Urgent: a stale thumbnail shows wrong colours,
+  // and the first slide's is about to become the deck's preview. A render in
+  // flight is re-run after it ends (enqueue), as for an edit.
+  useEffect(() => {
+    return subscribeColourResolver(({ prev, next }) => {
+      for (const slideId of trackedSlideIdsRef.current) {
+        const objects = latestObjectsRef.current.get(slideId)
+        if (objects !== undefined && tokenColoursDiffer(objects, prev, next)) {
+          scheduleRender(slideId)
+        }
+      }
+    })
+  }, [scheduleRender])
 
   // ---------------------------------------------------------------------------
   // Ensure per-slide debouncer exists (idempotent)

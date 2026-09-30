@@ -123,7 +123,8 @@ const assetRow = (id: string, owner: { deckId?: string; componentId?: string }) 
   createdAt: new Date(),
 })
 
-const ownedFolder = { id: 'f1', ownerUserId: 'u1', name: 'Client' }
+/** The deck's folder, created by someone else: u1's role in it is their folder_permissions row. */
+const sharedFolder = { id: 'f1', ownerUserId: 'someone-else', name: 'Client' }
 
 function objectsOfMaster(doc: Y.Doc): SlideObject[] {
   return listSlides(hydrateSlideDoc(doc))[0]!.objects
@@ -135,7 +136,8 @@ describe('promoteComponent', () => {
     const script = scriptedDb({
       selects: [
         [{ folderId: 'f1' }], // the deck's folder
-        [ownedFolder], // …which the user owns
+        [sharedFolder], // …which exists
+        [{ role: 'editor' }], // …and in which the user is an editor
         [assetRow('a_deck', { deckId: 'deck1' })], // media the promoted objects show
       ],
     })
@@ -185,20 +187,37 @@ describe('promoteComponent', () => {
     await deck.disconnect()
   })
 
-  it("refuses a deck whose folder is not the user's, before reading the deck", async () => {
+  it("refuses a user who is not an editor of the deck's folder (a viewer, an outsider), before reading the deck", async () => {
     await seedDeck()
-    const script = scriptedDb({
-      selects: [[{ folderId: 'f1' }], [{ ...ownedFolder, ownerUserId: 'someone-else' }]],
-    })
+    for (const roleRows of [[{ role: 'viewer' }], []]) {
+      const script = scriptedDb({ selects: [[{ folderId: 'f1' }], [sharedFolder], roleRows] })
+      const err = await serviceErrorOf(
+        promoteComponent(
+          { db: script.db, log: quietLog, hocuspocus: () => hp },
+          { userId: 'u1', deckId: 'deck1', slide: 'S1', objects: ['pic'], name: 'X' },
+        ),
+      )
+      expect(err.status).toBe(403)
+      expect(err.message).toBe(
+        "Components belong to the deck's folder; adding one needs the editor role in it",
+      )
+      expect(script.writes).toEqual([])
+    }
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('passes a missing deck folder through as 404, not as the component refusal', async () => {
+    // Only a refusal becomes the component-specific 403; any other error keeps its own answer.
+    const script = scriptedDb({ selects: [[{ folderId: 'f1' }], []] })
     const err = await serviceErrorOf(
       promoteComponent(
         { db: script.db, log: quietLog, hocuspocus: () => hp },
         { userId: 'u1', deckId: 'deck1', slide: 'S1', objects: ['pic'], name: 'X' },
       ),
     )
-    expect(err.status).toBe(403)
+    expect(err.status).toBe(404)
+    expect(err.message).toBe('Folder not found')
     expect(script.writes).toEqual([])
-    expect(send).not.toHaveBeenCalled()
   })
 
   it('refuses a deck in no folder: components live in folders', async () => {
@@ -214,7 +233,9 @@ describe('promoteComponent', () => {
 
   it('refuses an object the slide does not have, writing nothing', async () => {
     await seedDeck()
-    const script = scriptedDb({ selects: [[{ folderId: 'f1' }], [ownedFolder]] })
+    const script = scriptedDb({
+      selects: [[{ folderId: 'f1' }], [sharedFolder], [{ role: 'editor' }]],
+    })
     await expect(
       promoteComponent(
         { db: script.db, log: quietLog, hocuspocus: () => hp },

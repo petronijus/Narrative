@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // token. Mock the teardown helper so we can assert the call shape without a
 // running Hocuspocus instance.
 vi.mock('../hocuspocus/connections.js', () => ({
-  closeDeckConnections: vi.fn(() => 0),
+  closeShareTokenConnections: vi.fn(() => 0),
 }))
 
 import {
@@ -23,7 +23,7 @@ import {
   listShareLinks,
   type ShareLinkRow,
 } from './shareLinks.js'
-import { closeDeckConnections } from '../hocuspocus/connections.js'
+import { closeShareTokenConnections } from '../hocuspocus/connections.js'
 
 // ---------------------------------------------------------------------------
 // In-memory share_links store
@@ -286,8 +286,8 @@ describe('revokeShareLink', () => {
     expect(store[0]!.revoked).toBe(true)
   })
 
-  it('closes live WS connections for the revoked token on that deck (CONN-1)', async () => {
-    vi.mocked(closeDeckConnections).mockClear()
+  it('closes every live WS connection made with the revoked token — the deck and its folder document (CONN-1)', async () => {
+    vi.mocked(closeShareTokenConnections).mockClear()
     const db = {
       update: vi.fn().mockReturnValue({
         set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) }),
@@ -296,7 +296,7 @@ describe('revokeShareLink', () => {
 
     await revokeShareLink(db as never, 'tok-abc', 'deck-1')
 
-    expect(closeDeckConnections).toHaveBeenCalledWith('deck-1', { shareToken: 'tok-abc' })
+    expect(closeShareTokenConnections).toHaveBeenCalledWith('tok-abc')
   })
 
   it('does not revoke a link belonging to a different deck (IDOR guard)', async () => {

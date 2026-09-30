@@ -6,8 +6,15 @@
  * These functions are the authoritative source of truth for:
  *   - Granting / revoking explicit per-user roles on a deck
  *   - Listing who has access to a deck
- *   - Resolving a user's effective role (direct grant → owner fallback → share link)
+ *   - Resolving a user's effective role on a deck: the highest of its own
+ *     grant, the role in the deck's folder (folder sharing — a folder member
+ *     has that role on every deck in it), the owner fallback, a share link
+ *   - Resolving a user's role in a folder and on its components, and whether
+ *     they may read the folder's shared content (tokens, fonts, component
+ *     media) through one of its decks
  *   - Checking whether a user meets a minimum required role
+ *
+ * Folder sharing: docs/plans/folder-sharing.md.
  *
  * Consumed by (phase 2):
  *   - Fastify route middleware (pre-handler hooks)
@@ -16,9 +23,9 @@
  * See also: auth/shareLinks.ts for share-link CRUD.
  */
 
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { deckPermissions, decks, folders, components } from '../db/schema.js'
+import { components, deckPermissions, decks, folderPermissions } from '../db/schema.js'
 import { findShareLink } from './shareLinks.js'
 
 // ---------------------------------------------------------------------------
@@ -30,7 +37,18 @@ export type DeckRole = 'owner' | 'editor' | 'viewer'
 export interface DeckAccessResult {
   role: DeckRole
   /** How access was determined. Useful for audit logging / UI hints. */
-  reason: 'direct' | 'share-link' | 'owner-fallback'
+  reason: 'direct' | 'folder' | 'share-link'
+}
+
+/** The higher of two resolved roles, keeping its reason (null counts as no access; a tie keeps `a`). */
+function higher<T extends { role: DeckRole }>(a: T | null, b: T | null): T | null {
+  if (a === null || b === null) return a ?? b
+  return roleLevel[b.role] > roleLevel[a.role] ? b : a
+}
+
+/** The higher of two roles (null counts as no access). */
+export function higherRole(a: DeckRole | null, b: DeckRole | null): DeckRole | null {
+  return higher(a === null ? null : { role: a }, b === null ? null : { role: b })?.role ?? null
 }
 
 // ---------------------------------------------------------------------------
@@ -116,16 +134,16 @@ export async function listPermissions(db: Database, deckId: string): Promise<Per
 // ---------------------------------------------------------------------------
 
 /**
- * Resolves the effective role a principal has on a deck.
+ * Resolves the effective role a principal has on a deck: the highest of
+ * (null when none applies, or the deck does not exist)
+ *   1. the user's own deck_permissions row (a deck's creator has one —
+ *      migration 0031 wrote it for decks older than the rule);
+ *   2. the user's role in the deck's folder (folder sharing);
+ *   3. the role of a share link to this deck.
+ * `decks.owner_user_id` grants nothing: it records who created the deck.
+ * The deck row and both grants come in one query.
  *
- * Resolution order:
- *   1. If userId is provided, look up deck_permissions. Return the explicit role if found.
- *   2. If userId matches decks.owner_user_id, return 'owner' (owner-fallback for
- *      decks created before M10 that don't have a deck_permissions row yet).
- *   3. If shareToken is provided, delegate to findShareLink. Return the link's role.
- *   4. Return null — no access.
- *
- * @param args.userId     Google OIDC 'sub' claim, or null for unauthenticated access via share link.
+ * @param args.userId     the signed-in user, or null for an anonymous share-link visit.
  * @param args.shareToken Optional share link token from query string.
  */
 export async function resolveDeckAccess(
@@ -133,45 +151,35 @@ export async function resolveDeckAccess(
   args: { deckId: string; userId: string | null; shareToken?: string | null },
 ): Promise<DeckAccessResult | null> {
   const { deckId, userId, shareToken } = args
+  let best: DeckAccessResult | null = null
 
-  // 1. Explicit deck_permissions row
   if (userId) {
     const [row] = await db
-      .select()
-      .from(deckPermissions)
-      .where(and(eq(deckPermissions.deckId, deckId), eq(deckPermissions.userId, userId)))
-      .limit(1)
-
-    if (row) {
-      return { role: row.role as DeckRole, reason: 'direct' }
-    }
-
-    // 2. Owner fallback — covers decks created before M10 that lack a permissions row
-    const [deck] = await db
-      .select({ ownerUserId: decks.ownerUserId })
+      .select({ deckRole: deckPermissions.role, folderRole: folderPermissions.role })
       .from(decks)
+      .leftJoin(
+        deckPermissions,
+        and(eq(deckPermissions.deckId, decks.id), eq(deckPermissions.userId, userId)),
+      )
+      .leftJoin(
+        folderPermissions,
+        and(eq(folderPermissions.folderId, decks.folderId), eq(folderPermissions.userId, userId)),
+      )
       .where(eq(decks.id, deckId))
       .limit(1)
-
-    if (!deck) {
-      // Deck doesn't exist
-      return null
-    }
-
-    if (deck.ownerUserId === userId) {
-      return { role: 'owner', reason: 'owner-fallback' }
-    }
+    // Deck doesn't exist
+    if (!row) return null
+    if (row.deckRole) best = { role: row.deckRole as DeckRole, reason: 'direct' }
+    if (row.folderRole) best = higher(best, { role: row.folderRole as DeckRole, reason: 'folder' })
   }
 
-  // 3. Share link
   if (shareToken) {
     const link = await findShareLink(db, shareToken)
-    if (link && link.deckId === deckId) {
-      return { role: link.role, reason: 'share-link' }
-    }
+    if (link && link.deckId === deckId)
+      best = higher(best, { role: link.role, reason: 'share-link' })
   }
 
-  return null
+  return best
 }
 
 // ---------------------------------------------------------------------------
@@ -179,20 +187,15 @@ export async function resolveDeckAccess(
 // ---------------------------------------------------------------------------
 
 export interface ComponentAccessResult {
-  role: 'owner'
-  reason: 'direct'
+  role: DeckRole
+  reason: 'folder'
 }
 
 /**
- * Resolves whether a userId may access a component's Hocuspocus Y.Doc.
- *
- * A component is folder-scoped: only the owning folder's owner may connect.
- * Resolution:
- *   1. Look up components.folder_id.
- *   2. Delegate to resolveFolderAccess with that folderId.
- *
- * Returns { role: 'owner', reason: 'direct' } on success, or null on deny.
- * `userId` must be non-null — share-link access is not supported.
+ * The user's role on a component: their role in the component's folder
+ * (viewer reads the master, editor changes it). A deck-only guest has none.
+ * Returns null on deny; `userId` must be non-null — a share link never
+ * reaches a component.
  */
 export async function resolveComponentAccess(
   db: Database,
@@ -212,9 +215,7 @@ export async function resolveComponentAccess(
     folderId: row.folderId,
     userId: args.userId,
   })
-
-  if (!folderAccess) return null
-  return { role: 'owner', reason: 'direct' }
+  return folderAccess === null ? null : { role: folderAccess.role, reason: 'folder' }
 }
 
 /**
@@ -247,33 +248,87 @@ export async function checkDeckPermission(
 // ---------------------------------------------------------------------------
 
 export interface FolderAccessResult {
-  role: 'owner'
+  role: DeckRole
   reason: 'direct'
 }
 
 /**
- * Resolves whether a userId may access a folder's Hocuspocus Y.Doc.
+ * The user's role in a folder — their `folder_permissions` row (folder
+ * sharing; the creator is the first owner, migration 0030). A member sees
+ * everything in the folder with that role. `alsoAs` lists further user ids
+ * that count as the same person (BYPASS_AUTH's demo user, services/shared.ts
+ * `ownerIdsFor`); the highest role wins.
  *
- * Folders have a single owner; no per-folder ACL table exists yet.
- * Rule: only the folder's `owner_user_id` may connect.
- *
- * Returns { role: 'owner', reason: 'direct' } on success, or null on deny.
- * `userId` must be non-null — share-link access to folder docs is not supported.
+ * Returns null on deny. `userId` must be non-null — share links never reach
+ * a folder.
  */
 export async function resolveFolderAccess(
   db: Database,
-  args: { folderId: string; userId: string | null },
+  args: { folderId: string; userId: string | null; alsoAs?: readonly string[] | undefined },
 ): Promise<FolderAccessResult | null> {
   if (!args.userId) return null
+  const ids = [args.userId, ...(args.alsoAs ?? [])]
+  const rows = await db
+    .select({ role: folderPermissions.role })
+    .from(folderPermissions)
+    .where(
+      and(eq(folderPermissions.folderId, args.folderId), inArray(folderPermissions.userId, ids)),
+    )
+  let best: FolderAccessResult | null = null
+  for (const r of rows) best = higher(best, { role: r.role as DeckRole, reason: 'direct' })
+  return best
+}
 
-  const [row] = await db
-    .select({ ownerUserId: folders.ownerUserId })
-    .from(folders)
-    .where(eq(folders.id, args.folderId))
-    .limit(1)
+/** How someone may read a folder's shared content (tokens, fonts, component media). */
+export interface FolderContentAccess {
+  role: DeckRole
+  /** `folder`: a member, with their folder role; `deck`: a guest of one of its decks, read-only. */
+  via: 'folder' | 'deck'
+}
 
-  if (!row) return null
-  if (row.ownerUserId !== args.userId) return null
-
-  return { role: 'owner', reason: 'direct' }
+/**
+ * Whether the user may READ the content a folder shares with all its decks —
+ * its tokens, its fonts, its components' pictures and videos — and with what
+ * role: a folder member with their folder role; anyone with access to a deck
+ * in the folder (a deck grant, or a share link to one of its decks) as a
+ * viewer, so a shared deck renders with its folder's styles and shows its
+ * stamped components. Writing that content needs a folder role.
+ */
+export async function resolveFolderContentAccess(
+  db: Database,
+  args: {
+    folderId: string
+    userId: string | null
+    shareToken?: string | null | undefined
+    alsoAs?: readonly string[] | undefined
+  },
+): Promise<FolderContentAccess | null> {
+  const member = await resolveFolderAccess(db, args)
+  if (member) return { role: member.role, via: 'folder' }
+  if (args.userId) {
+    const [guest] = await db
+      .select({ deckId: deckPermissions.deckId })
+      .from(deckPermissions)
+      .innerJoin(decks, eq(decks.id, deckPermissions.deckId))
+      .where(
+        and(
+          inArray(deckPermissions.userId, [args.userId, ...(args.alsoAs ?? [])]),
+          eq(decks.folderId, args.folderId),
+        ),
+      )
+      .limit(1)
+    if (guest) return { role: 'viewer', via: 'deck' }
+  }
+  if (args.shareToken) {
+    const link = await findShareLink(db, args.shareToken)
+    if (link) {
+      const [deck] = await db
+        .select({ folderId: decks.folderId })
+        .from(decks)
+        .where(eq(decks.id, link.deckId))
+        .limit(1)
+      if (deck?.folderId === args.folderId) return { role: 'viewer', via: 'deck' }
+    }
+  }
+  return null
 }

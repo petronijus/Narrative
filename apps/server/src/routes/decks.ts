@@ -66,8 +66,8 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
   // GET /decks — list decks accessible to the authenticated user
   //
   // Optional query param: ?folderId=<id>
-  //   When provided, returns only decks in that folder. Folder ownership is
-  //   verified; attempting to filter by another user's folder returns 403.
+  //   When provided, returns only decks in that folder. The caller must be a
+  //   member of the folder; filtering by a folder they are not in returns 403.
   // ---------------------------------------------------------------------------
   app.get('/decks', { preHandler: authPreHandler }, async (request, reply) => {
     const query = request.query as Record<string, string>

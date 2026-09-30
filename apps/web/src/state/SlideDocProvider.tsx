@@ -65,6 +65,7 @@ import type { SlideDocContextValue, WsStatus } from './slideDocContext.js'
 import { markWsConnected, markWsSynced } from './loadTimings.js'
 import { whenProviderSaved } from './providerSaved.js'
 import { whenComponentDocSaved } from './componentDocCache.js'
+import { hocuspocusAuthOptions } from './hocuspocusAuth.js'
 
 const HOCUSPOCUS_URL = import.meta.env['VITE_HOCUSPOCUS_URL'] ?? 'ws://localhost:3002'
 const PEER_ID_STORAGE_KEY = 'narrative:peerId'
@@ -218,18 +219,9 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     const peerId = getOrCreatePeerId()
     const localUser: PeerUser = localPeerUser(peerId, user?.name)
 
-    // M10: share_token from URL query params — passed as WS parameter for the
-    // anonymous viewer path.
-    // 2026-05: cookie-based auth. The `narrative_session` HttpOnly cookie on
-    // the WS upgrade carries the real identity; `token: 'cookie'` is a
-    // sentinel that triggers HocuspocusProvider's auth-frame so the server's
-    // onAuthenticate hook runs (server ignores the value and reads the
-    // cookie). See `docs/adr/0005-server-side-session-cookies.md`.
-    const searchParams = new URLSearchParams(location.search)
-    const shareToken = searchParams.get('share_token')
-
-    const authOptions =
-      shareToken !== null ? { parameters: { share_token: shareToken } } : { token: 'cookie' }
+    // The session cookie, or on a share-link visit the page's share_token
+    // (state/hocuspocusAuth.ts — the auth frame is always sent).
+    const authOptions = hocuspocusAuthOptions(location.search)
 
     // Last non-null local awareness state, kept so a reconnect can restore
     // it (see restoredLocalState). Fed by the awareness 'update' listener

@@ -10,8 +10,8 @@
  *      document: a Hocuspocus direct connection skips `onAuthenticate`, so a
  *      document opened before this check would be an IDOR.
  *        deck      → the user's role on the deck (share links never apply)
- *        component → the user's role on the master (its folder's owner)
- *        folder    → the user's role on the folder (its owner)
+ *        component → the user's role on the master (their role in its folder)
+ *        folder    → the user's role in the folder (folder_permissions)
  *        user      → owner of their own account
  *      No access → `forbidden`, and nothing is opened. A role below the
  *      command's → `forbidden` too, still before any document is loaded.
@@ -250,7 +250,7 @@ const NO_LOOKUPS: ConfirmationLookups = {
   shareLink: async () => null,
   asset: async () => null,
   componentInFolder: async () => null,
-  ownedFolder: async () => null,
+  memberFolder: async () => null,
   folderDeckCount: async () => 0,
 }
 

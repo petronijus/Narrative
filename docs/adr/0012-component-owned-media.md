@@ -1,6 +1,6 @@
 # ADR 0012 — A component owns its media; media is copied whenever it crosses an owner
 
-**Status**: Accepted (2026-09-30, A2.12b; to ship in 0.10.15). Petr chose the model — master pictures belong to the component, a stamp arrives as a remote change (Delete removes it, Ctrl+Z does not) — on 2026-09-30; the storage quota and a confirmation for stamping into a shared deck are open (see Consequences).
+**Status**: Accepted (2026-09-30, A2.12b; to ship in 0.10.15). Petr chose the model — master pictures belong to the component, a stamp arrives as a remote change (Delete removes it, Ctrl+Z does not) — on 2026-09-30; the storage quota and a confirmation for stamping into a shared deck are open (see Consequences). **Decision 2 superseded by [ADR 0013](0013-folder-sharing-roles.md)** (folder roles: component media is read by the folder's members and the guests of its decks, written by its editors); inside one folder, stamps will link the component's media instead of copying it (ADR 0013, folder-sharing step 2).
 **Scope**: `media_assets` and `upload_sessions` (migrations 0027–0029),
 `apps/server/src/media/` (`mediaOwner.ts`, `tus.ts`, `routes.ts`,
 `uploadSessions.ts`, `bucketCleanup.ts`),

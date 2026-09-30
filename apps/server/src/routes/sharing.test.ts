@@ -22,6 +22,7 @@ import { registerAuthPlugin } from '../auth/fastifyAuth.js'
 import type { Database } from '../db/client.js'
 import type { DeckRole, DeckAccessResult, PermissionRow } from '../auth/permissions.js'
 import type { ShareLinkRow } from '../auth/shareLinks.js'
+import { scriptedDb } from '../test-support/scriptedDb.js'
 
 // ---------------------------------------------------------------------------
 // Mock auth modules — so no Drizzle queries run in route tests
@@ -37,6 +38,8 @@ vi.mock('../auth/permissions.js', async (importOriginal) => {
     listPermissions: vi.fn(),
     grantPermission: vi.fn(),
     revokePermission: vi.fn(),
+    // After a revoke: does the user still reach the deck's folder another way?
+    resolveFolderContentAccess: vi.fn(),
     roleAtLeast: original.roleAtLeast, // keep real implementation for role checks
   }
 })
@@ -431,18 +434,13 @@ describe('DELETE /decks/:id/permissions/:userId', () => {
       { userId: 'alice', role: 'owner', grantedAt: now, grantedBy: 'dev-user' },
     ])
 
-    // The DELETE route queries deckPermissions directly (not listPermissions).
-    // We need to mock the DB select that the route uses for owner count check.
-    // Since we fully mocked permissions.js functions, the route's direct db.select
-    // still runs. We need a real db mock for that specific query.
-    // Simplest: mock the db passed to registerSharingRoutes for the owner-count select.
-    const db = {
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([{ userId: 'dev-user' }, { userId: 'alice' }]),
-        }),
-      }),
-    } as unknown as Database
+    // The DELETE route queries deckPermissions directly (not listPermissions)
+    // for the owner count, then the deck's folder — whose token document
+    // the revoked user leaves when this deck was their way into it.
+    const { db } = scriptedDb({
+      selects: [[{ userId: 'dev-user' }, { userId: 'alice' }], [{ folderId: 'f1' }]],
+    })
+    vi.mocked(permissions.resolveFolderContentAccess).mockResolvedValue(null)
 
     const app = Fastify({ logger: false })
     registerAuthPlugin(app, { bypass: true, db })
@@ -456,6 +454,14 @@ describe('DELETE /decks/:id/permissions/:userId', () => {
     })
 
     expect(res.statusCode).toBe(204)
+    expect(mockRevokePermission).toHaveBeenCalledWith(expect.anything(), {
+      deckId: 'deck-1',
+      userId: 'alice',
+    })
+    expect(permissions.resolveFolderContentAccess).toHaveBeenCalledWith(expect.anything(), {
+      folderId: 'f1',
+      userId: 'alice',
+    })
   })
 
   it('returns 409 when revoking the last owner', async () => {

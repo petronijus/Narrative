@@ -15,12 +15,20 @@ import { BlurFilter, type Container, type Filter } from 'pixi.js'
 import { DropShadowFilter } from 'pixi-filters'
 import type { ShadowStyle } from '@narrative/shared'
 import { resolveColour } from './colourResolver.js'
+import { markRenderDirty } from './RenderScheduler.js'
 
 interface FilterSlots {
   blur?: BlurFilter
   blurPx?: number
   shadow?: DropShadowFilter
   shadowData?: ShadowStyle
+  /**
+   * The colour the installed shadow filter was built with — `shadowData.color`
+   * resolved. A token colour can resolve differently later with the same
+   * `shadowData` (the folder's tokens arrived or changed), so this, not the
+   * TokenRef's identity, is what decides whether the filter is stale.
+   */
+  shadowColour?: number
   /**
    * Pending rAF handle when filter install/update has been deferred.
    * Cancelled by destroyFilterEffects so teardown doesn't race with a
@@ -114,23 +122,27 @@ function installFilterEffectsNow(
   // filter's identity; mutating `.color` / `.blur` / `.offset` on a
   // live instance desyncs those bind groups and the next render crashes
   // in BindGroup.setResource. Allocating a fresh filter is cheap.
-  const shadowChanged = shadowStyleDifferent(slots.shadowData, shadow)
+  const shadowColour = shadow !== undefined ? resolveColour(shadow.color) : undefined
+  const shadowChanged =
+    shadowStyleDifferent(slots.shadowData, shadow) || shadowColour !== slots.shadowColour
   const blurChanged =
     slots.blurPx !== (blur ?? 0) || (blur === undefined) !== (slots.blur === undefined)
+  const installed = { shadow: slots.shadow, blur: slots.blur }
 
   if (shadowChanged) {
     if (slots.shadow !== undefined) {
       slots.shadow.destroy()
       delete slots.shadow
       delete slots.shadowData
+      delete slots.shadowColour
     }
-    if (shadow !== undefined) {
+    if (shadow !== undefined && shadowColour !== undefined) {
       const blurPx = Math.max(0, shadow.blur)
       // Pixi 8.17's optimized blur halves strength per pass; higher
       // quality (more passes) eliminates visible banding in the
       // shadow gradient.
       const filter = new DropShadowFilter({
-        color: resolveColour(shadow.color),
+        color: shadowColour,
         alpha: shadow.opacity,
         blur: blurPx,
         offset: { x: shadow.offsetX, y: shadow.offsetY },
@@ -140,6 +152,7 @@ function installFilterEffectsNow(
       filter.resolution = Math.min(2, window.devicePixelRatio || 1)
       slots.shadow = filter
       slots.shadowData = { ...shadow }
+      slots.shadowColour = shadowColour
     }
   }
 
@@ -167,6 +180,28 @@ function installFilterEffectsNow(
   }
 
   if (shadowChanged || blurChanged) rebuildFilterList(container)
+  // This runs on its own frame, after the mutation that asked for it; the
+  // scheduler's frame may already have been drawn by then, and with
+  // `autoStart: false` nothing else would put the new filter on screen.
+  // Only when a filter really came or went: most installs (an object without
+  // shadow or blur) change nothing and must not cost the idle editor a frame.
+  if (slots.shadow !== installed.shadow || slots.blur !== installed.blur) markRenderDirty()
+}
+
+/**
+ * The colour resolver changed (renderer/colourResolver.ts): rebuild the
+ * shadow filter if its colour resolves differently now. SceneGraph calls it
+ * for every object type — the shadow is the one token colour that is not
+ * the object renderer's own.
+ *
+ * Nothing to do while an install is pending: it resolves the colour on its
+ * own frame, with the resolver installed by then.
+ */
+export function repaintFilterColours(container: Container): void {
+  const slots = asAny(container)[FILTER_TAG] as FilterSlots | undefined
+  if (slots === undefined || slots.pendingFrame !== undefined) return
+  if (slots.shadowData === undefined) return
+  applyFilterEffects(container, slots.shadowData, slots.blurPx)
 }
 
 function shadowStyleDifferent(a: ShadowStyle | undefined, b: ShadowStyle | undefined): boolean {

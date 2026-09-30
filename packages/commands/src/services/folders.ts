@@ -4,6 +4,7 @@
  * routes and the `folder.*` commands call these same methods.
  */
 
+import type { Role } from '../types.js'
 import type { BinarySource, FontFaceInfo, ListKeyset } from './common.js'
 
 /** A folder in the list view. */
@@ -13,6 +14,8 @@ export interface FolderSummary {
   /** ISO timestamp. */
   createdAt: string
   deckCount: number
+  /** The caller's role in the folder: viewer reads it, editor changes it, owner also shares and deletes it. */
+  role: Role
 }
 
 export interface FolderListPageArgs {
@@ -41,13 +44,18 @@ export interface FolderRecord {
 }
 
 export interface FolderService {
+  /** The folders the caller is a member of, each with their role in it. */
   list(args: { userId: string }): Promise<FolderSummary[]>
   /**
-   * The caller's folders, filtered, sorted by name and keyset-paged — for the
+   * The caller's folders (the ones they are a member of), filtered, sorted by name and keyset-paged — for the
    * agent's `folder.list`. `list` keeps serving the web app.
    */
   listPage(args: FolderListPageArgs): Promise<FolderListPage>
-  create(args: { userId: string; name: string }): Promise<FolderRecord & { deckCount: number }>
+  /** A new folder, the caller its owner. */
+  create(args: {
+    userId: string
+    name: string
+  }): Promise<FolderRecord & { deckCount: number; role: Role }>
   rename(args: { userId: string; folderId: string; name: string }): Promise<FolderRecord>
   /** Delete the folder and every deck in it. The Drafts folder cannot be deleted. */
   delete(args: { userId: string; folderId: string }): Promise<{ deletedDeckCount: number }>
@@ -63,8 +71,8 @@ export interface FolderService {
     familyOverride?: string | undefined
   }): Promise<FontFaceInfo>
   /**
-   * Remove a folder font. Decks in the folder that the user owns get a
-   * deck-scoped copy so they keep rendering.
+   * Remove a folder font. Every deck in the folder gets a deck-scoped copy
+   * so it keeps rendering.
    */
   deleteFont(args: {
     userId: string

@@ -4,17 +4,18 @@
  * REST API for component master management (M16 P5).
  *
  * Endpoints:
- *   GET    /folders/:folderId/components   → list components in a folder (owner only)
+ *   GET    /folders/:folderId/components   → list components in a folder (folder members)
  *   POST   /folders/:folderId/components   → create an empty component (row + empty master slide)
  *   POST   /decks/:id/promote-component    → component.promote: objects of a slide become a component
  *   POST   /decks/:id/stamp-component      → component.stamp: a master stamped onto a slide
  *   POST   /components/:id/insert-objects  → object.insertFromDeck into a master (paste)
- *   PATCH  /components/:id                 → rename (owner only)
- *   DELETE /components/:id                 → delete (owner only; cascades component_updates)
+ *   PATCH  /components/:id                 → rename (folder editors)
+ *   DELETE /components/:id                 → delete (folder editors; cascades component_updates)
  *
  * Auth:
  *   All endpoints require authPreHandler (JWT Bearer or BYPASS_AUTH=true dev mode).
- *   Ownership verified via folders.owner_user_id.
+ *   The user's role in the component's folder (folder_permissions): viewers
+ *   read, editors change (docs/plans/folder-sharing.md).
  *
  * Thumbnail:
  *   Mirrors the deck thumbnail pattern — NULL until the editor uploads a snapshot.
@@ -29,7 +30,7 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { PutObjectCommand } from '@aws-sdk/client-s3'
 import type { Database } from '../db/client.js'
-import { components, folders } from '../db/schema.js'
+import { components } from '../db/schema.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
@@ -37,7 +38,8 @@ import { parseDataUrl } from '../media/dataUrl.js'
 import { createComponentsService, MAX_COMPONENT_NAME } from '../services/components.js'
 import { createEmptyComponent, stampComponentIntoDeck } from '../services/componentStaging.js'
 import { sendInsertObjects } from './insertObjects.js'
-import { routeDeps } from '../services/http.js'
+import { isBypass, routeDeps } from '../services/http.js'
+import { requireComponentRole } from '../services/shared.js'
 import { sendCommandOrServiceError, sendServiceError } from '../services/errors.js'
 
 /**
@@ -94,52 +96,6 @@ function withThumbnailUrl(row: ComponentRow): ComponentRow & { thumbnailUrl: str
     })
   }
   return { ...row, thumbnailUrl }
-}
-
-// ---------------------------------------------------------------------------
-// Ownership check helper
-// ---------------------------------------------------------------------------
-
-/**
- * Verifies that a folder exists and is owned by userId.
- * Returns the folder row on success, or null / 'forbidden' on failure.
- */
-async function checkFolderOwner(
-  db: Database,
-  folderId: string,
-  userId: string,
-): Promise<{ id: string } | 'not_found' | 'forbidden'> {
-  const [row] = await db
-    .select({ id: folders.id, ownerUserId: folders.ownerUserId })
-    .from(folders)
-    .where(eq(folders.id, folderId))
-    .limit(1)
-
-  if (!row) return 'not_found'
-  if (row.ownerUserId !== userId) return 'forbidden'
-  return { id: row.id }
-}
-
-/**
- * Verifies that a component exists and that userId owns its folder.
- */
-async function checkComponentOwner(
-  db: Database,
-  componentId: string,
-  userId: string,
-): Promise<{ id: string; folderId: string } | 'not_found' | 'forbidden'> {
-  const [row] = await db
-    .select({ id: components.id, folderId: components.folderId })
-    .from(components)
-    .where(eq(components.id, componentId))
-    .limit(1)
-
-  if (!row) return 'not_found'
-
-  const folderResult = await checkFolderOwner(db, row.folderId, userId)
-  if (folderResult === 'not_found' || folderResult === 'forbidden') return 'forbidden'
-
-  return { id: row.id, folderId: row.folderId }
 }
 
 // ---------------------------------------------------------------------------
@@ -257,7 +213,7 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
   // POST /components/:id/insert-objects — the master editor's cross-document
   // paste: objects read from a deck or another master onto the master's
   // slide, their pictures and videos copied into the component
-  // (routes/insertObjects.ts). Owner of the component's folder (checked by
+  // (routes/insertObjects.ts). Editor in the component's folder (checked by
   // the service, as the master's document is), editor of a source deck.
   // -------------------------------------------------------------------------
   app.post<{ Params: { id: string }; Body: unknown }>(
@@ -268,7 +224,7 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
   )
 
   // -------------------------------------------------------------------------
-  // PATCH /components/:id — rename (owner only)
+  // PATCH /components/:id — rename (folder editors)
   //
   // Body: { name?: string }
   // -------------------------------------------------------------------------
@@ -290,7 +246,7 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
   )
 
   // -------------------------------------------------------------------------
-  // PUT /components/:id/thumbnail — upload component master snapshot (owner)
+  // PUT /components/:id/thumbnail — upload component master snapshot (folder editors)
   //
   // Accepts a JSON body { dataUrl: "data:image/(jpeg|png);base64,..." }.
   // Mirrors the deck thumbnail pattern. The MinIO key is stable per
@@ -311,12 +267,11 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
       const { id } = request.params
       const userId = request.user!.sub
 
-      const componentResult = await checkComponentOwner(db, id, userId)
-      if (componentResult === 'not_found') {
-        return reply.status(404).send({ error: 'Component not found' })
-      }
-      if (componentResult === 'forbidden') {
-        return reply.status(403).send({ error: 'Forbidden' })
+      // Folder editors write the snapshot, as they write the master.
+      try {
+        await requireComponentRole(db, id, userId, 'editor', { bypass: isBypass(app) })
+      } catch (err) {
+        return sendServiceError(reply, err)
       }
 
       const dataUrlRaw = request.body?.dataUrl

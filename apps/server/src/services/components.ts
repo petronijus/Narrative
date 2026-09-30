@@ -9,14 +9,13 @@
 
 import { eq } from 'drizzle-orm'
 import type { ComponentMaster, ComponentRecord, ComponentService } from '@narrative/commands'
-import type { Database } from '../db/client.js'
 import { components, decks } from '../db/schema.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { listComponentMediaKeys } from '../media/assets.js'
 import { purgeComponentBucketPrefix, purgeExplicitKeys } from '../media/bucketCleanup.js'
 import type { ServiceDeps } from './deps.js'
-import { badRequest, forbidden, notFound } from './errors.js'
-import { iso, requireOwnedFolder } from './shared.js'
+import { badRequest, notFound } from './errors.js'
+import { iso, requireComponentRole, requireFolderRole } from './shared.js'
 import { documentName, readDocState } from './liveDocs.js'
 import { prepareComponentStamp, promoteComponent } from './componentStaging.js'
 
@@ -48,34 +47,11 @@ export function componentRecord(row: ComponentRow): ComponentRecord {
   }
 }
 
-/**
- * The component, whose folder the user must own. A component that exists
- * in someone else's folder answers 403 (as the routes always did); with
- * `folderId` given, a component of another folder answers 404.
- */
-async function requireOwnedComponent(
-  db: Database,
-  componentId: string,
-  userId: string,
-  folderId?: string,
-): Promise<ComponentRow> {
-  const [row] = await db.select().from(components).where(eq(components.id, componentId)).limit(1)
-  if (!row || (folderId !== undefined && row.folderId !== folderId)) {
-    throw notFound('Component not found')
-  }
-  try {
-    await requireOwnedFolder(db, row.folderId, userId)
-  } catch {
-    throw forbidden()
-  }
-  return row
-}
-
 export function createComponentsService(deps: ServiceDeps): ComponentService {
   const { db } = deps
 
   async function list(args: { userId: string; folderId: string }): Promise<ComponentRecord[]> {
-    await requireOwnedFolder(db, args.folderId, args.userId)
+    await requireFolderRole(db, args.folderId, args.userId, 'viewer', { bypass: deps.bypass })
     const rows = await db
       .select()
       .from(components)
@@ -90,7 +66,10 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
     name: string
     folderId?: string | undefined
   }): Promise<ComponentRecord> {
-    await requireOwnedComponent(db, args.componentId, args.userId, args.folderId)
+    await requireComponentRole(db, args.componentId, args.userId, 'editor', {
+      bypass: deps.bypass,
+      folderId: args.folderId,
+    })
     const name = typeof args.name === 'string' ? args.name.trim() : ''
     if (name.length === 0) throw badRequest('name is required')
     if (name.length > MAX_COMPONENT_NAME) {
@@ -110,7 +89,10 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
     componentId: string
     folderId?: string | undefined
   }): Promise<void> {
-    await requireOwnedComponent(db, args.componentId, args.userId, args.folderId)
+    await requireComponentRole(db, args.componentId, args.userId, 'editor', {
+      bypass: deps.bypass,
+      folderId: args.folderId,
+    })
     // The master's own pictures and videos: tus originals are keyed by
     // their upload id, outside the components/<id>/ prefix, so their keys
     // are read before the cascade removes the rows.
@@ -141,7 +123,10 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
       if (!deck || deck.folderId === null) throw notFound('Component not found')
       expectedFolder = deck.folderId
     }
-    const row = await requireOwnedComponent(db, args.componentId, args.userId, expectedFolder)
+    const row = await requireComponentRole(db, args.componentId, args.userId, 'viewer', {
+      bypass: deps.bypass,
+      folderId: expectedFolder,
+    })
     return {
       component: componentRecord(row),
       state: await readDocState(deps, 'component', row.id),
@@ -157,11 +142,13 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
   }
 
   async function access(args: { userId: string; componentId: string }) {
-    const row = await requireOwnedComponent(db, args.componentId, args.userId)
+    const row = await requireComponentRole(db, args.componentId, args.userId, 'viewer', {
+      bypass: deps.bypass,
+    })
     return {
       componentId: row.id,
       folderId: row.folderId,
-      role: 'owner' as const,
+      role: row.role,
       documentName: documentName('component', row.id),
     }
   }

@@ -76,15 +76,11 @@ import {
   registerOwnedMedia,
   type StagedDeckMedia,
 } from '../pptx/importDeck.js'
-import {
-  canUseComponentMedia,
-  mediaOriginalPath,
-  mediaOwnerPrefix,
-  type MediaOwner,
-} from '../media/mediaOwner.js'
+import { mediaOriginalPath, mediaOwnerPrefix, type MediaOwner } from '../media/mediaOwner.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, forbidden, notFound } from './errors.js'
 import { readDocCopy, SERVER_EDIT_ORIGIN, writeLiveDoc } from './liveDocs.js'
+import { requireComponentRole } from './shared.js'
 import { applyTokenRebinding, planTokenRebinding, type RebindCounts } from './tokenRebind.js'
 import { spendMediaCopyBudget } from './mediaCopyBudget.js'
 
@@ -464,21 +460,6 @@ async function folderOf(deps: ServiceDeps, doc: MediaOwner): Promise<string | nu
 }
 
 /**
- * A component master the user may copy out of or into: its folder must be
- * theirs (the rule of the `component:<id>` document). One they cannot use
- * answers "not found", like a component that does not exist.
- */
-async function requireComponentAccess(
-  deps: ServiceDeps,
-  userId: string,
-  componentId: string,
-): Promise<void> {
-  if (!(await canUseComponentMedia(deps.db, componentId, userId))) {
-    throw notFound(`Component '${componentId}' not found`)
-  }
-}
-
-/**
  * `object.insertFromDeck`: objects read from `source` (already validated
  * and planned by the command) staged for `target` — each a deck or a
  * component master. They are built in a scratch document and rewritten
@@ -499,15 +480,30 @@ export async function stageObjectInsert(
     throw badRequest('The objects come from this document: paste them with object.insert')
   }
 
-  if ('deckId' in source) await requireCopyAccess(deps, userId, source.deckId)
-  else await requireComponentAccess(deps, userId, source.componentId)
-  // A deck target is authorised by the caller (the host, the route's role
-  // check); a master is its folder owner's.
-  if ('componentId' in target) await requireComponentAccess(deps, userId, target.componentId)
   const [sourceFolderId, targetFolderId] = await Promise.all([
     folderOf(deps, source),
     folderOf(deps, target),
   ])
+  if ('deckId' in source) await requireCopyAccess(deps, userId, source.deckId)
+  else {
+    // Inside its folder a master is read by any member (a paste within the
+    // folder); copying it into another folder takes it out, which — like
+    // copying a deck (requireCopyAccess) — needs the editor role.
+    const required = sourceFolderId === targetFolderId ? 'viewer' : 'editor'
+    await requireComponentRole(deps.db, source.componentId, userId, required, {
+      bypass: deps.bypass,
+      unseen: 'not_found',
+    })
+  }
+  // A deck target is authorised by the caller (the host, the route's role
+  // check); a master is its folder editors'. A master the caller cannot see
+  // answers "not found", like one that does not exist.
+  if ('componentId' in target) {
+    await requireComponentRole(deps.db, target.componentId, userId, 'editor', {
+      bypass: deps.bypass,
+      unseen: 'not_found',
+    })
+  }
 
   // The source's slide ids, read live: a link to one of them would jump
   // nowhere in the target.

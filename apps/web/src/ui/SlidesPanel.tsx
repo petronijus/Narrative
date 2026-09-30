@@ -50,6 +50,7 @@ import { SlideItemMenu } from './SlideItemMenu.js'
 import { usePptxDropIntoDeck } from './usePptxDropIntoDeck.js'
 import { PptxImportRow } from './PptxImportRow.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
+import { useFolderTokensSettled } from '../state/FolderDocProvider.js'
 import { Plus, EyeOff, ChevronRight, PanelLeftClose } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -504,8 +505,13 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   const { clear: clearSelection } = useSelection()
   const listRef = useRef<HTMLUListElement>(null)
   const headerId = useId()
-  const { role } = useDeckRole()
+  const { role, folderId, isLoading: roleLoading } = useDeckRole()
   const isViewer = role === 'viewer'
+  // A preview painted before the folder's tokens arrived shows token colours
+  // black: upload only once they are final — the folder document synced or
+  // refused, or the deck has no folder.
+  const folderTokensSettled = useFolderTokensSettled()
+  const tokensFinal = !roleLoading && (folderId === null || folderTokensSettled)
 
   const allSlideIds = slides.map((s) => s.id)
   const thumbnailMap = useSlideThumbnails(allSlideIds)
@@ -540,6 +546,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       deckId === undefined ||
       deckId === '' ||
       firstSlideThumb === undefined ||
+      !tokensFinal ||
       isViewerRef.current ||
       lastUploadedRef.current === firstSlideThumb
     ) {
@@ -560,7 +567,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
         console.warn('[deck-thumb] PUT failed', err)
       })
     }, 1500)
-  }, [deckId, firstSlideThumb])
+  }, [deckId, firstSlideThumb, tokensFinal])
 
   const [dragState, setDragState] = useState<DragState | null>(null)
   const dragStateRef = useRef<DragState | null>(null)

@@ -17,11 +17,14 @@
  *   useFolderTokens()             — the tokens (live, with pending changes)
  *   useFolderTokensOptional()     — the same, null outside a provider
  *   useFolderTokensForCommands()  — as `CommandContext.folderTokens` takes them
+ *   useFolderTokensSettled()      — the tokens are final (synced, or refused)
  *   useFolderTokenWriter()        — create / update / remove / whenTokens
  *   useTokenUsages()              — where a token is used (server scan)
  *
- * Auth: the session cookie (see SlideDocProvider). Share-token access is
- * NOT supported for folder docs.
+ * Auth: the session cookie, or on a share-link visit the page's
+ * `share_token` (as SlideDocProvider does): the server admits a folder's
+ * members and, read-only, the guests of its decks, so a shared deck renders
+ * with its folder's tokens (docs/plans/folder-sharing.md).
  */
 
 import { createContext, useContext, useEffect, useRef, useState, useMemo } from 'react'
@@ -33,6 +36,7 @@ import type { TokenUsage } from '../api/client.js'
 import { FolderDocContext, emptyTokensSnapshot } from './FolderDocContext.js'
 import type { FolderTokensSnapshot, FolderDocContextValue } from './FolderDocContext.js'
 import { FolderTokenWriter, overlayTokens } from './folderTokenWriter.js'
+import { hocuspocusAuthOptions } from './hocuspocusAuth.js'
 
 const HOCUSPOCUS_URL = import.meta.env['VITE_HOCUSPOCUS_URL'] ?? 'ws://localhost:3002'
 
@@ -68,6 +72,7 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
 
     const doc = new Y.Doc()
     let synced = false
+    let refused = false
     // Assigned below; the refresh reads it for the pending changes.
     let tokenWriter: FolderTokenWriter | null = null
     const refresh = () => {
@@ -76,22 +81,27 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
         doc,
         tokens: tokenWriter === null ? tokens : overlayTokens(tokens, tokenWriter.pending()),
         synced,
+        refused,
       })
     }
     tokenWriter = new FolderTokenWriter(api, folderId, doc, refresh)
     setWriter(tokenWriter)
-    setValue({ doc, tokens: emptyTokensSnapshot(), synced: false })
+    setValue({ doc, tokens: emptyTokensSnapshot(), synced: false, refused: false })
 
+    // The session cookie, or on a share-link visit the page's share_token,
+    // exactly like the deck's document (state/hocuspocusAuth.ts).
+    const authOptions = hocuspocusAuthOptions(window.location.search)
     const provider = new HocuspocusProvider({
       url: HOCUSPOCUS_URL,
       name: `folder:${folderId}`,
       document: doc,
-      // Sentinel triggers HocuspocusProvider's auth-frame; server reads
-      // the real session from the `narrative_session` cookie on the WS
-      // upgrade. See `docs/adr/0005-server-side-session-cookies.md`.
-      token: 'cookie',
+      ...authOptions,
       onSynced() {
         synced = true
+        refresh()
+      },
+      onAuthenticationFailed() {
+        refused = true
         refresh()
       },
     })
@@ -116,7 +126,12 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
   // the real provider's first sync.
   const placeholderRef = useRef<FolderDocContextValue | null>(null)
   if (placeholderRef.current === null) {
-    placeholderRef.current = { doc: new Y.Doc(), tokens: emptyTokensSnapshot(), synced: false }
+    placeholderRef.current = {
+      doc: new Y.Doc(),
+      tokens: emptyTokensSnapshot(),
+      synced: false,
+      refused: false,
+    }
   }
   useEffect(() => {
     return () => {
@@ -171,6 +186,18 @@ export function useFolderTokensForCommands(): FolderTokensSnapshot | null | unde
   const ctx = useContext(FolderDocContext)
   if (ctx === null || !ctx.synced) return undefined
   return hasNoTokens(ctx.tokens) ? null : ctx.tokens
+}
+
+/**
+ * Whether the folder's tokens are as final as they will get — the folder
+ * document synced, or the server refused it — so something rendered with
+ * them may be kept (a thumbnail uploaded as a deck or component preview).
+ * False while the folder is not known yet (the placeholder); true outside a
+ * provider, where there is no folder to wait for.
+ */
+export function useFolderTokensSettled(): boolean {
+  const ctx = useContext(FolderDocContext)
+  return ctx === null || ctx.synced || ctx.refused
 }
 
 /**

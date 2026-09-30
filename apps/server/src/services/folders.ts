@@ -17,7 +17,8 @@ import type {
   FolderSummary,
   FontFaceInfo,
 } from '@narrative/commands'
-import { components, decks, folders, mediaAssets } from '../db/schema.js'
+import { components, decks, folderPermissions, folders, mediaAssets } from '../db/schema.js'
+import type { DeckRole } from '../auth/permissions.js'
 import {
   purgeComponentBucketPrefix,
   purgeDeckBucketPrefix,
@@ -38,7 +39,8 @@ import {
   fontFaceInfo,
   iso,
   ownerIdsFor,
-  requireOwnedFolder,
+  requireFolderContentReader,
+  requireFolderRole,
   validPageLimit,
 } from './shared.js'
 import { resolveBinarySource } from './binarySource.js'
@@ -128,10 +130,15 @@ export async function getOrProvisionDrafts(
   if (existing) return existing.id
 
   const id = nanoid(12)
-  const [created] = await db
-    .insert(folders)
-    .values({ id, ownerUserId: userId, name: 'Drafts', createdAt: new Date() })
-    .returning({ id: folders.id })
+  const created = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(folders)
+      .values({ id, ownerUserId: userId, name: 'Drafts', createdAt: new Date() })
+      .returning({ id: folders.id })
+    // The creator is the folder's first member (folder sharing, migration 0030).
+    if (row) await tx.insert(folderPermissions).values({ folderId: id, userId, role: 'owner' })
+    return row
+  })
   if (!created) throw new Error('Failed to provision Drafts folder')
   await seedNewFolder(deps, created.id)
   return created.id
@@ -174,52 +181,77 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
       .as('deck_counts')
   }
 
+  /**
+   * The caller's memberships, one row per folder with their role in it, as a
+   * subquery to join. `min` of the `deck_role` enum is the HIGHEST role: the
+   * enum is declared owner, editor, viewer, and Postgres orders an enum by
+   * declaration. More than one row per folder only in BYPASS_AUTH dev mode
+   * (the dev user and the legacy demo user).
+   */
+  function memberships(userId: string) {
+    return db
+      .select({
+        folderId: folderPermissions.folderId,
+        role: sql<DeckRole>`min(${folderPermissions.role})`.as('role'),
+      })
+      .from(folderPermissions)
+      .where(inArray(folderPermissions.userId, ownerIdsFor(userId, deps.bypass)))
+      .groupBy(folderPermissions.folderId)
+      .as('my_folders')
+  }
+
   async function list(args: { userId: string }): Promise<FolderSummary[]> {
     const deckCountSub = deckCounts()
+    const mine = memberships(args.userId)
     const rows = await db
       .select({
         id: folders.id,
         name: folders.name,
         createdAt: folders.createdAt,
         deckCount: sql<number>`coalesce(${deckCountSub.count}, 0)`,
+        role: mine.role,
       })
       .from(folders)
+      .innerJoin(mine, eq(mine.folderId, folders.id))
       .leftJoin(deckCountSub, eq(folders.id, deckCountSub.folderId))
-      .where(inArray(folders.ownerUserId, ownerIdsFor(args.userId, deps.bypass)))
       .orderBy(folders.createdAt)
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
       createdAt: iso(r.createdAt),
       deckCount: r.deckCount,
+      role: r.role,
     }))
   }
 
   /**
    * The caller's folders by name A→Z ignoring case, then id; a page
    * continues with `(lower(name), id) > (key, id)`. Fetches `limit + 1` rows
-   * to know whether another page follows. Ownership as in `list`.
+   * to know whether another page follows. Membership as in `list`.
    */
   async function listPage(args: FolderListPageArgs): Promise<FolderListPage> {
     const limit = validPageLimit(args.limit)
     if (args.after !== undefined && args.after.key.length > MAX_FOLDER_KEY)
       throw badRequest('cursor: not a position this list returned')
-    const filters: SQL[] = [inArray(folders.ownerUserId, ownerIdsFor(args.userId, deps.bypass))]
+    const filters: SQL[] = []
     if (args.query !== undefined && args.query !== '')
       filters.push(containsIgnoringCase(folders.name, args.query))
     if (args.after !== undefined)
       filters.push(sql`(${folderNameKey}, ${folders.id}) > (${args.after.key}, ${args.after.id})`)
 
     const deckCountSub = deckCounts()
+    const mine = memberships(args.userId)
     const rows = await db
       .select({
         id: folders.id,
         name: folders.name,
         createdAt: folders.createdAt,
         deckCount: sql<number>`coalesce(${deckCountSub.count}, 0)`,
+        role: mine.role,
         key: folderNameKey,
       })
       .from(folders)
+      .innerJoin(mine, eq(mine.folderId, folders.id))
       .leftJoin(deckCountSub, eq(folders.id, deckCountSub.folderId))
       .where(and(...filters))
       .orderBy(asc(folderNameKey), asc(folders.id))
@@ -233,6 +265,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
         name: r.name,
         createdAt: iso(r.createdAt),
         deckCount: r.deckCount,
+        role: r.role,
       })),
       next: rows.length > limit && last !== undefined ? { key: last.key, id: last.id } : null,
     }
@@ -241,18 +274,27 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
   async function create(args: { userId: string; name: string }) {
     const name = validFolderName(args.name)
     const id = nanoid(12)
-    const [created] = await db
-      .insert(folders)
-      .values({ id, ownerUserId: args.userId, name, createdAt: new Date() })
-      .returning()
+    const created = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(folders)
+        .values({ id, ownerUserId: args.userId, name, createdAt: new Date() })
+        .returning()
+      // The creator is the folder's first member (folder sharing, migration 0030).
+      if (row) {
+        await tx
+          .insert(folderPermissions)
+          .values({ folderId: id, userId: args.userId, role: 'owner' })
+      }
+      return row
+    })
     if (!created) throw failed('Failed to create folder')
     await seedNewFolder(deps, id)
-    return { ...folderRecord(created), deckCount: 0 }
+    return { ...folderRecord(created), deckCount: 0, role: 'owner' as const }
   }
 
   async function rename(args: { userId: string; folderId: string; name: string }) {
     const name = validFolderName(args.name)
-    await requireOwnedFolder(db, args.folderId, args.userId)
+    await requireFolderRole(db, args.folderId, args.userId, 'owner', { bypass: deps.bypass })
     const [updated] = await db
       .update(folders)
       .set({ name })
@@ -264,7 +306,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
 
   async function remove(args: { userId: string; folderId: string }) {
     const id = args.folderId
-    const existing = await requireOwnedFolder(db, id, args.userId)
+    const existing = await requireFolderRole(db, id, args.userId, 'owner', { bypass: deps.bypass })
     if (existing.name === 'Drafts') throw conflict('cannot_delete_drafts')
 
     // Capture deck ids so MinIO blobs can be swept after the cascade.
@@ -321,7 +363,8 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
   }
 
   async function listFonts(args: { userId: string; folderId: string }): Promise<FontFaceInfo[]> {
-    await requireOwnedFolder(db, args.folderId, args.userId)
+    // A deck guest reads its folder's fonts too: the deck renders with them.
+    await requireFolderContentReader(db, args.folderId, args.userId, { bypass: deps.bypass })
     const rows = await listFolderFontAssets(db, args.folderId)
     return Promise.all(rows.map(fontFaceInfo))
   }
@@ -333,7 +376,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
     familyOverride?: string | undefined
   }): Promise<FontFaceInfo> {
     const { userId, folderId } = args
-    await requireOwnedFolder(db, folderId, userId)
+    await requireFolderRole(db, folderId, userId, 'editor', { bypass: deps.bypass })
 
     const file = await resolveBinarySource(args.source, {
       userId,
@@ -410,20 +453,19 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
 
   async function deleteFont(args: { userId: string; folderId: string; assetId: string }) {
     const { userId, folderId, assetId } = args
-    await requireOwnedFolder(db, folderId, userId)
+    await requireFolderRole(db, folderId, userId, 'editor', { bypass: deps.bypass })
     const asset = await getFolderFontAsset(db, assetId, folderId)
     if (!asset) throw notFound('Font asset not found')
 
     // Every deck in the folder gets a deck-scoped clone so a presentation
     // that uses the font keeps rendering (Yjs docs are not scanned for use;
     // cloning to all is the safe deterministic option, sharing one MinIO key).
-    // IDOR-1: only decks the CALLER owns — folder membership is not deck
-    // ownership, and cloning a row onto someone else's deck is cross-tenant
-    // row creation.
+    // A folder editor is an editor of every deck in it (folder sharing), so
+    // the clones land on decks the caller may change — whoever created them.
     const folderDecks = await db
       .select({ id: decks.id })
       .from(decks)
-      .where(and(eq(decks.folderId, folderId), eq(decks.ownerUserId, userId)))
+      .where(eq(decks.folderId, folderId))
 
     let promotedToDeckCount = 0
     if (folderDecks.length > 0) {

@@ -24,8 +24,8 @@
  *   - storageKey is server-constructed — never user-supplied (no path traversal).
  *   - Share token (viewer) path does NOT grant upload rights — only JWT users with editor/owner role may upload.
  *   - A component master's pictures and videos (A2.12b) are uploaded with
- *     metadata `componentId` instead of `deckId`: only the owner of the
- *     component's folder (resolveComponentAccess — the rule of the master's
+ *     metadata `componentId` instead of `deckId`: only an editor of the
+ *     component's folder (canWriteComponentMedia — the rule of the master's
  *     Y.Doc), images and videos only (fonts belong to the folder, a .pptx to
  *     a deck); an upload session issued for the component may carry one. Key:
  *     `components/<componentId>/uploads/<assetId>/original.<ext>`, compound
@@ -59,7 +59,7 @@ import { GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s
 import type { Database } from '../db/client.js'
 import { COMPONENT_FONT_REFUSED, finalizeMediaUpload, UploadRejected } from './finalizeUpload.js'
 import {
-  canUseComponentMedia,
+  canWriteComponentMedia,
   encodeTusUploadId,
   isStorageSafeId,
   mediaOriginalPath,
@@ -79,7 +79,7 @@ import {
   maxUploadBytes,
   tooLargeMessage,
 } from './uploadPolicy.js'
-import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
+import { resolveDeckAccess, resolveFolderAccess, roleAtLeast } from '../auth/permissions.js'
 import { eq } from 'drizzle-orm'
 import { folders, decks } from '../db/schema.js'
 import { DeleteObjectCommand } from '@aws-sdk/client-s3'
@@ -301,8 +301,8 @@ const CREATOR_META_KEY = 'creatorUserId'
  * Requires BOTH:
  *   (a) the live session user equals the upload's stored creator, AND
  *   (b) the creator still has the access the upload was created under —
- *       editor on the encoded deck for media uploads, or folder ownership
- *       for transient pptx imports.
+ *       editor on the encoded deck for media uploads, editor in the folder
+ *       for a component's media and for transient pptx imports.
  *
  * Fails closed (403) when the creator id can't be recovered from the upload
  * metadata — e.g. a legacy in-flight upload created before this binding
@@ -352,11 +352,12 @@ async function requireUploadCreatorAndAccess(
   const folderId = upload.metadata?.['folderId'] ?? null
   const componentId = upload.metadata?.['componentId'] ?? null
 
-  // A component master's picture or video: the creator must still own the
-  // component's folder. Checked first — a component upload has no deck.
+  // A component master's picture or video: the creator must still be an
+  // editor of the component's folder. Checked first — a component upload
+  // has no deck.
   if (componentId) {
     if (mime === PPTX_MIME) throw { status_code: 403, body: 'Forbidden: ' + COMPONENT_KIND_REFUSED }
-    if (!(await canUseComponentMedia(db, componentId, userId))) {
+    if (!(await canWriteComponentMedia(db, componentId, userId))) {
       throw { status_code: 403, body: 'Forbidden: access to the component revoked' }
     }
     return
@@ -369,8 +370,8 @@ async function requireUploadCreatorAndAccess(
     // A pptx upload is bound to EITHER a deck (insert into it — the slides
     // panel's drop) or a folder (create a new deck in it). The binding
     // decides which access is re-asserted: inserting slides into a deck is
-    // an ordinary edit of that deck and must not require owning the folder
-    // it sits in, or a shared editor could not drop a .pptx onto a deck
+    // an ordinary edit of that deck and must not require a role in the
+    // folder it sits in, or a shared editor could not drop a .pptx onto a deck
     // they are otherwise free to rewrite.
     if (deckId) {
       const deckAccess = await resolveDeckAccess(db, { deckId, userId, shareToken: null })
@@ -379,16 +380,12 @@ async function requireUploadCreatorAndAccess(
       }
       return
     }
-    // Folder-scoped import: re-assert folder ownership.
+    // Folder-scoped import: re-assert the editor role in the folder.
     if (!folderId) {
       throw { status_code: 403, body: 'Forbidden: pptx upload missing deck or folder binding' }
     }
-    const [folder] = await db
-      .select({ id: folders.id, ownerUserId: folders.ownerUserId })
-      .from(folders)
-      .where(eq(folders.id, folderId))
-      .limit(1)
-    if (!folder || folder.ownerUserId !== userId) {
+    const folderAccess = await resolveFolderAccess(db, { folderId, userId })
+    if (folderAccess === null || !roleAtLeast(folderAccess.role, 'editor')) {
       throw { status_code: 403, body: 'Forbidden: folder access revoked' }
     }
     return
@@ -711,10 +708,10 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         if (upload.size > maxUploadBytes(kind)) {
           throw { status_code: 413, body: tooLargeMessage(kind) }
         }
-        if (!(await canUseComponentMedia(db, componentId, userId))) {
+        if (!(await canWriteComponentMedia(db, componentId, userId))) {
           throw {
             status_code: 403,
-            body: "Forbidden: only the owner of the component's folder may upload into it",
+            body: "Forbidden: only an editor of the component's folder may upload into it",
           }
         }
         requireKeyOfOwner(upload.id, { componentId })
@@ -730,8 +727,8 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
 
       // ─── PPTX import branch ────────────────────────────────────────────
       // Different metadata model: pptx imports create a NEW deck inside a
-      // folder, so they require `folderId` (not `deckId`) and we check
-      // folder ownership instead of deck role. The MinIO blob is transient
+      // folder, so they require `folderId` (not `deckId`) and we check the
+      // folder role (editor) instead of a deck role. The MinIO blob is transient
       // — the onUploadFinish hook parses it and deletes it.
       if (mime === PPTX_MIME) {
         if (!deckId && !folderId) {
@@ -769,17 +766,18 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         }
 
         // ─── Folder-scoped: create a new deck ────────────────────────────
-        // Folder ownership — same check the synchronous pptxImport route does.
+        // The editor role in the folder — the check importDeck makes too.
         const [folder] = await db
-          .select({ id: folders.id, ownerUserId: folders.ownerUserId })
+          .select({ id: folders.id })
           .from(folders)
           .where(eq(folders.id, folderId!))
           .limit(1)
         if (!folder) {
           throw { status_code: 404, body: 'Folder not found' }
         }
-        if (folder.ownerUserId !== userId) {
-          throw { status_code: 403, body: 'Forbidden: only the folder owner may import' }
+        const folderAccess = await resolveFolderAccess(db, { folderId: folder.id, userId })
+        if (folderAccess === null || !roleAtLeast(folderAccess.role, 'editor')) {
+          throw { status_code: 403, body: 'Forbidden: only a folder editor may import' }
         }
         return { res, metadata: persistedMetadata }
       }

@@ -234,6 +234,11 @@ export const pathRenderer = {
     }
     applyFilterEffects(node, next.shadow, next.blur)
   },
+  /** Fill and stroke resolve token colours: redraw them (index.ts, repaintColours). */
+  repaintColours(node: PixiContainer, data: PathObject): void {
+    const g = getGraphics(node)
+    if (g !== undefined) drawPath(g, node, data)
+  },
   destroy(node: PixiContainer): void {
     const g = getGraphics(node)
     releaseImageFill(node)

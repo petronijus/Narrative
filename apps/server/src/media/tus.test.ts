@@ -202,6 +202,10 @@ vi.mock('../auth/permissions.js', () => ({
 }))
 
 import { resolveComponentAccess, resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
+
+/** The real role order, for the tests whose outcome depends on a role boundary. */
+const { roleAtLeast: realRoleAtLeast } =
+  await vi.importActual<typeof import('../auth/permissions.js')>('../auth/permissions.js')
 import { createMediaAsset } from './assets.js'
 import { enqueueVideoTranscode } from './enqueue.js'
 import { registerTusPlugin, tokenMayUpload } from './tus.js'
@@ -1160,7 +1164,9 @@ describe('tus upload with an upload session token', () => {
 
   it('uploads into the component master it was issued for, and nowhere else', async () => {
     const { sessions, store } = await buildSessionApp()
-    vi.mocked(resolveComponentAccess).mockResolvedValue({ componentId: 'comp-1' } as never)
+    // The session's user is an editor of the component's folder.
+    vi.mocked(resolveComponentAccess).mockResolvedValue({ role: 'editor', reason: 'folder' })
+    vi.mocked(roleAtLeast).mockImplementation(realRoleAtLeast)
     const { token } = await sessions.issue({
       userSub: 'agent-user',
       owner: { componentId: 'comp-1' },
@@ -1365,7 +1371,8 @@ describe('tokenMayUpload', () => {
 
 describe('tus upload into a component master (metadata componentId)', () => {
   const PPTX = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-  const OWNER = { role: 'owner', reason: 'direct' } as const
+  const EDITOR = { role: 'editor', reason: 'folder' } as const
+  const VIEWER = { role: 'viewer', reason: 'folder' } as const
 
   const create = () => capturedTusOptions['onUploadCreate'] as OnUploadCreate
   const incoming = () => capturedTusOptions['onIncomingRequest'] as OnIncomingRequest
@@ -1400,8 +1407,9 @@ describe('tus upload into a component master (metadata componentId)', () => {
     capturedTusOptions = {}
     // A deck role would let anybody in: a component upload must never ask for one.
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
-    vi.mocked(roleAtLeast).mockReturnValue(true)
-    vi.mocked(resolveComponentAccess).mockResolvedValue(OWNER)
+    // Uploading into a master needs the editor role in its folder.
+    vi.mocked(roleAtLeast).mockImplementation(realRoleAtLeast)
+    vi.mocked(resolveComponentAccess).mockResolvedValue(EDITOR)
   })
 
   it("names the object under components/<id>/uploads/ with 'unknown' in the deck slot", async () => {
@@ -1419,7 +1427,7 @@ describe('tus upload into a component master (metadata componentId)', () => {
     )
   })
 
-  it("accepts the owner of the component's folder and binds the upload to the component", async () => {
+  it("accepts an editor of the component's folder and binds the upload to the component", async () => {
     await buildApp(true)
     const result = await createFor({ componentId: 'comp-1', 'content-type': 'image/png' })
 
@@ -1486,19 +1494,27 @@ describe('tus upload into a component master (metadata componentId)', () => {
     ).rejects.toMatchObject({ status_code: 400 })
   })
 
-  it('accepts a video from the owner', async () => {
+  it('accepts a video from a folder editor', async () => {
     await buildApp(true)
     await expect(
       createFor({ componentId: 'comp-1', 'content-type': 'video/mp4' }, 5_000_000),
     ).resolves.toBeDefined()
   })
 
-  it("refuses anybody who does not own the component's folder (403)", async () => {
+  it("refuses anybody outside the component's folder (403)", async () => {
     await buildApp(true)
     vi.mocked(resolveComponentAccess).mockResolvedValue(null)
     await expect(
       createFor({ componentId: 'comp-1', 'content-type': 'image/png' }),
     ).rejects.toMatchObject({ status_code: 403 })
+  })
+
+  it("refuses a viewer of the component's folder: uploading changes the master (403)", async () => {
+    await buildApp(true)
+    vi.mocked(resolveComponentAccess).mockResolvedValue(VIEWER)
+    await expect(
+      createFor({ componentId: 'comp-1', 'content-type': 'image/png' }),
+    ).rejects.toMatchObject({ status_code: 403, body: expect.stringMatching(/editor/) })
   })
 
   it('refuses a font (it belongs to the folder) and a .pptx (it belongs to a deck) with 415', async () => {
@@ -1601,10 +1617,13 @@ describe('tus upload into a component master (metadata componentId)', () => {
       incoming()(buildRequest({ method: 'PATCH' }), buildResponse(), id),
     ).resolves.toBeUndefined()
 
-    vi.mocked(resolveComponentAccess).mockResolvedValue(null)
-    await expect(
-      incoming()(buildRequest({ method: 'HEAD' }), buildResponse(), id),
-    ).rejects.toMatchObject({ status_code: 403 })
+    // Demoted to viewer, then removed from the folder: refused both times.
+    for (const access of [VIEWER, null]) {
+      vi.mocked(resolveComponentAccess).mockResolvedValue(access)
+      await expect(
+        incoming()(buildRequest({ method: 'HEAD' }), buildResponse(), id),
+      ).rejects.toMatchObject({ status_code: 403 })
+    }
     expect(resolveDeckAccess).not.toHaveBeenCalled()
   })
 
@@ -1649,9 +1668,9 @@ describe('tus upload into a component master (metadata componentId)', () => {
     expect(job).not.toHaveProperty('deckId')
   })
 
-  it('refuses to finish once the folder is no longer theirs, and writes no row', async () => {
+  it('refuses to finish once they are no longer an editor of the folder, and writes no row', async () => {
     await buildApp(true)
-    vi.mocked(resolveComponentAccess).mockResolvedValue(null)
+    vi.mocked(resolveComponentAccess).mockResolvedValue(VIEWER)
     const id = componentUploadId('asset-c4', 'comp-1', 'png')
     await expect(
       finish()(buildRequest({}), buildResponse(), {

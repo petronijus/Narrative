@@ -12,8 +12,13 @@
  *   - deck with no matching refs → 200 { usages: [] }
  *   - component with a matching token ref → 200 with component entry
  *   - textStyle in folder doc referencing a color token → 200 with textStyle entry
- *   - wrong owner → 403
+ *   - a viewer of the folder → 200 (usages are a folder member's question)
+ *   - not a member (a guest of one of its decks included) → 403
  *   - missing folder → 404
+ *
+ * Access is the caller's role in the folder (folder_permissions — folder
+ * sharing, docs/plans/folder-sharing.md): viewers read usages, editors write
+ * tokens.
  *
  * Uses real Y.Doc to produce update bytes so the scanner logic is exercised
  * end-to-end, but the DB is mocked (no real Postgres).
@@ -37,6 +42,7 @@ import * as Y from 'yjs'
 import { registerTokenRoutes } from './tokens.js'
 import { registerAuthPlugin } from '../auth/fastifyAuth.js'
 import type { Database } from '../db/client.js'
+import type { DeckRole } from '../auth/permissions.js'
 import { addFolderToken, readFolderTokens } from '@narrative/slide-model'
 import { scriptedDb } from '../test-support/scriptedDb.js'
 import { registerSameOriginPolicy } from '../http/sameOrigin.js'
@@ -186,6 +192,8 @@ interface MockDbOpts {
   deckUpdates?: Record<string, UpdateRow[]>
   folderUpdates?: Record<string, UpdateRow[]>
   componentUpdates?: Record<string, UpdateRow[]>
+  /** The caller's folder_permissions role in the folder; null for none (default owner). */
+  role?: DeckRole | null
 }
 
 /**
@@ -200,9 +208,11 @@ function makeMockDb(opts: MockDbOpts = {}): Database {
   const deckUpdatesStore: Record<string, UpdateRow[]> = opts.deckUpdates ?? {}
   const folderUpdatesStore: Record<string, UpdateRow[]> = opts.folderUpdates ?? {}
   const componentUpdatesStore: Record<string, UpdateRow[]> = opts.componentUpdates ?? {}
+  const role = opts.role === undefined ? 'owner' : opts.role
 
   // We intercept query chains.  The route issues these patterns:
-  //   db.select({…}).from(folders).where(eq(…)).limit(1)   → folder ownership check
+  //   db.select({…}).from(folders).where(eq(…)).limit(1)   → the folder
+  //   db.select({…}).from(folderPermissions).where(…)       → the caller's role in it
   //   db.select({…}).from(folderUpdates).where(eq(…)).orderBy(…) → folder doc updates
   //   db.select({…}).from(decks).where(eq(…)).orderBy(…)   → list decks
   //   db.select({…}).from(deckUpdates).where(eq(…)).orderBy(…) → deck updates
@@ -266,6 +276,7 @@ function makeMockDb(opts: MockDbOpts = {}): Database {
 
   // Order for GET /folders/F/tokens/colors/T/usages:
   //   1) SELECT from folders WHERE id = F LIMIT 1 → folder row
+  //   1b) SELECT from folder_permissions WHERE folder = F AND user → the caller's role rows
   //   2) SELECT from folder_updates WHERE folderId = F ORDER BY id → folder update rows
   //   3) SELECT from decks WHERE folderId = F ORDER BY createdAt → deck rows
   //   4+) For each deck: SELECT from deck_updates WHERE deckId = D ORDER BY id
@@ -280,8 +291,9 @@ function makeMockDb(opts: MockDbOpts = {}): Database {
     callQueue.length = 0
     callIndex = 0
 
-    // 1. Folder ownership check
+    // 1. The folder, then the caller's role in it (requireFolderRole)
     callQueue.push(() => Promise.resolve(folderStore.filter((f) => f.id === folderId).slice(0, 1)))
+    callQueue.push(() => Promise.resolve(role === null ? [] : [{ role }]))
 
     // 2. Folder doc updates (only for colors)
     if (category === 'colors') {
@@ -341,6 +353,9 @@ function makeMockDb(opts: MockDbOpts = {}): Database {
               .fn()
               .mockImplementation(() => result.then((rows) => (rows as unknown[]).slice(0, 1))),
             orderBy: vi.fn().mockImplementation(() => result),
+            // The role rows are read without limit or order: the query is awaited.
+            then: (ok: (rows: unknown[]) => unknown, err?: (e: unknown) => unknown) =>
+              result.then(ok, err),
           })),
           orderBy: vi.fn().mockImplementation(() => result),
           limit: vi
@@ -532,9 +547,30 @@ describe('GET /folders/:folderId/tokens/:category/:tokenId/usages', () => {
     expect(entry.field).toBe('color')
   })
 
-  it('returns 403 when the caller does not own the folder', async () => {
+  it('answers a viewer of the folder: usages are a member question, not an editor one', async () => {
     const db = makeMockDb({
       folders: [{ id: 'folder-x', ownerUserId: 'other-user', name: 'Theirs', createdAt: now }],
+      role: 'viewer',
+    })
+    ;(db as unknown as { _primeQueue: (f: string, c: string) => void })._primeQueue(
+      'folder-x',
+      'colors',
+    )
+
+    const app = await buildApp(db)
+    const res = await app.inject({
+      method: 'GET',
+      url: '/folders/folder-x/tokens/colors/any-id/usages',
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ usages: [] })
+  })
+
+  it('returns 403 for a user outside the folder, a guest of one of its decks included', async () => {
+    const db = makeMockDb({
+      folders: [{ id: 'folder-x', ownerUserId: 'other-user', name: 'Theirs', createdAt: now }],
+      role: null,
     })
     ;(db as unknown as { _primeQueue: (f: string, c: string) => void })._primeQueue(
       'folder-x',
@@ -573,6 +609,11 @@ describe('GET /folders/:folderId/tokens/:category/:tokenId/usages', () => {
 
 describe('token writes', () => {
   const folderRow = { id: 'folder-1', ownerUserId: 'dev-user', name: 'My folder' }
+  /** requireFolderRole's two answers: the folder, then the caller's role in it. */
+  const inFolder = (role: DeckRole = 'owner', row: object = folderRow): unknown[][] => [
+    [row],
+    [{ role }],
+  ]
 
   /** The stored folder document: one colour and a built-in text style (fixed bytes). */
   const stored = (() => {
@@ -594,7 +635,7 @@ describe('token writes', () => {
   }
 
   it('POST adds a token (normalised as token.create stores it) → 201 { tokenId }', async () => {
-    const db = scriptedDb({ selects: [[folderRow], storedFolder()] })
+    const db = scriptedDb({ selects: [...inFolder(), storedFolder()] })
     const app = await buildApp(db.db)
     const res = await app.inject({
       method: 'POST',
@@ -637,9 +678,9 @@ describe('token writes', () => {
 
   it('PATCH changes a token (null removes a field) and reports the propagation', async () => {
     const db = scriptedDb({
-      // Ownership, the folder document; then the propagation reads the folder
-      // afresh and lists its decks and components.
-      selects: [[folderRow], storedFolder(), storedFolder(), [], []],
+      // The editor role, the folder document; then the propagation reads the
+      // folder afresh and lists its decks and components.
+      selects: [...inFolder('editor'), storedFolder(), storedFolder(), [], []],
     })
     const app = await buildApp(db.db)
     const res = await app.inject({
@@ -667,7 +708,7 @@ describe('token writes', () => {
       payload: {},
     })
     expect(empty.statusCode).toBe(400)
-    const db = scriptedDb({ selects: [[folderRow], storedFolder()] })
+    const db = scriptedDb({ selects: [...inFolder(), storedFolder()] })
     const unknown = await (
       await buildApp(db.db)
     ).inject({
@@ -680,7 +721,7 @@ describe('token writes', () => {
   })
 
   it('DELETE removes a colour and refuses a built-in text style', async () => {
-    const db = scriptedDb({ selects: [[folderRow], storedFolder()] })
+    const db = scriptedDb({ selects: [...inFolder(), storedFolder()] })
     const res = await (
       await buildApp(db.db)
     ).inject({
@@ -691,7 +732,7 @@ describe('token writes', () => {
     expect(folderAfter(db.writes).colors['brand']).toBeUndefined()
 
     const builtin = await (
-      await buildApp(scriptedDb({ selects: [[folderRow], storedFolder()] }).db)
+      await buildApp(scriptedDb({ selects: [...inFolder(), storedFolder()] }).db)
     ).inject({ method: 'DELETE', url: '/folders/folder-1/tokens/textStyles/title' })
     expect(builtin.statusCode).toBe(409)
   })
@@ -723,8 +764,8 @@ describe('token writes', () => {
     expect(res.statusCode).toBe(400)
   })
 
-  it("refuses another user's folder", async () => {
-    const db = scriptedDb({ selects: [[{ ...folderRow, ownerUserId: 'someone-else' }]] })
+  it('refuses a folder the user is not a member of', async () => {
+    const db = scriptedDb({ selects: [[{ ...folderRow, ownerUserId: 'someone-else' }], []] })
     const res = await (
       await buildApp(db.db)
     ).inject({
@@ -733,5 +774,38 @@ describe('token writes', () => {
       payload: { name: 'X', value: '#000000' },
     })
     expect(res.statusCode).toBe(403)
+    expect(db.writes).toEqual([])
+  })
+
+  it('refuses a viewer of the folder every write: tokens change with the editor role', async () => {
+    const theirs = { ...folderRow, ownerUserId: 'someone-else' }
+    for (const [method, url, payload] of [
+      ['POST', '/folders/folder-1/tokens/colors', { name: 'X', value: '#000000' }],
+      ['PATCH', '/folders/folder-1/tokens/colors/brand', { value: '#000000' }],
+      ['DELETE', '/folders/folder-1/tokens/colors/brand', undefined],
+    ] as const) {
+      const db = scriptedDb({ selects: inFolder('viewer', theirs) })
+      const res = await (
+        await buildApp(db.db)
+      ).inject({ method, url, ...(payload ? { payload } : {}) })
+      expect(res.statusCode, method).toBe(403)
+      expect(res.json(), method).toMatchObject({ error: expect.stringMatching(/editor/) })
+      expect(db.writes, method).toEqual([])
+    }
+  })
+
+  it("lets an editor of someone else's folder add a token", async () => {
+    const theirs = { ...folderRow, ownerUserId: 'someone-else' }
+    const db = scriptedDb({ selects: [...inFolder('editor', theirs), storedFolder()] })
+    const res = await (
+      await buildApp(db.db)
+    ).inject({
+      method: 'POST',
+      url: '/folders/folder-1/tokens/colors',
+      payload: { name: 'Accent', value: '#F80' },
+    })
+    expect(res.statusCode).toBe(201)
+    const { tokenId } = res.json() as { tokenId: string }
+    expect(folderAfter(db.writes).colors[tokenId]).toMatchObject({ name: 'Accent' })
   })
 })

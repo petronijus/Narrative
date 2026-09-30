@@ -6,12 +6,18 @@
  *
  * Auth: all tests run with BYPASS_AUTH=true semantics (dev-user synthesized).
  *
+ * Access is the caller's role in the folder (folder_permissions — folder
+ * sharing, docs/plans/folder-sharing.md); the scripted database
+ * (test-support/scriptedDb.ts) answers a service's selects in order, so a
+ * folder check is two answers: the folder row, then the caller's
+ * folder_permissions rows.
+ *
  * Coverage:
- *   GET  /folders                  → returns folders for dev-user (with deckCount)
- *   POST /folders                  → creates folder owned by dev-user
- *   PATCH /folders/:id             → renames own folder; 403 for other user's folder; 404 missing
- *   DELETE /folders/:id            → 200 {deletedDeckCount} (cascades decks); 409 on Drafts; 403 foreign
- *   POST /folders/:id/move-decks   → moves decks; 400 bad args; 403 foreign; 404 missing folder
+ *   GET  /folders                  → the caller's folders with deckCount and their role
+ *   POST /folders                  → creates folder owned by dev-user, its owner row with it
+ *   PATCH /folders/:id             → renames (owner only); 403 non-member / editor; 404 missing
+ *   DELETE /folders/:id            → 200 {deletedDeckCount} (cascades decks); owner only; 409 on Drafts
+ *   POST /folders/:id/move-decks   → moves decks (editor in both folders, owner of each deck); 400 bad args; 404 missing folder
  *
  * Also tests deck endpoint changes (M16 integration):
  *   POST /decks                    → auto-provisions Drafts folder and assigns folderId
@@ -26,6 +32,8 @@ import { registerFolderRoutes } from './folders.js'
 import { registerDeckRoutes } from './decks.js'
 import { registerAuthPlugin } from '../auth/fastifyAuth.js'
 import type { Database } from '../db/client.js'
+import { resolveDeckAccess } from '../auth/permissions.js'
+import { scriptedDb } from '../test-support/scriptedDb.js'
 
 // ---------------------------------------------------------------------------
 // Mock resolveDeckAccess (needed by deck route registration)
@@ -162,58 +170,6 @@ function makeMockDb(
 }
 
 // ---------------------------------------------------------------------------
-// Targeted mock DB builders for specific scenarios
-// ---------------------------------------------------------------------------
-
-function makeFolderSelectMock(folder: MockFolder | null, deckCount = 0, decks: MockDeck[] = []) {
-  const db = {
-    select: vi.fn(),
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn().mockReturnValue({
-        returning: vi.fn().mockResolvedValue([folder ?? {}]),
-      }),
-    }),
-    update: vi.fn().mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue(folder ? [folder] : []),
-        }),
-      }),
-    }),
-    delete: vi.fn().mockReturnValue({
-      where: vi.fn().mockResolvedValue([]),
-    }),
-    transaction: vi
-      .fn()
-      .mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(db)),
-  }
-
-  // Chain: select().from().where().limit() → folder lookup
-  // Chain: select().from().where() → count query (for delete)
-  // Chain: select().from().leftJoin().where().orderBy() → list
-  db.select.mockReturnValue({
-    from: vi.fn().mockReturnValue({
-      where: vi.fn().mockReturnValue({
-        limit: vi.fn().mockResolvedValue(folder ? [folder] : []),
-        orderBy: vi.fn().mockResolvedValue(folder ? [folder] : []),
-        // For count queries, resolve with count row
-        then: vi
-          .fn()
-          .mockImplementation((cb: (v: unknown) => unknown) => cb([{ count: deckCount }])),
-      }),
-      leftJoin: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          orderBy: vi.fn().mockResolvedValue([]),
-        }),
-      }),
-      orderBy: vi.fn().mockResolvedValue(decks),
-    }),
-  })
-
-  return db as unknown as Database
-}
-
-// ---------------------------------------------------------------------------
 // App builder
 // ---------------------------------------------------------------------------
 
@@ -234,50 +190,12 @@ async function buildApp(db: Database): Promise<FastifyInstance> {
 // and the final query resolves with our test rows.
 // ---------------------------------------------------------------------------
 
-function makeListFoldersMockDb(expectedRows: unknown[]) {
-  // The route does two select() calls:
-  //   1. db.select({...}).from(decks).groupBy(...).as('deck_counts') — builds subquery
-  //   2. db.select({...}).from(folders).leftJoin(...).where(...).orderBy(...) — actual query
-  // We mock so call 1 returns a fake subquery object and call 2 returns expectedRows.
-  let selectCallIdx = 0
-
-  const db = {
-    select: vi.fn().mockImplementation(() => {
-      const idx = selectCallIdx++
-      if (idx === 0) {
-        // First call: subquery builder — return a chainable object that ends with .as()
-        const sub = {
-          from: vi.fn().mockReturnThis(),
-          groupBy: vi.fn().mockReturnThis(),
-          as: vi.fn().mockReturnValue({}), // returns the subquery object (a plain obj is fine)
-        }
-        return sub
-      }
-      // Second call: actual list query with leftJoin
-      return {
-        from: vi.fn().mockReturnValue({
-          leftJoin: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              orderBy: vi.fn().mockResolvedValue(expectedRows),
-            }),
-          }),
-        }),
-      }
-    }),
-    insert: vi.fn(),
-    update: vi.fn(),
-    delete: vi.fn(),
-    transaction: vi.fn(),
-  }
-
-  return db as unknown as Database
-}
-
 describe('GET /folders', () => {
   beforeEach(() => vi.clearAllMocks())
 
+  // The list is one query (its subqueries are built, never awaited alone).
   it('returns empty array when user has no folders', async () => {
-    const db = makeListFoldersMockDb([])
+    const { db } = scriptedDb({ selects: [[]] })
     const app = await buildApp(db)
 
     const res = await app.inject({ method: 'GET', url: '/folders' })
@@ -285,17 +203,30 @@ describe('GET /folders', () => {
     expect(JSON.parse(res.body)).toEqual([])
   })
 
-  it('returns folders with deckCount', async () => {
-    const now = new Date().toISOString()
-    const expectedRows = [{ id: 'f-1', name: 'Drafts', createdAt: now, deckCount: 2 }]
-    const db = makeListFoldersMockDb(expectedRows)
+  it("returns folders with deckCount and the caller's role in each", async () => {
+    const now = new Date()
+    const { db } = scriptedDb({
+      selects: [
+        [
+          { id: 'f-1', name: 'Drafts', createdAt: now, deckCount: 2, role: 'owner' },
+          { id: 'f-2', name: 'Shared with me', createdAt: now, deckCount: 5, role: 'viewer' },
+        ],
+      ],
+    })
     const app = await buildApp(db)
 
     const res = await app.inject({ method: 'GET', url: '/folders' })
     expect(res.statusCode).toBe(200)
-    const body = JSON.parse(res.body) as unknown[]
-    expect(Array.isArray(body)).toBe(true)
-    expect(body).toHaveLength(1)
+    expect(res.json()).toEqual([
+      { id: 'f-1', name: 'Drafts', createdAt: now.toISOString(), deckCount: 2, role: 'owner' },
+      {
+        id: 'f-2',
+        name: 'Shared with me',
+        createdAt: now.toISOString(),
+        deckCount: 5,
+        role: 'viewer',
+      },
+    ])
   })
 })
 
@@ -328,6 +259,7 @@ describe('POST /folders', () => {
     const body = JSON.parse(res.body) as { id: string; name: string; ownerUserId: string }
     expect(body.name).toBe('Projects')
     expect(body.ownerUserId).toBe('dev-user')
+    expect(body).toMatchObject({ role: 'owner', deckCount: 0 })
 
     // A2.12: the new folder's document got the default tokens (written as a
     // delta row: no sync server runs in this test).
@@ -381,75 +313,65 @@ describe('POST /folders', () => {
 describe('PATCH /folders/:id', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('renames own folder', async () => {
-    const now = new Date()
-    const folder: MockFolder = {
-      id: 'f-1',
-      ownerUserId: 'dev-user',
-      name: 'Old Name',
-      createdAt: now,
-    }
-    const db = makeFolderSelectMock(folder)
-    const app = await buildApp(db)
+  const folder: MockFolder = {
+    id: 'f-1',
+    ownerUserId: 'alice',
+    name: 'Old Name',
+    createdAt: new Date(),
+  }
+  const rename = (db: Database, body: unknown = { name: 'New Name' }) =>
+    buildApp(db).then((app) =>
+      app.inject({
+        method: 'PATCH',
+        url: '/folders/f-1',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    )
 
-    const res = await app.inject({
-      method: 'PATCH',
-      url: '/folders/f-1',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'New Name' }),
+  it('renames a folder for its owner', async () => {
+    const scripted = scriptedDb({
+      selects: [[folder], [{ role: 'owner' }]],
+      updates: [[{ ...folder, name: 'New Name' }]],
     })
+
+    const res = await rename(scripted.db)
 
     expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ id: 'f-1', name: 'New Name' })
+    expect(scripted.writes).toEqual([
+      { kind: 'update', table: 'folders', values: { name: 'New Name' } },
+    ])
   })
 
-  it("returns 403 for another user's folder", async () => {
-    const now = new Date()
-    const folder: MockFolder = {
-      id: 'f-1',
-      ownerUserId: 'alice',
-      name: 'Alice Folder',
-      createdAt: now,
-    }
-    const db = makeFolderSelectMock(folder)
-    const app = await buildApp(db)
+  it("refuses an editor of the folder: renaming is the owner's", async () => {
+    const scripted = scriptedDb({ selects: [[folder], [{ role: 'editor' }]] })
 
-    const res = await app.inject({
-      method: 'PATCH',
-      url: '/folders/f-1',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'Hacked' }),
-    })
+    const res = await rename(scripted.db, { name: 'Hacked' })
 
     expect(res.statusCode).toBe(403)
+    expect(res.json()).toMatchObject({ error: expect.stringMatching(/owner/) })
+    expect(scripted.writes).toEqual([])
+  })
+
+  it('returns 403 for a folder the user is not a member of', async () => {
+    const scripted = scriptedDb({ selects: [[folder], []] })
+
+    const res = await rename(scripted.db, { name: 'Hacked' })
+
+    expect(res.statusCode).toBe(403)
+    expect(scripted.writes).toEqual([])
   })
 
   it('returns 404 for non-existent folder', async () => {
-    const db = makeFolderSelectMock(null)
-    const app = await buildApp(db)
-
-    const res = await app.inject({
-      method: 'PATCH',
-      url: '/folders/ghost',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'New Name' }),
-    })
-
+    const { db } = scriptedDb({ selects: [[]] })
+    const res = await rename(db)
     expect(res.statusCode).toBe(404)
   })
 
   it('returns 400 when name is missing', async () => {
-    const now = new Date()
-    const folder: MockFolder = { id: 'f-1', ownerUserId: 'dev-user', name: 'F', createdAt: now }
-    const db = makeFolderSelectMock(folder)
-    const app = await buildApp(db)
-
-    const res = await app.inject({
-      method: 'PATCH',
-      url: '/folders/f-1',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({}),
-    })
-
+    const { db } = scriptedDb({ selects: [[folder], [{ role: 'owner' }]] })
+    const res = await rename(db, {})
     expect(res.statusCode).toBe(400)
   })
 })
@@ -462,53 +384,38 @@ describe('DELETE /folders/:id', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('returns 200 with deletedDeckCount when folder is empty and owned by user', async () => {
-    const now = new Date()
     const folder: MockFolder = {
       id: 'f-empty',
       ownerUserId: 'dev-user',
       name: 'Empty',
-      createdAt: now,
+      createdAt: new Date(),
     }
+    // The folder and the owner's row; no decks, components or media in it.
+    const scripted = scriptedDb({ selects: [[folder], [{ role: 'owner' }], [], [], []] })
 
-    // Need to control multiple select calls:
-    // 1st select: folder ownership lookup → folder
-    // 2nd select: deck count → 0
-    let selectCallCount = 0
-    const db = {
-      select: vi.fn().mockImplementation(() => {
-        selectCallCount++
-        if (selectCallCount === 1) {
-          // ownership lookup
-          return {
-            from: vi.fn().mockReturnValue({
-              where: vi.fn().mockReturnValue({
-                limit: vi.fn().mockResolvedValue([folder]),
-              }),
-            }),
-          }
-        }
-        // deck count
-        return {
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockResolvedValue([{ count: 0 }]),
-          }),
-        }
-      }),
-      delete: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([]),
-      }),
-      insert: vi.fn(),
-      update: vi.fn(),
-      transaction: vi.fn(),
-    } as unknown as Database
-
-    const app = await buildApp(db)
+    const app = await buildApp(scripted.db)
     const res = await app.inject({ method: 'DELETE', url: '/folders/f-empty' })
-    // 200 (not 204): a 204 must not carry a body, so the count is returned with
-    // 200. (The shared select mock conflates the count/rows queries, so we
-    // assert the response contract — a numeric deletedDeckCount — not its value.)
+    // 200 (not 204): a 204 must not carry a body, so the count is returned with 200.
     expect(res.statusCode).toBe(200)
-    expect(typeof res.json().deletedDeckCount).toBe('number')
+    expect(res.json()).toEqual({ deletedDeckCount: 0 })
+    expect(scripted.writes).toEqual([{ kind: 'delete', table: 'folders' }])
+  })
+
+  it("refuses an editor of the folder: deleting it is the owner's", async () => {
+    const folder: MockFolder = {
+      id: 'f-1',
+      ownerUserId: 'alice',
+      name: 'Team',
+      createdAt: new Date(),
+    }
+    const scripted = scriptedDb({ selects: [[folder], [{ role: 'editor' }]] })
+
+    const app = await buildApp(scripted.db)
+    const res = await app.inject({ method: 'DELETE', url: '/folders/f-1' })
+
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toMatchObject({ error: expect.stringMatching(/owner/) })
+    expect(scripted.writes).toEqual([])
   })
 
   // M16 P1 follow-up: DELETE /folders/:id now cascades contained decks
@@ -557,56 +464,35 @@ describe('DELETE /folders/:id', () => {
   })
 
   it('returns 409 cannot_delete_drafts for Drafts folder', async () => {
-    const now = new Date()
     const drafts: MockFolder = {
       id: 'f-drafts',
       ownerUserId: 'dev-user',
       name: 'Drafts',
-      createdAt: now,
+      createdAt: new Date(),
     }
+    const scripted = scriptedDb({ selects: [[drafts], [{ role: 'owner' }]] })
 
-    const db = {
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([drafts]),
-          }),
-        }),
-      }),
-      delete: vi.fn(),
-      insert: vi.fn(),
-      update: vi.fn(),
-      transaction: vi.fn(),
-    } as unknown as Database
-
-    const app = await buildApp(db)
+    const app = await buildApp(scripted.db)
     const res = await app.inject({ method: 'DELETE', url: '/folders/f-drafts' })
     expect(res.statusCode).toBe(409)
     const body = JSON.parse(res.body) as { error: string }
     expect(body.error).toBe('cannot_delete_drafts')
+    expect(scripted.writes).toEqual([])
   })
 
-  it("returns 403 when trying to delete another user's folder", async () => {
-    const now = new Date()
-    const folder: MockFolder = { id: 'f-1', ownerUserId: 'alice', name: 'Alice', createdAt: now }
+  it('returns 403 when trying to delete a folder the user is not a member of', async () => {
+    const folder: MockFolder = {
+      id: 'f-1',
+      ownerUserId: 'alice',
+      name: 'Alice',
+      createdAt: new Date(),
+    }
+    const scripted = scriptedDb({ selects: [[folder], []] })
 
-    const db = {
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([folder]),
-          }),
-        }),
-      }),
-      delete: vi.fn(),
-      insert: vi.fn(),
-      update: vi.fn(),
-      transaction: vi.fn(),
-    } as unknown as Database
-
-    const app = await buildApp(db)
+    const app = await buildApp(scripted.db)
     const res = await app.inject({ method: 'DELETE', url: '/folders/f-1' })
     expect(res.statusCode).toBe(403)
+    expect(scripted.writes).toEqual([])
   })
 
   it('returns 404 for non-existent folder', async () => {
@@ -692,85 +578,86 @@ describe('POST /folders/:id/move-decks', () => {
     expect(res.statusCode).toBe(404)
   })
 
-  it('successfully moves decks and returns movedCount', async () => {
-    const now = new Date()
-    const srcFolder: MockFolder = {
-      id: 'f-src',
-      ownerUserId: 'dev-user',
-      name: 'Drafts',
-      createdAt: now,
-    }
-    const destFolder: MockFolder = {
-      id: 'f-dest',
-      ownerUserId: 'dev-user',
-      name: 'Projects',
-      createdAt: now,
-    }
-    const deck: MockDeck = {
-      id: 'd-1',
-      title: 'Deck',
-      ownerUserId: 'dev-user',
-      folderId: 'f-src',
-      thumbnailKey: null,
-      thumbnailUpdatedAt: null,
-      createdAt: now,
-      updatedAt: now,
-    }
-
-    let folderSelectIdx = 0
-    const db = {
-      select: vi.fn().mockImplementation(() => {
-        const idx = folderSelectIdx++
-        if (idx === 0) {
-          // source folder lookup
-          return {
-            from: vi.fn().mockReturnValue({
-              where: vi.fn().mockReturnValue({
-                limit: vi.fn().mockResolvedValue([srcFolder]),
-              }),
-            }),
-          }
-        }
-        if (idx === 1) {
-          // dest folder lookup
-          return {
-            from: vi.fn().mockReturnValue({
-              where: vi.fn().mockReturnValue({
-                limit: vi.fn().mockResolvedValue([destFolder]),
-              }),
-            }),
-          }
-        }
-        // deck rows lookup
-        return {
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockResolvedValue([deck]),
-          }),
-        }
+  const moveFolders = {
+    src: { id: 'f-src', ownerUserId: 'alice', name: 'Team', createdAt: new Date() },
+    dest: { id: 'f-dest', ownerUserId: 'alice', name: 'Archive', createdAt: new Date() },
+  }
+  const move = (db: Database) =>
+    buildApp(db).then((app) =>
+      app.inject({
+        method: 'POST',
+        url: '/folders/f-src/move-decks',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ deckIds: ['d-1'], destFolderId: 'f-dest' }),
       }),
-      update: vi.fn().mockReturnValue({
-        set: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            returning: vi.fn().mockResolvedValue([{ id: 'd-1' }]),
-          }),
-        }),
-      }),
-      insert: vi.fn(),
-      delete: vi.fn(),
-      transaction: vi.fn(),
-    } as unknown as Database
+    )
 
-    const app = await buildApp(db)
-    const res = await app.inject({
-      method: 'POST',
-      url: '/folders/f-src/move-decks',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ deckIds: ['d-1'], destFolderId: 'f-dest' }),
+  it('moves decks for an editor of both folders who owns the deck, and returns movedCount', async () => {
+    const scripted = scriptedDb({
+      selects: [
+        [moveFolders.src],
+        [{ role: 'editor' }],
+        [moveFolders.dest],
+        [{ role: 'editor' }],
+        [{ id: 'd-1', folderId: 'f-src' }],
+        // The caller's owner grants on the moved decks.
+        [{ deckId: 'd-1' }],
+      ],
+      updates: [[{ id: 'd-1' }]],
     })
+
+    const res = await move(scripted.db)
 
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.body) as { movedCount: number }
     expect(body.movedCount).toBe(1)
+    expect(resolveDeckAccess).not.toHaveBeenCalled()
+    expect(scripted.writes[0]).toMatchObject({
+      kind: 'update',
+      table: 'decks',
+      values: { folderId: 'f-dest' },
+    })
+  })
+
+  it('refuses a viewer of the destination folder: a deck may not be moved into it', async () => {
+    const scripted = scriptedDb({
+      selects: [[moveFolders.src], [{ role: 'owner' }], [moveFolders.dest], [{ role: 'viewer' }]],
+    })
+
+    const res = await move(scripted.db)
+
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toMatchObject({ error: expect.stringMatching(/editor/) })
+    expect(scripted.writes).toEqual([])
+  })
+
+  it('refuses a viewer of the source folder', async () => {
+    const scripted = scriptedDb({ selects: [[moveFolders.src], [{ role: 'viewer' }]] })
+
+    const res = await move(scripted.db)
+
+    expect(res.statusCode).toBe(403)
+    expect(scripted.writes).toEqual([])
+  })
+
+  it('refuses an editor of both folders who is only an editor of the deck: moving changes who sees it', async () => {
+    const scripted = scriptedDb({
+      selects: [
+        [moveFolders.src],
+        [{ role: 'editor' }],
+        [moveFolders.dest],
+        [{ role: 'editor' }],
+        [{ id: 'd-1', folderId: 'f-src' }],
+        // No owner grant on d-1.
+        [],
+      ],
+    })
+
+    const res = await move(scripted.db)
+
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toMatchObject({ error: expect.stringMatching(/owner role/) })
+    expect(scripted.writes).toEqual([])
   })
 })
 
@@ -894,78 +781,40 @@ describe('GET /decks?folderId', () => {
     expect(res.statusCode).toBe(404)
   })
 
-  it("returns 403 when filtering by another user's folder", async () => {
-    const now = new Date()
-    const aliceFolder = { id: 'f-alice', ownerUserId: 'alice', name: 'Alice', createdAt: now }
-
-    const db = {
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([aliceFolder]),
-            orderBy: vi.fn().mockResolvedValue([]),
-          }),
-        }),
-      }),
-      insert: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
-      transaction: vi.fn(),
-    } as unknown as Database
+  it('returns 403 when filtering by a folder the user is not a member of', async () => {
+    const aliceFolder = {
+      id: 'f-alice',
+      ownerUserId: 'alice',
+      name: 'Alice',
+      createdAt: new Date(),
+    }
+    const { db } = scriptedDb({ selects: [[aliceFolder], []] })
 
     const app = await buildApp(db)
     const res = await app.inject({ method: 'GET', url: '/decks?folderId=f-alice' })
     expect(res.statusCode).toBe(403)
   })
 
-  it('returns decks in folder when caller owns the folder', async () => {
+  it('returns decks in folder when the caller is a member, a viewer included', async () => {
     const now = new Date()
-    const myFolder = { id: 'f-mine', ownerUserId: 'dev-user', name: 'Drafts', createdAt: now }
-    const myDeck: MockDeck = {
+    const sharedFolder = { id: 'f-shared', ownerUserId: 'alice', name: 'Team', createdAt: now }
+    const deck: MockDeck = {
       id: 'd-1',
-      title: 'My Deck',
+      title: 'Their Deck',
       ownerUserId: 'dev-user',
-      folderId: 'f-mine',
+      folderId: 'f-shared',
       thumbnailKey: null,
       thumbnailUpdatedAt: null,
       createdAt: now,
       updatedAt: now,
     }
+    const scripted = scriptedDb({ selects: [[sharedFolder], [{ role: 'viewer' }], [deck]] })
 
-    let selectIdx = 0
-    const db = {
-      select: vi.fn().mockImplementation(() => {
-        const idx = selectIdx++
-        if (idx === 0) {
-          // folder ownership check
-          return {
-            from: vi.fn().mockReturnValue({
-              where: vi.fn().mockReturnValue({
-                limit: vi.fn().mockResolvedValue([myFolder]),
-              }),
-            }),
-          }
-        }
-        // deck list query
-        return {
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              orderBy: vi.fn().mockResolvedValue([myDeck]),
-            }),
-          }),
-        }
-      }),
-      insert: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
-      transaction: vi.fn(),
-    } as unknown as Database
-
-    const app = await buildApp(db)
-    const res = await app.inject({ method: 'GET', url: '/decks?folderId=f-mine' })
+    const app = await buildApp(scripted.db)
+    const res = await app.inject({ method: 'GET', url: '/decks?folderId=f-shared' })
     expect(res.statusCode).toBe(200)
-    const body = JSON.parse(res.body)
-    expect(Array.isArray(body)).toBe(true)
+    expect((res.json() as { id: string }[]).map((d) => d.id)).toEqual(['d-1'])
+    expect(scripted.remaining().selects).toBe(0)
   })
 })
 

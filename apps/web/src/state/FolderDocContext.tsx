@@ -33,6 +33,11 @@ export interface FolderDocContextValue {
    * commands must not take it for one (state/useCommand.ts).
    */
   synced: boolean
+  /**
+   * The server refused the folder document (no access to the folder's
+   * content). `tokens` then stays the empty placeholder for good.
+   */
+  refused: boolean
 }
 
 export const FolderDocContext = createContext<FolderDocContextValue | null>(null)

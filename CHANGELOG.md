@@ -6,7 +6,41 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+### Added
+
+- **Folder roles** (folder sharing, step 1 —
+  [ADR 0013](docs/adr/0013-folder-sharing-roles.md)): migration 0030 adds
+  `folder_permissions` and makes every folder's owner its first member. A
+  folder member has their folder role (viewer, editor, owner) on every
+  deck and component in the folder; changes need an editor, renaming and
+  deleting the folder its owner, and moving a deck the owner role on the
+  deck plus editor in both folders. Folder lists carry the caller's `role`
+  (the web API and `folder.list`), deck lists include decks visible through
+  a folder, and "Move to…" offers only folders the user may add decks to.
+  Nothing changes for anyone until folders can be shared (step 3).
+
+### Fixed
+
+- **A deck shared with someone renders with its folder's styles**: its
+  guests (and share links) now read the folder's design tokens, fonts and
+  component pictures, read-only, instead of falling back to default styles.
+- **A share link opens its deck again for a visitor who is not signed in.**
+  The page connected to the deck with the link's token but never sent the
+  sync server its authentication message, so the deck never loaded
+  (`state/hocuspocusAuth.ts` now builds the options for both documents).
+  The page also takes the link's role and the deck's folder from
+  `GET /decks/:id?share_token=…`, so an editor link gets the editor's
+  controls (the sync server always allowed it to edit) and the deck gets
+  its folder's tokens (`e2e/share-link-folder-tokens.spec.ts`).
+
 ### Changed
+
+- A deck's creator column no longer grants the owner role by itself:
+  migration 0031 gives every deck's creator an owner row, so that access can
+  be revoked like anyone's. Moving or deleting a deck closes the live
+  connections on it (and on its folder's token document), so everyone
+  re-authenticates. The folder token document is read-only for every
+  browser connection; tokens change only through the server.
 
 - **Agents load a smaller tool list**: the input shapes that recur on many
   MCP tools (the slide reference on 72 tools, colours, the table cell,

@@ -54,7 +54,7 @@ import { replayUpdates } from '../media/replayDoc.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, conflict, notFound } from './errors.js'
 import { SERVER_EDIT_ORIGIN, readDocCopy, writeLiveDoc, type DocKind } from './liveDocs.js'
-import { requireOwnedFolder } from './shared.js'
+import { requireFolderContentReader, requireFolderRole } from './shared.js'
 
 /**
  * Origin of the server's writes that carry a folder token change into the
@@ -306,7 +306,8 @@ export function createTokensService(deps: ServiceDeps): TokenService {
     if (!(TOKEN_CATEGORIES as readonly string[]).includes(category)) {
       throw badRequest(`Invalid token category. Allowed: ${TOKEN_CATEGORIES.join(', ')}`)
     }
-    await requireOwnedFolder(db, folderId, args.userId)
+    // Scans every deck in the folder: a folder member's question, not a deck guest's.
+    await requireFolderRole(db, folderId, args.userId, 'viewer', { bypass: deps.bypass })
 
     const tokenKey = `${category}.${tokenId}`
     const found: UsageEntry[] = []
@@ -402,7 +403,8 @@ export function createTokensService(deps: ServiceDeps): TokenService {
   }
 
   async function list(args: { userId: string; folderId: string }): Promise<FolderTokensSnapshot> {
-    await requireOwnedFolder(db, args.folderId, args.userId)
+    // A deck guest reads its folder's tokens too: the deck renders with them.
+    await requireFolderContentReader(db, args.folderId, args.userId, { bypass: deps.bypass })
     const copy = await readDocCopy(deps, 'folder', args.folderId)
     try {
       return readFolderTokens(copy)
@@ -422,7 +424,7 @@ export function createTokensService(deps: ServiceDeps): TokenService {
     // Made here, so a later default seed never takes it for one of its own
     // (migrateFolderTokens flags unflagged styles named like a default).
     if (args.category === 'textStyles') fields['builtin'] = false
-    await requireOwnedFolder(db, args.folderId, args.userId)
+    await requireFolderRole(db, args.folderId, args.userId, 'editor', { bypass: deps.bypass })
     const tokenId = newTokenId()
     await writeLiveDoc(
       deps,
@@ -452,7 +454,7 @@ export function createTokensService(deps: ServiceDeps): TokenService {
     requireEditable(args.category)
     const patch = validated(() => parseTokenPatch(args.category, args.patch))
     if (Object.keys(patch).length === 0) throw badRequest('Pass at least one field to change')
-    await requireOwnedFolder(db, args.folderId, args.userId)
+    await requireFolderRole(db, args.folderId, args.userId, 'editor', { bypass: deps.bypass })
     const { previous, changed } = await writeLiveDoc(
       deps,
       'folder',
@@ -500,7 +502,7 @@ export function createTokensService(deps: ServiceDeps): TokenService {
     if (!(TOKEN_CATEGORIES as readonly string[]).includes(args.category)) {
       throw badRequest(`Invalid token category. Allowed: ${TOKEN_CATEGORIES.join(', ')}`)
     }
-    await requireOwnedFolder(db, args.folderId, args.userId)
+    await requireFolderRole(db, args.folderId, args.userId, 'editor', { bypass: deps.bypass })
     const token = await writeLiveDoc(
       deps,
       'folder',
@@ -529,7 +531,7 @@ export function createTokensService(deps: ServiceDeps): TokenService {
     userId: string
     folderId: string
   }): Promise<{ seeded: boolean; migrated: boolean }> {
-    await requireOwnedFolder(db, args.folderId, args.userId)
+    await requireFolderRole(db, args.folderId, args.userId, 'editor', { bypass: deps.bypass })
     const { seeded, migrated } = await ensureFolderTokens(deps, args.folderId)
     return { seeded, migrated }
   }

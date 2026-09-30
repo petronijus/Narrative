@@ -1,6 +1,7 @@
 /**
  * routes/tokens.ts — a folder's design tokens, for the Folder Settings page
- * and the Inspector's text-style actions. Folder owner only.
+ * and the Inspector's text-style actions. Reading a folder's tokens is open to
+ * its members and the guests of its decks, changing them to its editors.
  *
  *   GET    /folders/:folderId/tokens/:category/:tokenId/usages   → { usages }
  *     Every reference to the token in the folder's decks, component masters

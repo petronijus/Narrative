@@ -23,9 +23,9 @@ import {
 export interface AgentAccess {
   /** The user's role on the deck, or null (no access, or no such deck). */
   deckRole(deckId: string, userId: string): Promise<Role | null>
-  /** The user's role on a component master (its folder's owner only), or null. */
+  /** The user's role on a component master (their role in its folder), or null. */
   componentRole(componentId: string, userId: string): Promise<Role | null>
-  /** The user's role on a folder (its owner only), or null. */
+  /** The user's role in a folder (folder_permissions), or null. */
   folderRole(folderId: string, userId: string): Promise<Role | null>
 }
 

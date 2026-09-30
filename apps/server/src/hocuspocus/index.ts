@@ -25,7 +25,8 @@
  *
  * Doc name routing (M16 P2):
  *   `deck:<id>`   → deck access via resolveDeckAccess (existing path)
- *   `folder:<id>` → folder access via resolveFolderAccess (owner-only, no share-link)
+ *   `folder:<id>` → its members, and read-only the guests of its decks
+ *                   (authenticate.ts)
  *   Legacy bare name → treated as deck id (backward compat)
  */
 

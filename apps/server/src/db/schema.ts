@@ -219,6 +219,35 @@ export const deckPermissions = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// folder_permissions — who may see and change a folder (folder sharing)
+// ---------------------------------------------------------------------------
+
+/**
+ * A folder member and their role (the deck roles): viewer looks and
+ * presents, editor changes the folder's decks, components, tokens and
+ * fonts, owner also shares and deletes the folder. The role applies to
+ * everything in the folder (docs/plans/folder-sharing.md). The folder's
+ * creator (`folders.owner_user_id`) is its first owner (migration 0030).
+ */
+export const folderPermissions = pgTable(
+  'folder_permissions',
+  {
+    folderId: text('folder_id')
+      .notNull()
+      .references(() => folders.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    role: deckRoleEnum('role').notNull(),
+    grantedAt: timestamp('granted_at').defaultNow().notNull(),
+    /** userId of the granter; null when the system or a migration writes the row */
+    grantedBy: text('granted_by'),
+  },
+  (t) => [
+    primaryKey({ columns: [t.folderId, t.userId] }),
+    index('folder_permissions_user_idx').on(t.userId),
+  ],
+)
+
+// ---------------------------------------------------------------------------
 // share_links — public-token-based access (M10)
 // ---------------------------------------------------------------------------
 

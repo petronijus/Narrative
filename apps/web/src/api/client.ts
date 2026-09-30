@@ -40,8 +40,12 @@ export type AgentRunTarget = { deckId: string } | { componentId: string }
 export interface ApiClient {
   /** List decks. Pass `folderId` to filter to a specific folder. */
   listDecks(opts?: { folderId?: string }): Promise<DeckSummary[]>
-  /** Fetch a single deck by id. */
-  getDeck(id: string): Promise<DeckSummary>
+  /**
+   * Fetch a single deck by id, with the caller's role (`viewerRole`). With
+   * `shareToken` it answers an anonymous share-link visitor too — the one
+   * REST read a share link reaches.
+   */
+  getDeck(id: string, opts?: { shareToken?: string }): Promise<DeckSummary>
   /** Create a deck. Omit `folderId` to land in the caller's Drafts folder. */
   createDeck(title?: string, folderId?: string): Promise<DeckSummary>
   renameDeck(id: string, title: string): Promise<DeckSummary>
@@ -113,11 +117,11 @@ export interface ApiClient {
   // ---------------------------------------------------------------------------
   // M16 P1 — Folder API
   // ---------------------------------------------------------------------------
-  /** List folders owned by the authenticated user, each with a deckCount. */
+  /** The folders the signed-in user is a member of, each with a deckCount and their role. */
   listFolders(): Promise<FolderSummary[]>
   /** Create a new folder. */
   createFolder(name: string): Promise<FolderSummary>
-  /** Rename a folder (owner only). */
+  /** Rename a folder (folder owner). */
   renameFolder(id: string, name: string): Promise<FolderSummary>
   /**
    * Delete a folder.
@@ -152,7 +156,7 @@ export interface ApiClient {
   // ---------------------------------------------------------------------------
   // M16 P5 — Component API
   // ---------------------------------------------------------------------------
-  /** List components in a folder (owner only). */
+  /** List components in a folder (folder members). */
   listComponents(folderId: string): Promise<ComponentSummary[]>
   /**
    * `component.promote`: objects of a slide become a new component of the
@@ -173,9 +177,9 @@ export interface ApiClient {
     deckId: string,
     body: { componentId: string; slideId: string; at?: { x: number; y: number } },
   ): Promise<{ objectIds: string[] }>
-  /** Rename a component (owner only). */
+  /** Rename a component (folder editors). */
   renameComponent(componentId: string, name: string): Promise<ComponentSummary>
-  /** Delete a component and cascade its update log (owner only). Caller handles instance cleanup. */
+  /** Delete a component and cascade its update log (folder editors). Caller handles instance cleanup. */
   deleteComponent(componentId: string): Promise<void>
   /**
    * Upload (or replace) the master preview thumbnail for a component.
@@ -448,6 +452,8 @@ export interface FolderSummary {
   /** Number of decks currently in the folder. */
   deckCount: number
   createdAt: string
+  /** The caller's role in the folder: viewer reads it, editor changes it, owner also shares and deletes it. */
+  role: 'owner' | 'editor' | 'viewer'
 }
 
 /** A user actively editing a deck. `email`/`name` are best-effort display
@@ -708,7 +714,12 @@ export function createApiClient(): ApiClient {
       return requestJson<DeckSummary[]>(url)
     },
 
-    getDeck: (id) => requestJson<DeckSummary>(`/decks/${id}`),
+    getDeck: (id, opts) =>
+      requestJson<DeckSummary>(
+        opts?.shareToken === undefined
+          ? `/decks/${id}`
+          : `/decks/${id}?share_token=${encodeURIComponent(opts.shareToken)}`,
+      ),
 
     createDeck: (title = 'Untitled Deck', folderId) =>
       requestJson<DeckSummary>('/decks', {

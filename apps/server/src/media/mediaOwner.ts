@@ -13,9 +13,10 @@
  *                    services/folders.ts), never through this module.
  *
  * Access follows the owner: deck media by the deck's role (share links
- * included), component media by owning the component's folder — the same
- * rule that gates the `component:<id>` document (resolveComponentAccess).
- * Share tokens never reach component media.
+ * included); component media is read by whoever may read its folder's
+ * content (members, and guests of the folder's decks — share links
+ * included) and uploaded or deleted by the folder's editors, the rule of the
+ * `component:<id>` document (docs/plans/folder-sharing.md).
  *
  * The tus upload id is a compound `<assetId>:<deckId|unknown>:<base64url(path)>`
  * and is also the object's S3 key (@tus/s3-store keys objects by upload id).
@@ -25,8 +26,15 @@
  */
 
 import type { DocumentRef } from '@narrative/commands'
-import { resolveComponentAccess } from '../auth/permissions.js'
+import { eq } from 'drizzle-orm'
+import {
+  resolveComponentAccess,
+  resolveFolderContentAccess,
+  roleAtLeast,
+  type DeckRole,
+} from '../auth/permissions.js'
 import type { Database } from '../db/client.js'
+import { components } from '../db/schema.js'
 
 /**
  * The owner of a picture or video: the document it belongs to (the
@@ -107,16 +115,54 @@ export function parseTusUploadId(id: string): ParsedTusUploadId | null {
 }
 
 /**
- * Whether the user may read, write and delete a component's media: they must
- * own the folder the component lives in. Exactly the rule of the component's
- * Y.Doc (hocuspocus/authenticate.ts), so whoever can edit a master can use
- * its pictures and nobody else can. A missing component answers false.
+ * The user's role in the folder a component lives in, which is what they
+ * may do with the component's pictures and videos: a viewer reads them, an
+ * editor also uploads and deletes them. Exactly the rule of the component's
+ * Y.Doc (hocuspocus/authenticate.ts). A missing component, or a user
+ * outside the folder, answers null.
  */
-export async function canUseComponentMedia(
+export async function componentMediaRole(
+  db: Database,
+  componentId: string,
+  userId: string | null,
+): Promise<DeckRole | null> {
+  if (userId === null || userId === '') return null
+  return (await resolveComponentAccess(db, { componentId, userId }))?.role ?? null
+}
+
+/** Whether the user may upload a component's media or delete it: an editor of its folder. */
+export async function canWriteComponentMedia(
   db: Database,
   componentId: string,
   userId: string | null,
 ): Promise<boolean> {
-  if (userId === null || userId === '') return false
-  return (await resolveComponentAccess(db, { componentId, userId })) !== null
+  const role = await componentMediaRole(db, componentId, userId)
+  return role !== null && roleAtLeast(role, 'editor')
+}
+
+/**
+ * Whether the user — or the holder of a share link — may SEE a component's
+ * picture or video: whoever may read the content of the component's folder
+ * (a member, or anyone with access to one of its decks, a share link
+ * included), so a component stamped on a shared deck shows for its guests
+ * (docs/plans/folder-sharing.md). A missing component answers false.
+ */
+export async function canReadComponentMedia(
+  db: Database,
+  componentId: string,
+  userId: string | null,
+  shareToken: string | null | undefined,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ folderId: components.folderId })
+    .from(components)
+    .where(eq(components.id, componentId))
+    .limit(1)
+  if (!row) return false
+  const access = await resolveFolderContentAccess(db, {
+    folderId: row.folderId,
+    userId: userId === '' ? null : userId,
+    shareToken: shareToken ?? null,
+  })
+  return access !== null
 }

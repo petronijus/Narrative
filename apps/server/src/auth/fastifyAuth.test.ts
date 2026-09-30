@@ -18,6 +18,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
+import { getTableName, type Table } from 'drizzle-orm'
 import cookie from '@fastify/cookie'
 import {
   registerAuthPlugin,
@@ -41,11 +42,14 @@ interface FakeSession {
 
 /**
  * Mock db that satisfies both `lookupSession()` (db.update().set().where().returning())
- * and `resolveDeckAccess()` (db.select().from().where().limit()).
+ * and `resolveDeckAccess()` (one select from decks, left-joined to the
+ * user's deck_permissions and folder_permissions rows).
  *
  * - `session`: the row `lookupSession` should return for a "valid" cookie, or
  *   null to simulate no row found.
- * - `accessResult`: the role row `resolveDeckAccess` should return; null = none.
+ * - `accessResult`: the user's own deck_permissions role; null = none. The
+ *   deck exists and the user holds no role in its folder, so the deck grant
+ *   alone decides.
  */
 function makeMockDb(session: FakeSession | null, accessResult: DeckAccessResult | null) {
   const updateBuilder = {
@@ -54,28 +58,31 @@ function makeMockDb(session: FakeSession | null, accessResult: DeckAccessResult 
     returning: vi.fn().mockImplementation(() => Promise.resolve(session ? [session] : [])),
   }
 
-  const selectBuilder = {
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    limit: vi.fn().mockImplementation(() => {
-      if (accessResult) {
-        return Promise.resolve([
-          {
-            deckId: 'deck-1',
-            userId: 'user-1',
-            role: accessResult.role,
-            grantedAt: new Date(),
-            grantedBy: null,
-          },
-        ])
-      }
-      return Promise.resolve([])
-    }),
+  const rowsFor = (table: string): unknown[] => {
+    if (table === 'decks') return [{ deckRole: accessResult?.role ?? null, folderRole: null }]
+    return []
   }
+
+  const select = vi.fn().mockImplementation(() => {
+    let table = ''
+    const builder = {
+      from: vi.fn().mockImplementation((t: Table) => {
+        table = getTableName(t)
+        return builder
+      }),
+      leftJoin: vi.fn().mockImplementation(() => builder),
+      where: vi.fn().mockImplementation(() => builder),
+      limit: vi.fn().mockImplementation(() => Promise.resolve(rowsFor(table))),
+      // A query awaited without a limit.
+      then: (ok: (rows: unknown[]) => unknown, err?: (e: unknown) => unknown) =>
+        Promise.resolve(rowsFor(table)).then(ok, err),
+    }
+    return builder
+  })
 
   return {
     update: vi.fn().mockReturnValue(updateBuilder),
-    select: vi.fn().mockReturnValue(selectBuilder),
+    select,
   } as unknown as Database
 }
 

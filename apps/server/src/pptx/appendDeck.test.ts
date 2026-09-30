@@ -71,11 +71,12 @@ interface FakeDb {
 /**
  * Just enough of Drizzle for the pipeline: `insert().values()` (with an
  * optional `.returning()`), `delete().where()`, `select()...` for the folder
- * lookup, and `transaction()` that stages writes and only commits them when
+ * lookup and the caller's role in it (`folderRole`: their folder_permissions
+ * row; the folder exists whenever it is given), and `transaction()` that stages writes and only commits them when
  * the callback resolves — so "the row exists" means "the transaction
  * committed", the property the ordering depends on.
  */
-function makeFakeDb(opts: { folderOwner?: string } = {}): FakeDb {
+function makeFakeDb(opts: { folderRole?: 'owner' | 'editor' | 'viewer' } = {}): FakeDb {
   const committed = new Map<string, Array<Record<string, unknown>>>()
   const deletes: Array<{ table: string }> = []
   const commit = (staged: Array<[string, Array<Record<string, unknown>>]>): void => {
@@ -108,12 +109,16 @@ function makeFakeDb(opts: { folderOwner?: string } = {}): FakeDb {
     ...writer(null),
     select: () => ({
       from: () => ({
-        where: () => ({
-          limit: async () =>
-            opts.folderOwner !== undefined
-              ? [{ id: 'folder-1', ownerUserId: opts.folderOwner }]
-              : [],
-        }),
+        where: () => {
+          const found = opts.folderRole !== undefined
+          return {
+            // The folder row.
+            limit: async () => (found ? [{ id: 'folder-1' }] : []),
+            // The caller's folder_permissions rows (awaited without a limit).
+            then: (ok: (rows: unknown[]) => unknown, err?: (e: unknown) => unknown) =>
+              Promise.resolve(found ? [{ role: opts.folderRole }] : []).then(ok, err),
+          }
+        },
       }),
     }),
     transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
@@ -412,7 +417,7 @@ describe('appendPptxToDeck — media rows and transcodes', () => {
 
 describe('importDeckFromPptxBytes — media rows and transcodes', () => {
   it('commits the deck and its media rows together, then enqueues the transcode', async () => {
-    const fake = makeFakeDb({ folderOwner: 'user-1' })
+    const fake = makeFakeDb({ folderRole: 'editor' })
 
     const out = await importDeckFromPptxBytes({
       bytes: await videoDeckPptx(),
@@ -441,6 +446,38 @@ describe('importDeckFromPptxBytes — media rows and transcodes', () => {
       expect(at).toBeGreaterThanOrEqual(0)
       expect(enqueueAt).toBeGreaterThan(at)
     }
+  })
+})
+
+describe('importDeckFromPptxBytes — the folder role', () => {
+  it('refuses a viewer of the folder before parsing, and writes nothing', async () => {
+    const fake = makeFakeDb({ folderRole: 'viewer' })
+
+    const out = await importDeckFromPptxBytes({
+      bytes: await videoDeckPptx(),
+      folderId: 'folder-1',
+      ownerUserId: 'user-1',
+      db: fake.db,
+      log,
+    })
+
+    expect(out).toEqual({ ok: false, error: { kind: 'forbidden' } })
+    expect(fake.committed.size).toBe(0)
+    expect(s3Send).not.toHaveBeenCalled()
+  })
+
+  it('answers a folder that does not exist as not found', async () => {
+    const fake = makeFakeDb()
+
+    const out = await importDeckFromPptxBytes({
+      bytes: await videoDeckPptx(),
+      folderId: 'folder-1',
+      ownerUserId: 'user-1',
+      db: fake.db,
+      log,
+    })
+
+    expect(out).toEqual({ ok: false, error: { kind: 'folderNotFound' } })
   })
 })
 

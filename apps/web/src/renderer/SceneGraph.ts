@@ -17,6 +17,14 @@
  * - Žádné přímé mutace Pixi objektů mimo SceneGraph + objectRenderers.
  * - render(array) provádí naivní ID-based diff: add/update/remove.
  * - applyChanges(ObjectChangeSet) — incremental diff s patch-based updates.
+ *
+ * Inputs of the diff: the slide's objects (render / applyChanges) AND the
+ * colour resolver (renderer/colourResolver.ts). A token-linked colour is a
+ * function of both, and the resolver changes without any object changing —
+ * the folder's tokens arrive after the first paint, or a member edits the
+ * palette. SceneGraph subscribes to it and repaints exactly the nodes whose
+ * token colours resolve differently (`repaintTokenColours`); every other
+ * node is left alone.
  */
 
 import { Container, Point } from 'pixi.js'
@@ -24,6 +32,13 @@ import type { Application } from 'pixi.js'
 import * as Y from 'yjs'
 import { getRenderer } from './objectRenderers'
 import { setTableCellFaded } from './objectRenderers/tableRenderer.js'
+import { repaintFilterColours } from './filterEffects.js'
+import {
+  getColourResolver,
+  subscribeColourResolver,
+  tokenColoursDiffer,
+  type ColourResolverFn,
+} from './colourResolver.js'
 import type { SlideObject, SlideObjectType, ObjectChangeSet } from '@narrative/shared'
 import type { ObjectBounds } from './types'
 import type { RenderScheduler } from './RenderScheduler'
@@ -101,10 +116,16 @@ export class SceneGraph {
    */
   private scheduler: RenderScheduler | null = null
 
+  /** Ends the colour-resolver subscription (destroy). */
+  private readonly unsubscribeColourResolver: () => void
+
   constructor(app: Application) {
     this.app = app
     this.root = new Container()
     this.app.stage.addChild(this.root)
+    this.unsubscribeColourResolver = subscribeColourResolver(({ prev, next }) => {
+      this.repaintTokenColours(prev, next)
+    })
   }
 
   /**
@@ -367,6 +388,37 @@ export class SceneGraph {
     if (changes.removed.length > 0 || changes.added.length > 0 || changes.updated.length > 0) {
       this.markDirty()
     }
+  }
+
+  /**
+   * The colour resolver changed from `prev` to `next`: repaint every mounted
+   * node painted with `prev` whose token colours `next` resolves differently
+   * — its fills, strokes, text colours, table cells (the renderer's
+   * `repaintColours`) and its drop shadow (filterEffects).
+   *
+   * The invariant this keeps: every mounted node is painted with the
+   * installed resolver. Mount and every update resolve with the current one,
+   * and each change is applied here, synchronously, as it is installed — so
+   * the resolver a node was painted with is always the `prev` of the next
+   * change, and comparing the two resolutions is exact. Nodes without a
+   * token ref (most of a slide) are skipped after a walk of their data, with
+   * no Pixi work at all; a token edit that moves no colour on this slide (a
+   * text style, another colour) repaints nothing.
+   *
+   * Driven by the `subscribeColourResolver` subscription and by
+   * `adoptSlideRoot`; public for the diff tests.
+   */
+  repaintTokenColours(prev: ColourResolverFn | null, next: ColourResolverFn | null): void {
+    if (prev === next) return
+    let touched = 0
+    for (const node of this.nodes.values()) {
+      const ownStale = tokenColoursDiffer(node.data, prev, next, { skip: ['shadow'] })
+      const shadowStale = tokenColoursDiffer(node.data.shadow, prev, next)
+      if (ownStale) getRenderer(node.data.type)?.repaintColours(node.container, node.data)
+      if (shadowStale) repaintFilterColours(node.container)
+      if (ownStale || shadowStale) touched++
+    }
+    if (touched > 0) this.markDirty()
   }
 
   /**
@@ -732,6 +784,13 @@ export class SceneGraph {
     nextRoot: Container,
     nextNodes: Array<SceneNode & { id: string }>,
     nextBackgroundContainer?: Container,
+    /**
+     * The colour resolver `nextNodes` were mounted with (playTransition
+     * reads it before mounting). The folder's tokens can arrive during the
+     * transition, and these nodes were not in the scene graph to be
+     * repainted then — they are brought up to date on adoption.
+     */
+    paintedWith: ColourResolverFn | null = getColourResolver(),
   ): void {
     // Destroy the previous root and all its children (the outgoing slide's
     // nodes) in one pass. This also runs each renderer's destroy() path via
@@ -781,6 +840,7 @@ export class SceneGraph {
       this.containerToId.set(entry.container, entry.id)
       this.applyOutsideFade(node)
     }
+    this.repaintTokenColours(paintedWith, getColourResolver())
     this.markDirty()
   }
 
@@ -797,6 +857,7 @@ export class SceneGraph {
    * proper error handling, then the node tree is torn down.
    */
   destroy(): void {
+    this.unsubscribeColourResolver()
     for (const id of [...this.nodes.keys()]) {
       this.removeObject(id)
     }

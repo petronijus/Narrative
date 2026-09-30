@@ -143,6 +143,11 @@ function makeRenderer<T extends LineLike>(type: T['type']) {
       }
       applyFilterEffects(node, next.shadow, next.blur)
     },
+    /** The stroke (and its arrowheads) resolves a token colour: redraw it (index.ts). */
+    repaintColours(node: PixiContainer, data: T): void {
+      const g = getGraphics(node)
+      if (g !== undefined) drawLine(g, data)
+    },
     destroy(node: PixiContainer): void {
       const g = getGraphics(node)
       g?.destroy()

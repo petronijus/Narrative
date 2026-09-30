@@ -3,7 +3,8 @@
  * server's FolderService (apps/server/src/services/folders.ts), the same
  * service the /folders and /api/folders/:id/fonts routes call. A folder is a
  * client / brand boundary: it owns its decks, design tokens, fonts and
- * components, and has exactly one owner.
+ * components; its members see all of it with their folder role
+ * (docs/plans/folder-sharing.md).
  */
 
 import { z } from 'zod'
@@ -25,6 +26,7 @@ import {
   IdSchema,
   PATCH,
   POST,
+  RoleSchema,
   serverCommand,
   targetFolderId,
   toBinarySource,
@@ -43,9 +45,11 @@ export const folderList = defineCommand({
   domain: 'folder',
   title: 'List folders',
   description:
-    "The user's folders, by name A→Z, one page at a time: { id, name, createdAt, deckCount } each. A folder is a " +
-    'client or brand: it holds decks plus the design tokens, fonts and components they share. Every user has a ' +
-    '"Drafts" folder. Narrow it with `query` (name contains, ignoring case). A page holds `limit` folders ' +
+    "The user's folders, by name A→Z, one page at a time: { id, name, createdAt, deckCount, role } each. A folder " +
+    'is a client or brand: it holds decks plus the design tokens, fonts and components they share. The list ' +
+    "includes folders shared with the user; `role` is the user's in it (viewer reads, editor changes, owner also " +
+    'renames, shares and deletes it). Every user has a private "Drafts" folder. ' +
+    'Narrow it with `query` (name contains, ignoring case). A page holds `limit` folders ' +
     '(default 50, at most 200); when `nextCursor` is not null there are more — call again with ' +
     '`cursor: nextCursor` and the same `query`. Decks in a folder: deck.list with folderId.',
   input: z.strictObject({
@@ -56,7 +60,12 @@ export const folderList = defineCommand({
     cursor: ListCursorSchema.optional(),
   }),
   output: z.object({
-    folders: z.array(FolderOutput.extend({ deckCount: z.number() })),
+    folders: z.array(
+      FolderOutput.extend({
+        deckCount: z.number(),
+        role: RoleSchema.describe("The user's role in the folder"),
+      }),
+    ),
     nextCursor: z
       .string()
       .nullable()
@@ -256,8 +265,8 @@ export const folderFontsDelete = defineCommand({
   domain: 'folder',
   title: 'Delete folder font',
   description:
-    'Remove a font face from the folder (asset id from folder.fonts.list). Decks in the folder that the user owns ' +
-    'keep a private copy so they still render; other decks fall back to another face. Confirm with the user first.',
+    'Remove a font face from the folder (asset id from folder.fonts.list). Every deck in the folder keeps a ' +
+    'private copy so it still renders. Confirm with the user first.',
   input: z.strictObject({ assetId: IdSchema.describe('Font asset id (folder.fonts.list)') }),
   output: z.object({
     promotedToDeckCount: z.number().describe('Decks that received a private copy of the font'),

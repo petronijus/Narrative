@@ -5,12 +5,14 @@
  * is accepted as written, and resolves to the next scripted result for its
  * kind. Inserts, updates and deletes are recorded with their table name, so
  * a test can assert what a service wrote. `transaction(fn)` runs `fn` with
- * the same client.
+ * the same client plus `rollback()`, which throws drizzle's
+ * `TransactionRollbackError` as the real one does; when `fn` throws, the
+ * writes it made leave `writes` for `rolledBack`, as Postgres discards them.
  *
  * Excluded from the build (tsconfig.build.json: src/test-support/**).
  */
 
-import { getTableName, type Table } from 'drizzle-orm'
+import { getTableName, TransactionRollbackError, type Table } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 
 export interface ScriptedWrite {
@@ -22,6 +24,8 @@ export interface ScriptedWrite {
 export interface ScriptedDb {
   db: Database
   writes: ScriptedWrite[]
+  /** Writes made inside a transaction that threw (rolled back), in order. */
+  rolledBack: ScriptedWrite[]
   /** Scripted results still unconsumed, per kind. */
   remaining(): { selects: number; updates: number; deletes: number }
 }
@@ -53,6 +57,7 @@ export function scriptedDb(script: Script = {}): ScriptedDb {
   const updates = [...(script.updates ?? [])]
   const deletes = [...(script.deletes ?? [])]
   const writes: ScriptedWrite[] = []
+  const rolledBack: ScriptedWrite[] = []
 
   /** A chainable, awaitable query whose result is computed when awaited. */
   const query = (resolve: () => unknown, extra: Record<string, unknown> = {}): unknown => {
@@ -99,12 +104,27 @@ export function scriptedDb(script: Script = {}): ScriptedDb {
         where: () => query(() => [], { returning: () => query(result) }),
       }
     },
-    transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(db),
+    transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+      const mark = writes.length
+      const tx = {
+        ...db,
+        rollback: (): never => {
+          throw new TransactionRollbackError()
+        },
+      }
+      try {
+        return await fn(tx)
+      } catch (err) {
+        rolledBack.push(...writes.splice(mark))
+        throw err
+      }
+    },
   }
 
   return {
     db: db as unknown as Database,
     writes,
+    rolledBack,
     remaining: () => ({
       selects: selects.length,
       updates: updates.length,

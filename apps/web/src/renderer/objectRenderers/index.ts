@@ -47,6 +47,22 @@ export interface ObjectRenderer<T extends SlideObject = SlideObject> {
    */
   thumbnailMount?(data: T): Container
   /**
+   * Repaint every part of `node` whose colour this renderer resolves through
+   * `resolveColour` (fills, strokes, text colours, table cells and borders)
+   * from `data`, with the resolver installed now. Geometry, layout and text
+   * content are unchanged — only what a colour-token resolution feeds.
+   *
+   * SceneGraph calls it when the colour resolver changes (the folder's tokens
+   * arrived or changed: renderer/colourResolver.ts) for the nodes whose token
+   * colours resolve differently now; nothing in their Yjs data changed, so
+   * `update` / `applyPatch` would see no difference. The drop shadow is not
+   * part of it: filterEffects owns that, for every object type alike.
+   *
+   * A renderer that resolves no colours of its own implements it as a no-op
+   * and says why — it is required so a new renderer has to decide.
+   */
+  repaintColours(node: Container, data: T): void
+  /**
    * Destroy the node and release any held resources.
    */
   destroy(node: Container): void

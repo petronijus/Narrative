@@ -862,7 +862,17 @@ Done since:
    was 44/44 before and after (332 → 326 turns, 287 → 281 tool calls,
    $5.65 → $5.43).
 
-Next: **the MCP work.**
+3. **Folder sharing, step 1 (access core)** done and committed on
+   2026-09-30, not released: migration 0030 `folder_permissions`, folder roles through
+   every service, route, sync document and the agent host
+   ([ADR 0013](../adr/0013-folder-sharing-roles.md)). The plan, its status
+   and the next steps: [`folder-sharing.md`](folder-sharing.md).
+
+Next: **the test-loop speed-up** ([`dev-speed.md`](dev-speed.md) —
+finish parallel Playwright), then **folder sharing** steps 2–5
+([`folder-sharing.md`](folder-sharing.md)).
+
+(Was, after the tools/list review: "Next: the MCP work.")
 
 (Was, after A2.12b: "Next, 1. A2.13 Close — the parity guard over
 shortcuts and menu ids; `testApi.ts` through commands; `FINISHED_PHASES +=
@@ -871,8 +881,8 @@ Then MCP work.")
 
 Open, outside the steps:
 
-- **Folder sharing and linked component media — decided 2026-09-30, after
-  the MCP work.** Petr's access model: sharing a folder shows everything in
+- **Folder sharing and linked component media — decided 2026-09-30, now
+  in progress ([`folder-sharing.md`](folder-sharing.md)).** Petr's access model: sharing a folder shows everything in
   it (decks, components, pictures, videos, fonts, tokens), with no levels
   inside; sharing a deck shows that deck only. Narrative has no folder
   sharing today (a folder has one owner, sharing is per deck), which is why

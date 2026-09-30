@@ -5,7 +5,9 @@
  * for a given deck so components can gate UI accordingly.
  *
  * Role resolution priority:
- *   1. share_token in URL → 'viewer' (anonymous viewer path)
+ *   1. share_token in URL → the share link's role and the deck's folder, from
+ *      GET /decks/:id?share_token (the anonymous viewer path; the folder id
+ *      opens the folder's token document, which admits the link read-only)
  *   2. viewerRole from deck list response (server includes it when authed)
  *   3. Fallback: 'viewer' (safe default — never grants write access unexpectedly)
  *
@@ -68,11 +70,29 @@ export function DeckRoleProvider({ deckId, children }: DeckRoleProviderProps) {
   useEffect(() => {
     const searchParams = new URLSearchParams(location.search)
 
-    // share_token in URL → unauth viewer path, no API call needed
-    if (searchParams.has('share_token')) {
-      setRole('viewer')
-      setIsLoading(false)
-      return
+    // share_token in URL → the anonymous path: the link's role and the
+    // deck's folder, so the deck renders with its folder's tokens.
+    const shareToken = searchParams.get('share_token')
+    if (shareToken !== null) {
+      let cancelled = false
+      api
+        .getDeck(deckId, { shareToken })
+        .then((deck) => {
+          if (cancelled) return
+          setRole(deck.viewerRole ?? 'viewer')
+          setFolderId(deck.folderId ?? null)
+        })
+        .catch(() => {
+          if (cancelled) return
+          setRole('viewer')
+        })
+        .finally(() => {
+          if (cancelled) return
+          setIsLoading(false)
+        })
+      return () => {
+        cancelled = true
+      }
     }
 
     // Not authenticated — treat as viewer (ProtectedRoute should have already redirected,

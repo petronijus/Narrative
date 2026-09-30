@@ -258,6 +258,14 @@ export const ellipseRenderer = {
     }
   },
 
+  /** Fill and stroke resolve token colours: redraw them (index.ts, repaintColours). */
+  repaintColours(node: Container, data: EllipseObject): void {
+    const graphics = getGraphics(node)
+    if (graphics === undefined) return
+    setCachedData(node, data)
+    drawEllipse(graphics, node, data)
+  },
+
   /**
    * Uvolní Graphics a Container. Volá se při removeObject.
    */

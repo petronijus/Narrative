@@ -1021,6 +1021,21 @@ export const textRenderer = {
   },
 
   /**
+   * The text colour and the glyph stroke resolve token colours, and both
+   * live in the HTMLTextStyle only (run colours in the body are literal
+   * numbers; buildHtml passes no box colour). A new style re-rasterises the
+   * node; the wired onViewUpdate schedules the async-texture catch-up and
+   * re-flags a raster already in flight, as for an Inspector colour change.
+   * Colour moves no metrics, so neither alignment nor the mask is redone.
+   */
+  repaintColours(node: Container, data: TextObject): void {
+    const textNode = getTextNode(node)
+    if (textNode === undefined) return
+    textNode.style = new HTMLTextStyle(buildStyleOpts(data))
+    setStoredData(node, data)
+  },
+
+  /**
    * A face of `family` was installed or removed: metrics measured against
    * whatever stood in for it are void. SceneGraph calls this before it
    * re-applies the family to every node, so the rebuilt styles and masks

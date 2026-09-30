@@ -30,8 +30,12 @@
  *
  * Doc name routing (M16 P2):
  *   `deck:<id>`      → deck access via resolveDeckAccess
- *   `folder:<id>`    → folder access via resolveFolderAccess (owner-only, no share-link)
- *   `component:<id>` → component access via resolveComponentAccess (owner-only, no share-link)
+ *   `folder:<id>`    → resolveFolderContentAccess: a folder member, or a guest
+ *                      of one of its decks (a deck grant or a share link to
+ *                      one of them), so a shared deck renders with its
+ *                      folder's tokens; read-only for all (the server writes it)
+ *   `component:<id>` → resolveComponentAccess: the folder role (no share-link);
+ *                      read-only for a viewer
  *   Legacy bare name → treated as deck id (backward compat)
  */
 
@@ -39,7 +43,7 @@ import type { IncomingHttpHeaders } from 'node:http'
 import type { Database } from '../db/client.js'
 import {
   resolveDeckAccess,
-  resolveFolderAccess,
+  resolveFolderContentAccess,
   resolveComponentAccess,
 } from '../auth/permissions.js'
 import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../auth/session.js'
@@ -116,7 +120,8 @@ async function resolvePrincipal(data: WsAuthPayload, deps: WsAuthDeps): Promise<
   const shareToken = data.requestParameters.get('share_token')
   if (shareToken) {
     // Share-token access — skip session validation entirely.
-    // resolveDeckAccess validates the token. Folder and component docs do
+    // resolveDeckAccess validates the token; a folder doc admits it
+    // read-only when it links to a deck of the folder. Component docs do
     // NOT support share-token access.
     return { userId: null, shareToken }
   }
@@ -189,31 +194,36 @@ function createAuthenticate(deps: WsAuthDeps) {
     const { userId, shareToken } = await resolvePrincipal(data, deps)
 
     if (documentName.startsWith('folder:')) {
-      // Folder doc — owner-only, no share-link support.
+      // Folder doc — its members, and read-only the guests of its decks.
       const folderId = documentName.slice('folder:'.length)
-      if (!userId) throw new Error('Forbidden')
-
-      const access = await resolveFolderAccess(db, { folderId, userId })
+      const access = await resolveFolderContentAccess(db, { folderId, userId, shareToken })
       if (!access) throw new Error('Forbidden')
 
+      const displayId = userId ?? `share:${shareToken?.slice(0, 8)}`
       // Write the context here; the exported wrapper returns these writes so
       // Hocuspocus merges them (see createOnAuthenticate).
-      data.context.userId = userId
+      data.context.userId = displayId
       data.context.folderId = folderId
       data.context.role = access.role
+      // CONN-1: a revoked share link closes this connection too.
+      if (shareToken) data.context.shareToken = shareToken
 
-      // Folders are always read-write for the owner.
-      connection.readOnly = false
+      // Read-only for every role: tokens change only through the server
+      // (services/tokens.ts validates them and carries a change into the
+      // folder's decks), which writes over its own direct connection. A
+      // browser writing raw updates would bypass both.
+      connection.readOnly = true
 
       log.info(
-        { doc: documentName, user: userId, role: access.role, reason: access.reason },
+        { doc: documentName, user: displayId, role: access.role, reason: access.via },
         'authenticate',
       )
       return
     }
 
     if (documentName.startsWith('component:')) {
-      // Component doc — owner-only (folder owner), no share-link support.
+      // Component doc — the folder's members with their folder role, no
+      // share-link support.
       const componentId = documentName.slice('component:'.length)
       if (!userId) throw new Error('Forbidden')
 
@@ -224,7 +234,7 @@ function createAuthenticate(deps: WsAuthDeps) {
       data.context.componentId = componentId
       data.context.role = access.role
 
-      connection.readOnly = false
+      connection.readOnly = access.role === 'viewer'
 
       log.info(
         { doc: documentName, user: userId, role: access.role, reason: access.reason },

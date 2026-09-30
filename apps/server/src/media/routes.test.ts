@@ -13,6 +13,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Fastify from 'fastify'
+import type { SQL } from 'drizzle-orm'
+import { PgDialect } from 'drizzle-orm/pg-core'
 import type { FastifyInstance } from 'fastify'
 import type { Database } from '../db/client.js'
 import type { MediaAsset } from '../db/schema.js'
@@ -50,13 +52,25 @@ vi.mock('./s3Client.js', () => ({
 vi.mock('../auth/permissions.js', () => ({
   resolveDeckAccess: vi.fn(),
   resolveComponentAccess: vi.fn(),
+  resolveFolderAccess: vi.fn(),
+  resolveFolderContentAccess: vi.fn(),
   roleAtLeast: vi.fn(),
 }))
 
 import { getMediaAsset, getVideoAsset, deleteMediaAsset, getFolderFontAsset } from './assets.js'
 import { signImgproxyUrl } from './imgproxyUrl.js'
 import { presignGetUrl } from './s3Client.js'
-import { resolveComponentAccess, resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
+import {
+  resolveComponentAccess,
+  resolveDeckAccess,
+  resolveFolderAccess,
+  resolveFolderContentAccess,
+  roleAtLeast,
+} from '../auth/permissions.js'
+
+/** The real role order, for the tests whose outcome depends on a role boundary. */
+const { roleAtLeast: realRoleAtLeast } =
+  await vi.importActual<typeof import('../auth/permissions.js')>('../auth/permissions.js')
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -317,36 +331,13 @@ describe('DELETE /api/media/:assetId', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Tests: DELETE /api/folders/:folderId/fonts/:assetId — IDOR-1 clone scoping
+// Tests: DELETE /api/folders/:folderId/fonts/:assetId — folder editors, clones onto every deck
 // ---------------------------------------------------------------------------
 
-describe('DELETE /api/folders/:folderId/fonts/:assetId — clone scoping (IDOR-1)', () => {
-  /**
-   * Recursively scans a drizzle SQL condition for a column whose SQL name
-   * matches `name`. Drizzle conditions are SQL objects whose `queryChunks`
-   * carry Column instances (with a `.name` property). This lets us assert
-   * the folderDecks WHERE clause is scoped by `owner_user_id` without
-   * depending on the SQL dialect.
-   */
-  function conditionMentionsColumn(
-    node: unknown,
-    name: string,
-    seen: Set<object> = new Set(),
-  ): boolean {
-    if (!node || typeof node !== 'object') return false
-    if (seen.has(node)) return false
-    seen.add(node)
-    const n = node as Record<string, unknown>
-    if (typeof n['name'] === 'string' && n['name'] === name) return true
-    for (const key of Object.keys(n)) {
-      const v = n[key]
-      if (Array.isArray(v)) {
-        if (v.some((child) => conditionMentionsColumn(child, name, seen))) return true
-      } else if (v && typeof v === 'object') {
-        if (conditionMentionsColumn(v, name, seen)) return true
-      }
-    }
-    return false
+describe('DELETE /api/folders/:folderId/fonts/:assetId — a folder editor, clones on every deck', () => {
+  /** A captured drizzle WHERE condition as the SQL Postgres would run. */
+  function whereSql(condition: unknown): string {
+    return new PgDialect().sqlToQuery(condition as SQL).sql
   }
 
   const FOLDER_ID = 'folder-shared'
@@ -365,13 +356,13 @@ describe('DELETE /api/folders/:folderId/fonts/:assetId — clone scoping (IDOR-1
 
   /**
    * Builds an app whose db:
-   *   - returns a folder owned by 'dev-user' (passes requireFolderOwner),
-   *   - returns `ownedDecks` from the decks select (simulating the DB having
-   *     already filtered to caller-owned decks — we ALSO capture the WHERE
-   *     condition to prove the owner scope is present),
+   *   - returns the folder (requireFolderRole's lookup; the caller's role in
+   *     it comes from the mocked resolveFolderAccess),
+   *   - returns `folderDecks` from the decks select, capturing its WHERE
+   *     condition,
    *   - records the rows passed to insert(mediaAssets).
    */
-  function buildScopedApp(ownedDecks: { id: string }[]) {
+  function buildFontApp(folderDecks: { id: string }[]) {
     const captured: { whereCondition?: unknown; insertedRows?: unknown[] } = {}
     let selectCall = 0
 
@@ -380,15 +371,19 @@ describe('DELETE /api/folders/:folderId/fonts/:assetId — clone scoping (IDOR-1
         from: vi.fn(() => ({
           where: vi.fn((cond: unknown) => {
             selectCall += 1
-            // 1st select = requireFolderOwner (folders); 2nd = folderDecks.
+            // 1st select = requireFolderRole (folders); 2nd = folderDecks.
             if (selectCall === 1) {
               return {
-                limit: vi.fn().mockResolvedValue([{ id: FOLDER_ID, ownerUserId: 'dev-user' }]),
+                limit: vi
+                  .fn()
+                  .mockResolvedValue([
+                    { id: FOLDER_ID, ownerUserId: 'someone-else', name: 'Team' },
+                  ]),
               }
             }
             captured.whereCondition = cond
             // The decks select is awaited directly (no .limit()).
-            return Promise.resolve(ownedDecks)
+            return Promise.resolve(folderDecks)
           }),
         })),
       })),
@@ -406,64 +401,69 @@ describe('DELETE /api/folders/:folderId/fonts/:assetId — clone scoping (IDOR-1
     return { mockDb, captured }
   }
 
+  async function deleteFont(mockDb: Database) {
+    const app = Fastify({ logger: false })
+    registerAuthPlugin(app, { bypass: true, db: mockDb })
+    await registerMediaRoutes(app, { db: mockDb })
+    await app.ready()
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/folders/${FOLDER_ID}/fonts/font-asset-01`,
+    })
+    await app.close()
+    return res
+  }
+
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(roleAtLeast).mockImplementation(realRoleAtLeast)
+    vi.mocked(getFolderFontAsset).mockResolvedValue(FONT_ASSET as never)
   })
 
-  it('scopes the deck-font clone to caller-owned decks via owner_user_id', async () => {
-    // Only ONE of the folder's decks is owned by the caller; the DB filter
-    // (decks.ownerUserId = caller) returns just that one.
-    const ownedDecks = [{ id: 'deck-mine' }]
-    const { mockDb, captured } = buildScopedApp(ownedDecks)
+  it('clones the font onto every deck of the folder, whoever created the deck', async () => {
+    // A folder editor is an editor of every deck in it (folder sharing).
+    vi.mocked(resolveFolderAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
+    const { mockDb, captured } = buildFontApp([{ id: 'deck-mine' }, { id: 'deck-colleague' }])
 
-    vi.mocked(getFolderFontAsset).mockResolvedValue(FONT_ASSET as never)
-
-    const app = Fastify({ logger: false })
-    registerAuthPlugin(app, { bypass: true, db: mockDb })
-    await registerMediaRoutes(app, { db: mockDb })
-    await app.ready()
-
-    const res = await app.inject({
-      method: 'DELETE',
-      url: `/api/folders/${FOLDER_ID}/fonts/font-asset-01`,
-    })
+    const res = await deleteFont(mockDb)
 
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ promotedToDeckCount: 1 })
-
-    // The folderDecks WHERE clause must constrain by owner_user_id (IDOR-1).
-    expect(conditionMentionsColumn(captured.whereCondition, 'owner_user_id')).toBe(true)
-    // And it must still constrain by folder_id.
-    expect(conditionMentionsColumn(captured.whereCondition, 'folder_id')).toBe(true)
-
-    // Clones are created only for the caller-owned deck — never the foreign one.
-    const rows = (captured.insertedRows ?? []) as { deckId: string }[]
-    expect(rows).toHaveLength(1)
-    expect(rows[0]?.deckId).toBe('deck-mine')
-
-    await app.close()
+    expect(res.json()).toEqual({ promotedToDeckCount: 2 })
+    expect(resolveFolderAccess).toHaveBeenCalledWith(expect.anything(), {
+      folderId: FOLDER_ID,
+      userId: 'dev-user',
+      alsoAs: ['demo-user'],
+    })
+    // The folderDecks WHERE clause is the folder alone — no creator filter.
+    expect(whereSql(captured.whereCondition)).toBe('"decks"."folder_id" = $1')
+    const rows = (captured.insertedRows ?? []) as { deckId: string; folderId: unknown }[]
+    expect(rows.map((r) => r.deckId)).toEqual(['deck-mine', 'deck-colleague'])
+    expect(rows.every((r) => r.folderId === null)).toBe(true)
   })
 
-  it('promotes to zero decks when the caller owns none in the folder', async () => {
-    const { mockDb, captured } = buildScopedApp([])
-    vi.mocked(getFolderFontAsset).mockResolvedValue(FONT_ASSET as never)
+  it('promotes to zero decks when the folder holds none', async () => {
+    vi.mocked(resolveFolderAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
+    const { mockDb, captured } = buildFontApp([])
 
-    const app = Fastify({ logger: false })
-    registerAuthPlugin(app, { bypass: true, db: mockDb })
-    await registerMediaRoutes(app, { db: mockDb })
-    await app.ready()
-
-    const res = await app.inject({
-      method: 'DELETE',
-      url: `/api/folders/${FOLDER_ID}/fonts/font-asset-01`,
-    })
+    const res = await deleteFont(mockDb)
 
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ promotedToDeckCount: 0 })
-    // No insert issued when there are no caller-owned decks.
+    // No insert issued when there are no decks to clone onto.
     expect(captured.insertedRows).toBeUndefined()
+  })
 
-    await app.close()
+  it('refuses a folder viewer, and anyone outside the folder, before touching the font', async () => {
+    for (const access of [{ role: 'viewer', reason: 'direct' } as const, null]) {
+      vi.mocked(resolveFolderAccess).mockResolvedValueOnce(access)
+      const { mockDb, captured } = buildFontApp([{ id: 'deck-1' }])
+
+      const res = await deleteFont(mockDb)
+
+      expect(res.statusCode).toBe(403)
+      expect(getFolderFontAsset).not.toHaveBeenCalled()
+      expect(captured.insertedRows).toBeUndefined()
+    }
   })
 })
 
@@ -576,11 +576,12 @@ describe('GET /api/media/:assetId/video-info', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Tests: a component master's own media (A2.12b)
+// Tests: a component master's own media (A2.12b) under folder sharing
 // ---------------------------------------------------------------------------
 
-describe("a component master's media: the owner of its folder only, never a share link", () => {
+describe("a component master's media: read with the folder's content, deleted by its editors", () => {
   let app: FastifyInstance
+  const COMPONENT_FOLDER = 'folder-c'
 
   const COMPONENT_IMAGE: MediaAsset = {
     ...FIXTURE_ASSET,
@@ -599,22 +600,34 @@ describe("a component master's media: the owner of its folder only, never a shar
 
   beforeEach(async () => {
     vi.clearAllMocks()
-    app = await buildApp()
+    // The only query the service makes itself: the component's folder.
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: () => ({ limit: async () => [{ folderId: COMPONENT_FOLDER }] }),
+        }),
+      }),
+    } as unknown as Database
+    app = Fastify({ logger: false })
+    registerAuthPlugin(app, { bypass: true, db })
+    await registerMediaRoutes(app, { db })
+    await app.ready()
     // A deck role would let everyone in: it must never be consulted.
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
-    vi.mocked(roleAtLeast).mockReturnValue(true)
+    vi.mocked(roleAtLeast).mockImplementation(realRoleAtLeast)
   })
 
-  it('the folder owner gets the signed URL of the stored image', async () => {
+  it('a folder member gets the signed URL of the stored image', async () => {
     vi.mocked(getMediaAsset).mockResolvedValue(COMPONENT_IMAGE)
-    vi.mocked(resolveComponentAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
+    vi.mocked(resolveFolderContentAccess).mockResolvedValue({ role: 'viewer', via: 'folder' })
 
     const res = await app.inject({ method: 'GET', url: '/api/media/comp-img-01/url?variant=thumb' })
 
     expect(res.statusCode).toBe(200)
-    expect(resolveComponentAccess).toHaveBeenCalledWith(expect.anything(), {
-      componentId: 'comp-1',
+    expect(resolveFolderContentAccess).toHaveBeenCalledWith(expect.anything(), {
+      folderId: COMPONENT_FOLDER,
       userId: 'dev-user',
+      shareToken: null,
     })
     expect(signImgproxyUrl).toHaveBeenCalledWith({
       storageKey: COMPONENT_IMAGE.storageKey,
@@ -623,14 +636,32 @@ describe("a component master's media: the owner of its folder only, never a shar
     expect(resolveDeckAccess).not.toHaveBeenCalled()
   })
 
-  it('anyone else is refused, a deck editor or a share link included', async () => {
+  it('a share link to a deck of the folder sees it too, so a stamp shows on the shared deck', async () => {
     vi.mocked(getMediaAsset).mockResolvedValue(COMPONENT_IMAGE)
-    vi.mocked(resolveComponentAccess).mockResolvedValue(null)
+    vi.mocked(resolveFolderContentAccess).mockResolvedValue({ role: 'viewer', via: 'deck' })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/media/comp-img-01/url?share_token=tok-1',
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(resolveFolderContentAccess).toHaveBeenCalledWith(expect.anything(), {
+      folderId: COMPONENT_FOLDER,
+      userId: 'dev-user',
+      shareToken: 'tok-1',
+    })
+    expect(resolveDeckAccess).not.toHaveBeenCalled()
+  })
+
+  it('anyone without access to the folder or one of its decks is refused, a share link included', async () => {
+    vi.mocked(getMediaAsset).mockResolvedValue(COMPONENT_IMAGE)
+    vi.mocked(resolveFolderContentAccess).mockResolvedValue(null)
 
     const plain = await app.inject({ method: 'GET', url: '/api/media/comp-img-01/url' })
     const shared = await app.inject({
       method: 'GET',
-      url: '/api/media/comp-img-01/url?share_token=tok-1',
+      url: '/api/media/comp-img-01/url?share_token=tok-elsewhere',
     })
 
     expect(plain.statusCode).toBe(403)
@@ -639,36 +670,44 @@ describe("a component master's media: the owner of its folder only, never a shar
     expect(resolveDeckAccess).not.toHaveBeenCalled()
   })
 
-  it('video-info answers the folder owner and refuses a share link', async () => {
+  it('video-info answers a guest of a deck in the folder and refuses a share link to another folder', async () => {
     vi.mocked(getVideoAsset).mockResolvedValue(COMPONENT_VIDEO)
-    vi.mocked(resolveComponentAccess).mockResolvedValueOnce({ role: 'owner', reason: 'direct' })
+    vi.mocked(resolveFolderContentAccess).mockResolvedValueOnce({ role: 'viewer', via: 'deck' })
 
-    const owner = await app.inject({ method: 'GET', url: '/api/media/comp-vid-01/video-info' })
-    expect(owner.statusCode).toBe(200)
-    expect(owner.json()).toMatchObject({ assetId: 'comp-vid-01', transcodeStatus: 'done' })
+    const guest = await app.inject({ method: 'GET', url: '/api/media/comp-vid-01/video-info' })
+    expect(guest.statusCode).toBe(200)
+    expect(guest.json()).toMatchObject({ assetId: 'comp-vid-01', transcodeStatus: 'done' })
 
-    vi.mocked(resolveComponentAccess).mockResolvedValueOnce(null)
+    vi.mocked(resolveFolderContentAccess).mockResolvedValueOnce(null)
     const shared = await app.inject({
       method: 'GET',
-      url: '/api/media/comp-vid-01/video-info?share_token=tok-1',
+      url: '/api/media/comp-vid-01/video-info?share_token=tok-elsewhere',
     })
     expect(shared.statusCode).toBe(403)
     expect(resolveDeckAccess).not.toHaveBeenCalled()
   })
 
-  it('only the folder owner deletes it', async () => {
+  it('deleting it needs the editor role in its folder: a viewer and an outsider are refused', async () => {
     vi.mocked(getMediaAsset).mockResolvedValue(COMPONENT_IMAGE)
-    vi.mocked(resolveComponentAccess).mockResolvedValueOnce(null)
-
-    expect((await app.inject({ method: 'DELETE', url: '/api/media/comp-img-01' })).statusCode).toBe(
-      403,
-    )
+    for (const access of [{ role: 'viewer', reason: 'folder' } as const, null]) {
+      vi.mocked(resolveComponentAccess).mockResolvedValueOnce(access)
+      const res = await app.inject({ method: 'DELETE', url: '/api/media/comp-img-01' })
+      expect(res.statusCode).toBe(403)
+    }
     expect(deleteMediaAsset).not.toHaveBeenCalled()
+  })
 
-    vi.mocked(resolveComponentAccess).mockResolvedValueOnce({ role: 'owner', reason: 'direct' })
-    expect((await app.inject({ method: 'DELETE', url: '/api/media/comp-img-01' })).statusCode).toBe(
-      204,
-    )
+  it('a folder editor deletes it', async () => {
+    vi.mocked(getMediaAsset).mockResolvedValue(COMPONENT_IMAGE)
+    vi.mocked(resolveComponentAccess).mockResolvedValueOnce({ role: 'editor', reason: 'folder' })
+
+    const res = await app.inject({ method: 'DELETE', url: '/api/media/comp-img-01' })
+
+    expect(res.statusCode).toBe(204)
+    expect(resolveComponentAccess).toHaveBeenCalledWith(expect.anything(), {
+      componentId: 'comp-1',
+      userId: 'dev-user',
+    })
     expect(deleteMediaAsset).toHaveBeenCalledWith(expect.anything(), 'comp-img-01')
   })
 })

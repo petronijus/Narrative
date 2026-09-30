@@ -113,7 +113,7 @@ export interface ConditionalConfirmation {
 export interface Actor {
   /** Narrative user id the command runs as. Agents always act on behalf of a user. */
   userId: string
-  /** The user's role on the target deck (folder owner counts as owner). */
+  /** The user's role on the target (a folder role counts on the folder's decks and components). */
   role: Role
   /** Who is at the keyboard. Agents never get more than the user's role. */
   kind: 'human' | 'agent'

@@ -12,9 +12,10 @@
  *   - `TokensProvider` wraps the editor canvas tree. It subscribes to
  *     `FolderDocContext` for the live token snapshot and rebuilds the resolver
  *     on every change.
- *   - The renderer (reconciler / object renderers) calls `useTokensResolve()`
- *     to obtain the `resolve` function, then calls it per colour field at
- *     render time.
+ *   - React consumers call `useTokensResolve()`. The Pixi renderer cannot:
+ *     `FolderTokensBridge` (components/FolderTokensBridge.tsx) installs the
+ *     same `resolve` into renderer/colourResolver.ts on every change, and
+ *     the renderer repaints what the change affects (that file's header).
  *
  * Design notes:
  *   - The `resolve` function is stable between renders when the token snapshot

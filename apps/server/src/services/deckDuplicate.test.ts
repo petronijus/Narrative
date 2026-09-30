@@ -4,7 +4,9 @@
  * the deck guides — becomes the first document state of a new deck the
  * caller owns; the media it shows is copied into the new deck's namespace
  * and registered in the same transaction as the deck row; the source is
- * never modified; a viewer cannot copy a deck out.
+ * never modified; a viewer cannot copy a deck out. The copy lands in the
+ * source's folder when the caller is an editor there (folder sharing),
+ * else in their Drafts.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -117,7 +119,7 @@ describe('DecksService.duplicate', () => {
     const script = scriptedDb({
       selects: [
         [{ id: 'src', title: 'Pitch', folderId: 'f1', thumbnailKey: 'decks/src/thumb.png' }],
-        [{ id: 'f1' }], // the caller owns its folder
+        [{ role: 'editor' }], // the caller is an editor of its folder
         [mediaRow], // assets the slides show
       ],
     })
@@ -174,27 +176,53 @@ describe('DecksService.duplicate', () => {
     await sourceEditor.disconnect()
   })
 
-  it('puts the copy in Drafts when the caller does not own the source folder', async () => {
-    seedSource()
-    const sourceEditor = await hp.openDirectConnection('src')
+  // Not a member of the source folder (a deck shared on its own), or only a
+  // viewer of it: the caller may not add decks there.
+  for (const [who, roleRows] of [
+    ['is not a member of', []],
+    ['is only a viewer of', [{ role: 'viewer' }]],
+  ] as const) {
+    it(`puts the copy in Drafts when the caller ${who} the source folder`, async () => {
+      seedSource()
+      const sourceEditor = await hp.openDirectConnection('src')
+      const script = scriptedDb({
+        selects: [
+          [{ id: 'src', title: 'Shared deck', folderId: 'theirs', thumbnailKey: null }],
+          [...roleRows], // the caller's role in the source folder
+          [{ id: 'drafts' }], // getOrProvisionDrafts finds the Drafts folder
+          [mediaRow],
+          [], // stored rows of the source folder (no tokens)…
+          [], // …and of Drafts: token references are rebound across folders
+        ],
+      })
+      const service = createDecksService({ db: script.db, log: quietLog, hocuspocus: () => hp })
+      try {
+        const copy = await service.duplicate({ userId: 'u1', deckId: 'src', title: 'Mine' })
+        expect(copy).toMatchObject({ title: 'Mine', folderId: 'drafts' })
+        expect(copy.tokens).toEqual({ rebound: 0, literalised: 0, detached: 0, unmatched: 0 })
+        expect(script.remaining().selects).toBe(0)
+      } finally {
+        await sourceEditor.disconnect()
+      }
+    })
+  }
+
+  it('refuses a named target folder the caller is only a viewer of, before copying anything', async () => {
     const script = scriptedDb({
       selects: [
-        [{ id: 'src', title: 'Shared deck', folderId: 'theirs', thumbnailKey: null }],
-        [], // not the caller's folder
-        [{ id: 'drafts' }], // getOrProvisionDrafts finds the Drafts folder
-        [mediaRow],
-        [], // stored rows of the source folder (no tokens)…
-        [], // …and of Drafts: token references are rebound across folders
+        [{ id: 'src', title: 'Pitch', folderId: 'f1', thumbnailKey: null }],
+        [{ id: 'f2', ownerUserId: 'someone-else', name: 'Team' }],
+        [{ role: 'viewer' }],
       ],
     })
     const service = createDecksService({ db: script.db, log: quietLog, hocuspocus: () => hp })
-    try {
-      const copy = await service.duplicate({ userId: 'u1', deckId: 'src', title: 'Mine' })
-      expect(copy).toMatchObject({ title: 'Mine', folderId: 'drafts' })
-      expect(copy.tokens).toEqual({ rebound: 0, literalised: 0, detached: 0, unmatched: 0 })
-    } finally {
-      await sourceEditor.disconnect()
-    }
+    const err = await serviceErrorOf(
+      service.duplicate({ userId: 'u1', deckId: 'src', folderId: 'f2' }),
+    )
+    expect(err.status).toBe(403)
+    expect(err.message).toMatch(/editor role/)
+    expect(send).not.toHaveBeenCalled()
+    expect(script.writes).toEqual([])
   })
 
   it('refuses a caller who can only view the deck, before copying anything', async () => {
@@ -202,7 +230,8 @@ describe('DecksService.duplicate', () => {
     const script = scriptedDb({
       selects: [
         [{ id: 'src', title: 'Pitch', folderId: 'f1', thumbnailKey: null }],
-        [{ id: 'f1' }],
+        [], // no role in its folder: the deck was shared on its own, as viewer
+        [{ id: 'drafts' }], // so the copy would go to Drafts
       ],
     })
     const service = createDecksService({ db: script.db, log: quietLog, hocuspocus: () => hp })

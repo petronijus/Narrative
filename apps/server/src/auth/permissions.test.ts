@@ -2,11 +2,12 @@
  * auth/permissions.test.ts
  *
  * Tests for permission helpers: grantPermission, revokePermission,
- * listPermissions, resolveDeckAccess, checkDeckPermission, roleAtLeast.
+ * listPermissions, the access resolvers (deck, folder, component, folder
+ * content — docs/plans/folder-sharing.md), checkDeckPermission, roleAtLeast.
  *
- * Uses an in-memory mock database — no real Postgres required.
- * The mock models the chainable Drizzle query builder interface closely
- * enough to exercise all code paths in permissions.ts.
+ * No real Postgres: the grant helpers run on an in-memory mock, the
+ * resolvers on the scripted database (test-support/scriptedDb.ts), which
+ * answers their selects in the order the resolver makes them.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -16,10 +17,15 @@ import {
   revokePermission,
   listPermissions,
   resolveDeckAccess,
+  resolveFolderAccess,
+  resolveComponentAccess,
+  resolveFolderContentAccess,
+  higherRole,
   checkDeckPermission,
   type DeckRole,
   type PermissionRow,
 } from './permissions.js'
+import { scriptedDb } from '../test-support/scriptedDb.js'
 
 // ---------------------------------------------------------------------------
 // In-memory store
@@ -282,179 +288,277 @@ describe('listPermissions', () => {
 })
 
 // ---------------------------------------------------------------------------
-// resolveDeckAccess
+// resolveDeckAccess — the highest of the deck grant, the folder role and a
+// share link. For a signed-in user the deck row and both grants come in ONE
+// select (decks left-joined to the user's deck_permissions and
+// folder_permissions rows); a share token adds the share-link select.
 // ---------------------------------------------------------------------------
 
+const LIVE_LINK = (deckId: string, role: DeckRole = 'viewer') => ({
+  id: 'tok-abc',
+  deckId,
+  role,
+  revoked: false,
+  expiresAt: null,
+})
+
+/** The selects of resolveDeckAccess for a signed-in user, in order. */
+function deckScript(opts: {
+  deck?: null
+  deckRole?: DeckRole | null
+  folderRole?: DeckRole | null
+  link?: ReturnType<typeof LIVE_LINK> | null
+}): unknown[][] {
+  const link = opts.link !== undefined ? [opts.link ? [opts.link] : []] : []
+  if (opts.deck === null) return [[], ...link]
+  return [[{ deckRole: opts.deckRole ?? null, folderRole: opts.folderRole ?? null }], ...link]
+}
+
 describe('resolveDeckAccess', () => {
-  /**
-   * Helper: build a mock DB that serves controlled data for the
-   * select().from().where().limit() chain used by resolveDeckAccess.
-   *
-   * selectSequence: array of results returned in order for each .limit() call.
-   * The first call is always deck_permissions lookup, the second is decks lookup.
-   */
-  /**
-   * Build a mock DB for resolveDeckAccess.
-   *
-   * The function makes up to three sequential select().from().where().limit()
-   * calls. Because the mock re-uses one shared `select` spy, we return results
-   * by call index.
-   *
-   * When userId is null the first two select calls (perm + deck lookup) are
-   * skipped entirely, so the share-link lookup is always call index 0 from the
-   * mock's perspective.  Pass `skipUserLookups: true` for that case so the
-   * mock maps correctly.
-   */
-  function makeResolveMock(opts: {
-    permRow?: PermRow | null
-    deckRow?: DeckRow | null
-    shareRow?: ShareRow | null
-    skipUserLookups?: boolean // set true when userId=null (skips perm+deck selects)
-  }) {
-    const calls: Array<unknown[]> = []
-
-    const limitMock = vi.fn().mockImplementation(() => {
-      const idx = calls.length
-      calls.push([])
-
-      if (opts.skipUserLookups) {
-        // Only call is share_links lookup (via findShareLink)
-        if (idx === 0) return Promise.resolve(opts.shareRow ? [opts.shareRow] : [])
-      } else {
-        // Call 0: deck_permissions
-        if (idx === 0) return Promise.resolve(opts.permRow ? [opts.permRow] : [])
-        // Call 1: decks (owner fallback — only reached when no perm row found)
-        if (idx === 1) return Promise.resolve(opts.deckRow ? [opts.deckRow] : [])
-        // Call 2: share_links (via findShareLink — only if shareToken provided)
-        if (idx === 2) return Promise.resolve(opts.shareRow ? [opts.shareRow] : [])
-      }
-      return Promise.resolve([])
-    })
-
-    const db = {
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: limitMock,
-          }),
-        }),
-      }),
-    }
-
-    return db
-  }
-
-  it('returns direct role when deck_permissions row exists', async () => {
-    const now = new Date()
-    const db = makeResolveMock({
-      permRow: {
-        deckId: 'deck-1',
-        userId: 'user-a',
-        role: 'editor',
-        grantedAt: now,
-        grantedBy: null,
-      },
-    })
-
-    const result = await resolveDeckAccess(db as never, {
-      deckId: 'deck-1',
-      userId: 'user-a',
-    })
-
+  it('returns the direct role when the deck has a row for the user', async () => {
+    const { db } = scriptedDb({ selects: deckScript({ deckRole: 'editor' }) })
+    const result = await resolveDeckAccess(db, { deckId: 'deck-1', userId: 'user-a' })
     expect(result).toEqual({ role: 'editor', reason: 'direct' })
   })
 
-  it('returns owner-fallback when userId matches decks.ownerUserId', async () => {
-    const db = makeResolveMock({
-      permRow: null,
-      deckRow: { id: 'deck-1', ownerUserId: 'user-a' },
-    })
-
-    const result = await resolveDeckAccess(db as never, {
-      deckId: 'deck-1',
-      userId: 'user-a',
-    })
-
-    expect(result).toEqual({ role: 'owner', reason: 'owner-fallback' })
+  it('gives a folder member their folder role on a deck they hold no row for', async () => {
+    const { db } = scriptedDb({ selects: deckScript({ folderRole: 'editor' }) })
+    const result = await resolveDeckAccess(db, { deckId: 'deck-1', userId: 'user-a' })
+    expect(result).toEqual({ role: 'editor', reason: 'folder' })
   })
 
-  it('returns null when userId does not match owner and no perms row', async () => {
-    const db = makeResolveMock({
-      permRow: null,
-      deckRow: { id: 'deck-1', ownerUserId: 'other-user' },
-    })
+  it('takes the folder role over a lower deck row', async () => {
+    const { db } = scriptedDb({ selects: deckScript({ deckRole: 'viewer', folderRole: 'editor' }) })
+    const result = await resolveDeckAccess(db, { deckId: 'deck-1', userId: 'user-a' })
+    expect(result).toEqual({ role: 'editor', reason: 'folder' })
+  })
 
-    const result = await resolveDeckAccess(db as never, {
-      deckId: 'deck-1',
-      userId: 'user-a',
-    })
+  it('keeps a deck row that is higher than the folder role', async () => {
+    const { db } = scriptedDb({ selects: deckScript({ deckRole: 'owner', folderRole: 'viewer' }) })
+    const result = await resolveDeckAccess(db, { deckId: 'deck-1', userId: 'user-a' })
+    expect(result).toEqual({ role: 'owner', reason: 'direct' })
+  })
 
+  it('reports a deck row and an equal folder role as direct (a tie keeps the deck grant)', async () => {
+    const { db } = scriptedDb({ selects: deckScript({ deckRole: 'editor', folderRole: 'editor' }) })
+    const result = await resolveDeckAccess(db, { deckId: 'deck-1', userId: 'user-a' })
+    expect(result).toEqual({ role: 'editor', reason: 'direct' })
+  })
+
+  it('reads the deck and both grants in one select', async () => {
+    const scripted = scriptedDb({
+      selects: [...deckScript({ deckRole: 'viewer', folderRole: 'owner' }), [{ unused: true }]],
+    })
+    const result = await resolveDeckAccess(scripted.db, { deckId: 'deck-1', userId: 'user-a' })
+    expect(result).toEqual({ role: 'owner', reason: 'folder' })
+    expect(scripted.remaining().selects).toBe(1)
+  })
+
+  it("gives the deck's creator nothing without a grant: decks.owner_user_id is no fallback", async () => {
+    // The creator's owner row is written with the deck (migration 0031 for older
+    // decks); a creator whose row is gone holds no role on the deck.
+    const { db } = scriptedDb({ selects: deckScript({}) })
+    const result = await resolveDeckAccess(db, { deckId: 'deck-1', userId: 'the-creator' })
     expect(result).toBeNull()
   })
 
-  it('returns null when deck does not exist', async () => {
-    const db = makeResolveMock({ permRow: null, deckRow: null })
-
-    const result = await resolveDeckAccess(db as never, {
-      deckId: 'nonexistent',
-      userId: 'user-a',
-    })
-
+  it('returns null for a user with no deck row and no folder role', async () => {
+    const { db } = scriptedDb({ selects: deckScript({}) })
+    const result = await resolveDeckAccess(db, { deckId: 'deck-1', userId: 'user-a' })
     expect(result).toBeNull()
   })
 
-  it('returns share-link role when userId is null and valid share token provided', async () => {
-    const db = makeResolveMock({
-      skipUserLookups: true,
-      shareRow: {
-        id: 'tok-abc',
-        deckId: 'deck-1',
-        role: 'viewer',
-        revoked: false,
-        expiresAt: null,
-      },
-    })
+  it('returns null when the deck does not exist', async () => {
+    const scripted = scriptedDb({ selects: deckScript({ deck: null }) })
+    const result = await resolveDeckAccess(scripted.db, { deckId: 'nonexistent', userId: 'user-a' })
+    expect(result).toBeNull()
+    expect(scripted.remaining().selects).toBe(0)
+  })
 
-    const result = await resolveDeckAccess(db as never, {
+  it('returns null for a missing deck even with a share token, without reading the link', async () => {
+    const scripted = scriptedDb({ selects: deckScript({ deck: null, link: LIVE_LINK('gone') }) })
+    const result = await resolveDeckAccess(scripted.db, {
+      deckId: 'gone',
+      userId: 'user-a',
+      shareToken: 'tok-abc',
+    })
+    expect(result).toBeNull()
+    expect(scripted.remaining().selects).toBe(1)
+  })
+
+  it('returns the share-link role when userId is null and the token is valid', async () => {
+    const { db } = scriptedDb({ selects: [[LIVE_LINK('deck-1')]] })
+    const result = await resolveDeckAccess(db, {
       deckId: 'deck-1',
       userId: null,
       shareToken: 'tok-abc',
     })
-
     expect(result).toEqual({ role: 'viewer', reason: 'share-link' })
   })
 
-  it('returns null when userId is null and no shareToken', async () => {
-    // No DB calls are made when userId=null and no shareToken — mock is unused
-    const db = makeResolveMock({ skipUserLookups: true })
-
-    const result = await resolveDeckAccess(db as never, {
-      deckId: 'deck-1',
-      userId: null,
+  it('takes an editor share link over a viewer folder role', async () => {
+    const { db } = scriptedDb({
+      selects: deckScript({ folderRole: 'viewer', link: LIVE_LINK('deck-1', 'editor') }),
     })
+    const result = await resolveDeckAccess(db, {
+      deckId: 'deck-1',
+      userId: 'user-a',
+      shareToken: 'tok-abc',
+    })
+    expect(result).toEqual({ role: 'editor', reason: 'share-link' })
+  })
 
+  it('keeps a deck grant over a lower share link', async () => {
+    const { db } = scriptedDb({
+      selects: deckScript({ deckRole: 'editor', link: LIVE_LINK('deck-1', 'viewer') }),
+    })
+    const result = await resolveDeckAccess(db, {
+      deckId: 'deck-1',
+      userId: 'user-a',
+      shareToken: 'tok-abc',
+    })
+    expect(result).toEqual({ role: 'editor', reason: 'direct' })
+  })
+
+  it('returns null when userId is null and no shareToken', async () => {
+    const scripted = scriptedDb()
+    const result = await resolveDeckAccess(scripted.db, { deckId: 'deck-1', userId: null })
     expect(result).toBeNull()
   })
 
-  it('returns null when share link deckId does not match requested deckId', async () => {
-    const db = makeResolveMock({
-      skipUserLookups: true,
-      shareRow: {
-        id: 'tok-abc',
-        deckId: 'deck-OTHER', // different deck
-        role: 'viewer',
-        revoked: false,
-        expiresAt: null,
-      },
-    })
-
-    const result = await resolveDeckAccess(db as never, {
+  it('returns null when the share link is for another deck', async () => {
+    const { db } = scriptedDb({ selects: [[LIVE_LINK('deck-OTHER')]] })
+    const result = await resolveDeckAccess(db, {
       deckId: 'deck-1',
       userId: null,
       shareToken: 'tok-abc',
     })
-
     expect(result).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveFolderAccess / resolveComponentAccess / resolveFolderContentAccess
+// ---------------------------------------------------------------------------
+
+describe('resolveFolderAccess', () => {
+  it("returns the member's folder_permissions role", async () => {
+    const { db } = scriptedDb({ selects: [[{ role: 'viewer' }]] })
+    const result = await resolveFolderAccess(db, { folderId: 'f', userId: 'user-a' })
+    expect(result).toEqual({ role: 'viewer', reason: 'direct' })
+  })
+
+  it('returns null for a user without a row, and for no user at all', async () => {
+    const { db } = scriptedDb({ selects: [[]] })
+    expect(await resolveFolderAccess(db, { folderId: 'f', userId: 'user-a' })).toBeNull()
+    expect(await resolveFolderAccess(scriptedDb().db, { folderId: 'f', userId: null })).toBeNull()
+  })
+
+  it('takes the highest role among the user and the ids it also counts as', async () => {
+    const { db } = scriptedDb({ selects: [[{ role: 'editor' }, { role: 'owner' }]] })
+    const result = await resolveFolderAccess(db, {
+      folderId: 'f',
+      userId: 'dev-user',
+      alsoAs: ['demo-user'],
+    })
+    expect(result).toEqual({ role: 'owner', reason: 'direct' })
+  })
+})
+
+describe('resolveComponentAccess', () => {
+  it("is the user's role in the component's folder", async () => {
+    const { db } = scriptedDb({ selects: [[{ folderId: 'f' }], [{ role: 'viewer' }]] })
+    const result = await resolveComponentAccess(db, { componentId: 'c', userId: 'user-a' })
+    expect(result).toEqual({ role: 'viewer', reason: 'folder' })
+  })
+
+  it('refuses a user outside the folder, a missing component and a share-link principal', async () => {
+    const outside = scriptedDb({ selects: [[{ folderId: 'f' }], []] })
+    expect(await resolveComponentAccess(outside.db, { componentId: 'c', userId: 'u' })).toBeNull()
+    const missing = scriptedDb({ selects: [[]] })
+    expect(await resolveComponentAccess(missing.db, { componentId: 'c', userId: 'u' })).toBeNull()
+    expect(await resolveComponentAccess(scriptedDb().db, { componentId: 'c', userId: null })).toBe(
+      null,
+    )
+  })
+})
+
+describe('resolveFolderContentAccess', () => {
+  it('gives a folder member their folder role', async () => {
+    const { db } = scriptedDb({ selects: [[{ role: 'editor' }]] })
+    const result = await resolveFolderContentAccess(db, { folderId: 'f', userId: 'user-a' })
+    expect(result).toEqual({ role: 'editor', via: 'folder' })
+  })
+
+  it('lets a guest of one of its decks read it as a viewer', async () => {
+    const { db } = scriptedDb({ selects: [[], [{ deckId: 'deck-1' }]] })
+    const result = await resolveFolderContentAccess(db, { folderId: 'f', userId: 'user-a' })
+    expect(result).toEqual({ role: 'viewer', via: 'deck' })
+  })
+
+  it('lets a BYPASS alias holding a grant on one of its decks read it as a viewer', async () => {
+    const { db } = scriptedDb({ selects: [[], [{ deckId: 'deck-1' }]] })
+    const result = await resolveFolderContentAccess(db, {
+      folderId: 'f',
+      userId: 'dev-user',
+      alsoAs: ['demo-user'],
+    })
+    expect(result).toEqual({ role: 'viewer', via: 'deck' })
+  })
+
+  it('refuses the creator of one of its decks who holds no grant (no owner fallback)', async () => {
+    // Two selects only: folder_permissions, then deck_permissions. Nothing reads decks.owner_user_id.
+    const scripted = scriptedDb({ selects: [[], [], [{ id: 'deck-1' }]] })
+    const result = await resolveFolderContentAccess(scripted.db, { folderId: 'f', userId: 'u' })
+    expect(result).toBeNull()
+    expect(scripted.remaining().selects).toBe(1)
+  })
+
+  it('lets a share link to a deck of the folder read it as a viewer, even an editor link', async () => {
+    const { db } = scriptedDb({
+      selects: [[LIVE_LINK('deck-1', 'editor')], [{ folderId: 'f' }]],
+    })
+    const result = await resolveFolderContentAccess(db, {
+      folderId: 'f',
+      userId: null,
+      shareToken: 'tok-abc',
+    })
+    expect(result).toEqual({ role: 'viewer', via: 'deck' })
+  })
+
+  it('refuses a share link to a deck of another folder', async () => {
+    const { db } = scriptedDb({ selects: [[LIVE_LINK('deck-1')], [{ folderId: 'other' }]] })
+    const result = await resolveFolderContentAccess(db, {
+      folderId: 'f',
+      userId: null,
+      shareToken: 'tok-abc',
+    })
+    expect(result).toBeNull()
+  })
+
+  it('refuses a revoked share link', async () => {
+    const { db } = scriptedDb({ selects: [[{ ...LIVE_LINK('deck-1'), revoked: true }]] })
+    const result = await resolveFolderContentAccess(db, {
+      folderId: 'f',
+      userId: null,
+      shareToken: 'tok-abc',
+    })
+    expect(result).toBeNull()
+  })
+
+  it('refuses a user with no role in the folder and no access to any of its decks', async () => {
+    const { db } = scriptedDb({ selects: [[], []] })
+    expect(await resolveFolderContentAccess(db, { folderId: 'f', userId: 'user-a' })).toBeNull()
+  })
+})
+
+describe('higherRole', () => {
+  it('picks the higher role and treats null as no access', () => {
+    expect(higherRole('viewer', 'editor')).toBe('editor')
+    expect(higherRole('owner', 'editor')).toBe('owner')
+    expect(higherRole(null, 'viewer')).toBe('viewer')
+    expect(higherRole('viewer', null)).toBe('viewer')
+    expect(higherRole(null, null)).toBeNull()
   })
 })
 
@@ -463,23 +567,6 @@ describe('resolveDeckAccess', () => {
 // ---------------------------------------------------------------------------
 
 describe('checkDeckPermission — role matrix', () => {
-  function makeDirectRoleMock(role: DeckRole) {
-    const now = new Date()
-    return {
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi
-              .fn()
-              .mockResolvedValue([
-                { deckId: 'd', userId: 'u', role, grantedAt: now, grantedBy: null },
-              ]),
-          }),
-        }),
-      }),
-    }
-  }
-
   const cases: Array<{ actual: DeckRole; required: DeckRole; expected: boolean }> = [
     { actual: 'owner', required: 'owner', expected: true },
     { actual: 'owner', required: 'editor', expected: true },
@@ -494,28 +581,26 @@ describe('checkDeckPermission — role matrix', () => {
 
   for (const { actual, required, expected } of cases) {
     it(`${actual} asking for ${required} → ${expected}`, async () => {
-      const db = makeDirectRoleMock(actual)
-      const result = await checkDeckPermission(db as never, {
-        deckId: 'd',
-        userId: 'u',
-        required,
-      })
+      const { db } = scriptedDb({ selects: deckScript({ deckRole: actual }) })
+      const result = await checkDeckPermission(db, { deckId: 'd', userId: 'u', required })
       expect(result).toBe(expected)
     })
   }
 
-  it('returns false for nonexistent deck (null access)', async () => {
-    const db = {
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([]),
-          }),
-        }),
-      }),
-    }
+  it('a folder editor meets editor on a deck of the folder, not owner', async () => {
+    const editor = scriptedDb({ selects: deckScript({ folderRole: 'editor' }) })
+    expect(
+      await checkDeckPermission(editor.db, { deckId: 'd', userId: 'u', required: 'editor' }),
+    ).toBe(true)
+    const again = scriptedDb({ selects: deckScript({ folderRole: 'editor' }) })
+    expect(
+      await checkDeckPermission(again.db, { deckId: 'd', userId: 'u', required: 'owner' }),
+    ).toBe(false)
+  })
 
-    const result = await checkDeckPermission(db as never, {
+  it('returns false for nonexistent deck (null access)', async () => {
+    const { db } = scriptedDb({ selects: deckScript({ deck: null }) })
+    const result = await checkDeckPermission(db, {
       deckId: 'nonexistent',
       userId: 'user-a',
       required: 'viewer',

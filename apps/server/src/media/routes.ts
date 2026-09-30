@@ -8,7 +8,7 @@
  *     Auth: JWT required (authPreHandler). Deck access: viewer or above.
  *     Cache-Control: private, max-age=600 (10 min). Signed URLs are stable, so the
  *     browser may keep one; a shared cache must not (it would hand one viewer's
- *     answer to another — component media is its folder owner's only).
+ *     answer to another — component media is only for its folder's readers).
  *
  *   GET  /api/media/:assetId/video-info
  *     Returns transcode status + signed poster/thumbnail URLs + progressive MP4 playback URL.
@@ -19,7 +19,8 @@
  *     Returns a short-TTL presigned MinIO URL for a font asset's bytes plus
  *     parsed metadata (MEDIA-1: bucket is private). M16 P3: only resolves
  *     folder-scoped fonts now (kind='font', folder_id IS NOT NULL,
- *     deck_id IS NULL). Auth: caller must own the folder.
+ *     deck_id IS NULL). Auth: the caller may read the folder's content (a
+ *     member, or a guest of one of its decks).
  *
  *   POST   /api/folders/:folderId/fonts
  *   GET    /api/folders/:folderId/fonts
@@ -34,8 +35,10 @@
  *   - Share token (viewer via share link) does NOT permit uploads — only reads.
  *   - Deck ownership verified via getMediaAsset → deckId → resolveDeckAccess chain.
  *   - A component master's picture or video (A2.12b, `component_id` set):
- *     url, video-info and DELETE need the owner of the component's folder
- *     (resolveComponentAccess); a share token never grants it.
+ *     url and video-info answer whoever may read the component's folder
+ *     content — its members and the guests of its decks, share links
+ *     included (canReadComponentMedia); DELETE needs an editor of the
+ *     folder (canWriteComponentMedia).
  *   - MEDIA-1: the MinIO bucket is PRIVATE (no anonymous download policy).
  *     Every media URL handed to a client is either an imgproxy-signed URL
  *     (images, posters, thumbnails — stable HMAC) or a short-TTL S3 presigned
@@ -280,7 +283,7 @@ export async function registerMediaRoutes(
           : undefined
     }
 
-    // Folder ownership, the empty / 10 MB checks, parsing and the postscript
+    // The editor role in the folder, the empty / 10 MB checks, parsing and the postscript
     // collision check all happen in the service, in that order.
     try {
       const font = await createFoldersService(routeDeps(app, db, request.log)).uploadFont({

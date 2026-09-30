@@ -5,7 +5,13 @@
  *   - liveDocs: reads prefer the live copy, writes are ONE transaction with
  *     the caller's origin through a direct connection;
  *   - decks.create writes the first slide with the deck;
- *   - decks.moveDecks rebinds the moved deck's token references;
+ *   - decks.list / listPage show the higher of the deck grant and the
+ *     folder role (no creator fallback);
+ *   - decks.moveDecks authorises the move (editor of both folders, owner of
+ *     every moved deck), moves all or none, closes the live connections on
+ *     the moved decks and the source folder's token document, and rebinds
+ *     the moved deck's token references;
+ *   - decks.delete closes the deleted deck's connections and its folder's;
  *   - components.readMaster enforces the folder rules;
  *   - pptx export reads the live document, not the stored snapshot.
  */
@@ -31,16 +37,29 @@ import { readDocState, writeLiveDoc } from './liveDocs.js'
 import { createDecksService } from './decks.js'
 import { createComponentsService } from './components.js'
 import { createPptxService } from './pptx.js'
+import { closeConnectionsForDocument, closeDeckConnections } from '../hocuspocus/connections.js'
 
 vi.mock('../media/bucketCleanup.js', () => ({
   purgeDeckBucketPrefix: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
   purgeExplicitKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
 }))
 
+// The services close live WebSocket connections through the process-wide
+// server registry; here we only record that they asked to.
+vi.mock('../hocuspocus/connections.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../hocuspocus/connections.js')>()),
+  closeDeckConnections: vi.fn(() => 0),
+  closeConnectionsForDocument: vi.fn(() => 0),
+}))
+
+const closedDecks = vi.mocked(closeDeckConnections)
+const closedDocuments = vi.mocked(closeConnectionsForDocument)
+
 let persistence: MemoryPersistence
 let hp: Hocuspocus
 
 beforeEach(() => {
+  vi.clearAllMocks()
   persistence = new MemoryPersistence()
   hp = new Hocuspocus({
     quiet: true,
@@ -178,7 +197,8 @@ describe('decks.create', () => {
   it('writes the deck, its owner permission and a first document with one empty slide, together', async () => {
     const now = new Date('2026-09-26T10:00:00Z')
     const script = scriptedDb({
-      selects: [[{ id: 'f1', ownerUserId: 'u1' }]],
+      // The folder, then the caller's role in it (someone else's folder they edit).
+      selects: [[{ id: 'f1', ownerUserId: 'someone-else', name: 'Team' }], [{ role: 'editor' }]],
     })
     const created = await createDecksService(deps(script.db)).create({
       userId: 'u1',
@@ -199,25 +219,107 @@ describe('decks.create', () => {
     void now
   })
 
-  it("refuses a folder that is not the user's", async () => {
-    const script = scriptedDb({ selects: [[{ id: 'f1', ownerUserId: 'someone-else' }]] })
-    const err = await serviceErrorOf(
-      createDecksService(deps(script.db)).create({ userId: 'u1', folderId: 'f1' }),
-    )
-    expect(err).toBeInstanceOf(ServiceError)
-    expect((err as ServiceError).status).toBe(403)
-    expect(script.writes).toEqual([])
+  it('refuses a folder the user is not a member of, and one they only view', async () => {
+    for (const roleRows of [[], [{ role: 'viewer' }]]) {
+      const script = scriptedDb({
+        selects: [[{ id: 'f1', ownerUserId: 'someone-else', name: 'Team' }], roleRows],
+      })
+      const err = await serviceErrorOf(
+        createDecksService(deps(script.db)).create({ userId: 'u1', folderId: 'f1' }),
+      )
+      expect(err).toBeInstanceOf(ServiceError)
+      expect((err as ServiceError).status).toBe(403)
+      expect(script.writes).toEqual([])
+    }
+  })
+})
+
+describe('decks.list / decks.listPage: the role shown for each deck', () => {
+  const deckRow = (id: string) => ({
+    id,
+    title: id,
+    ownerUserId: 'the-creator',
+    folderId: 'f1',
+    thumbnailKey: null,
+    thumbnailUpdatedAt: null,
+    createdAt: new Date('2026-09-30'),
+    updatedAt: new Date('2026-09-30'),
+  })
+
+  it('lists the higher of the deck grant and the folder role, never the creator column', async () => {
+    const script = scriptedDb({
+      selects: [
+        [
+          { deck: deckRow('grant-wins'), deckRole: 'owner', folderRole: 'viewer' },
+          { deck: deckRow('folder-wins'), deckRole: 'viewer', folderRole: 'editor' },
+          { deck: deckRow('grant-only'), deckRole: 'editor', folderRole: null },
+          { deck: deckRow('folder-only'), deckRole: null, folderRole: 'viewer' },
+        ],
+      ],
+    })
+    // The caller is decks.owner_user_id of every deck: that grants nothing.
+    const listed = await createDecksService(deps(script.db)).list({ userId: 'the-creator' })
+    expect(listed.map((d) => [d.id, d.viewerRole])).toEqual([
+      ['grant-wins', 'owner'],
+      ['folder-wins', 'editor'],
+      ['grant-only', 'editor'],
+      ['folder-only', 'viewer'],
+    ])
+  })
+
+  it('pages with the same role rule', async () => {
+    const at = new Date('2026-09-30T10:00:00Z')
+    const item = (id: string, deckRole: string | null, folderRole: string | null) => ({
+      id,
+      title: id,
+      folderId: 'f1',
+      updatedAt: at,
+      key: '2026-09-30T10:00:00.000000',
+      deckRole,
+      folderRole,
+    })
+    const script = scriptedDb({
+      selects: [
+        [
+          item('grant-wins', 'owner', 'viewer'),
+          item('folder-wins', 'viewer', 'editor'),
+          item('folder-only', null, 'viewer'),
+        ],
+      ],
+    })
+    const page = await createDecksService(deps(script.db)).listPage({
+      userId: 'the-creator',
+      limit: 10,
+    })
+    expect(page.decks.map((d) => [d.id, d.role])).toEqual([
+      ['grant-wins', 'owner'],
+      ['folder-wins', 'editor'],
+      ['folder-only', 'viewer'],
+    ])
+    expect(page.next).toBeNull()
   })
 })
 
 describe('decks.moveDecks', () => {
+  const SRC = { id: 'f_src', ownerUserId: 'u1', name: 'Client A' }
+  const DST = { id: 'f_dst', ownerUserId: 'u1', name: 'Client B' }
+  const moveArgs = (deckIds: string[]) => ({
+    userId: 'u1',
+    sourceFolderId: 'f_src',
+    deckIds,
+    destFolderId: 'f_dst',
+  })
+
   it('moves the deck and rebinds its token references to the destination folder', async () => {
     persistence.snapshots.set('d1', deckState({ $token: 'colors.src_brand' }))
     const script = scriptedDb({
       selects: [
-        [{ id: 'f_src', ownerUserId: 'u1', name: 'Client A' }],
-        [{ id: 'f_dst', ownerUserId: 'u1', name: 'Client B' }],
-        [{ id: 'd1', ownerUserId: 'u1', folderId: 'f_src' }],
+        [SRC],
+        [{ role: 'editor' }], // the caller edits the source folder…
+        [DST],
+        [{ role: 'editor' }], // …and the destination
+        [{ id: 'd1', folderId: 'f_src' }],
+        [{ deckId: 'd1' }], // the caller's owner grants on the moved decks
         // the two folder documents (stored rows), source first
         [{ update: folderState({ src_brand: { name: 'Brand', value: '#0033aa' } }) }],
         [{ update: folderState({ dst_brand: { name: 'brand', value: '#0044bb' } }) }],
@@ -226,10 +328,7 @@ describe('decks.moveDecks', () => {
     })
     const origin = { run: 'r1' }
     const result = await createDecksService(deps(script.db)).moveDecks({
-      userId: 'u1',
-      sourceFolderId: 'f_src',
-      deckIds: ['d1'],
-      destFolderId: 'f_dst',
+      ...moveArgs(['d1']),
       origin,
     })
     expect(result).toEqual({
@@ -244,24 +343,167 @@ describe('decks.moveDecks', () => {
     })
   })
 
-  it('refuses decks the caller does not own, before moving anything', async () => {
+  it("lets the source folder's owner move a deck without reading the deck grants", async () => {
+    // No grant select is scripted: had the service read the grants, the
+    // empty source-folder document below would answer it and refuse the move.
     const script = scriptedDb({
       selects: [
-        [{ id: 'f_src', ownerUserId: 'u1', name: 'A' }],
-        [{ id: 'f_dst', ownerUserId: 'u1', name: 'B' }],
-        [{ id: 'd1', ownerUserId: 'other', folderId: 'f_src' }],
+        [SRC],
+        [{ role: 'owner' }],
+        [DST],
+        [{ role: 'editor' }],
+        [{ id: 'd1', folderId: 'f_src' }],
+        [], // the source folder document (empty: no tokens to rebind)
+        [], // the destination folder document
+      ],
+      updates: [[{ id: 'd1' }]],
+    })
+    const result = await createDecksService(deps(script.db)).moveDecks(moveArgs(['d1']))
+    expect(result.movedCount).toBe(1)
+    expect(script.remaining().selects).toBe(0)
+  })
+
+  it('lets a source folder editor move the decks they hold an owner grant on', async () => {
+    const script = scriptedDb({
+      selects: [
+        [SRC],
+        [{ role: 'editor' }],
+        [DST],
+        [{ role: 'editor' }],
+        [
+          { id: 'd1', folderId: 'f_src' },
+          { id: 'd2', folderId: 'f_src' },
+        ],
+        [{ deckId: 'd1' }, { deckId: 'd2' }], // one query: owner grants on both
+        [],
+        [],
+      ],
+      updates: [[{ id: 'd1' }, { id: 'd2' }]],
+    })
+    const result = await createDecksService(deps(script.db)).moveDecks(moveArgs(['d1', 'd2']))
+    expect(result.movedCount).toBe(2)
+    expect(script.remaining().selects).toBe(0)
+  })
+
+  it('refuses a deck the caller only edits through the folder, before moving anything', async () => {
+    // An editor of both folders who holds no owner grant on the deck:
+    // moving it changes who sees it.
+    const script = scriptedDb({
+      selects: [
+        [SRC],
+        [{ role: 'editor' }],
+        [DST],
+        [{ role: 'editor' }],
+        [{ id: 'd1', folderId: 'f_src' }],
+        [], // no owner grant
       ],
     })
     const err = await serviceErrorOf(
-      createDecksService(deps(script.db)).moveDecks({
-        userId: 'u1',
-        sourceFolderId: 'f_src',
-        deckIds: ['d1'],
-        destFolderId: 'f_dst',
-      }),
+      createDecksService(deps(script.db)).moveDecks(moveArgs(['d1'])),
+    )
+    expect(err.status).toBe(403)
+    expect(err.message).toMatch(/owner role/)
+    expect(script.writes).toEqual([])
+    expect(script.remaining().selects).toBe(0)
+    expect(closedDecks).not.toHaveBeenCalled()
+    expect(closedDocuments).not.toHaveBeenCalled()
+  })
+
+  it('refuses the whole move when the caller owns only some of the decks', async () => {
+    const script = scriptedDb({
+      selects: [
+        [SRC],
+        [{ role: 'editor' }],
+        [DST],
+        [{ role: 'editor' }],
+        [
+          { id: 'd1', folderId: 'f_src' },
+          { id: 'd2', folderId: 'f_src' },
+        ],
+        [{ deckId: 'd1' }], // an owner grant on d1 only
+      ],
+    })
+    const err = await serviceErrorOf(
+      createDecksService(deps(script.db)).moveDecks(moveArgs(['d1', 'd2'])),
     )
     expect(err.status).toBe(403)
     expect(script.writes).toEqual([])
+  })
+
+  it('rolls the move back with a conflict when a deck left the source folder meanwhile', async () => {
+    const script = scriptedDb({
+      selects: [
+        [SRC],
+        [{ role: 'owner' }],
+        [DST],
+        [{ role: 'editor' }],
+        [
+          { id: 'd1', folderId: 'f_src' },
+          { id: 'd2', folderId: 'f_src' },
+        ],
+      ],
+      // The guarded update (id in … and folder_id = source) moved only d1.
+      updates: [[{ id: 'd1' }]],
+    })
+    const err = await serviceErrorOf(
+      createDecksService(deps(script.db)).moveDecks(moveArgs(['d1', 'd2'])),
+    )
+    expect(err.status).toBe(409)
+    expect(err.message).toBe('Some decks left the source folder while they were being moved')
+    expect(script.writes).toEqual([])
+    expect(script.rolledBack).toMatchObject([
+      { kind: 'update', table: 'decks', values: { folderId: 'f_dst' } },
+    ])
+    expect(closedDecks).not.toHaveBeenCalled()
+    expect(closedDocuments).not.toHaveBeenCalled()
+  })
+
+  it("closes the moved decks' connections and the source folder document's", async () => {
+    const script = scriptedDb({
+      selects: [
+        [SRC],
+        [{ role: 'owner' }],
+        [DST],
+        [{ role: 'editor' }],
+        [
+          { id: 'd1', folderId: 'f_src' },
+          { id: 'd2', folderId: 'f_src' },
+        ],
+        [],
+        [],
+      ],
+      updates: [[{ id: 'd1' }, { id: 'd2' }]],
+    })
+    await createDecksService(deps(script.db)).moveDecks(moveArgs(['d1', 'd2']))
+    expect(closedDecks.mock.calls).toEqual([['d1'], ['d2']])
+    expect(closedDocuments.mock.calls).toEqual([['folder:f_src']])
+  })
+})
+
+describe('decks.delete', () => {
+  it("closes the deleted deck's connections and its folder document's", async () => {
+    const script = scriptedDb({
+      selects: [[]], // the deck's media rows
+      deletes: [[{ id: 'd1', folderId: 'f1' }]],
+    })
+    await createDecksService(deps(script.db)).delete({ deckId: 'd1' })
+    expect(closedDecks.mock.calls).toEqual([['d1']])
+    expect(closedDocuments.mock.calls).toEqual([['folder:f1']])
+  })
+
+  it('closes no folder document for a deck in no folder', async () => {
+    const script = scriptedDb({ selects: [[]], deletes: [[{ id: 'd1', folderId: null }]] })
+    await createDecksService(deps(script.db)).delete({ deckId: 'd1' })
+    expect(closedDecks.mock.calls).toEqual([['d1']])
+    expect(closedDocuments).not.toHaveBeenCalled()
+  })
+
+  it('closes nothing when the deck does not exist', async () => {
+    const script = scriptedDb({ selects: [[]], deletes: [[]] })
+    const err = await serviceErrorOf(createDecksService(deps(script.db)).delete({ deckId: 'd1' }))
+    expect(err.status).toBe(404)
+    expect(closedDecks).not.toHaveBeenCalled()
+    expect(closedDocuments).not.toHaveBeenCalled()
   })
 })
 
@@ -284,7 +526,7 @@ describe('components.readMaster', () => {
       selects: [
         [{ folderId: 'f1' }], // the deck's folder
         [componentRow],
-        [{ id: 'f1', ownerUserId: 'u1', name: 'A' }], // folder ownership
+        [{ role: 'viewer' }], // the caller's role in its folder: reading a master needs viewer
         [{ update: master }], // stored master
       ],
     })
@@ -311,28 +553,29 @@ describe('components.readMaster', () => {
     expect(err.status).toBe(404)
   })
 
-  it("refuses a component whose folder is someone else's", async () => {
-    const script = scriptedDb({
-      selects: [[componentRow], [{ id: 'f1', ownerUserId: 'other', name: 'A' }]],
-    })
+  it('refuses a component in a folder the user is not a member of', async () => {
+    const script = scriptedDb({ selects: [[componentRow], []] })
     const err = await serviceErrorOf(
       createComponentsService(deps(script.db)).access({ userId: 'u1', componentId: 'cmp1' }),
     )
     expect(err.status).toBe(403)
   })
 
-  it('authorises opening a master for the owner', async () => {
-    const script = scriptedDb({
-      selects: [[componentRow], [{ id: 'f1', ownerUserId: 'u1', name: 'A' }]],
-    })
-    expect(
-      await createComponentsService(deps(script.db)).access({ userId: 'u1', componentId: 'cmp1' }),
-    ).toEqual({
-      componentId: 'cmp1',
-      folderId: 'f1',
-      role: 'owner',
-      documentName: 'component:cmp1',
-    })
+  it('authorises opening a master with the role the user holds in its folder', async () => {
+    for (const role of ['owner', 'editor', 'viewer'] as const) {
+      const script = scriptedDb({ selects: [[componentRow], [{ role }]] })
+      expect(
+        await createComponentsService(deps(script.db)).access({
+          userId: 'u1',
+          componentId: 'cmp1',
+        }),
+      ).toEqual({
+        componentId: 'cmp1',
+        folderId: 'f1',
+        role,
+        documentName: 'component:cmp1',
+      })
+    }
   })
 })
 

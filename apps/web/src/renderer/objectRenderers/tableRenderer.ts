@@ -1225,6 +1225,16 @@ export const tableRenderer: ObjectRenderer<TableObject> = {
     rebuild(node, merged)
     applyFilterEffects(node, merged.shadow, merged.blur)
   },
+  /**
+   * Cell text colours, cell fills and borders resolve token colours. A
+   * rebuild from the same data repaints exactly the ones whose resolution
+   * changed: each cell's fill is keyed by its resolved fill (`cellFillKey`),
+   * each cell's text by its resolved style (`cellRenderFingerprint`), so an
+   * untouched cell keeps its raster; the borders are one cheap re-stroke.
+   */
+  repaintColours(node, data) {
+    rebuild(node, data)
+  },
   destroy(node) {
     const tagged = node as Container & { [k: symbol]: unknown }
     const grid = tagged[GRID_TAG] as Graphics | undefined

@@ -23,11 +23,15 @@ import type * as React from 'react'
 // ---------------------------------------------------------------------------
 
 // Mock the API client
-const mockListFolders = vi
-  .fn()
-  .mockResolvedValue([
-    { id: 'folder-1', name: 'My Folder', deckCount: 2, createdAt: '2026-01-01T00:00:00Z' },
-  ])
+const mockListFolders = vi.fn().mockResolvedValue([
+  {
+    id: 'folder-1',
+    name: 'My Folder',
+    deckCount: 2,
+    createdAt: '2026-01-01T00:00:00Z',
+    role: 'owner',
+  },
+])
 const mockRenameFolder = vi.fn().mockResolvedValue({})
 
 // M16 P5 — Component API mocks
@@ -195,7 +199,13 @@ describe('FolderSettings page', () => {
     mockEffectStyles = {}
     idCounter = 0
     mockListFolders.mockResolvedValue([
-      { id: 'folder-1', name: 'My Folder', deckCount: 2, createdAt: '2026-01-01T00:00:00Z' },
+      {
+        id: 'folder-1',
+        name: 'My Folder',
+        deckCount: 2,
+        createdAt: '2026-01-01T00:00:00Z',
+        role: 'owner',
+      },
     ])
   })
 

@@ -1,5 +1,10 @@
 /**
- * services/folders.test.ts — `folder.delete` (FolderService.delete, `remove` in folders.ts) and the
+ * services/folders.test.ts — folder membership (folder sharing,
+ * docs/plans/folder-sharing.md): a new folder and a provisioned Drafts get
+ * their creator's owner row with them; deleting is the owner's; a folder's
+ * fonts are read by its members and its decks' guests.
+ *
+ * `folder.delete` (FolderService.delete, `remove` in folders.ts) and the
  * bucket: every storage key of what the folder held is collected BEFORE the
  * cascade removes the rows, and swept after it — the contained decks'
  * `decks/<id>/` prefixes, the contained component masters'
@@ -40,7 +45,7 @@ vi.mock('../media/s3Client.js', () => ({
 
 const { purgeComponentBucketPrefix, purgeDeckBucketPrefix, purgeExplicitKeys } =
   await import('../media/bucketCleanup.js')
-const { createFoldersService } = await import('./folders.js')
+const { createFoldersService, getOrProvisionDrafts } = await import('./folders.js')
 
 const FOLDER = { id: 'fold_1', ownerUserId: 'u1', name: 'Client work' }
 
@@ -61,8 +66,9 @@ describe('deleting a folder', () => {
   function folderWithDeckAndComponent(): ScriptedDb {
     return scriptedDb({
       selects: [
-        // requireOwnedFolder
+        // requireFolderRole: the folder, the caller's role in it
         [FOLDER],
+        [{ role: 'owner' }],
         // the contained decks
         [{ id: 'deck_a' }],
         // the contained component masters
@@ -140,6 +146,7 @@ describe('deleting a folder', () => {
     const db = scriptedDb({
       selects: [
         [FOLDER],
+        [{ role: 'owner' }],
         [],
         [{ id: 'cmp_a' }, { id: 'cmp_b' }],
         [
@@ -166,11 +173,102 @@ describe('deleting a folder', () => {
   })
 
   it('refuses the Drafts folder and sweeps nothing', async () => {
-    const db = scriptedDb({ selects: [[{ ...FOLDER, name: 'Drafts' }]] })
+    const db = scriptedDb({ selects: [[{ ...FOLDER, name: 'Drafts' }], [{ role: 'owner' }]] })
     const err = await serviceErrorOf(service(db).delete({ userId: 'u1', folderId: 'fold_1' }))
 
     expect(err.status).toBe(409)
     expect(db.writes).toEqual([])
     expect(purgeCalls).toEqual([])
+  })
+
+  it("refuses an editor of the folder — deleting it is the owner's — and sweeps nothing", async () => {
+    const db = scriptedDb({ selects: [[FOLDER], [{ role: 'editor' }]] })
+    const err = await serviceErrorOf(service(db).delete({ userId: 'u2', folderId: 'fold_1' }))
+
+    expect(err.status).toBe(403)
+    expect(err.message).toMatch(/owner/)
+    expect(db.writes).toEqual([])
+    expect(purgeCalls).toEqual([])
+  })
+})
+
+describe('the creator is the first member', () => {
+  it("creating a folder writes its row and the creator's owner row together", async () => {
+    // The folder's document is seeded afterwards from its (empty) stored rows.
+    const db = scriptedDb({ selects: [[]] })
+    const out = await service(db).create({ userId: 'u1', name: 'Client work' })
+
+    expect(out).toMatchObject({ name: 'Client work', deckCount: 0, role: 'owner' })
+    const inserts = db.writes.filter((w) => w.kind === 'insert')
+    expect(inserts.slice(0, 2)).toEqual([
+      {
+        kind: 'insert',
+        table: 'folders',
+        values: expect.objectContaining({ id: out.id, ownerUserId: 'u1' }),
+      },
+      {
+        kind: 'insert',
+        table: 'folder_permissions',
+        values: { folderId: out.id, userId: 'u1', role: 'owner' },
+      },
+    ])
+  })
+
+  it('provisioning Drafts makes its user the owner member', async () => {
+    const db = scriptedDb({ selects: [[], []] }) // no Drafts yet; its empty stored document
+    const id = await getOrProvisionDrafts(
+      { db: db.db, log: quietLog, hocuspocus: () => null },
+      'u1',
+    )
+
+    expect(db.writes.filter((w) => w.kind === 'insert').slice(0, 2)).toEqual([
+      {
+        kind: 'insert',
+        table: 'folders',
+        values: expect.objectContaining({ id, ownerUserId: 'u1', name: 'Drafts' }),
+      },
+      {
+        kind: 'insert',
+        table: 'folder_permissions',
+        values: { folderId: id, userId: 'u1', role: 'owner' },
+      },
+    ])
+  })
+
+  it('returns an existing Drafts without writing anything', async () => {
+    const db = scriptedDb({ selects: [[{ id: 'drafts_1' }]] })
+    expect(
+      await getOrProvisionDrafts({ db: db.db, log: quietLog, hocuspocus: () => null }, 'u1'),
+    ).toBe('drafts_1')
+    expect(db.writes).toEqual([])
+  })
+})
+
+describe("a folder's fonts", () => {
+  it('are listed for a guest of one of its decks: the deck renders with them', async () => {
+    // The folder; no folder role; a deck grant on one of its decks; its fonts (none).
+    const db = scriptedDb({ selects: [[{ id: 'fold_1' }], [], [{ deckId: 'deck_a' }], []] })
+    await expect(service(db).listFonts({ userId: 'guest', folderId: 'fold_1' })).resolves.toEqual(
+      [],
+    )
+    expect(db.remaining().selects).toBe(0)
+  })
+
+  it('are refused to someone with no access to the folder or any of its decks', async () => {
+    const db = scriptedDb({ selects: [[{ id: 'fold_1' }], [], [], []] })
+    const err = await serviceErrorOf(
+      service(db).listFonts({ userId: 'stranger', folderId: 'fold_1' }),
+    )
+    expect(err.status).toBe(403)
+  })
+
+  it('are deleted only by an editor: a viewer is refused before anything is read', async () => {
+    const db = scriptedDb({ selects: [[FOLDER], [{ role: 'viewer' }]] })
+    const err = await serviceErrorOf(
+      service(db).deleteFont({ userId: 'viewer', folderId: 'fold_1', assetId: 'font_1' }),
+    )
+    expect(err.status).toBe(403)
+    expect(err.message).toMatch(/editor role/)
+    expect(db.writes).toEqual([])
   })
 })

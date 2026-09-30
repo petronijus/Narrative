@@ -10,7 +10,7 @@
  *      reading them back as a Buffer.
  *
  * Steps:
- *   - Verify folder ownership.
+ *   - Verify the editor role in the folder.
  *   - Parse pptx via `parsePptx`.
  *   - Upload every embedded image / video to MinIO under the new deck's
  *     namespace, patching the parsed shapes' `assetId` fields.
@@ -33,6 +33,7 @@ import { nanoid } from 'nanoid'
 import { eq, inArray, TransactionRollbackError } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { decks, deckPermissions, deckUpdates, folders, mediaAssets } from '../db/schema.js'
+import { resolveFolderAccess, roleAtLeast } from '../auth/permissions.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { enqueueVideoTranscode } from '../media/enqueue.js'
 import type { MediaOwner } from '../media/mediaOwner.js'
@@ -119,14 +120,16 @@ export async function importDeckFromPptxBytes(args: {
     return { ok: false, error: { kind: 'emptyBody' } }
   }
 
-  // Verify folder ownership before doing expensive parse work.
+  // A new deck goes into a folder the user may change (editor), checked
+  // before the expensive parse.
   const [folder] = await db
-    .select({ id: folders.id, ownerUserId: folders.ownerUserId })
+    .select({ id: folders.id })
     .from(folders)
     .where(eq(folders.id, folderId))
     .limit(1)
   if (!folder) return { ok: false, error: { kind: 'folderNotFound' } }
-  if (folder.ownerUserId !== ownerUserId) {
+  const access = await resolveFolderAccess(db, { folderId, userId: ownerUserId })
+  if (access === null || !roleAtLeast(access.role, 'editor')) {
     return { ok: false, error: { kind: 'forbidden' } }
   }
 

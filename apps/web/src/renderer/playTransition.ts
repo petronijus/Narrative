@@ -38,6 +38,7 @@ import { getDefaultRenderScheduler } from './RenderScheduler.js'
 import { applyBackground } from './ArtboardBackground.js'
 import { getDefaultImageUrlResolver } from './imageUrl.js'
 import { getDefaultResourceManager } from './ResourceManager.js'
+import { getColourResolver } from './colourResolver.js'
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -154,6 +155,9 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
   }
 
   const incomingNodes: Array<{ id: string; container: Container; data: SlideObject }> = []
+  // The colour resolver these nodes are painted with; if the folder's tokens
+  // change before the transition ends, adoptSlideRoot repaints them.
+  const paintedWith = getColourResolver()
   for (const obj of incomingObjects) {
     const renderer = getRenderer(obj.type)
     if (renderer === undefined) continue
@@ -253,7 +257,7 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
       // of nulling — that keeps subsequent Canvas applyBackground calls
       // (when the slide-change effect re-runs) operating on the already-
       // painted, transition-survived container.
-      sceneGraph.adoptSlideRoot(incomingRoot, incomingNodes, incomingBgContainer)
+      sceneGraph.adoptSlideRoot(incomingRoot, incomingNodes, incomingBgContainer, paintedWith)
       resolve()
     })
 

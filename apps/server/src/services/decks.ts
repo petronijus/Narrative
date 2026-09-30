@@ -8,7 +8,7 @@
 
 import { nanoid } from 'nanoid'
 import * as Y from 'yjs'
-import { and, desc, eq, inArray, sql, type SQL } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql, TransactionRollbackError, type SQL } from 'drizzle-orm'
 import { createSlideDoc, readFolderTokens } from '@narrative/slide-model'
 import type {
   ActiveEditorsEntry,
@@ -23,22 +23,35 @@ import type {
   MoveDecksResult,
   TokenRebindReport,
 } from '@narrative/commands'
-import { decks, deckPermissions, deckUpdates, folders, mediaAssets } from '../db/schema.js'
-import { resolveDeckAccess } from '../auth/permissions.js'
+import {
+  decks,
+  deckPermissions,
+  deckUpdates,
+  folderPermissions,
+  mediaAssets,
+} from '../db/schema.js'
+import {
+  higherRole,
+  resolveDeckAccess,
+  resolveFolderAccess,
+  roleAtLeast,
+} from '../auth/permissions.js'
 import { listUsersBySubs } from '../auth/users.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { purgeDeckBucketPrefix, purgeExplicitKeys } from '../media/bucketCleanup.js'
 import { listDeckFontAssets } from '../media/assets.js'
 import { activeEditorsByDeck } from '../hocuspocus/presence.js'
+import { closeConnectionsForDocument, closeDeckConnections } from '../hocuspocus/connections.js'
 import type { ServiceDeps } from './deps.js'
-import { badRequest, failed, forbidden, notFound } from './errors.js'
+import { badRequest, conflict, failed, forbidden, notFound } from './errors.js'
 import {
   containsIgnoringCase,
   fontFaceInfo,
   iso,
   isoOrNull,
+  bypassAliases,
   ownerIdsFor,
-  requireOwnedFolder,
+  requireFolderRole,
   validPageLimit,
 } from './shared.js'
 import { getOrProvisionDrafts } from './folders.js'
@@ -108,15 +121,34 @@ const DECK_LAST_CHANGE_KEY = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}$/
 export function createDecksService(deps: ServiceDeps): DeckService {
   const { db } = deps
 
-  /** A folder filter must name a folder the caller owns (404 / 403 otherwise). */
+  /** A folder filter must name a folder the caller is a member of (404 / 403 otherwise). */
   async function requireFilterFolder(userId: string, folderId: string): Promise<void> {
-    const [folder] = await db
-      .select({ ownerUserId: folders.ownerUserId })
-      .from(folders)
-      .where(eq(folders.id, folderId))
-      .limit(1)
-    if (!folder) throw notFound('Folder not found')
-    if (!ownerIdsFor(userId, deps.bypass).includes(folder.ownerUserId)) throw forbidden()
+    await requireFolderRole(db, folderId, userId, 'viewer', { bypass: deps.bypass })
+  }
+
+  /**
+   * What makes a deck visible to a signed-in user (not BYPASS_AUTH): their
+   * own deck_permissions row, or their membership of the deck's folder —
+   * folder sharing shows every deck in the folder. Left-join `deckGrant` and
+   * `folderGrant`, filter by `visible`, select `roles` and read the role
+   * with `listedRole`. At most one row of each per deck (both are keyed by
+   * user), so a deck appears once.
+   */
+  function accessJoins(userId: string) {
+    return {
+      deckGrant: and(eq(deckPermissions.deckId, decks.id), eq(deckPermissions.userId, userId)),
+      folderGrant: and(
+        eq(folderPermissions.folderId, decks.folderId),
+        eq(folderPermissions.userId, userId),
+      ),
+      visible: sql`(${deckPermissions.role} IS NOT NULL OR ${folderPermissions.role} IS NOT NULL)`,
+      roles: { deckRole: deckPermissions.role, folderRole: folderPermissions.role },
+    }
+  }
+
+  /** The user's role on a listed deck: the higher of their deck grant and folder role (`visible` guarantees one). */
+  function listedRole(r: { deckRole: DeckRole | null; folderRole: DeckRole | null }): DeckRole {
+    return higherRole(r.deckRole, r.folderRole) ?? 'viewer'
   }
 
   async function list(args: { userId: string; folderId?: string | undefined }) {
@@ -138,48 +170,31 @@ export function createDecksService(deps: ServiceDeps): DeckService {
       return rows.map((r) => ({ ...deckRecord(r), viewerRole: 'owner' as const }))
     }
 
-    // Decks where the user has any explicit permission row (deck_permissions is
-    // the authoritative access list post-M10), as one subquery — no N+1.
-    const accessibleDeckIds = db
-      .select({ deckId: deckPermissions.deckId })
-      .from(deckPermissions)
-      .where(eq(deckPermissions.userId, userId))
-    const accessCondition = sql`${decks.id} IN (${accessibleDeckIds})`
-    const whereClause =
-      filterFolderId !== null
-        ? and(accessCondition, eq(decks.folderId, filterFolderId))
-        : accessCondition
-    const rows = await db.select().from(decks).where(whereClause).orderBy(decks.createdAt)
-
-    // The caller's effective role on each deck: one small follow-up query.
-    const rolesByDeck = new Map<string, DeckRole>()
-    if (rows.length > 0) {
-      const permRows = await db
-        .select({ deckId: deckPermissions.deckId, role: deckPermissions.role })
-        .from(deckPermissions)
-        .where(
-          and(
-            eq(deckPermissions.userId, userId),
-            inArray(
-              deckPermissions.deckId,
-              rows.map((r) => r.id),
-            ),
-          ),
-        )
-      for (const p of permRows) rolesByDeck.set(p.deckId, p.role as DeckRole)
-    }
-    // Default to viewer if no permission row was found (the IN clause
-    // guarantees one exists — defensive).
-    return rows.map((r) => ({ ...deckRecord(r), viewerRole: rolesByDeck.get(r.id) ?? 'viewer' }))
+    // Decks the user may see: a deck grant or the deck's folder (accessJoins),
+    // in one query that also yields both roles — no N+1.
+    const access = accessJoins(userId)
+    const rows = await db
+      .select({ deck: decks, ...access.roles })
+      .from(decks)
+      .leftJoin(deckPermissions, access.deckGrant)
+      .leftJoin(folderPermissions, access.folderGrant)
+      .where(
+        filterFolderId !== null
+          ? and(access.visible, eq(decks.folderId, filterFolderId))
+          : access.visible,
+      )
+      .orderBy(decks.createdAt)
+    return rows.map((r) => ({ ...deckRecord(r.deck), viewerRole: listedRole(r) }))
   }
 
   /**
    * `list` as a keyset-paged, filtered list of lean items, newest change
    * first: ORDER BY last change DESC, id DESC, and a page continues with
    * `(last change, id) < (key, id)`. Fetches `limit + 1` rows to know whether
-   * another page follows. Access is `list`'s: a deck_permissions row for the
-   * caller (joined here, which also yields the role), or in BYPASS_AUTH dev
-   * mode the decks of dev-user and the legacy demo-user (role owner).
+   * another page follows. Access is `list`'s: a deck grant or membership of
+   * the deck's folder (accessJoins, which also yield the role), or in
+   * BYPASS_AUTH dev mode the decks of dev-user and the legacy demo-user
+   * (role owner).
    */
   async function listPage(args: DeckListPageArgs): Promise<DeckListPage> {
     const limit = validPageLimit(args.limit)
@@ -229,28 +244,33 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     }
     const order = [desc(lastChange), desc(decks.id)] as const
 
-    const rows =
-      deps.bypass === true
-        ? (
-            await db
-              .select(columns)
-              .from(decks)
-              .leftJoin(lastStore, eq(lastStore.deckId, decks.id))
-              .where(and(inArray(decks.ownerUserId, ['dev-user', 'demo-user']), ...filters))
-              .orderBy(...order)
-              .limit(limit + 1)
-          ).map((r) => ({ ...r, role: 'owner' as DeckRole }))
-        : await db
-            .select({ ...columns, role: deckPermissions.role })
-            .from(decks)
-            .leftJoin(lastStore, eq(lastStore.deckId, decks.id))
-            .innerJoin(
-              deckPermissions,
-              and(eq(deckPermissions.deckId, decks.id), eq(deckPermissions.userId, args.userId)),
-            )
-            .where(and(...filters))
-            .orderBy(...order)
-            .limit(limit + 1)
+    // BYPASS_AUTH=true dev fallback: the decks of dev-user and the legacy demo-user, as owner.
+    async function bypassPage() {
+      const found = await db
+        .select(columns)
+        .from(decks)
+        .leftJoin(lastStore, eq(lastStore.deckId, decks.id))
+        .where(and(inArray(decks.ownerUserId, ['dev-user', 'demo-user']), ...filters))
+        .orderBy(...order)
+        .limit(limit + 1)
+      return found.map((r) => ({ ...r, role: 'owner' as DeckRole }))
+    }
+
+    async function accessiblePage(userId: string) {
+      const access = accessJoins(userId)
+      const found = await db
+        .select({ ...columns, ...access.roles })
+        .from(decks)
+        .leftJoin(lastStore, eq(lastStore.deckId, decks.id))
+        .leftJoin(deckPermissions, access.deckGrant)
+        .leftJoin(folderPermissions, access.folderGrant)
+        .where(and(access.visible, ...filters))
+        .orderBy(...order)
+        .limit(limit + 1)
+      return found.map((r) => ({ ...r, role: listedRole(r) }))
+    }
+
+    const rows = deps.bypass === true ? await bypassPage() : await accessiblePage(args.userId)
 
     const page = rows.slice(0, limit)
     const last = page[page.length - 1]
@@ -290,18 +310,13 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     const ownerUserId = args.userId
     const title = args.title ?? 'Untitled Deck'
 
-    // The target folder: verified ownership when named, else Drafts
-    // (auto-provisioned for a brand-new user).
+    // The target folder: one the user may change (editor) when named, else
+    // Drafts (auto-provisioned for a brand-new user).
     let targetFolderId: string
     if (args.folderId) {
-      const [folder] = await db
-        .select({ id: folders.id, ownerUserId: folders.ownerUserId })
-        .from(folders)
-        .where(eq(folders.id, args.folderId))
-        .limit(1)
-      if (!folder) throw notFound('Folder not found')
-      if (folder.ownerUserId !== ownerUserId) throw forbidden()
-      targetFolderId = folder.id
+      targetFolderId = (
+        await requireFolderRole(db, args.folderId, ownerUserId, 'editor', { bypass: deps.bypass })
+      ).id
     } else {
       targetFolderId = await getOrProvisionDrafts(deps, ownerUserId)
     }
@@ -366,21 +381,26 @@ export function createDecksService(deps: ServiceDeps): DeckService {
       .limit(1)
     if (!source) throw notFound('Deck not found')
 
-    // Where the copy goes: the named folder (owned), else the source's folder
-    // when the user owns it, else their Drafts.
+    // Where the copy goes: the named folder (editor needed), else the
+    // source's folder when the user may add decks to it, else their Drafts.
     let targetFolderId: string
     if (args.folderId !== undefined) {
-      targetFolderId = (await requireOwnedFolder(db, args.folderId, args.userId)).id
+      targetFolderId = (
+        await requireFolderRole(db, args.folderId, args.userId, 'editor', { bypass: deps.bypass })
+      ).id
     } else {
-      const [own] =
+      const sourceRole =
         source.folderId === null
-          ? []
-          : await db
-              .select({ id: folders.id })
-              .from(folders)
-              .where(and(eq(folders.id, source.folderId), eq(folders.ownerUserId, args.userId)))
-              .limit(1)
-      targetFolderId = own?.id ?? (await getOrProvisionDrafts(deps, args.userId))
+          ? null
+          : await resolveFolderAccess(db, {
+              folderId: source.folderId,
+              userId: args.userId,
+              alsoAs: bypassAliases(deps.bypass),
+            })
+      targetFolderId =
+        source.folderId !== null && sourceRole !== null && roleAtLeast(sourceRole.role, 'editor')
+          ? source.folderId
+          : await getOrProvisionDrafts(deps, args.userId)
     }
     const title =
       args.title !== undefined
@@ -489,8 +509,16 @@ export function createDecksService(deps: ServiceDeps): DeckService {
       .from(mediaAssets)
       .where(eq(mediaAssets.deckId, id))
 
-    const deleted = await db.delete(decks).where(eq(decks.id, id)).returning({ id: decks.id })
-    if (deleted.length === 0) throw notFound('Deck not found')
+    const [deleted] = await db
+      .delete(decks)
+      .where(eq(decks.id, id))
+      .returning({ id: decks.id, folderId: decks.folderId })
+    if (!deleted) throw notFound('Deck not found')
+    // Nobody may keep the deck open, and its guests read its folder's token
+    // document through it: close both, so everyone else reconnects and is
+    // authorised again.
+    closeDeckConnections(id)
+    if (deleted.folderId !== null) closeConnectionsForDocument(`folder:${deleted.folderId}`)
 
     const explicitKeys = assetRows.flatMap((r) =>
       [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey].filter(
@@ -589,32 +617,75 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     if (ids.length === 0) throw badRequest('deckIds must be a non-empty array')
     if (destFolderId === '') throw badRequest('destFolderId is required')
 
-    await requireOwnedFolder(db, sourceFolderId, userId, {
+    // Moving a deck changes who sees it (folder sharing): editor in both
+    // folders, and the owner role on every deck moved.
+    const source = await requireFolderRole(db, sourceFolderId, userId, 'editor', {
+      bypass: deps.bypass,
       notFoundMessage: 'Source folder not found',
     })
-    await requireOwnedFolder(db, destFolderId, userId, {
+    await requireFolderRole(db, destFolderId, userId, 'editor', {
+      bypass: deps.bypass,
       notFoundMessage: 'Destination folder not found',
     })
 
-    // Every deck must be the caller's and sit in the source folder.
     const deckRows = await db
-      .select({ id: decks.id, ownerUserId: decks.ownerUserId, folderId: decks.folderId })
+      .select({ id: decks.id, folderId: decks.folderId })
       .from(decks)
       .where(inArray(decks.id, ids))
-    if (deckRows.some((d) => d.ownerUserId !== userId)) {
-      throw forbidden('Forbidden: some decks are not owned by you')
-    }
     const notInSrc = deckRows.filter((d) => d.folderId !== sourceFolderId)
     if (notInSrc.length > 0) {
       throw badRequest('Some decks are not in the source folder', { count: notInSrc.length })
     }
     if (deckRows.length !== ids.length) throw badRequest('Some deck ids not found')
 
+    // The deck role is the higher of the deck grant and the source folder's
+    // role (resolveDeckAccess): the folder's owner owns every deck in it, an
+    // editor only those they hold an owner grant on — one query for all.
+    const moved = deckRows.map((d) => d.id)
+    if (source.role !== 'owner') {
+      const owned = await db
+        .select({ deckId: deckPermissions.deckId })
+        .from(deckPermissions)
+        .where(
+          and(
+            inArray(deckPermissions.deckId, moved),
+            inArray(deckPermissions.userId, ownerIdsFor(userId, deps.bypass)),
+            eq(deckPermissions.role, 'owner'),
+          ),
+        )
+      const ownedIds = new Set(owned.map((o) => o.deckId))
+      if (moved.some((id) => !ownedIds.has(id))) {
+        throw forbidden('Forbidden: moving a deck needs the owner role on it')
+      }
+    }
+
+    // Only decks still in the source folder move, all or none: a deck moved
+    // away since the checks above fails the whole move.
     const result = await db
-      .update(decks)
-      .set({ folderId: destFolderId, updatedAt: new Date() })
-      .where(inArray(decks.id, ids))
-      .returning({ id: decks.id })
+      .transaction(async (tx) => {
+        const rows = await tx
+          .update(decks)
+          .set({ folderId: destFolderId, updatedAt: new Date() })
+          .where(and(inArray(decks.id, moved), eq(decks.folderId, sourceFolderId)))
+          .returning({ id: decks.id })
+        if (rows.length !== moved.length) {
+          tx.rollback()
+        }
+        return rows
+      })
+      .catch((err: unknown) => {
+        if (err instanceof TransactionRollbackError) {
+          throw conflict('Some decks left the source folder while they were being moved')
+        }
+        throw err
+      })
+
+    // Who may open the moved decks changed: close every live connection on
+    // them, and on the source folder's token document (the moved decks'
+    // guests read it through them), so each reconnects and is authorised
+    // again — the members of the new folder in, anyone else out.
+    for (const r of result) closeDeckConnections(r.id)
+    closeConnectionsForDocument(`folder:${sourceFolderId}`)
 
     const tokens = await rebindTokens(
       result.map((r) => r.id),
@@ -652,18 +723,13 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     userId: string
     folderId: string
   }): Promise<ActiveEditorsEntry[]> {
-    // Folder ownership; anything else is "not found" (no existence oracle).
-    const [owned] = await db
-      .select({ id: folders.id })
-      .from(folders)
-      .where(
-        and(
-          eq(folders.id, args.folderId),
-          inArray(folders.ownerUserId, ownerIdsFor(args.userId, deps.bypass)),
-        ),
-      )
-      .limit(1)
-    if (!owned) throw notFound('Folder not found')
+    // Folder membership; anything else is "not found" (no existence oracle).
+    const member = await resolveFolderAccess(db, {
+      folderId: args.folderId,
+      userId: args.userId,
+      alsoAs: bypassAliases(deps.bypass),
+    })
+    if (!member) throw notFound('Folder not found')
 
     const folderDecks = await db
       .select({ id: decks.id })

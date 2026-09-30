@@ -44,7 +44,8 @@ import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { EditorLayout } from '../components/EditorLayout.js'
 import { DeckRoleStaticProvider } from '../state/DeckRoleContext.js'
 import { MediaUploadProvider } from '../state/useMediaUpload.js'
-import { FolderDocProvider } from '../state/FolderDocProvider.js'
+import { FolderDocProvider, useFolderTokensSettled } from '../state/FolderDocProvider.js'
+import { FolderTokensBridge } from '../components/FolderTokensBridge.js'
 
 export function ComponentMasterEditor() {
   const { folderId, componentId } = useParams<{ folderId: string; componentId: string }>()
@@ -99,34 +100,38 @@ export function ComponentMasterEditor() {
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
       <DeckRoleStaticProvider role="owner" folderId={folderId}>
         <FolderDocProvider folderId={folderId}>
-          {/* The master's pictures and videos belong to the component
-              (A2.12b): tus gets `componentId`, not a deck. */}
-          <MediaUploadProvider componentId={componentId}>
-            <SlideDocProvider deckId={`component:${componentId}`} doc={doc}>
-              <ActiveSlideProvider>
-                <SelectionProvider>
-                  <ToolProvider>
-                    <TextEditProvider>
-                      <TableEditProvider>
-                        <CropModeProvider>
-                          <PathPointsModeProvider>
-                            <RulersProvider>
-                              <SnappingProvider>
-                                <CanvasInstanceContext value={canvasInstance}>
-                                  <EditorLayout masterMode onCanvasReady={handleCanvasReady} />
-                                  <ComponentThumbnailUploader componentId={componentId} />
-                                </CanvasInstanceContext>
-                              </SnappingProvider>
-                            </RulersProvider>
-                          </PathPointsModeProvider>
-                        </CropModeProvider>
-                      </TableEditProvider>
-                    </TextEditProvider>
-                  </ToolProvider>
-                </SelectionProvider>
-              </ActiveSlideProvider>
-            </SlideDocProvider>
-          </MediaUploadProvider>
+          {/* The folder's tokens, for the canvas too: without the bridge the
+              renderer has no colour resolver and token colours paint black. */}
+          <FolderTokensBridge>
+            {/* The master's pictures and videos belong to the component
+                (A2.12b): tus gets `componentId`, not a deck. */}
+            <MediaUploadProvider componentId={componentId}>
+              <SlideDocProvider deckId={`component:${componentId}`} doc={doc}>
+                <ActiveSlideProvider>
+                  <SelectionProvider>
+                    <ToolProvider>
+                      <TextEditProvider>
+                        <TableEditProvider>
+                          <CropModeProvider>
+                            <PathPointsModeProvider>
+                              <RulersProvider>
+                                <SnappingProvider>
+                                  <CanvasInstanceContext value={canvasInstance}>
+                                    <EditorLayout masterMode onCanvasReady={handleCanvasReady} />
+                                    <ComponentThumbnailUploader componentId={componentId} />
+                                  </CanvasInstanceContext>
+                                </SnappingProvider>
+                              </RulersProvider>
+                            </PathPointsModeProvider>
+                          </CropModeProvider>
+                        </TableEditProvider>
+                      </TextEditProvider>
+                    </ToolProvider>
+                  </SelectionProvider>
+                </ActiveSlideProvider>
+              </SlideDocProvider>
+            </MediaUploadProvider>
+          </FolderTokensBridge>
         </FolderDocProvider>
       </DeckRoleStaticProvider>
     </div>
@@ -146,6 +151,9 @@ function ComponentThumbnailUploader({ componentId }: { componentId: string }) {
   const thumbnailMap = useSlideThumbnails(['master'])
   const masterThumb = thumbnailMap.get('master')
   const api = useApi()
+  // Upload only a thumbnail painted with the folder's final tokens (a
+  // token colour renders black before they arrive).
+  const tokensFinal = useFolderTokensSettled()
 
   const lastUploadedRef = useRef<string | null>(null)
   const pendingRef = useRef<string | null>(null)
@@ -154,7 +162,7 @@ function ComponentThumbnailUploader({ componentId }: { componentId: string }) {
   apiRef.current = api
 
   useEffect(() => {
-    if (masterThumb === undefined) return
+    if (masterThumb === undefined || !tokensFinal) return
     if (lastUploadedRef.current === masterThumb) return
     pendingRef.current = masterThumb
     if (flushTimerRef.current !== null) return
@@ -171,7 +179,7 @@ function ComponentThumbnailUploader({ componentId }: { componentId: string }) {
         console.warn('[component-thumb] PUT failed', err)
       })
     }, 1500)
-  }, [componentId, masterThumb])
+  }, [componentId, masterThumb, tokensFinal])
 
   useEffect(() => {
     return () => {

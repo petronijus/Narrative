@@ -17,9 +17,14 @@ import type {
   SharingService,
 } from '@narrative/commands'
 import { decks, deckPermissions } from '../db/schema.js'
-import { grantPermission, listPermissions, revokePermission } from '../auth/permissions.js'
+import {
+  grantPermission,
+  listPermissions,
+  resolveFolderContentAccess,
+  revokePermission,
+} from '../auth/permissions.js'
 import { createShareLink, listShareLinks, revokeShareLink } from '../auth/shareLinks.js'
-import { closeDeckConnections } from '../hocuspocus/connections.js'
+import { closeDeckConnections, closeUserConnectionsOnDocument } from '../hocuspocus/connections.js'
 import { createInvite, listPendingInvitesForDeck, revokeInvite } from '../auth/invites.js'
 import { getUserByEmail, getUserBySub, listUsersBySubs } from '../auth/users.js'
 import { sendEmail } from '../email/client.js'
@@ -191,8 +196,20 @@ export function createSharingService(deps: ServiceDeps): SharingService {
       throw conflict('Cannot revoke the last owner — assign another owner first.')
     }
     await revokePermission(db, { deckId, userId })
-    // CONN-1: kick the revoked user's live connections on this deck only.
+    // CONN-1: kick the revoked user's live connections on this deck, and on
+    // its folder's token document when this deck was what let them read it.
     closeDeckConnections(deckId, { userId })
+    const [deck] = await db
+      .select({ folderId: decks.folderId })
+      .from(decks)
+      .where(eq(decks.id, deckId))
+      .limit(1)
+    if (
+      deck?.folderId &&
+      !(await resolveFolderContentAccess(db, { folderId: deck.folderId, userId }))
+    ) {
+      closeUserConnectionsOnDocument(`folder:${deck.folderId}`, userId)
+    }
   }
 
   async function listInvites(args: { deckId: string }): Promise<PendingInvite[]> {

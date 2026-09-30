@@ -16,22 +16,43 @@ import { afterEach, describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 import { Hocuspocus } from '@hocuspocus/server'
 import { HocuspocusProvider } from '@hocuspocus/provider'
+import { getTableName, type Table } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { createOnAuthenticate } from './authenticate.js'
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-/** resolveDeckAccess reads one deck_permissions row — answered slowly. */
+/**
+ * resolveDeckAccess's read, answered slowly: the deck left-joined to the
+ * user's deck_permissions row with `role` and no role in the deck's folder —
+ * so the deck grant alone decides.
+ */
 function slowDb(role: 'editor' | 'viewer'): Database {
-  const chain = {
-    from: () => chain,
-    where: () => chain,
-    limit: async () => {
-      await delay(40)
-      return [{ role }]
-    },
+  const rowsFor = (table: string): unknown[] => {
+    if (table === 'decks') return [{ deckRole: role, folderRole: null }]
+    return []
   }
-  return { select: () => chain } as unknown as Database
+  const select = () => {
+    let table = ''
+    const answer = async () => {
+      await delay(40)
+      return rowsFor(table)
+    }
+    const chain = {
+      from: (t: Table) => {
+        table = getTableName(t)
+        return chain
+      },
+      leftJoin: () => chain,
+      where: () => chain,
+      limit: answer,
+      // A query awaited without a limit.
+      then: (ok: (rows: unknown[]) => unknown, err?: (e: unknown) => unknown) =>
+        answer().then(ok, err),
+    }
+    return chain
+  }
+  return { select } as unknown as Database
 }
 
 let server: Hocuspocus | null = null

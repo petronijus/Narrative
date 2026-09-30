@@ -189,7 +189,7 @@ export class MemoryWorld implements World {
 
   private addFolder(name: string): string {
     const id = this.nextId('folder')
-    this.folders.set(id, { id, name, createdAt: this.now(), deckCount: 0 })
+    this.folders.set(id, { id, name, createdAt: this.now(), deckCount: 0, role: 'owner' })
     // A new folder comes with the default tokens (services/folders.ts create).
     const doc = new Y.Doc()
     seedDefaultTokens(doc, () => this.newTokenId())
@@ -389,7 +389,14 @@ export class MemoryWorld implements World {
     s.folders.create = async ({ name }) => {
       const id = this.addFolder(name)
       const f = this.folders.get(id)!
-      return { id, name: f.name, ownerUserId: USER_ID, createdAt: f.createdAt, deckCount: 0 }
+      return {
+        id,
+        name: f.name,
+        ownerUserId: USER_ID,
+        createdAt: f.createdAt,
+        deckCount: 0,
+        role: 'owner',
+      }
     }
 
     // No font is ever uploaded in the memory world, as in a fresh eval folder live.

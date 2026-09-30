@@ -139,6 +139,11 @@ function makeRenderer<T extends PolygonLike>(type: T['type']) {
       }
       applyFilterEffects(node, next.shadow, next.blur)
     },
+    /** Fill and stroke resolve token colours: redraw them (index.ts, repaintColours). */
+    repaintColours(node: PixiContainer, data: T): void {
+      const g = getGraphics(node)
+      if (g !== undefined) drawPolygon(g, node, data)
+    },
     destroy(node: PixiContainer): void {
       releaseImageFill(node)
       releaseProceduralFill(node)

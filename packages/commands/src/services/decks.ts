@@ -175,7 +175,7 @@ export interface DeckService {
     destFolderId: string
     origin?: unknown
   }): Promise<MoveDecksResult>
-  /** Who has each deck of the folder open right now (folder owner only). */
+  /** Who has each deck of the folder open right now (folder members only). */
   activeEditors(args: { userId: string; folderId: string }): Promise<ActiveEditorsEntry[]>
   /**
    * Fonts bound to the deck itself (copies made when a folder font the deck

@@ -7,7 +7,8 @@
  * Props
  *   deckIds        — ids to move (usually just one from the card menu)
  *   currentFolderId — folder that is currently open; excluded from the list
- *   folders        — all folders the user owns (caller provides, no extra fetch)
+ *   folders        — the user's folders (caller provides, no extra fetch); only
+ *                    those they may add decks to (editor or owner) are offered
  *   onConfirm      — called with the chosen destination folder id
  *   onClose        — dismiss without action
  */
@@ -32,7 +33,8 @@ export function MoveDeckModal({
   onConfirm,
   onClose,
 }: MoveDeckModalProps) {
-  const targets = folders.filter((f) => f.id !== currentFolderId)
+  // Moving needs the editor role in the destination (services/decks.ts moveDecks).
+  const targets = folders.filter((f) => f.id !== currentFolderId && f.role !== 'viewer')
   const [selected, setSelected] = useState<string | null>(targets[0]?.id ?? null)
 
   const handleConfirm = () => {

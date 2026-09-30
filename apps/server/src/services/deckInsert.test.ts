@@ -3,7 +3,11 @@
  * slides are copied with their objects, animations and notes; referenced
  * media is copied into the target deck's namespace and re-pointed; slide
  * links follow the copies or are dropped; the source is never modified; the
- * write is one synchronous step against the target document.
+ * write is one synchronous step against the target document. Object copies
+ * between a deck and a component master (`stageObjectInsert`) run the real
+ * requireComponentRole on the scripted database: a master is read by any
+ * member of its folder within the folder, copied out of it by an editor,
+ * written by an editor, and answers "not found" to a non-member.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -38,15 +42,6 @@ vi.mock('../auth/permissions.js', async (importOriginal) => {
   return { ...original, resolveDeckAccess: vi.fn() }
 })
 
-const canUseComponentMedia = vi.fn()
-vi.mock('../media/mediaOwner.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../media/mediaOwner.js')>()
-  return {
-    ...original,
-    canUseComponentMedia: (...a: unknown[]) => canUseComponentMedia(...a),
-  }
-})
-
 const { resolveDeckAccess } = await import('../auth/permissions.js')
 const { stageDeckInsert, stageObjectInsert, insertObjectsFrom } = await import('./deckInsert.js')
 const { planInsert } = await import('@narrative/commands')
@@ -60,8 +55,6 @@ beforeEach(() => {
   persistence = new MemoryPersistence()
   hp = new Hocuspocus({ quiet: true, stopOnSignals: false, extensions: [persistence] })
   accessMock.mockResolvedValue({ role: 'editor', reason: 'direct' })
-  canUseComponentMedia.mockReset()
-  canUseComponentMedia.mockResolvedValue(true)
 })
 
 afterEach(async () => {
@@ -381,7 +374,12 @@ describe('stageObjectInsert / insertObjectsFrom', () => {
 
   it('refuses a source the caller can only view, before copying anything', async () => {
     accessMock.mockResolvedValue({ role: 'viewer', reason: 'direct' })
-    const script = scriptedDb()
+    const script = scriptedDb({
+      selects: [
+        [{ folderId: 'f1' }], // the source's folder
+        [{ folderId: 'f1' }], // the target's
+      ],
+    })
     const err = await serviceErrorOf(
       stageObjectInsert(
         { db: script.db, log: quietLog, hocuspocus: () => hp },
@@ -394,6 +392,8 @@ describe('stageObjectInsert / insertObjectsFrom', () => {
       ),
     )
     expect(err.status).toBe(403)
+    expect(script.writes).toEqual([])
+    expect(script.remaining().selects).toBe(0)
     expect(send).not.toHaveBeenCalled()
   })
 
@@ -455,12 +455,28 @@ describe('stageObjectInsert between a deck and a component master', () => {
       opacity: 1,
     },
   ]
+  /** A component row, as requireComponentRole reads it. */
+  const component = (id: string, folderId: string) => ({
+    id,
+    folderId,
+    name: 'Headline',
+    thumbnailKey: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  })
+  const masterPicture = { ...mediaRow, deckId: null, componentId: 'cmp1' }
 
   it("copies a deck's picture into the master, which owns the copy", async () => {
     seedSource()
     const sourceEditor = await hp.openDirectConnection('src')
     const script = scriptedDb({
-      selects: [[{ folderId: 'f1' }], [{ folderId: 'f1' }], [mediaRow]],
+      selects: [
+        [{ folderId: 'f1' }], // the deck's folder
+        [{ folderId: 'f1' }], // the master's folder
+        [component('cmp1', 'f1')], // requireComponentRole: the master…
+        [{ role: 'editor' }], // …and the caller's role in its folder
+        [mediaRow],
+      ],
     })
     const prepared = await stageObjectInsert(
       { db: script.db, log: quietLog, hocuspocus: () => hp },
@@ -471,7 +487,7 @@ describe('stageObjectInsert between a deck and a component master', () => {
         plan: planInsert(picture(), {}),
       },
     )
-    expect(canUseComponentMedia).toHaveBeenCalledWith(expect.anything(), 'cmp1', 'u1')
+    expect(script.remaining().selects).toBe(0)
     const [row] = script.writes.find((w) => w.table === 'media_assets')!.values as Array<
       Record<string, unknown>
     >
@@ -485,9 +501,125 @@ describe('stageObjectInsert between a deck and a component master', () => {
     await sourceEditor.disconnect()
   })
 
-  it('refuses a master the caller cannot use, as missing, before copying anything', async () => {
-    canUseComponentMedia.mockResolvedValue(false)
-    const script = scriptedDb()
+  it("copies a master's picture into a deck of its folder for a viewer of the folder", async () => {
+    const script = scriptedDb({
+      selects: [
+        [{ folderId: 'f1' }], // the master's folder
+        [{ folderId: 'f1' }], // the deck's folder: the same one
+        [component('cmp1', 'f1')],
+        [{ role: 'viewer' }], // a paste within the folder needs only the viewer role
+        [], // the master's stored rows (not open in an editor): its slide ids
+        [masterPicture], // the master's picture
+      ],
+    })
+    await stageObjectInsert(
+      { db: script.db, log: quietLog, hocuspocus: () => hp },
+      {
+        userId: 'u1',
+        source: { componentId: 'cmp1' },
+        target: { deckId: 'dst' },
+        plan: planInsert(picture(), {}),
+      },
+    )
+    const [row] = script.writes.find((w) => w.table === 'media_assets')!.values as Array<
+      Record<string, unknown>
+    >
+    expect(row).toMatchObject({ deckId: 'dst', componentId: null })
+    expect(script.remaining().selects).toBe(0)
+  })
+
+  it("refuses a viewer of the master's folder copying it into a deck of another folder (403)", async () => {
+    // Taking a master out of its folder is an export: it needs the editor role there.
+    const script = scriptedDb({
+      selects: [
+        [{ folderId: 'f1' }], // the master's folder
+        [{ folderId: 'f2' }], // the deck's folder: another one
+        [component('cmp1', 'f1')],
+        [{ role: 'viewer' }],
+      ],
+    })
+    const err = await serviceErrorOf(
+      stageObjectInsert(
+        { db: script.db, log: quietLog, hocuspocus: () => hp },
+        {
+          userId: 'u1',
+          source: { componentId: 'cmp1' },
+          target: { deckId: 'dst' },
+          plan: planInsert(picture(), {}),
+        },
+      ),
+    )
+    expect(err.status).toBe(403)
+    expect(err.message).toMatch(/editor role/)
+    expect(script.writes).toEqual([])
+    expect(script.remaining().selects).toBe(0)
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it("copies a master into a deck of another folder for an editor of the master's folder", async () => {
+    const script = scriptedDb({
+      selects: [
+        [{ folderId: 'f1' }], // the master's folder
+        [{ folderId: 'f2' }], // the deck's folder: another one
+        [component('cmp1', 'f1')],
+        [{ role: 'editor' }],
+        [], // the master's stored rows: its slide ids
+        [masterPicture],
+        [], // the two folders' token documents (no tokens to rebind)
+        [],
+      ],
+    })
+    await stageObjectInsert(
+      { db: script.db, log: quietLog, hocuspocus: () => hp },
+      {
+        userId: 'u1',
+        source: { componentId: 'cmp1' },
+        target: { deckId: 'dst' },
+        plan: planInsert(picture(), {}),
+      },
+    )
+    const [row] = script.writes.find((w) => w.table === 'media_assets')!.values as Array<
+      Record<string, unknown>
+    >
+    expect(row).toMatchObject({ deckId: 'dst', componentId: null })
+    expect(script.remaining().selects).toBe(0)
+  })
+
+  it('refuses a viewer of the folder pasting into its master (403), before copying anything', async () => {
+    const script = scriptedDb({
+      selects: [
+        [{ folderId: 'f1' }], // the deck's folder
+        [{ folderId: 'f1' }], // the master's folder
+        [component('cmp1', 'f1')],
+        [{ role: 'viewer' }], // writing into a master needs the editor role
+      ],
+    })
+    const err = await serviceErrorOf(
+      stageObjectInsert(
+        { db: script.db, log: quietLog, hocuspocus: () => hp },
+        {
+          userId: 'u1',
+          source: { deckId: 'src' },
+          target: { componentId: 'cmp1' },
+          plan: planInsert(picture(), {}),
+        },
+      ),
+    )
+    expect(err.status).toBe(403)
+    expect(err.message).toMatch(/editor role/)
+    expect(script.writes).toEqual([])
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('refuses a master the caller cannot see, as missing, before copying anything', async () => {
+    const script = scriptedDb({
+      selects: [
+        [{ folderId: 'f9' }], // the master's folder
+        [{ folderId: 'f1' }], // the deck's folder
+        [component('cmp_other', 'f9')],
+        [], // the caller is no member of f9
+      ],
+    })
     const err = await serviceErrorOf(
       stageObjectInsert(
         { db: script.db, log: quietLog, hocuspocus: () => hp },
@@ -500,7 +632,34 @@ describe('stageObjectInsert between a deck and a component master', () => {
       ),
     )
     expect(err.status).toBe(404)
+    expect(err.message).toBe('Component not found')
     expect(script.remaining().selects).toBe(0)
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('refuses a master target the caller cannot see, as missing, before copying anything', async () => {
+    const script = scriptedDb({
+      selects: [
+        [{ folderId: 'f1' }], // the deck's folder
+        [{ folderId: 'f9' }], // the master's folder
+        [component('cmp_other', 'f9')],
+        [], // the caller is no member of f9
+      ],
+    })
+    const err = await serviceErrorOf(
+      stageObjectInsert(
+        { db: script.db, log: quietLog, hocuspocus: () => hp },
+        {
+          userId: 'u1',
+          source: { deckId: 'src' },
+          target: { componentId: 'cmp_other' },
+          plan: planInsert(picture(), {}),
+        },
+      ),
+    )
+    expect(err.status).toBe(404)
+    expect(err.message).toBe('Component not found')
+    expect(script.writes).toEqual([])
     expect(send).not.toHaveBeenCalled()
   })
 

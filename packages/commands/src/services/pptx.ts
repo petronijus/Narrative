@@ -90,7 +90,7 @@ export type PptxExportResult =
     }
 
 export interface PptxService {
-  /** Import a .pptx as a new deck in a folder the user owns. */
+  /** Import a .pptx as a new deck in a folder in which the user is an editor. */
   importPptx(args: {
     userId: string
     folderId: string

@@ -104,7 +104,8 @@ export interface MediaService {
   }): Promise<UploadSessionInfo>
   /**
    * Transcode state and playback URLs of a video: viewer access to its deck,
-   * or owning the folder of its component. With `owner`, the asset must
+   * or read access to its component's folder (a member, or a guest of one
+   * of the folder's decks, share links included). With `owner`, the asset must
    * belong to that deck or component.
    */
   videoInfo(args: {
@@ -121,7 +122,7 @@ export interface MediaService {
     variant: ImageVariant
     owner?: DocumentRef | undefined
   }): Promise<{ url: string }>
-  /** Presigned URL of a folder font file (folder owner only). */
+  /** Presigned URL of a folder font file (its folder's members and deck guests). */
   fontUrl(args: {
     userId: string
     assetId: string

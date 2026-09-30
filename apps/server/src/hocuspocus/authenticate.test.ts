@@ -18,7 +18,7 @@ vi.mock('../auth/permissions.js', async (importOriginal) => {
   return {
     ...original,
     resolveDeckAccess: vi.fn(),
-    resolveFolderAccess: vi.fn(),
+    resolveFolderContentAccess: vi.fn(),
     resolveComponentAccess: vi.fn(),
   }
 })
@@ -37,7 +37,7 @@ vi.mock('../auth/session.js', async (importOriginal) => {
 
 import {
   resolveDeckAccess,
-  resolveFolderAccess,
+  resolveFolderContentAccess,
   resolveComponentAccess,
 } from '../auth/permissions.js'
 import { lookupSession } from '../auth/session.js'
@@ -52,7 +52,7 @@ import { createFixedWindowLimiter } from '../http/fixedWindowLimiter.js'
 import type { Database } from '../db/client.js'
 
 const deckAccess = vi.mocked(resolveDeckAccess)
-const folderAccess = vi.mocked(resolveFolderAccess)
+const folderAccess = vi.mocked(resolveFolderContentAccess)
 const componentAccess = vi.mocked(resolveComponentAccess)
 const sessions = vi.mocked(lookupSession)
 
@@ -83,8 +83,8 @@ function onAuthenticate(over: Partial<WsAuthDeps> = {}) {
 beforeEach(() => {
   vi.clearAllMocks()
   deckAccess.mockResolvedValue({ role: 'editor', reason: 'direct' })
-  folderAccess.mockResolvedValue({ role: 'owner', reason: 'owner' } as never)
-  componentAccess.mockResolvedValue({ role: 'owner', reason: 'owner' } as never)
+  folderAccess.mockResolvedValue({ role: 'owner', via: 'folder' })
+  componentAccess.mockResolvedValue({ role: 'owner', reason: 'folder' })
 })
 
 describe('personal access tokens are refused on the WebSocket', () => {
@@ -176,18 +176,32 @@ describe('browser paths', () => {
     await expect(onAuthenticate()(payload({ requestHeaders: COOKIE }))).rejects.toThrow('Forbidden')
   })
 
-  it('keeps share-link access for decks, and refuses it for folders and components', async () => {
+  it('keeps share-link access for decks', async () => {
     deckAccess.mockResolvedValue({ role: 'viewer', reason: 'share-link' })
     const data = payload({ params: { share_token: 'link-123' } })
     await onAuthenticate()(data)
     expect(data.context).toMatchObject({ userId: 'share:link-123', shareToken: 'link-123' })
     expect(data.connection.readOnly).toBe(true)
+  })
 
-    for (const documentName of ['folder:f1', 'component:c1']) {
-      await expect(
-        onAuthenticate()(payload({ documentName, params: { share_token: 'link-123' } })),
-      ).rejects.toThrow('Forbidden')
-    }
+  it("admits a share link read-only to its deck's folder document, never to a component", async () => {
+    folderAccess.mockResolvedValue({ role: 'viewer', via: 'deck' })
+    const folder = payload({ documentName: 'folder:f1', params: { share_token: 'link-123' } })
+    await onAuthenticate()(folder)
+    expect(folderAccess).toHaveBeenCalledWith(expect.anything(), {
+      folderId: 'f1',
+      userId: null,
+      shareToken: 'link-123',
+    })
+    expect(folder.context).toMatchObject({ userId: 'share:link-123', shareToken: 'link-123' })
+    expect(folder.connection.readOnly).toBe(true)
+
+    await expect(
+      onAuthenticate()(
+        payload({ documentName: 'component:c1', params: { share_token: 'link-123' } }),
+      ),
+    ).rejects.toThrow('Forbidden')
+    expect(componentAccess).not.toHaveBeenCalled()
   })
 
   it('resolves folder and component docs for the cookie user', async () => {
@@ -196,6 +210,7 @@ describe('browser paths', () => {
     expect(folderAccess).toHaveBeenCalledWith(expect.anything(), {
       folderId: 'f1',
       userId: 'cookie-user',
+      shareToken: null,
     })
     expect(folder.context).toMatchObject({ userId: 'cookie-user', folderId: 'f1', role: 'owner' })
 

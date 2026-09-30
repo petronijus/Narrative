@@ -467,6 +467,8 @@ export function createDomainFakes(
           name: f.name,
           createdAt: f.createdAt,
           deckCount: [...decks.values()].filter((d) => d.folderId === f.id).length,
+          // The fake's actor owns every folder.
+          role: 'owner' as const,
         }))
       },
       async listPage(args) {
@@ -492,6 +494,8 @@ export function createDomainFakes(
             name: f.name,
             createdAt: f.createdAt,
             deckCount: [...decks.values()].filter((d) => d.folderId === f.id).length,
+            // The fake's actor owns every folder.
+            role: 'owner' as const,
           })),
           next:
             matching.length > args.limit && last !== undefined
@@ -508,7 +512,7 @@ export function createDomainFakes(
           createdAt: T0,
         }
         folders.set(folder.id, folder)
-        return { ...folder, deckCount: 0 }
+        return { ...folder, deckCount: 0, role: 'owner' as const }
       },
       async rename(args) {
         rFolders('rename', args)

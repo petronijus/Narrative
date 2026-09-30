@@ -24,9 +24,12 @@
  * principal, which would kick innocent co-editors off the deck on any revoke.
  *
  * Targeting (see each helper for coarseness notes):
- *   - share-link revoke → match `context.shareToken === token` on that deck.
+ *   - share-link revoke → match `context.shareToken === token` on every
+ *     document (the deck, and its folder's token document).
  *   - permission revoke/downgrade → match `context.userId === userId` on that
- *     deck (owner-level structural change can close ALL deck connections).
+ *     deck, and on its folder's token document when that deck was the user's
+ *     way in (a structural change — a deck moved or deleted — closes ALL its
+ *     connections and the folder document's, so everyone re-authenticates).
  *   - session revoke → match `context.userId === userId` across ALL docs.
  *
  * Single-process only — like presence.ts, multi-instance would need a Redis
@@ -138,6 +141,25 @@ export function closeDeckConnections(
     // No selector → every connection on the deck.
     return true
   })
+}
+
+/**
+ * Close every live connection — on any document — that authorised itself
+ * with this share token: the deck it links to and that deck's folder
+ * document, which a share-link guest reads for the deck's tokens. Share
+ * tokens are unique, so nobody else's connection matches.
+ */
+export function closeShareTokenConnections(shareToken: string): number {
+  return closeConnectionsWhere((ctx) => ctx.shareToken === shareToken)
+}
+
+/**
+ * Close one user's live connections on one document (its full name, e.g.
+ * `folder:xyz`) — a deck guest who lost their last deck in a folder loses
+ * the folder's token document too.
+ */
+export function closeUserConnectionsOnDocument(documentName: string, userId: string): number {
+  return closeConnectionsWhere((ctx, name) => name === documentName && ctx.userId === userId)
 }
 
 /**

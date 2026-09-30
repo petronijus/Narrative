@@ -31,7 +31,7 @@ const { registerAuthPlugin } = await import('../auth/fastifyAuth.js')
 const { registerComponentRoutes } = await import('./components.js')
 const { forbidden } = await import('../services/errors.js')
 
-/** The component the stamp's master read finds: a folder the dev user owns. */
+/** The component the stamp's master read finds, in a folder the dev user may read. */
 const COMPONENT_ROW = {
   id: 'cmp1',
   folderId: 'f1',
@@ -41,13 +41,18 @@ const COMPONENT_ROW = {
   updatedAt: new Date('2026-09-30'),
 }
 
-/** Answers `readMaster`'s lookups: the deck's folder, the component, the folder, its stored master. */
+/**
+ * Answers `readMaster`'s lookups: the deck's folder, the component, the dev
+ * user's role in the component's folder, its stored master. Reading a master
+ * needs only the viewer role in its folder — here someone else's folder the
+ * dev user views, while editing the deck through their own deck grant.
+ */
 function readMasterDb(): Database {
   const results: unknown[][] = [
-    [{ folderId: 'f1' }],
-    [COMPONENT_ROW],
-    [{ id: 'f1', ownerUserId: 'dev-user', name: 'Client' }],
-    [],
+    [{ folderId: 'f1' }], // the deck's folder
+    [COMPONENT_ROW], // requireComponentRole: the component…
+    [{ role: 'viewer' }], // …and the caller's role in its folder
+    [], // the master's stored rows
   ]
   const query = (): unknown => {
     const q: Record<string, unknown> = {}
@@ -120,7 +125,7 @@ describe('POST /decks/:id/promote-component', () => {
     expect(promoteComponent).not.toHaveBeenCalled()
   })
 
-  it("needs the editor role on the deck, and passes on the folder owner's refusal", async () => {
+  it("needs the editor role on the deck, and passes on the folder's refusal (no editor role in it)", async () => {
     const payload = { slideId: 'S1', objectIds: ['a'], name: 'X' }
     const viewer = await buildApp({ role: 'viewer', reason: 'direct' })
     expect(
@@ -129,7 +134,9 @@ describe('POST /decks/:id/promote-component', () => {
     ).toBe(403)
     expect(promoteComponent).not.toHaveBeenCalled()
 
-    promoteComponent.mockRejectedValue(forbidden("this deck's folder is not yours"))
+    promoteComponent.mockRejectedValue(
+      forbidden("Components belong to the deck's folder; adding one needs the editor role in it"),
+    )
     const app = await buildApp()
     expect(
       (await app.inject({ method: 'POST', url: '/decks/deck1/promote-component', payload }))

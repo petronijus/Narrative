@@ -12,7 +12,7 @@
  * authorised the user for the target, and every id in the input is resolved
  * WITHIN that target (a collaborator of this deck, an invite or link of this
  * deck, an asset of this deck or folder, a component of this folder, a
- * destination folder the user owns). Anything else is shown as the raw id,
+ * destination folder the user is a member of). Anything else is shown as the raw id,
  * so a model cannot use the page to look up a stranger's email.
  */
 
@@ -30,6 +30,7 @@ import {
   deckInvites,
   deckPermissions,
   decks,
+  folderPermissions,
   folders,
   mediaAssets,
   shareLinks,
@@ -57,8 +58,8 @@ export interface ConfirmationLookups {
   asset(scope: { deckId?: string; folderId?: string }, assetId: string): Promise<string | null>
   /** A component master of `folderId`. */
   componentInFolder(folderId: string, componentId: string): Promise<string | null>
-  /** A folder `userId` owns (a destination). */
-  ownedFolder(userId: string, folderId: string): Promise<string | null>
+  /** A folder `userId` is a member of (a destination). */
+  memberFolder(userId: string, folderId: string): Promise<string | null>
   /** How many decks a folder holds. */
   folderDeckCount(folderId: string): Promise<number>
 }
@@ -163,7 +164,7 @@ export async function buildConfirmationSummary(args: {
       )
     else if (key === 'componentId' && target.folderId !== undefined)
       shown = await lookups.componentInFolder(target.folderId, value)
-    else if (key === 'folderId') shown = await lookups.ownedFolder(args.userId, value)
+    else if (key === 'folderId') shown = await lookups.memberFolder(args.userId, value)
     details.push({
       label: FIELD_LABELS[key] ?? humanise(key),
       value: clip(shown ?? value),
@@ -336,11 +337,15 @@ export function createDbConfirmationLookups(db: Database): ConfirmationLookups {
         .limit(1)
       return row?.name ?? null
     },
-    async ownedFolder(userId, folderId) {
+    async memberFolder(userId, folderId) {
       const [row] = await db
         .select({ name: folders.name })
         .from(folders)
-        .where(and(eq(folders.id, folderId), eq(folders.ownerUserId, userId)))
+        .innerJoin(
+          folderPermissions,
+          and(eq(folderPermissions.folderId, folders.id), eq(folderPermissions.userId, userId)),
+        )
+        .where(eq(folders.id, folderId))
         .limit(1)
       return row?.name ?? null
     },

@@ -17,7 +17,7 @@ import { nanoid } from 'nanoid'
 import type { Database } from '../db/client.js'
 import { shareLinks } from '../db/schema.js'
 import type { DeckRole } from './permissions.js'
-import { closeDeckConnections } from '../hocuspocus/connections.js'
+import { closeShareTokenConnections } from '../hocuspocus/connections.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -82,11 +82,11 @@ export async function revokeShareLink(
     .where(and(eq(shareLinks.id, shareLinkId), eq(shareLinks.deckId, deckId)))
 
   // CONN-1: tear down any live WebSocket connections that authorised
-  // themselves with THIS share token on THIS deck. Without this they'd keep
-  // their open session (full read-write for editor links) until they happen
-  // to disconnect. Targeted by the full token so co-editors / the owner are
-  // untouched.
-  closeDeckConnections(deckId, { shareToken: shareLinkId })
+  // themselves with THIS share token — on the deck and on its folder's token
+  // document. Without this they'd keep their open session (full read-write
+  // for editor links) until they happen to disconnect. Targeted by the full
+  // token so co-editors / the owner are untouched.
+  closeShareTokenConnections(shareLinkId)
 }
 
 /**

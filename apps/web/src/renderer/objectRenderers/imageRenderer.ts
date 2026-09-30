@@ -751,6 +751,13 @@ export const imageRenderer = {
     }
   },
 
+  /**
+   * No colour of its own goes through `resolveColour` — the pixels come from
+   * the asset, the placeholder is a fixed grey. The shadow, the one token
+   * colour ImageObject can hold, is repainted by filterEffects (index.ts).
+   */
+  repaintColours(_node: Container, _data: ImageObject): void {},
+
   destroy(node: Container): void {
     setAborted(node)
 

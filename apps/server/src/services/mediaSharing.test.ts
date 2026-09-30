@@ -2,7 +2,9 @@
  * services/mediaSharing.test.ts — MediaService.upload (the agent upload
  * path: bytes decide the type, the shared upload policy decides the limits,
  * the shared finalize step does the checks) and the asset scoping of the
- * read / delete methods; SharingService.setRole.
+ * read / delete methods, with the folder-sharing rules for a component's
+ * media and a folder's fonts (docs/plans/folder-sharing.md);
+ * SharingService.setRole and revoke.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -31,28 +33,43 @@ vi.mock('../media/imgproxyUrl.js', () => ({
 }))
 vi.mock('../auth/permissions.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../auth/permissions.js')>()
-  return { ...original, resolveDeckAccess: vi.fn(), grantPermission: vi.fn() }
+  return {
+    ...original,
+    resolveDeckAccess: vi.fn(),
+    grantPermission: vi.fn(),
+    revokePermission: vi.fn(),
+    resolveFolderContentAccess: vi.fn(),
+  }
 })
 vi.mock('../auth/users.js', () => ({
   getUserBySub: vi.fn(),
   getUserByEmail: vi.fn(),
   listUsersBySubs: vi.fn(),
 }))
-vi.mock('../hocuspocus/connections.js', () => ({ closeDeckConnections: vi.fn() }))
-const canUseComponentMedia = vi.fn()
+vi.mock('../hocuspocus/connections.js', () => ({
+  closeDeckConnections: vi.fn(),
+  closeUserConnectionsOnDocument: vi.fn(),
+}))
+/** Whether the caller may upload or delete a component's media (an editor of its folder). */
+const canWriteComponentMedia = vi.fn()
+/** Whether the caller may see it (whoever reads the folder's content, share links included). */
+const canReadComponentMedia = vi.fn()
 vi.mock('../media/mediaOwner.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../media/mediaOwner.js')>()
   return {
     ...original,
-    canUseComponentMedia: (...a: unknown[]) => canUseComponentMedia(...a),
+    canWriteComponentMedia: (...a: unknown[]) => canWriteComponentMedia(...a),
+    canReadComponentMedia: (...a: unknown[]) => canReadComponentMedia(...a),
   }
 })
 
 const { finalizeMediaUpload, UploadRejected } = await import('../media/finalizeUpload.js')
-const { getMediaAsset, deleteMediaAsset } = await import('../media/assets.js')
-const { resolveDeckAccess, grantPermission } = await import('../auth/permissions.js')
+const { getMediaAsset, getFontAsset, deleteMediaAsset } = await import('../media/assets.js')
+const { resolveDeckAccess, grantPermission, revokePermission, resolveFolderContentAccess } =
+  await import('../auth/permissions.js')
 const { getUserBySub } = await import('../auth/users.js')
-const { closeDeckConnections } = await import('../hocuspocus/connections.js')
+const { closeDeckConnections, closeUserConnectionsOnDocument } =
+  await import('../hocuspocus/connections.js')
 const { createMediaService } = await import('./media.js')
 const { createSharingService } = await import('./sharing.js')
 const { ServiceError } = await import('./errors.js')
@@ -179,7 +196,7 @@ describe('MediaService.upload', () => {
 
 describe('MediaService.upload into a component master', () => {
   it('stores the picture under the component, which owns it', async () => {
-    canUseComponentMedia.mockResolvedValue(true)
+    canWriteComponentMedia.mockResolvedValue(true)
     await media().upload({
       userId: 'u1',
       owner: { componentId: 'c1' },
@@ -190,8 +207,8 @@ describe('MediaService.upload into a component master', () => {
     expect(args.storageKey).toMatch(/^components\/c1\/uploads\/[\w-]{16}\/original\.png$/)
   })
 
-  it("answers 404 for a master that is not the caller's, before reading the file", async () => {
-    canUseComponentMedia.mockResolvedValue(false)
+  it('answers 404 for a master the caller may not change (a folder viewer, an outsider), before reading the file', async () => {
+    canWriteComponentMedia.mockResolvedValue(false)
     expect(
       await status(
         media().upload({
@@ -201,11 +218,12 @@ describe('MediaService.upload into a component master', () => {
         }),
       ),
     ).toBe(404)
+    expect(canWriteComponentMedia).toHaveBeenCalledWith(expect.anything(), 'c1', 'u1')
     expect(send).not.toHaveBeenCalled()
   })
 
   it("refuses a font (415) without storing it: the folder's fonts cover a master", async () => {
-    canUseComponentMedia.mockResolvedValue(true)
+    canWriteComponentMedia.mockResolvedValue(true)
     const otf = Buffer.concat([Buffer.from('OTTO'), Buffer.alloc(8)])
     expect(
       await status(
@@ -249,8 +267,45 @@ describe('MediaService scoping', () => {
         }),
       ),
     ).toBe(404)
-    expect(canUseComponentMedia).not.toHaveBeenCalled()
+    expect(canReadComponentMedia).not.toHaveBeenCalled()
     expect(resolveDeckAccess).not.toHaveBeenCalled()
+  })
+
+  it("lets whoever reads the component's folder see its media, a share link passed along", async () => {
+    vi.mocked(getMediaAsset).mockResolvedValue({
+      id: 'a1',
+      deckId: null,
+      componentId: 'c1',
+      storageKey: 'k',
+    } as never)
+    canReadComponentMedia.mockResolvedValue(true)
+    await expect(
+      media().url({ userId: null, shareToken: 'tok-1', assetId: 'a1', variant: 'display' }),
+    ).resolves.toEqual({ url: 'https://img.test/signed' })
+    expect(canReadComponentMedia).toHaveBeenCalledWith(expect.anything(), 'c1', null, 'tok-1')
+
+    canReadComponentMedia.mockResolvedValue(false)
+    expect(await status(media().url({ userId: 'u1', assetId: 'a1', variant: 'display' }))).toBe(403)
+    expect(resolveDeckAccess).not.toHaveBeenCalled()
+  })
+
+  it("deletes a component's media only for an editor of its folder, never on the read rule", async () => {
+    vi.mocked(getMediaAsset).mockResolvedValue({
+      id: 'a1',
+      deckId: null,
+      componentId: 'c1',
+      storageKey: 'k',
+    } as never)
+    canReadComponentMedia.mockResolvedValue(true)
+    canWriteComponentMedia.mockResolvedValue(false)
+    expect(await status(media().delete({ userId: 'u1', assetId: 'a1' }))).toBe(403)
+    expect(deleteMediaAsset).not.toHaveBeenCalled()
+
+    canWriteComponentMedia.mockResolvedValue(true)
+    await media().delete({ userId: 'u1', assetId: 'a1' })
+    expect(canWriteComponentMedia).toHaveBeenLastCalledWith(expect.anything(), 'c1', 'u1')
+    expect(deleteMediaAsset).toHaveBeenCalledWith(expect.anything(), 'a1')
+    expect(canReadComponentMedia).not.toHaveBeenCalled()
   })
 
   it("answers 404 for another deck's asset, before any access check", async () => {
@@ -320,6 +375,84 @@ describe('SharingService.setRole', () => {
       ),
     ).toBe(404)
     expect(grantPermission).not.toHaveBeenCalled()
+  })
+})
+
+describe('MediaService.fontUrl', () => {
+  const FONT = {
+    id: 'font-1',
+    folderId: 'f1',
+    storageKey: 'fonts/f1/font-1/original.otf',
+    fontFamily: 'Brand Sans',
+    fontWeight: 400,
+    fontStyle: 'normal',
+    fontPostscriptName: 'BrandSans-Regular',
+    mimeType: 'font/otf',
+  }
+  // requireFolderContentReader: the folder row, then the content access.
+  const fonts = () =>
+    createMediaService({ db: scriptedDb({ selects: [[{ id: 'f1' }]] }).db, log: quietLog })
+
+  it("signs a folder font for a guest of one of the folder's decks: the deck renders with it", async () => {
+    vi.mocked(getFontAsset).mockResolvedValue(FONT as never)
+    vi.mocked(resolveFolderContentAccess).mockResolvedValue({ role: 'viewer', via: 'deck' })
+
+    const out = await fonts().fontUrl({ userId: 'guest', assetId: 'font-1' })
+
+    expect(out).toMatchObject({
+      assetId: 'font-1',
+      url: 'https://storage.test/signed',
+      family: 'Brand Sans',
+    })
+    expect(resolveFolderContentAccess).toHaveBeenCalledWith(expect.anything(), {
+      folderId: 'f1',
+      userId: 'guest',
+      alsoAs: [],
+    })
+  })
+
+  it('refuses someone with no access to the folder or any of its decks (403)', async () => {
+    vi.mocked(getFontAsset).mockResolvedValue(FONT as never)
+    vi.mocked(resolveFolderContentAccess).mockResolvedValue(null)
+
+    expect(await status(fonts().fontUrl({ userId: 'stranger', assetId: 'font-1' }))).toBe(403)
+  })
+})
+
+describe('SharingService.revoke', () => {
+  // The deck's owners, then (after the revoke) the deck's folder.
+  const sharing = () =>
+    createSharingService({
+      db: scriptedDb({
+        selects: [[{ userId: 'u1' }], [{ folderId: 'f1' }]],
+      }).db,
+      log: quietLog,
+    })
+
+  it("closes the revoked user's folder document too when that deck was their way into the folder", async () => {
+    vi.mocked(resolveFolderContentAccess).mockResolvedValue(null)
+
+    await sharing().revoke({ deckId: 'd1', callerUserId: 'u1', userId: 'jana' })
+
+    expect(revokePermission).toHaveBeenCalledWith(expect.anything(), {
+      deckId: 'd1',
+      userId: 'jana',
+    })
+    expect(closeDeckConnections).toHaveBeenCalledWith('d1', { userId: 'jana' })
+    expect(resolveFolderContentAccess).toHaveBeenCalledWith(expect.anything(), {
+      folderId: 'f1',
+      userId: 'jana',
+    })
+    expect(closeUserConnectionsOnDocument).toHaveBeenCalledWith('folder:f1', 'jana')
+  })
+
+  it('leaves their folder document open while they still reach the folder another way', async () => {
+    vi.mocked(resolveFolderContentAccess).mockResolvedValue({ role: 'viewer', via: 'deck' })
+
+    await sharing().revoke({ deckId: 'd1', callerUserId: 'u1', userId: 'jana' })
+
+    expect(closeDeckConnections).toHaveBeenCalledWith('d1', { userId: 'jana' })
+    expect(closeUserConnectionsOnDocument).not.toHaveBeenCalled()
   })
 })
 
@@ -440,9 +573,9 @@ describe('media.openUploadSession', () => {
     ).resolves.toMatchObject({ kind: 'video' })
   })
 
-  it("opens one for a component master's folder owner: pictures and videos, no fonts", async () => {
+  it("opens one for an editor of a component master's folder: pictures and videos, no fonts", async () => {
     const { svc, store } = await service()
-    canUseComponentMedia.mockResolvedValue(true)
+    canWriteComponentMedia.mockResolvedValue(true)
     const out = await svc.openUploadSession({
       userId: 'u1',
       owner: { componentId: 'c1' },
@@ -463,7 +596,8 @@ describe('media.openUploadSession', () => {
         }),
       ),
     ).toBe(415)
-    canUseComponentMedia.mockResolvedValue(false)
+    // A folder viewer (or an outsider) may not add to the master.
+    canWriteComponentMedia.mockResolvedValue(false)
     expect(
       await status(
         svc.openUploadSession({

@@ -343,6 +343,14 @@ export const rectangleRenderer = {
     }
   },
 
+  /** Fill and stroke resolve token colours: redraw them (index.ts, repaintColours). */
+  repaintColours(node: Container, data: RectangleObject): void {
+    const graphics = getGraphics(node)
+    if (graphics === undefined) return
+    setCachedData(node, data)
+    drawRect(graphics, node, data)
+  },
+
   /**
    * Uvolní Graphics a Container. Volá se při removeObject.
    */

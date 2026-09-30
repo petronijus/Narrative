@@ -10,9 +10,27 @@ import { MoveDeckModal } from './MoveDeckModal'
 import type { FolderSummary } from '../api/client'
 
 const FOLDERS: FolderSummary[] = [
-  { id: 'folder-drafts', name: 'Drafts', deckCount: 3, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'folder-work', name: 'Work', deckCount: 5, createdAt: '2026-01-02T00:00:00Z' },
-  { id: 'folder-personal', name: 'Personal', deckCount: 1, createdAt: '2026-01-03T00:00:00Z' },
+  {
+    id: 'folder-drafts',
+    name: 'Drafts',
+    deckCount: 3,
+    createdAt: '2026-01-01T00:00:00Z',
+    role: 'owner',
+  },
+  {
+    id: 'folder-work',
+    name: 'Work',
+    deckCount: 5,
+    createdAt: '2026-01-02T00:00:00Z',
+    role: 'owner',
+  },
+  {
+    id: 'folder-personal',
+    name: 'Personal',
+    deckCount: 1,
+    createdAt: '2026-01-03T00:00:00Z',
+    role: 'owner',
+  },
 ]
 
 function renderModal({
@@ -54,6 +72,24 @@ describe('MoveDeckModal', () => {
     const items = screen.getAllByRole('option')
     const names = items.map((el) => el.textContent)
     expect(names.some((n) => n?.includes('Work'))).toBe(false)
+  })
+
+  it('offers only folders the user may add decks to (not one they only view)', () => {
+    const onConfirm = vi.fn()
+    renderModal({
+      currentFolderId: 'folder-work',
+      folders: [
+        { ...FOLDERS[2]!, id: 'folder-shared', name: 'Shared', role: 'viewer' },
+        { ...FOLDERS[0]!, role: 'editor' },
+        FOLDERS[1]!,
+      ],
+      onConfirm,
+    })
+    const names = screen.getAllByRole('option').map((el) => el.textContent)
+    expect(names.some((n) => n?.includes('Shared'))).toBe(false)
+    // The first folder offered is pre-selected: the editor one, not the viewer one.
+    fireEvent.click(screen.getByRole('button', { name: /move here/i }))
+    expect(onConfirm).toHaveBeenCalledWith('folder-drafts')
   })
 
   it('shows deck counts next to each folder', () => {
