@@ -66,6 +66,7 @@ import { markWsConnected, markWsSynced } from './loadTimings.js'
 import { whenProviderSaved } from './providerSaved.js'
 import { whenComponentDocSaved } from './componentDocCache.js'
 import { hocuspocusAuthOptions } from './hocuspocusAuth.js'
+import { usePointerUndoGestures } from './undoGestures.js'
 
 const HOCUSPOCUS_URL = import.meta.env['VITE_HOCUSPOCUS_URL'] ?? 'ws://localhost:3002'
 const PEER_ID_STORAGE_KEY = 'narrative:peerId'
@@ -344,6 +345,8 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     () => (value === null ? null : { ...value, wsStatus }),
     [value, wsStatus],
   )
+  // Each pointer gesture is one undo step, by its boundaries (undoGestures.ts).
+  usePointerUndoGestures(value?.undoManager)
 
   if (fullValue === null) {
     return (
@@ -431,6 +434,9 @@ function ExternalDocSlideProvider({ deckId, doc, children }: ExternalDocSlidePro
   // seed a fresh nanoid id instead. The cache guarantees the doc is fully
   // synced before `<ComponentMasterEditor>` mounts this provider, so the
   // master slide is always present.
+
+  // Each pointer gesture is one undo step, by its boundaries (undoGestures.ts).
+  usePointerUndoGestures(value.undoManager)
 
   // Awareness is a fresh Awareness instance per provider instance —
   // dispose on unmount to avoid leaking the local-state listeners.

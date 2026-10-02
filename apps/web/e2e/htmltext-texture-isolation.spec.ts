@@ -49,11 +49,26 @@ const TEXTS: Array<{ id: string; text: string }> = [
   { id: 'e2e-htmltext-iso-e', text: 'Tag EEE' },
 ]
 
+/**
+ * Wait until the test API answers from a live deck document. The hook can be
+ * installed while StrictMode's second mount is still swapping the provider
+ * (it throws "no live deck document" then), so poll the call itself rather
+ * than sleeping a fixed time after the hook appears.
+ */
 async function waitForTestApi(page: Page): Promise<void> {
-  await page.waitForFunction(() => window.__narrative_test_api !== undefined, null, {
-    timeout: 20_000,
-  })
-  await page.waitForTimeout(1500)
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          try {
+            return window.__narrative_test_api?.listSlideIds().length ?? 0
+          } catch {
+            return 0
+          }
+        }),
+      { timeout: 20_000 },
+    )
+    .toBeGreaterThan(0)
 }
 
 async function waitForAllMounted(page: Page, ids: string[]): Promise<void> {

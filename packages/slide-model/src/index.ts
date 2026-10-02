@@ -189,7 +189,12 @@ export {
 } from './animationBindings.js'
 
 // Undo
-export { createUndoManager } from './undo.js'
+export {
+  beginUndoGesture,
+  createUndoManager,
+  endUndoGesture,
+  UNDO_CAPTURE_TIMEOUT_MS,
+} from './undo.js'
 
 // Component helpers (M16 P5)
 export {

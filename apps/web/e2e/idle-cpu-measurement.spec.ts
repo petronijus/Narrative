@@ -37,7 +37,7 @@ async function openDeckReady(page: Page, deckId: string): Promise<void> {
   })
 }
 
-test('idle CPU/GPU profile — 10s window', async ({ page }) => {
+test('idle CPU/GPU profile — 10s window', { tag: '@serial' }, async ({ page }) => {
   test.setTimeout(120_000)
 
   // Capture console + errors so we can see what the page is logging.

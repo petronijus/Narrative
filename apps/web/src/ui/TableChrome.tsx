@@ -31,8 +31,8 @@
  * each absolute from the pointer-down snapshot, so a frame that arrives
  * twice changes nothing: the move handle `object.update`, a boundary
  * `table.resizeColumn` / `table.resizeRow` with `keepTableSize`, the add /
- * remove handles `table.setSize`. The undo manager's capture window still
- * merges a gesture into one step.
+ * remove handles `table.setSize`. A gesture is one undo step because every
+ * pointer gesture is (state/undoGestures.ts).
  *
  * Lives in slide-world coords so it tracks the table's position, but
  * every visual dimension (axis thickness, corner handle size, dividers,

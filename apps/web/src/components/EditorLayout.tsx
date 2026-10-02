@@ -1167,10 +1167,10 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       //
       // `object.duplicate` is ONE transaction (fresh ids, the sources'
       // relative z-order, a dragged group becomes its own new group), so
-      // the clone is one step on the undo stack, and the drag writes that
-      // follow (LOCAL_ORIGIN, continuous, inside the undo manager's 500 ms
-      // capture window) merge into the same step — the same mechanism that
-      // makes a plain drag one step. With a zero offset each copy starts
+      // the clone and the drag writes that follow are one step on the undo
+      // stack: the pointer gesture is (state/undoGestures.ts, opened before
+      // this handler runs) — the same mechanism that makes a plain drag one
+      // step. With a zero offset each copy starts
       // exactly on its source, crop rect included, so the copies' own
       // snapshot (read back from the document) is the drag's start frame.
       let activeDragIds = dragIds
@@ -1252,8 +1252,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   // would have to be computed against positions this closure only sees
   // a render late. The write stays one command (one LOCAL_ORIGIN
   // transaction, one Yjs update per frame for the whole selection at
-  // 60 Hz), and the frames merge into one undo step in the undo
-  // manager's capture window, exactly as before.
+  // 60 Hz), and the frames are one undo step because the pointer
+  // gesture is (state/undoGestures.ts), however long the drag takes.
   const dragObjectsFrame = useCallback(
     (pointer: DragPointer) => {
       const drag = dragRef.current

@@ -29,6 +29,25 @@ supported: `pnpm --filter web exec playwright install chromium`.
 `IMGPROXY_ENDPOINT=/imgproxy`, `VITE_IMGPROXY_URL=/imgproxy` (the dev `.env`
 from `scripts/secrets-decrypt.sh dev` has them).
 
+## Parallel by default
+
+`just e2e` runs specs in parallel (`fullyParallel`, 6 workers; `PW_WORKERS=N`
+or `--workers N` overrides) — every browser is the same `dev-user` on one
+server and one database. So a spec seeds its own folders, decks, components
+and tokens, finds them by the ids it got back (never by position in, or the
+length of, a user-wide list: all folders, all decks, Drafts, access tokens,
+connected apps), gives them unique names (`Date.now()`), and deletes what it
+can. Tests in one file must not depend on each other either: `beforeAll`
+runs once per worker, so module state set there is per worker. Wait for
+conditions (`expect.poll`, `toPass`), not fixed sleeps — under parallel load
+a 1.5 s "settle" is not enough. A spec that genuinely cannot share the
+machine — it measures CPU or frame timing, or changes user-wide state other
+specs read — gets `{ tag: '@serial' }` and runs in the `serial` project, one
+test at a time, after the parallel project (alone:
+`just e2e <spec> --no-deps`, otherwise the whole parallel project runs first
+as its dependency). The server limits POST /access-tokens to 10 per hour per
+user; the suite creates 2 per run.
+
 ## Canonical setup: deterministic deck creation
 
 Don't rely on dashboard UI.

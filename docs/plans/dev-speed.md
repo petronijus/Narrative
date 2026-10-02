@@ -1,6 +1,6 @@
 # Faster test loops
 
-Status: started 2026-09-30, **paused** — parallel Playwright is unfinished.
+Status: started 2026-09-30, **in progress** — see "Where it stopped".
 Petr stopped the work: the loops of folder-sharing step 1 took far too long,
 and this is to be finished next time before new feature work.
 
@@ -62,6 +62,33 @@ Next time, in this order:
 
 Target: the full suite in 2–3 min, `just e2e-affected` in well under a
 minute for a typical change.
+
+## Where it stopped (2026-10-02, interrupted for a restart)
+
+Uncommitted in the working tree:
+
+- Parallel Playwright (the WIP above, applied): 6 workers green once
+  (175 tests, 3.0 min vs 12.9 min), then 2/3 runs failed
+  `table-commands` "column boundary … one undo step"; 8 workers 2.6 min,
+  4 workers 3.7 min green.
+- Root cause found — a real editor bug, not a test problem: every drag
+  relied on Yjs' 500 ms undo capture window, so a pause mid-drag (or a
+  busy machine) split one gesture into several undo steps. Fix written:
+  `beginUndoGesture` / `endUndoGesture` in slide-model `undo.ts` (+
+  `undo.gesture.test.ts`), the window-level hook `usePointerUndoGestures`
+  in web `state/undoGestures.ts` (+ test), wired into both providers in
+  `SlideDocProvider.tsx`; exports classified in
+  `parity/slideModelExports.ts`; comments in `EditorLayout.tsx` and
+  `TableChrome.tsx`. Unit tests green.
+- Last run, 8 workers with the fix: the two drag tests passed; two others
+  failed and are not investigated yet — `access-tokens` "create shows the
+  token once; revoke kills it" and `object-context-menu` "Duplicate from the
+  menu is one undo step" (the latter likely the undo fix: a menu click is
+  a pointer gesture — check whether the duplicate lands after the
+  gesture closed, or merges with the right-click that opened the menu).
+
+Next: investigate those two, then `just check`, two green full runs at the
+chosen worker count, review, commit.
 
 ## How to work (applies to every change)
 

@@ -12,26 +12,97 @@
  * async IIFEs bail before `document.fonts.add()`. Fix: cleanup deletes
  * pending (not-yet-fully-installed) slots so the next invocation retries.
  *
- * Arrange: folder with known font rows (SF Pro Display, Google Sans,
- *   Playwrite NO) already uploaded to MinIO.
+ * Arrange: a folder of the spec's own with one uploaded face (the codicon
+ *   fixture, family "codicon", through `folder.fonts.upload`), deleted
+ *   afterwards. It used to read a developer's Drafts folder by id — which
+ *   exists on one machine only, and whose deck list other specs change while
+ *   they run alongside this one.
  * Act: navigate to each page, wait for FontFace.load() to settle.
- * Assert: document.fonts contains at least one face beyond Inter (the
- *   app's own web font), and [FolderFontLoader] emits no install failures.
+ * Assert: document.fonts has the uploaded face loaded, and
+ *   [FolderFontLoader] emits no install failures.
  */
 
-import { test, expect } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 
-const FOLDER_ID = 'drafts-958e2b33e6952467a1fbe3c71fc802e6'
-const SETTINGS_URL = `/folder/${FOLDER_ID}/settings`
-const DECKS_URL = `/folder/${FOLDER_ID}`
+const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'
+const WEB_ORIGIN = process.env['NARRATIVE_WEB_URL'] ?? 'http://localhost:5173'
+const FONT = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'codicon.ttf')
 
-// How long to wait for FontFace.load() promises to settle after page load.
-const FONT_SETTLE_MS = 3000
+async function command<T>(
+  request: APIRequestContext,
+  target: Record<string, string>,
+  commandId: string,
+  input: unknown,
+): Promise<T> {
+  const res = await request.post(`${API_BASE}/commands`, {
+    headers: { Origin: WEB_ORIGIN },
+    data: { target, command: commandId, input },
+  })
+  const body = (await res.json()) as { ok: boolean; result: T; error?: { message: string } }
+  expect(body.ok, `${commandId}: ${body.error?.message}`).toBe(true)
+  return body.result
+}
+
+/** A new folder holding one uploaded font; returns its id and the face's family. */
+async function folderWithFont(
+  request: APIRequestContext,
+): Promise<{ folderId: string; family: string }> {
+  const { id: folderId } = await command<{ id: string }>(request, {}, 'folder.create', {
+    name: `Font preview e2e ${Date.now()}`,
+  })
+  createdFolders.push(folderId)
+  const { family } = await command<{ family: string }>(
+    request,
+    { folderId },
+    'folder.fonts.upload',
+    { file: { base64: readFileSync(FONT).toString('base64'), filename: 'codicon.ttf' } },
+  )
+  return { folderId, family }
+}
+
+/** Folders this file created, deleted after each test even when it failed halfway. */
+const createdFolders: string[] = []
+
+test.afterEach(async ({ request }) => {
+  for (const folderId of createdFolders.splice(0)) {
+    const res = await request.delete(`${API_BASE}/folders/${folderId}`)
+    expect(res.ok() || res.status() === 404, `DELETE /folders/${folderId}`).toBe(true)
+  }
+})
+
+/** Every face in document.fonts, with its load status. */
+function installedFaces(page: Page): Promise<{ family: string; status: string }[]> {
+  return page.evaluate(() =>
+    [...document.fonts].map((f) => ({ family: f.family, status: f.status })),
+  )
+}
+
+/**
+ * Wait until `family` is loaded in the page. The regression left the face
+ * out of document.fonts for good, so a poll that times out still catches it;
+ * a fixed settle time would also fail a load that is merely slow.
+ */
+async function expectFaceLoaded(page: Page, family: string): Promise<void> {
+  await expect
+    .poll(
+      async () =>
+        (await installedFaces(page)).some((f) => f.family === family && f.status === 'loaded'),
+      {
+        timeout: 15_000,
+        message: `"${family}" never loaded; installed: ${JSON.stringify(await installedFaces(page))}`,
+      },
+    )
+    .toBe(true)
+}
 
 test.describe('folder font preview', () => {
   test('FolderSettings Fonts tab — uploaded fonts install into document.fonts on refresh', async ({
     page,
   }) => {
+    const { folderId, family } = await folderWithFont(page.request)
     const fontLoaderWarnings: string[] = []
     const failedRequests: string[] = []
 
@@ -49,50 +120,26 @@ test.describe('folder font preview', () => {
       }
     })
 
-    await page.goto(SETTINGS_URL)
+    await page.goto(`/folder/${folderId}/settings`)
 
     // Click the Fonts tab (default tab is Colors)
     const fontsTab = page.getByRole('tab', { name: /fonts/i })
     await fontsTab.waitFor({ state: 'visible', timeout: 10_000 })
     await fontsTab.click()
 
-    // Wait for FontFace.load() promises to settle
-    await page.waitForTimeout(FONT_SETTLE_MS)
+    await expectFaceLoaded(page, family)
 
-    const installedFaces = await page.evaluate(
-      async (): Promise<{ family: string; status: string }[]> => {
-        await document.fonts.ready
-        const faces: { family: string; status: string }[] = []
-        for (const face of document.fonts) {
-          faces.push({ family: face.family, status: face.status })
-        }
-        return faces
-      },
-    )
-
-    // No install failures
     expect(
       fontLoaderWarnings,
       `[FolderFontLoader] reported failures: ${fontLoaderWarnings.join(' | ')}`,
     ).toHaveLength(0)
-
-    // No network errors
     expect(failedRequests, `Network failures: ${failedRequests.join(' | ')}`).toHaveLength(0)
-
-    // At least one custom (non-Inter) font face must be fully loaded.
-    // The test fixture has SF Pro Display, Google Sans, and Playwrite NO.
-    const customFaces = installedFaces.filter(
-      (f) => !f.family.toLowerCase().includes('inter') && f.status === 'loaded',
-    )
-    expect(
-      customFaces,
-      `No custom font faces loaded. Installed faces: ${JSON.stringify(installedFaces)}`,
-    ).not.toHaveLength(0)
   })
 
   test('FolderDecks styleguide strip — uploaded fonts install into document.fonts on refresh', async ({
     page,
   }) => {
+    const { folderId, family } = await folderWithFont(page.request)
     const fontLoaderWarnings: string[] = []
     const failedRequests: string[] = []
 
@@ -105,33 +152,14 @@ test.describe('folder font preview', () => {
       failedRequests.push(`${req.method()} ${req.url()} — ${req.failure()?.errorText ?? '?'}`)
     })
 
-    await page.goto(DECKS_URL)
-    await page.waitForTimeout(FONT_SETTLE_MS)
+    await page.goto(`/folder/${folderId}`)
 
-    const installedFaces = await page.evaluate(
-      async (): Promise<{ family: string; status: string }[]> => {
-        await document.fonts.ready
-        const faces: { family: string; status: string }[] = []
-        for (const face of document.fonts) {
-          faces.push({ family: face.family, status: face.status })
-        }
-        return faces
-      },
-    )
+    await expectFaceLoaded(page, family)
 
     expect(
       fontLoaderWarnings,
       `[FolderFontLoader] reported failures: ${fontLoaderWarnings.join(' | ')}`,
     ).toHaveLength(0)
-
     expect(failedRequests, `Network failures: ${failedRequests.join(' | ')}`).toHaveLength(0)
-
-    const customFaces = installedFaces.filter(
-      (f) => !f.family.toLowerCase().includes('inter') && f.status === 'loaded',
-    )
-    expect(
-      customFaces,
-      `No custom font faces loaded on decks page. Installed faces: ${JSON.stringify(installedFaces)}`,
-    ).not.toHaveLength(0)
   })
 })
