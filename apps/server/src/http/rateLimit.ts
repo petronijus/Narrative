@@ -61,7 +61,8 @@
  * runs as a single instance; a second instance would need the Redis store):
  *   - global, identified caller ...... 1200 / minute   (GLOBAL_RATE_LIMIT)
  *   - global, anonymous (per IP) ....... 600 / minute
- *   - POST /access-tokens ................ 10 / hour     (TOKEN_CREATE_RATE_LIMIT)
+ *   - POST /access-tokens ................ 10 / hour     (TOKEN_CREATE_RATE_LIMIT;
+ *       none under BYPASS_AUTH, tokenCreateRouteConfig)
  *   - agent endpoints ................... 240 / minute   (AGENT_RATE_LIMIT) —
  *       /api/commands and /api/mcp, mounted by the agent host; they opt in
  *       with `config: agentRouteRateLimit`.
@@ -171,6 +172,21 @@ export const tokenWriteRouteRateLimit: { rateLimit: RateLimitOptions } = {
 /** Route `config` for POST /access-tokens. */
 export const tokenCreateRouteRateLimit: { rateLimit: RateLimitOptions } = {
   rateLimit: { max: TOKEN_CREATE_RATE_LIMIT.max, timeWindow: TOKEN_CREATE_RATE_LIMIT.timeWindowMs },
+}
+
+/**
+ * The route `config` POST /access-tokens registers with:
+ * TOKEN_CREATE_RATE_LIMIT, except under BYPASS_AUTH. The limit keeps a
+ * stolen session from minting tokens for a real account. BYPASS_AUTH's
+ * `dev-user` is synthetic and never runs in production (the boot guard,
+ * auth/fastifyAuth.ts `assertAuthBootSafety`); it is the one identity every
+ * e2e spec and every run of the suite shares, so 10 an hour failed the
+ * suite's token specs from its sixth run within an hour on.
+ */
+export function tokenCreateRouteConfig(bypass: boolean): {
+  rateLimit: RateLimitOptions | false
+} {
+  return bypass ? { rateLimit: false } : tokenCreateRouteRateLimit
 }
 
 // ---------------------------------------------------------------------------

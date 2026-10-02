@@ -7,7 +7,8 @@
  * draggable centre handle. Dragging the handle sets the step's target
  * with `animation.update` (params merge, so only targetX / targetY change).
  * Each frame sends the absolute target from the pointer-down snapshot, so a
- * frame is idempotent; the undo manager merges the drag into one step.
+ * frame is idempotent; the drag is one undo step, as every pointer gesture
+ * is (state/undoGestures.ts).
  *
  * Coordinates are slide-px — the parent artboard applies the canvas
  * zoom via `transform: scale()`, same convention as PathPointsOverlay.

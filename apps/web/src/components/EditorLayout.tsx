@@ -1170,9 +1170,9 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       // the clone and the drag writes that follow are one step on the undo
       // stack: the pointer gesture is (state/undoGestures.ts, opened before
       // this handler runs) — the same mechanism that makes a plain drag one
-      // step. With a zero offset each copy starts
-      // exactly on its source, crop rect included, so the copies' own
-      // snapshot (read back from the document) is the drag's start frame.
+      // step. With a zero offset each copy starts exactly on its source,
+      // crop rect included, so the copies' own snapshot (read back from the
+      // document) is the drag's start frame.
       let activeDragIds = dragIds
       let activeInitialPositions = initialPositions
       const dragSlideId = activeSlideIdRef.current

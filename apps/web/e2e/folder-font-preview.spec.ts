@@ -86,16 +86,14 @@ function installedFaces(page: Page): Promise<{ family: string; status: string }[
  * a fixed settle time would also fail a load that is merely slow.
  */
 async function expectFaceLoaded(page: Page, family: string): Promise<void> {
-  await expect
-    .poll(
-      async () =>
-        (await installedFaces(page)).some((f) => f.family === family && f.status === 'loaded'),
-      {
-        timeout: 15_000,
-        message: `"${family}" never loaded; installed: ${JSON.stringify(await installedFaces(page))}`,
-      },
-    )
-    .toBe(true)
+  // Retried as a whole, so a time-out reports the faces of the last try.
+  await expect(async () => {
+    const faces = await installedFaces(page)
+    expect(
+      faces.some((f) => f.family === family && f.status === 'loaded'),
+      `"${family}" never loaded; installed: ${JSON.stringify(faces)}`,
+    ).toBe(true)
+  }).toPass({ timeout: 15_000 })
 }
 
 test.describe('folder font preview', () => {

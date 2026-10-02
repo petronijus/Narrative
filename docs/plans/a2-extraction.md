@@ -56,7 +56,8 @@ A continuous gesture (drag, resize, rotate, scrub) dispatches one command
 per pointer move, as it writes one mutation per move today. Each dispatch is
 one `LOCAL_ORIGIN` transaction; the editor's `Y.UndoManager` keeps merging
 them within its capture window exactly as now, so undo granularity does not
-change. Where a gesture writes several things per move (move + imageRect),
+change. (Since 2026-10-02 the gesture's pointer boundaries decide instead of
+the capture window — `state/undoGestures.ts`, [`dev-speed.md`](dev-speed.md).) Where a gesture writes several things per move (move + imageRect),
 that becomes one command (or one `batch`), which is strictly better than
 today's separate transactions.
 
@@ -185,7 +186,8 @@ after the mechanism has been proven on simpler surfaces.
     crop rule moves a picture by the frame's change against the live value);
     a multi-object handle drag sends `object.move` for the not-yet-applied
     part of the travel. Each frame is one command, one transaction; the undo
-    manager's capture window still merges a gesture into one step.
+    manager's capture window still merges a gesture into one step (its
+    pointer boundaries since 2026-10-02, `state/undoGestures.ts`).
   - **The crop overlay writes nothing on entry.** The picture moves with
     `object.crop.set` (frame-relative); the frame moves or resizes with
     `object.update` carrying the current `imageRect`, which also makes an

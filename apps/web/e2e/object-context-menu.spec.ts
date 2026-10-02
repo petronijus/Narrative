@@ -95,7 +95,8 @@ test('right-click on unselected object → menu opens, items fire', async ({ pag
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
   page.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`)
+    // A failed load names its URL only in the location, not in the text.
+    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()} (${msg.location().url})`)
     if (msg.text().startsWith('[rightClickOn]')) console.log(msg.text())
   })
 
@@ -243,9 +244,9 @@ test('Duplicate from the menu is one undo step and selects the copy', async ({ p
     })
     .toBe(true)
   await page.keyboard.press('Escape')
-  // Seeding is a LOCAL_ORIGIN write too; outside the undo manager's 500 ms
-  // capture window, Mod+Z below undoes only the duplicate.
-  await page.waitForTimeout(700)
+  // Seeding is a LOCAL_ORIGIN write too; clicking "Duplicate" opens a pointer
+  // gesture, which closes the seed's undo step first (state/undoGestures.ts),
+  // so Mod+Z below undoes only the duplicate.
 
   const menu = page.locator('[data-testid="editor-context-menu-content"]')
   await rightClickOn(page, 350, 300)

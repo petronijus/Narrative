@@ -300,6 +300,9 @@ as it is undefined` ("Test runner crashed. Tried twice to restart it").
 ## Found, not fixed
 
 - **Drag undo grouping relies on the UndoManager's 500 ms capture window.**
+  _Resolved 2026-10-02: every pointer gesture is one undo step by its
+  boundaries (web `state/undoGestures.ts`, slide-model `beginUndoGesture` /
+  `endUndoGesture`; `docs/plans/dev-speed.md`)._
   A drag (and the Alt-drag clone plus its drag) is one undo step only because
   its per-frame writes keep landing inside the window (Yjs' default
   `captureTimeout`; `createUndoManager` in `slide-model/src/undo.ts` does not
@@ -381,7 +384,8 @@ phase is separately releasable; it carries real user-facing fixes).
 - Bisect the 5 real-deck round-trip differences (0.9.25 → 0.9.29).
 - Tiptap budget: shrink the chunk or re-baseline the budget deliberately.
 - Stryker: upgrade `@stryker-mutator/*` to a vitest-4-compatible runner.
-- Explicit drag gesture boundary instead of the 500 ms capture window.
+- ~~Explicit drag gesture boundary instead of the 500 ms capture window.~~
+  Done 2026-10-02 (`state/undoGestures.ts`).
 
 ## Links
 

@@ -125,7 +125,8 @@ Cross-cutting decisions made during A2. Each step's own decisions are in
   unguarded until the last step (plan "Mechanisms").
 - **Continuous gestures send absolute, idempotent frames**, with one
   command per pointer move. The undo manager's capture window still merges
-  them into one step (A2.5, A2.6, A2.9, A2.10).
+  them into one step (A2.5, A2.6, A2.9, A2.10) — since 2026-10-02 the
+  gesture's pointer boundaries do (`state/undoGestures.ts`).
 - **Cross-document writes run on the server**: slide paste across decks
   (A2.2), object paste across decks (A2.7), stamp and every master ↔ deck
   paste (A2.12b). Media is deck- or component-scoped, so the server

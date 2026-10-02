@@ -21,7 +21,7 @@
  * same reason: credential management is not an agent capability.
  *
  * Creation is rate limited per user (http/rateLimit.ts,
- * TOKEN_CREATE_RATE_LIMIT) on top of the per-user active-token cap
+ * TOKEN_CREATE_RATE_LIMIT; not under BYPASS_AUTH) on top of the per-user active-token cap
  * (MAX_ACTIVE_PATS_PER_USER in auth/personalAccessTokens.ts).
  */
 
@@ -29,7 +29,7 @@ import type { FastifyInstance } from 'fastify'
 import { closeAgentSessionsForCredential, credentialKeyForToken } from '../auth/agentSessions.js'
 import { authPreHandler, getAuthOpts } from '../auth/fastifyAuth.js'
 import { PatError, parseCreatePatInput } from '../auth/personalAccessTokens.js'
-import { tokenCreateRouteRateLimit } from '../http/rateLimit.js'
+import { tokenCreateRouteConfig } from '../http/rateLimit.js'
 import { revokeUploadSessionsForCredential } from '../media/uploadSessions.js'
 
 export interface AccessTokenRouteOpts {
@@ -56,7 +56,10 @@ export function registerAccessTokenRoutes(
 
   app.post(
     '/access-tokens',
-    { preHandler: [authPreHandler], config: tokenCreateRouteRateLimit },
+    {
+      preHandler: [authPreHandler],
+      config: tokenCreateRouteConfig(getAuthOpts(app).bypass === true),
+    },
     async (req, reply) => {
       let input
       try {

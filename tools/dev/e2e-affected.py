@@ -163,6 +163,11 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/actions/*", ["keyboard-shortcuts", "object-context-menu"]),
     # ── web: state ────────────────────────────────────────────────────────
     ("apps/web/src/state/useShortcuts.ts", ["keyboard-shortcuts"]),
+    # Every pointer gesture's undo step: the drags and the menus.
+    (
+        "apps/web/src/state/undoGestures.ts",
+        CANVAS_TOOLS + INSPECTOR + SLIDES_PANEL + ["table-commands", "keyboard-shortcuts"],
+    ),
     ("apps/web/src/state/FolderDoc*", TOKENS),
     ("apps/web/src/state/TokensContext.tsx", TOKENS + RENDER),
     ("apps/web/src/state/folderTokenWriter.ts", TOKENS),
@@ -211,6 +216,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/pages/Folder*", ACCESS + TOKENS + ["folder-font-preview"]),
     ("apps/web/src/pages/ComponentMasterEditor.tsx", COMPONENTS),
     ("apps/web/src/pages/AccessTokens.tsx", ["access-tokens"]),
+    ("apps/web/src/pages/accessTokenList.ts", ["access-tokens"]),
     ("apps/web/src/pages/ConfirmAgentAction.tsx", ["agent-confirm", "mcp-oauth-consent"]),
     ("apps/web/src/pages/Auth*", ACCESS),
     ("apps/web/src/components/ProtectedRoute.tsx", ACCESS),
@@ -324,6 +330,11 @@ def affected(files: list[str]) -> tuple[set[str], list[str], list[str]]:
     return specs, whole, unclaimed
 
 
+def is_serial(spec: Path) -> bool:
+    """Whether a spec runs in the `serial` project (it carries the `@serial` tag)."""
+    return "@serial" in spec.read_text(encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--base", default="HEAD", help="compare against this ref (default HEAD)")
@@ -366,6 +377,11 @@ def main() -> int:
 
     if args.list:
         return 0
+    # Playwright runs a project's dependencies in full, without the spec
+    # filter: targeting only `@serial` specs (the `serial` project) would run
+    # the whole parallel suite first. They have nothing to wait for alone.
+    if targets and all(is_serial(SPEC_DIR / Path(t).name) for t in targets):
+        playwright_args = ["--no-deps", *playwright_args]
     sys.stdout.flush()
     os.execvp("just", ["just", "e2e", *targets, *playwright_args])
 

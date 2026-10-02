@@ -148,7 +148,8 @@ async function mcpStatus(request: APIRequestContext, accessToken: string): Promi
 test.describe('Access tokens', () => {
   test('create shows the token once; revoke kills it', async ({ page }) => {
     test.setTimeout(60_000)
-    const name = `e2e token ${Date.now()}`
+    // Unique across specs and workers running at the same moment.
+    const name = `e2e token ${randomBytes(6).toString('hex')}`
 
     await page.goto('/')
     await page.getByRole('button', { name: 'Account menu' }).click()
@@ -189,6 +190,10 @@ test.describe('Access tokens', () => {
     // Revoke, confirming in the dialog.
     await row.getByRole('button', { name: `Revoke ${name}` }).click()
     await page.getByRole('dialog').getByRole('button', { name: 'Revoke token' }).click()
+    // The dialog closes once the server has revoked the token. Wait for that,
+    // not for the row: while the modal is open the page behind it is
+    // aria-hidden, so a role query finds no row before anything was revoked.
+    await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(page.getByRole('listitem').filter({ hasText: name })).toHaveCount(0)
 
     const dead = await page.request.get(`${SERVER}/decks`, {
@@ -203,7 +208,7 @@ test.describe('Access tokens', () => {
     test.setTimeout(60_000)
     const { accessToken, clientName, connectionId } = await connectOAuthApp(
       page.request,
-      `E2E connector ${Date.now()}`,
+      `E2E connector ${randomBytes(6).toString('hex')}`,
     )
     // The app's token opens /mcp (past auth, the request lacks a session: 400).
     expect(await mcpStatus(page.request, accessToken)).toBe(400)
@@ -211,11 +216,11 @@ test.describe('Access tokens', () => {
     await page.goto('/settings/access-tokens')
     const apps = page.getByRole('region', { name: 'Your connected apps' })
     // With a metadata-document client the name is not unique (earlier runs,
-    // a developer's own Claude Code): the list is newest first, ours is first.
-    const rows = apps.getByRole('listitem').filter({ hasText: clientName })
-    const row = rows.first()
+    // other specs running alongside, a developer's own Claude Code): ours is
+    // the row with our connection's id, whatever else the list holds.
+    const row = apps.locator(`li[data-connection-id="${connectionId}"]`)
     await expect(row).toBeVisible()
-    const before = await rows.count()
+    await expect(row).toContainText(clientName)
     // A loopback callback is a program on this computer, whatever its port.
     await expect(row).toContainText('Returns to this computer')
 
@@ -223,14 +228,14 @@ test.describe('Access tokens', () => {
     await row.getByRole('button', { name: `Disconnect ${clientName}` }).click()
     await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click()
     await expect(page.getByRole('dialog')).toHaveCount(0)
-    await expect(rows).toHaveCount(before)
+    await expect(row).toBeVisible()
     expect(await mcpStatus(page.request, accessToken)).toBe(400)
 
     // Disconnect, confirming in the dialog.
     await row.getByRole('button', { name: `Disconnect ${clientName}` }).click()
     await page.getByRole('dialog').getByRole('button', { name: 'Disconnect' }).click()
     await expect(page.getByRole('dialog')).toHaveCount(0)
-    await expect(rows).toHaveCount(before - 1)
+    await expect(row).toHaveCount(0)
 
     // The server agrees: the connection is gone and its token is dead.
     const list = await page.request.get(`${SERVER}/oauth/connections`)

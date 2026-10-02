@@ -47,9 +47,9 @@ let pats: PatService
 let app: FastifyInstance
 const revokeUploadSessions = vi.fn(async (_key: string) => 0)
 
-async function buildApp(opts: { rateLimit?: boolean } = {}) {
+async function buildApp(opts: { rateLimit?: boolean; bypass?: boolean } = {}) {
   const a = Fastify({ logger: false })
-  registerAuthPlugin(a, { bypass: false, db: {} as Database, pats })
+  registerAuthPlugin(a, { bypass: opts.bypass === true, db: {} as Database, pats })
   if (opts.rateLimit) await registerRateLimit(a)
   registerAccessTokenRoutes(a, { revokeUploadSessions })
   await a.ready()
@@ -221,6 +221,16 @@ describe('DELETE /access-tokens/:id', () => {
 })
 
 describe('rate limit on creation', () => {
+  it('does not limit BYPASS_AUTH’s dev user, whom every e2e run shares', async () => {
+    app = await buildApp({ rateLimit: true, bypass: true })
+    for (let i = 0; i <= TOKEN_CREATE_RATE_LIMIT.max; i++) {
+      const res = await create({})
+      expect(res.statusCode, `creation ${i + 1}`).toBe(201)
+      // Stay under the per-user active-token cap: revoke each again.
+      await app.inject({ method: 'DELETE', url: `/access-tokens/${res.json().accessToken.id}` })
+    }
+  })
+
   it(`allows ${TOKEN_CREATE_RATE_LIMIT.max} creations per hour per user, then 429`, async () => {
     app = await buildApp({ rateLimit: true })
     for (let i = 0; i < TOKEN_CREATE_RATE_LIMIT.max; i++) {

@@ -686,8 +686,10 @@ test.describe('Snapping', () => {
     await page.keyboard.up('ControlOrMeta')
     await expect.poll(() => objectState(page, 'snap-mover')).toEqual({ x: 600, y: 600 })
 
-    // The preference outlives a reload.
-    await page.reload()
+    // The preference outlives a reload — opened again the way every test
+    // here opens a deck: with the suite running in parallel, the editor can
+    // take longer to boot than a bare 5 s assertion allows.
+    await openDeckReady(page, deckId)
     await expect(page.getByTestId('toolbar-snapping')).toHaveAttribute('aria-pressed', 'false')
   })
 

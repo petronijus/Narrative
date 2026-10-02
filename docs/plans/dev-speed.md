@@ -1,8 +1,7 @@
 # Faster test loops
 
-Status: started 2026-09-30, **in progress** — see "Where it stopped".
-Petr stopped the work: the loops of folder-sharing step 1 took far too long,
-and this is to be finished next time before new feature work.
+Status: **done** 2026-10-02 (started 2026-09-30).
+Started because the loops of folder-sharing step 1 took far too long.
 
 ## Why
 
@@ -32,63 +31,43 @@ Measured on the Linux desktop (24 threads) on 2026-09-30:
   is named so the table can learn it. `just lint-docs` fails when the table
   names a spec that does not exist.
 
-## Not done: parallel Playwright
+- **Parallel Playwright** (2026-10-02): `fullyParallel`, `PW_WORKERS`
+  workers (default 6), and a `serial` project that runs the `@serial` specs
+  alone after the parallel ones (`apps/web/playwright.config.ts`; the rule
+  for new specs is in `.claude/rules/e2e.md`). The full suite takes
+  **2.8 min instead of 12.9** — two green runs in a row, 175 tests, no
+  retries. Measured: 4 workers 3.7 min, 6 workers 2.8–3.0 min, 8 workers
+  2.6 min but not reliably green on this desktop.
 
-Work in progress on branch `wip/e2e-parallel` (one commit on top of the
-folder-sharing step 1 commit). What it has:
+## What running in parallel found
 
-- `playwright.config.ts`: `fullyParallel`, `PW_WORKERS` (default 6), a
-  `parallel` project and a `serial` project (tag `@serial`) that runs after
-  it with one worker;
-- isolation fixes in `folder-font-preview.spec.ts` and
-  `htmltext-texture-isolation.spec.ts`; `idle-cpu-measurement.spec.ts`
-  tagged `@serial`;
-- the rule for new specs in `.claude/rules/e2e.md` and the
-  `playwright-e2e` skill.
+Running the suite in parallel made specs slower and concurrent, and that
+exposed real problems besides test isolation:
 
-Where it stopped: at 6 workers two tests failed; one is in
-`slide-transition.spec.ts`, the other was not identified before the run was
-stopped. Neither worker counts 4 and 8 nor the stability runs were done.
+- **Undo split a slow drag** (editor bug): every drag relied on the undo
+  manager's 500 ms capture window to be one step, so a pause mid-drag split
+  it and a quick second gesture merged into the first. A pointer gesture is
+  now one undo step by its boundaries: slide-model `beginUndoGesture` /
+  `endUndoGesture`, web `state/undoGestures.ts`.
+- **A late token list hid a new token** (Access tokens page): the first
+  list answer overwrote tokens created or revoked meanwhile
+  (`pages/accessTokenList.ts`).
+- **10 tokens an hour** for the shared e2e identity: POST /access-tokens is
+  not rate limited under BYPASS_AUTH (`http/rateLimit.ts`
+  `tokenCreateRouteConfig`); production keeps 10 an hour.
+- Test bugs: specs counted rows of user-wide lists (connected apps), named
+  things by `Date.now()`, waited for a list row behind a modal that
+  aria-hides it, waited 5 s for an editor after a reload, and filtered a
+  console error by a URL Chrome does not put in the message text.
 
-Next time, in this order:
+Open, found on the way, not fixed:
 
-1. Start the dev stack yourself (`just dev` in a terminal): a background
-   task in Claude Code is killed after 2 h and took the stack down mid-run.
-2. Check out `wip/e2e-parallel`, run the full suite once at 6 workers,
-   fix or tag `@serial` whatever fails (read the failures' traces; no
-   retries — `retries: 0` stays).
-3. Measure 4 / 6 / 8 workers once each, keep the fastest fully green one.
-4. Two green full runs in a row, then merge into `main`.
-
-Target: the full suite in 2–3 min, `just e2e-affected` in well under a
-minute for a typical change.
-
-## Where it stopped (2026-10-02, interrupted for a restart)
-
-Uncommitted in the working tree:
-
-- Parallel Playwright (the WIP above, applied): 6 workers green once
-  (175 tests, 3.0 min vs 12.9 min), then 2/3 runs failed
-  `table-commands` "column boundary … one undo step"; 8 workers 2.6 min,
-  4 workers 3.7 min green.
-- Root cause found — a real editor bug, not a test problem: every drag
-  relied on Yjs' 500 ms undo capture window, so a pause mid-drag (or a
-  busy machine) split one gesture into several undo steps. Fix written:
-  `beginUndoGesture` / `endUndoGesture` in slide-model `undo.ts` (+
-  `undo.gesture.test.ts`), the window-level hook `usePointerUndoGestures`
-  in web `state/undoGestures.ts` (+ test), wired into both providers in
-  `SlideDocProvider.tsx`; exports classified in
-  `parity/slideModelExports.ts`; comments in `EditorLayout.tsx` and
-  `TableChrome.tsx`. Unit tests green.
-- Last run, 8 workers with the fix: the two drag tests passed; two others
-  failed and are not investigated yet — `access-tokens` "create shows the
-  token once; revoke kills it" and `object-context-menu` "Duplicate from the
-  menu is one undo step" (the latter likely the undo fix: a menu click is
-  a pointer gesture — check whether the duplicate lands after the
-  gesture closed, or merges with the right-click that opened the menu).
-
-Next: investigate those two, then `just check`, two green full runs at the
-chosen worker count, review, commit.
+- The sync server logs `FAILED to store snapshot` (foreign key on
+  `deck_updates` / `component_updates`) when a deck or component is deleted
+  while its document is still loaded: the debounced store runs after the
+  delete. Harmless (nothing is lost — the row is gone on purpose), but it is
+  logged as an ERROR; the store should skip a document whose deck no longer
+  exists, and deleting a deck should unload its document.
 
 ## How to work (applies to every change)
 

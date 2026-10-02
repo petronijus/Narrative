@@ -21,6 +21,16 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ### Fixed
 
+- **A drag is always one undo step.** Until now a drag, a resize or a
+  column boundary pulled with the pointer was one step only while no two of
+  its frames were more than half a second apart: pausing mid-drag (or a busy
+  machine) split it, and Ctrl+Z undid only its last part; a gesture right
+  after another merged into it. Every pointer gesture is now one step by its
+  start and end (`state/undoGestures.ts`, slide-model `beginUndoGesture`).
+- **A new access token no longer vanishes from the list** when the page's
+  first list arrives after it was created (and a token revoked meanwhile no
+  longer comes back).
+
 - **A deck shared with someone renders with its folder's styles**: its
   guests (and share links) now read the folder's design tokens, fonts and
   component pictures, read-only, instead of falling back to default styles.
@@ -34,6 +44,12 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
   its folder's tokens (`e2e/share-link-folder-tokens.spec.ts`).
 
 ### Changed
+
+- **The e2e suite runs in parallel**: 6 workers by default (`PW_WORKERS`),
+  `@serial` specs alone afterwards; the full suite takes 2.8 min instead of
+  12.9 (`docs/plans/dev-speed.md`). Under BYPASS_AUTH (development only)
+  creating access tokens is no longer rate limited, since every e2e run
+  shares the dev user; production keeps 10 an hour.
 
 - A deck's creator column no longer grants the owner role by itself:
   migration 0031 gives every deck's creator an owner row, so that access can

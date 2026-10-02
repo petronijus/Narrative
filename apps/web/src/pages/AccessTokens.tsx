@@ -18,8 +18,9 @@
  * Reached from the user menu (ui/UserMenu.tsx).
  */
 
-import { useEffect, useId, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { mergeLoadedTokens } from './accessTokenList.js'
 import {
   AlertTriangle,
   Check,
@@ -527,7 +528,12 @@ function ConnectedAppRow({
   onDisconnect(connection: OAuthConnection): void
 }) {
   return (
-    <li className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
+    // Several connections can share a client name ("Claude Code" on every
+    // machine); the id tells them apart (e2e/access-tokens.spec.ts).
+    <li
+      data-connection-id={connection.id}
+      className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3"
+    >
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate text-sm font-medium text-foreground">
@@ -640,6 +646,10 @@ export function AccessTokens() {
   const navigate = useNavigate()
   const api = useApi()
   const [tokens, setTokens] = useState<AccessTokenSummary[]>([])
+  // Created and revoked on this page: a list that arrives afterwards must
+  // not drop the former or bring back the latter (accessTokenList.ts).
+  const createdHere = useRef<AccessTokenSummary[]>([])
+  const revokedHere = useRef(new Set<string>())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
@@ -657,7 +667,8 @@ export function AccessTokens() {
     api.listAccessTokens().then(
       (list) => {
         if (cancelled) return
-        setTokens(list)
+        // The answer may predate a token created or revoked here meanwhile.
+        setTokens(mergeLoadedTokens(list, createdHere.current, revokedHere.current))
         setError(null)
         setLoading(false)
       },
@@ -815,12 +826,16 @@ export function AccessTokens() {
       <CreateTokenDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
-        onCreated={(created) => setTokens((prev) => [created.accessToken, ...prev])}
+        onCreated={(created) => {
+          createdHere.current = [created.accessToken, ...createdHere.current]
+          setTokens((prev) => [created.accessToken, ...prev])
+        }}
       />
       <RevokeTokenDialog
         token={revokeTarget}
         onCancel={() => setRevokeTarget(null)}
         onRevoked={(id) => {
+          revokedHere.current.add(id)
           setTokens((prev) => prev.filter((t) => t.id !== id))
           setRevokeTarget(null)
         }}

@@ -72,9 +72,9 @@ test('gradient, shadow and page number go through their commands', async ({ page
     .poll(async () => (await objectOf(page, RECT_ID))?.['fillStyle'])
     .toEqual({ kind: 'radialGradient', stops: seeded })
 
-  // Shadow: the default one, and one undo step. Edits within the undo
-  // manager's capture window merge, so let the gradient's step close first.
-  await page.waitForTimeout(700)
+  // Shadow: the default one, and one undo step — the switch click is a
+  // pointer gesture, which closes the gradient's step first
+  // (state/undoGestures.ts).
   await page.getByRole('switch', { name: 'Enable shadow' }).click()
   await expect
     .poll(async () => (await objectOf(page, RECT_ID))?.['shadow'])
