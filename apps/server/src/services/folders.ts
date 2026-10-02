@@ -25,6 +25,7 @@ import {
   purgeExplicitKeys,
 } from '../media/bucketCleanup.js'
 import { buildS3Client, MEDIA_BUCKET, presignGetUrl } from '../media/s3Client.js'
+import { closeConnectionsForDocument, closeDeckConnections } from '../hocuspocus/connections.js'
 import {
   folderFontPostscriptCollides,
   getFolderFontAsset,
@@ -352,6 +353,13 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
       if (containedDecks.length > 0) await tx.delete(decks).where(eq(decks.folderId, id))
       await tx.delete(folders).where(eq(folders.id, id))
     })
+
+    // Nobody keeps the folder's documents open: its decks, its component
+    // masters and its token document. (A store that still runs for one finds
+    // its owner gone and stores nothing — hocuspocus/persistence.ts.)
+    for (const d of containedDecks) closeDeckConnections(d.id)
+    for (const c of componentIds) closeConnectionsForDocument(`component:${c}`)
+    closeConnectionsForDocument(`folder:${id}`)
 
     // Best-effort MinIO cleanup, loss-tolerant.
     await Promise.all([

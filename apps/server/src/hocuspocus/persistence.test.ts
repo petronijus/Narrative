@@ -56,6 +56,9 @@ function makeFakeDb() {
   // fake distinguishes them positionally: the eq value is the doc id, the lt
   // value is the keepFrom serial id.
   let failNextTransaction = false
+  // Owners (deck / folder / component rows) that were deleted; every other
+  // id has one.
+  const deletedOwners = new Set<string>()
 
   // Build a chainable query object bound to an operation closure.
   function makeChain() {
@@ -66,6 +69,8 @@ function makeFakeDb() {
       // --- SELECT path -------------------------------------------------
       select: vi.fn(() => chain),
       from: vi.fn(() => chain),
+      // The owner check: `select … where id = … for('key share')`.
+      for: vi.fn(async () => (docId !== null && !deletedOwners.has(docId) ? [{ id: docId }] : [])),
       orderBy: vi.fn(async () => {
         const matched = rows.filter((r) => r.fkId === docId).sort((a, b) => a.id - b.id)
         return matched.map((r) => ({ update: r.update }))
@@ -168,6 +173,11 @@ function makeFakeDb() {
     _rowCountFor: (docId: string) => rows.filter((r) => r.fkId === docId).length,
     _failNextTransaction: () => {
       failNextTransaction = true
+    },
+    /** The deck / folder / component row is deleted (its updates cascade with it). */
+    _deleteOwner: (id: string) => {
+      deletedOwners.add(id)
+      for (let i = rows.length - 1; i >= 0; i--) if (rows[i]!.fkId === id) rows.splice(i, 1)
     },
   }
   return db
@@ -389,6 +399,27 @@ describe('PostgresPersistence', () => {
     addObject(cdoc, 'c-1')
     await persistence.onStoreDocument(makePayload('component:comp-y', cdoc) as never)
     expect(db._rowCountFor('comp-y')).toBe(1)
+  })
+
+  it('stores nothing for a document whose deck, folder or component was deleted', async () => {
+    // The debounced store runs after the owner's row is gone (a deck deleted
+    // with its editor still open): nothing to keep, and no error.
+    const db = makeFakeDb()
+    const persistence = new PostgresPersistence({ db: db as never })
+    addObject(doc, 'before')
+    await persistence.onStoreDocument(makePayload('deck:gone', doc) as never)
+    expect(db._rowCountFor('gone')).toBe(1)
+
+    db._deleteOwner('gone')
+    addObject(doc, 'after')
+    await expect(
+      persistence.onStoreDocument(makePayload('deck:gone', doc) as never),
+    ).resolves.toBeUndefined()
+    expect(db._rowCountFor('gone')).toBe(0)
+
+    db._deleteOwner('comp-gone')
+    await persistence.onStoreDocument(makePayload('component:comp-gone', doc) as never)
+    expect(db._rowCountFor('comp-gone')).toBe(0)
   })
 
   it('does not persist writes from a viewer context', async () => {

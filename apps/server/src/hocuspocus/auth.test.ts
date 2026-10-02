@@ -266,7 +266,8 @@ describe('PostgresPersistence — viewer write blocking', () => {
 
   // PERF-2: onStoreDocument now runs the insert+compaction-delete inside
   // db.transaction(). This mock models the transactional store path: the tx
-  // exposes insert().values().returning() and delete().where(). We assert the
+  // exposes the owner check select().from().where().for() (the deck exists),
+  // insert().values().returning() and delete().where(). We assert the
   // non-viewer write actually reaches the insert inside the transaction.
   function makeTxDb() {
     const mockInsert = vi.fn().mockReturnValue({
@@ -277,7 +278,11 @@ describe('PostgresPersistence — viewer write blocking', () => {
     const mockDelete = vi.fn().mockReturnValue({
       where: vi.fn().mockResolvedValue({ rowCount: 0 }),
     })
-    const tx = { insert: mockInsert, delete: mockDelete }
+    const ownerRow = { for: vi.fn().mockResolvedValue([{ id: 'deck-1' }]) }
+    const mockSelect = vi.fn().mockReturnValue({
+      from: vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue(ownerRow) }),
+    })
+    const tx = { select: mockSelect, insert: mockInsert, delete: mockDelete }
     const db = {
       transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
     }

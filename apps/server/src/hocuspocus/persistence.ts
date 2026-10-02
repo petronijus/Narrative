@@ -47,7 +47,14 @@ import type { Extension, onLoadDocumentPayload, onStoreDocumentPayload } from '@
 import * as Y from 'yjs'
 import { and, eq, lt } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { deckUpdates, folderUpdates, componentUpdates } from '../db/schema.js'
+import {
+  componentUpdates,
+  components,
+  deckUpdates,
+  decks,
+  folderUpdates,
+  folders,
+} from '../db/schema.js'
 import { closeConnectionsForDocument } from './connections.js'
 import { subsystemLogger } from '../observability/logger.js'
 
@@ -86,6 +93,9 @@ type DocKind = 'deck' | 'folder' | 'component'
 
 type DocTarget = { kind: DocKind; id: string }
 
+/** What a store's transaction answers when the document's owner is gone. */
+const OWNER_DELETED = Symbol('owner deleted')
+
 function parseDocName(name: string): DocTarget {
   if (name.startsWith('folder:')) {
     return { kind: 'folder', id: name.slice('folder:'.length) }
@@ -110,6 +120,13 @@ type Tx = Parameters<Parameters<Database['transaction']>[0]>[0]
 type DbOrTx = Database | Tx
 
 interface TableBinding {
+  /**
+   * Whether the document's owner (the deck, folder or component row) still
+   * exists, locking it `FOR KEY SHARE` until the transaction ends — the lock
+   * the snapshot's foreign key takes anyway — so it cannot be deleted
+   * between this check and the insert.
+   */
+  lockOwner(db: DbOrTx, id: string): Promise<boolean>
   /** Run `fn` for the matching kind; returns its result. */
   insertRow(db: DbOrTx, id: string, update: Uint8Array): Promise<{ id: number }[]>
   selectRows(db: DbOrTx, id: string): Promise<{ update: Uint8Array }[]>
@@ -119,6 +136,9 @@ interface TableBinding {
 
 const BINDINGS: Record<DocKind, TableBinding> = {
   deck: {
+    lockOwner: async (db, id) =>
+      (await db.select({ id: decks.id }).from(decks).where(eq(decks.id, id)).for('key share'))
+        .length > 0,
     insertRow: (db, id, update) =>
       db.insert(deckUpdates).values({ deckId: id, update }).returning({ id: deckUpdates.id }),
     selectRows: (db, id) =>
@@ -131,6 +151,9 @@ const BINDINGS: Record<DocKind, TableBinding> = {
       db.delete(deckUpdates).where(and(eq(deckUpdates.deckId, id), lt(deckUpdates.id, keepFromId))),
   },
   folder: {
+    lockOwner: async (db, id) =>
+      (await db.select({ id: folders.id }).from(folders).where(eq(folders.id, id)).for('key share'))
+        .length > 0,
     insertRow: (db, id, update) =>
       db.insert(folderUpdates).values({ folderId: id, update }).returning({ id: folderUpdates.id }),
     selectRows: (db, id) =>
@@ -145,6 +168,14 @@ const BINDINGS: Record<DocKind, TableBinding> = {
         .where(and(eq(folderUpdates.folderId, id), lt(folderUpdates.id, keepFromId))),
   },
   component: {
+    lockOwner: async (db, id) =>
+      (
+        await db
+          .select({ id: components.id })
+          .from(components)
+          .where(eq(components.id, id))
+          .for('key share')
+      ).length > 0,
     insertRow: (db, id, update) =>
       db
         .insert(componentUpdates)
@@ -313,6 +344,10 @@ export class PostgresPersistence implements Extension {
       // rows. If the tx rolls back, the prior rows remain intact and the next
       // debounced store retries.
       const deletedOlder = await this.db.transaction(async (tx) => {
+        // A document whose deck, folder or component was deleted while it
+        // was still loaded (the debounced store runs after the delete): there
+        // is nothing to keep, and its rows went with the owner.
+        if (!(await binding.lockOwner(tx, target.id))) return OWNER_DELETED
         const inserted = await binding.insertRow(tx, target.id, update)
         const newId = inserted[0]?.id
         if (newId === undefined) {
@@ -326,6 +361,15 @@ export class PostgresPersistence implements Extension {
         const count = (res as { rowCount?: number } | undefined)?.rowCount
         return typeof count === 'number' ? count : undefined
       })
+
+      if (deletedOlder === OWNER_DELETED) {
+        this.lastStoredBytes.delete(data.documentName)
+        log.info(
+          { kind: target.kind, id: target.id },
+          'not stored: the document belongs to a deleted ' + target.kind,
+        )
+        return
+      }
 
       // DOS-1: record the size we just persisted as the new growth baseline.
       this.lastStoredBytes.set(data.documentName, size)

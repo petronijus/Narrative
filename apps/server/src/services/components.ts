@@ -13,6 +13,7 @@ import { components, decks } from '../db/schema.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { listComponentMediaKeys } from '../media/assets.js'
 import { purgeComponentBucketPrefix, purgeExplicitKeys } from '../media/bucketCleanup.js'
+import { closeConnectionsForDocument } from '../hocuspocus/connections.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, notFound } from './errors.js'
 import { iso, requireComponentRole, requireFolderRole } from './shared.js'
@@ -101,6 +102,9 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
     // CASCADE). Stamped copies on slides are detached primitives with
     // deck-owned media and stay as they are.
     await db.delete(components).where(eq(components.id, args.componentId))
+    // Nobody keeps the master open (a store that still runs finds its owner
+    // gone and stores nothing — hocuspocus/persistence.ts).
+    closeConnectionsForDocument(documentName('component', args.componentId))
     await Promise.all([
       purgeComponentBucketPrefix(args.componentId, deps.log),
       purgeExplicitKeys(keys, deps.log),
