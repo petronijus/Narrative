@@ -451,8 +451,11 @@ export async function adoptMasterMedia(
     for (const [deckId, assetIds] of byDeck) {
       const staged = await copyMedia(deps, {
         userId: owner.userId,
+        // The decks are the component's folder's (filtered above).
         source: { deckId },
+        sourceFolderId: owner.folderId,
         target,
+        targetFolderId: owner.folderId,
         assetIds,
         families: new Set(),
         // A one-time server migration, not a person's copy.

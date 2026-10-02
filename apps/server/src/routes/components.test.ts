@@ -40,6 +40,7 @@ vi.mock('../media/bucketCleanup.js', () => ({
   purgeComponentBucketPrefix: (...a: unknown[]) => purgeComponentBucketPrefix(...a),
   purgeExplicitKeys: (...a: unknown[]) => purgeExplicitKeys(...a),
   purgeDeckBucketPrefix: vi.fn(),
+  purgeUnreferencedKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
 }))
 
 // ---------------------------------------------------------------------------
@@ -84,6 +85,7 @@ function makeMockDb(
   let lastInserted: unknown = null
   let lastUpdated: unknown = null
   let deletedId: string | null = null
+  const mediaHandedOver: unknown[] = []
 
   const rowsFor = (table: string): unknown[] => {
     if (table === 'folders') return folderStore.slice(0, 1)
@@ -96,6 +98,7 @@ function makeMockDb(
     _lastInserted: () => lastInserted,
     _lastUpdated: () => lastUpdated,
     _deletedId: () => deletedId,
+    _mediaHandedOver: () => mediaHandedOver,
     _componentStore: componentStore,
 
     select: vi.fn().mockImplementation(() => {
@@ -125,17 +128,27 @@ function makeMockDb(
       }),
     })),
 
-    update: vi.fn().mockImplementation(() => ({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockImplementation(() => {
-            lastUpdated = true
-            const comp = componentStore[0] ?? null
-            return Promise.resolve(comp ? [comp] : [])
-          }),
+    update: vi.fn().mockImplementation((t: Table) => ({
+      set: vi.fn().mockImplementation((values: unknown) => ({
+        where: vi.fn().mockImplementation(() => {
+          // A component's media handed to its folder (awaited without returning).
+          if (getTableName(t) === 'media_assets') mediaHandedOver.push(values)
+          const done = Promise.resolve({ rowCount: 1 })
+          return Object.assign(done, {
+            returning: vi.fn().mockImplementation(() => {
+              lastUpdated = true
+              const comp = componentStore[0] ?? null
+              return Promise.resolve(comp ? [comp] : [])
+            }),
+          })
         }),
-      }),
+      })),
     })),
+
+    // The delete hands the media over and removes the component in one transaction.
+    transaction: vi
+      .fn()
+      .mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(db)),
 
     delete: vi.fn().mockImplementation(() => ({
       where: vi.fn().mockImplementation(() => {
@@ -149,6 +162,7 @@ function makeMockDb(
     _lastInserted: () => unknown
     _lastUpdated: () => unknown
     _deletedId: () => string | null
+    _mediaHandedOver: () => unknown[]
   }
 }
 
@@ -462,7 +476,8 @@ describe('PATCH /components/:id', () => {
 
 describe('DELETE /components/:id', () => {
   it('deletes a component owned by the current user → 204', async () => {
-    const db = makeMockDb({ folders: [ownerFolder], components: [existingComponent] })
+    const withThumbnail = { ...existingComponent, thumbnailKey: 'components/comp-1/thumb.jpg' }
+    const db = makeMockDb({ folders: [ownerFolder], components: [withThumbnail] })
     const app = await buildApp(db)
 
     const res = await app.inject({
@@ -471,9 +486,14 @@ describe('DELETE /components/:id', () => {
     })
 
     expect(res.statusCode).toBe(204)
-    // Its storage goes too: the components/<id>/ prefix and the tus originals.
-    expect(purgeComponentBucketPrefix).toHaveBeenCalledWith('comp-1', expect.anything())
-    expect(purgeExplicitKeys).toHaveBeenCalledWith([], expect.anything())
+    // Its pictures and videos go to the folder, files and all: the slides it
+    // was stamped on link them. Only its own thumbnail leaves storage.
+    expect(db._mediaHandedOver()).toEqual([{ componentId: null, folderId: 'folder-1' }])
+    expect(purgeComponentBucketPrefix).not.toHaveBeenCalled()
+    expect(purgeExplicitKeys).toHaveBeenCalledWith(
+      ['components/comp-1/thumb.jpg'],
+      expect.anything(),
+    )
   })
 
   it('deletes it for an editor of the folder, and refuses a viewer', async () => {

@@ -2,8 +2,8 @@
  * media/assets.integration.test.ts — component-owned media (A2.12b) against a
  * real Postgres (migrations 0027 and 0028 applied): the database keeps a
  * media row to one owner and a new component id to the storage-safe
- * alphabet, `listComponentMediaKeys` returns every bucket key of a master's
- * rows, and deleting a master cascades its rows. Excluded from `pnpm test`;
+ * alphabet, `keysStillReferenced` tells which stored files a row still
+ * names, and deleting a master cascades its rows. Excluded from `pnpm test`;
  * run with `just integration` against the local dev database. It creates its
  * own user, folder, deck and components under random ids and deletes them
  * afterwards (the deck first; components and their media cascade with the
@@ -15,7 +15,7 @@ import { eq, inArray } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { db, pool } from '../db/client.js'
 import { components, decks, folders, mediaAssets, users } from '../db/schema.js'
-import { listComponentMediaKeys } from './assets.js'
+import { keysStillReferenced } from './bucketCleanup.js'
 
 const suffix = nanoid(8)
 const userSub = `it-user-${suffix}`
@@ -92,40 +92,26 @@ describe('component-owned media in Postgres', () => {
     expect(err).toMatchObject({ code: '23514', constraint: 'components_id_storage_safe' })
   })
 
-  it("lists every bucket key of a component's media rows, and only that component's", async () => {
-    const tusOriginal = `uploads/tus/${nanoid(16)}`
+  it('keeps a stored file another row still names, whichever key of the row names it', async () => {
+    // A deleted folder font is cloned onto each deck of the folder under one
+    // stored file: deleting one clone's deck must not remove it.
+    const shared = `fonts/${folderId}/${nanoid(8)}/original.ttf`
+    const poster = `decks/${deckId}/videos/${nanoid(8)}/poster.jpg`
+    const gone = `decks/${deckId}/uploads/${nanoid(8)}/original.png`
     await db.insert(mediaAssets).values([
+      mediaRow({ storageKey: shared, deckId, kind: 'font', mimeType: 'font/ttf' }),
       mediaRow({
-        storageKey: `components/${componentA}/uploads/a/original.png`,
-        componentId: componentA,
-      }),
-      mediaRow({
-        storageKey: tusOriginal,
-        componentId: componentA,
+        storageKey: `decks/${deckId}/uploads/${nanoid(8)}/original.mp4`,
+        deckId,
         kind: 'video',
         mimeType: 'video/mp4',
-        playbackKey: `components/${componentA}/videos/v/playback.mp4`,
-        posterKey: `components/${componentA}/videos/v/poster.jpg`,
-        thumbnailKey: `components/${componentA}/videos/v/thumb.jpg`,
+        posterKey: poster,
       }),
-      mediaRow({
-        storageKey: `components/${componentB}/uploads/b/original.png`,
-        componentId: componentB,
-      }),
-      mediaRow({ storageKey: `decks/${deckId}/uploads/d/original.png`, deckId }),
     ])
-
-    const keys = await listComponentMediaKeys(db, [componentA])
-    expect([...keys].sort()).toEqual(
-      [
-        `components/${componentA}/uploads/a/original.png`,
-        tusOriginal,
-        `components/${componentA}/videos/v/playback.mp4`,
-        `components/${componentA}/videos/v/poster.jpg`,
-        `components/${componentA}/videos/v/thumb.jpg`,
-      ].sort(),
+    expect(await keysStillReferenced(db, [shared, poster, gone, ''])).toEqual(
+      new Set([shared, poster]),
     )
-    expect(await listComponentMediaKeys(db, [])).toEqual([])
+    expect(await keysStillReferenced(db, [])).toEqual(new Set())
   })
 
   it("removes a component's media rows with the component, and leaves other owners' rows", async () => {

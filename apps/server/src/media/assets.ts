@@ -13,7 +13,7 @@
  * but the original MinIO objects remain orphaned. See migration 0002 for details.
  */
 
-import { eq, and, inArray, isNull } from 'drizzle-orm'
+import { eq, and, isNull } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { mediaAssets } from '../db/schema.js'
 import type { MediaAsset } from '../db/schema.js'
@@ -33,10 +33,12 @@ export type TranscodeStatus = 'pending' | 'processing' | 'done' | 'failed'
  */
 export interface VideoAssetRow {
   id: string
-  /** The owning deck; null for a component master's video. */
+  /** The owning deck; null for a component master's or a folder's video. */
   deckId: string | null
-  /** The owning component (A2.12b); null for a deck's video. */
+  /** The owning component (A2.12b); null for a deck's or a folder's video. */
   componentId: string | null
+  /** The owning folder: a deleted component's video, handed to its folder. */
+  folderId: string | null
   mimeType: string
   sizeBytes: number
   storageKey: string
@@ -169,13 +171,14 @@ export async function getVideoAsset(db: Database, id: string): Promise<VideoAsse
   const row = rows[0]
   if (!row) return null
 
-  // A video belongs to a deck or a component; a row with neither is not
-  // one anybody may resolve.
-  if (row.deckId === null && row.componentId === null) return null
+  // A video belongs to a deck, a component or a folder (a deleted
+  // component's); a row with none is not one anybody may resolve.
+  if (row.deckId === null && row.componentId === null && row.folderId === null) return null
   return {
     id: row.id,
     deckId: row.deckId,
     componentId: row.componentId,
+    folderId: row.folderId,
     mimeType: row.mimeType,
     sizeBytes: row.sizeBytes,
     storageKey: row.storageKey,
@@ -207,6 +210,7 @@ export async function listVideoAssets(db: Database, deckId: string): Promise<Vid
       id: row.id,
       deckId: row.deckId,
       componentId: row.componentId,
+      folderId: row.folderId,
       mimeType: row.mimeType,
       sizeBytes: row.sizeBytes,
       storageKey: row.storageKey,
@@ -225,34 +229,6 @@ export async function listVideoAssets(db: Database, deckId: string): Promise<Vid
 // ---------------------------------------------------------------------------
 // Read — component media (A2.12b)
 // ---------------------------------------------------------------------------
-
-/**
- * Every storage key the media of the given components occupy — originals
- * (tus compound ids included) and video outputs. Read BEFORE the rows go
- * (a component's or its folder's delete cascades them), then handed to
- * `purgeExplicitKeys` (media/bucketCleanup.ts): a tus original's key is the
- * compound upload id, which no `components/<id>/` prefix sweep reaches.
- */
-export async function listComponentMediaKeys(
-  db: Database,
-  componentIds: readonly string[],
-): Promise<string[]> {
-  if (componentIds.length === 0) return []
-  const rows = await db
-    .select({
-      storageKey: mediaAssets.storageKey,
-      playbackKey: mediaAssets.playbackKey,
-      posterKey: mediaAssets.posterKey,
-      thumbnailKey: mediaAssets.thumbnailKey,
-    })
-    .from(mediaAssets)
-    .where(inArray(mediaAssets.componentId, [...componentIds]))
-  return rows.flatMap((r) =>
-    [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey].filter(
-      (k): k is string => typeof k === 'string' && k !== '',
-    ),
-  )
-}
 
 // ---------------------------------------------------------------------------
 // Read — font-specific (P15)

@@ -357,8 +357,9 @@ export async function discardDeckMedia(args: {
 
 /**
  * `discardDeckMedia` for any owner of the rows. What survives a failure is
- * reaped with its owner: a deck's by its prefix sweep, a component's by
- * `listComponentMediaKeys` when the component (or its folder) is deleted.
+ * reaped with its owner: a deck's by its prefix sweep, a component's
+ * (handed to the folder when the component is deleted) by the folder's
+ * deletion.
  */
 export async function discardOwnedMedia(args: {
   db: Database

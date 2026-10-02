@@ -7,6 +7,7 @@
  * resolution centralised.
  */
 
+import { createHash } from 'node:crypto'
 import type { S3ClientConfig } from '@aws-sdk/client-s3'
 import {
   S3Client,
@@ -36,8 +37,31 @@ export function buildS3Config(): S3ClientConfig {
   return base
 }
 
+/**
+ * The media bucket's client. It adds `Content-MD5` to DeleteObjects (the
+ * batch delete every storage cleanup uses): the SDK sends a CRC32 checksum
+ * there since 3.729 and no MD5, and MinIO (RELEASE.2024-12-18, what
+ * production and dev run) refuses that with `MissingContentMD5` — so every
+ * purge failed and left its files behind, logged as "batch delete failed
+ * (orphans left)". With the MD5 both checksums are present and either kind
+ * of server accepts the request.
+ */
 export function buildS3Client(): S3Client {
-  return new S3Client(buildS3Config())
+  const client = new S3Client(buildS3Config())
+  client.middlewareStack.add(
+    (next, context) => async (args) => {
+      const request = args.request as { headers?: Record<string, string>; body?: unknown }
+      if (context.commandName === 'DeleteObjectsCommand' && request.headers !== undefined) {
+        const body = request.body
+        if (typeof body === 'string' || body instanceof Uint8Array) {
+          request.headers['content-md5'] = createHash('md5').update(body).digest('base64')
+        }
+      }
+      return next(args)
+    },
+    { step: 'build', name: 'contentMd5ForDeleteObjects' },
+  )
+  return client
 }
 
 /**

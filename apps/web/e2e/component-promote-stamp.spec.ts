@@ -7,8 +7,10 @@
  *     builds the master (`component.promote`) and copies the picture into
  *     the component, which owns it; the slide keeps its object;
  *   - stamp: "Add component" → pick it → the server stamps the master onto
- *     the slide (`component.stamp`) and copies the picture into the deck,
- *     so the stamp shows media the deck owns;
+ *     the slide (`component.stamp`); the stamp LINKS the master's picture
+ *     (folder sharing step 2: a deck shows its folder's component media),
+ *     and keeps showing it after the component is deleted (the folder takes
+ *     the component's media over);
  *   - paste: a picture copied in a deck and pasted in the master editor is
  *     copied into the component (`object.insertFromDeck` into a master).
  *
@@ -69,7 +71,7 @@ async function mediaServes(request: APIRequestContext, assetId: string): Promise
   return (await request.get(`${API_BASE}/api/media/${assetId}/url`)).status()
 }
 
-test('promote a picture to a component, then stamp it back: each owner gets its copy', async ({
+test('promote a picture to a component, stamp it back linked, and keep it after the component goes', async ({
   page,
 }) => {
   test.setTimeout(90_000)
@@ -138,14 +140,23 @@ test('promote a picture to a component, then stamp it back: each owner gets its 
     await expect.poll(async () => (await objectsOn(page.request, deckId)).length).toBe(2)
     const stamped = (await objectsOn(page.request, deckId))[1]!
     expect(stamped).toMatchObject({ type: 'image', x: 400, y: 200 })
-    const stampedAsset = stamped['assetId'] as string
-    // A copy owned by the deck: neither the slide's original nor the master's.
-    expect(stampedAsset).not.toBe(assetId)
-    expect(stampedAsset).not.toBe(masterAsset)
+    // Linked: the stamp shows the master's own picture, nothing was copied.
+    expect(stamped['assetId']).toBe(masterAsset)
     const media = await command<{ url: string }>(page.request, { deckId }, 'media.url', {
-      assetId: stampedAsset,
+      assetId: masterAsset,
     })
     expect(media.url).toBeTruthy()
+
+    // The component goes; its picture stays with the folder, and the stamp
+    // keeps showing it.
+    // (The editor's route: component.delete asks an agent to confirm.)
+    const removed = await page.request.delete(`${API_BASE}/components/${componentId}`)
+    expect(removed.status()).toBe(204)
+    expect(await mediaServes(page.request, masterAsset)).toBe(200)
+    const after = await command<{ url: string }>(page.request, { deckId }, 'media.url', {
+      assetId: masterAsset,
+    })
+    expect(after.url).toBeTruthy()
     expect(errors).toEqual([])
   } finally {
     await page.request.delete(`${API_BASE}/folders/${folderId}`)

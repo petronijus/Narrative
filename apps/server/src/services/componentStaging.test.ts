@@ -123,6 +123,12 @@ const assetRow = (id: string, owner: { deckId?: string; componentId?: string }) 
   createdAt: new Date(),
 })
 
+/** A media row as copyMedia reads it: with its component's folder joined (media/visibleMedia.ts). */
+const placed = (row: ReturnType<typeof assetRow>, componentFolderId: string | null = null) => ({
+  row,
+  componentFolderId,
+})
+
 /** The deck's folder, created by someone else: u1's role in it is their folder_permissions row. */
 const sharedFolder = { id: 'f1', ownerUserId: 'someone-else', name: 'Client' }
 
@@ -138,7 +144,7 @@ describe('promoteComponent', () => {
         [{ folderId: 'f1' }], // the deck's folder
         [sharedFolder], // …which exists
         [{ role: 'editor' }], // …and in which the user is an editor
-        [assetRow('a_deck', { deckId: 'deck1' })], // media the promoted objects show
+        [placed(assetRow('a_deck', { deckId: 'deck1' }))], // media the promoted objects show
       ],
     })
     const deps = { db: script.db, log: quietLog, hocuspocus: () => hp }
@@ -268,9 +274,13 @@ function masterWithPicture() {
 }
 
 describe('prepareComponentStamp + stampComponentIntoDeck', () => {
-  it("copies the master's pictures into the deck, then stamps onto the slide", async () => {
+  it("links the master's pictures in the deck — nothing copied — and stamps onto the slide", async () => {
+    // A stamp stays within the component's folder, where the deck may show
+    // the master's own pictures (media/visibleMedia.ts): no copy, no row.
     await seedDeck()
-    const script = scriptedDb({ selects: [[assetRow('a_cmp', { componentId: 'cmp1' })]] })
+    const script = scriptedDb({
+      selects: [[placed(assetRow('a_cmp', { componentId: 'cmp1' }), 'f1')]],
+    })
     const deps = { db: script.db, log: quietLog, hocuspocus: () => hp }
     const prepared = await prepareComponentStamp(deps, {
       userId: 'u1',
@@ -278,14 +288,9 @@ describe('prepareComponentStamp + stampComponentIntoDeck', () => {
       deckId: 'deck1',
       master: masterWithPicture(),
     })
-    expect(prepared.mediaRegistered).toBe(1)
-
-    // Registered for the deck before the deck is touched.
-    const inserts = script.writes.filter((w) => w.kind === 'insert')
-    expect(inserts.map((w) => w.table)).toEqual(['media_assets'])
-    const [media] = inserts[0]!.values as Array<Record<string, unknown>>
-    expect(media).toMatchObject({ deckId: 'deck1', componentId: null })
-    expect(media!['storageKey']).toMatch(/^decks\/deck1\/uploads\/[\w-]+\/original\.png$/)
+    expect(prepared).toMatchObject({ mediaRegistered: 0, skippedImages: 0 })
+    expect(script.writes.filter((w) => w.table === 'media_assets')).toEqual([])
+    expect(send).not.toHaveBeenCalled()
 
     const out = await stampComponentIntoDeck(deps, {
       deckId: 'deck1',
@@ -298,7 +303,7 @@ describe('prepareComponentStamp + stampComponentIntoDeck', () => {
     const slide = listSlides(hydrateSlideDoc(deck.document!))[0]!
     const stamped = slide.objects.filter((o) => out.objectIds.includes(o.id))
     expect(stamped).toHaveLength(2)
-    expect((stamped.find((o) => o.type === 'image') as ImageObject).assetId).toBe(media!['id'])
+    expect((stamped.find((o) => o.type === 'image') as ImageObject).assetId).toBe('a_cmp')
     await deck.disconnect()
   })
 
@@ -315,11 +320,12 @@ describe('prepareComponentStamp + stampComponentIntoDeck', () => {
     expect(send).not.toHaveBeenCalled()
   })
 
-  it('drops the copies when the slide goes before the deck is written', async () => {
+  it('writes nothing when the slide goes before the deck is written', async () => {
     await seedDeck()
-    const script = scriptedDb({ selects: [[assetRow('a_cmp', { componentId: 'cmp1' })]] })
+    const script = scriptedDb({
+      selects: [[placed(assetRow('a_cmp', { componentId: 'cmp1' }), 'f1')]],
+    })
     const deps = { db: script.db, log: quietLog, hocuspocus: () => hp }
-    let copiedKey = ''
     await expect(
       stampComponentIntoDeck(deps, {
         deckId: 'deck1',
@@ -332,24 +338,15 @@ describe('prepareComponentStamp + stampComponentIntoDeck', () => {
             deckId: 'deck1',
             master: masterWithPicture(),
           })
-          copiedKey = (
-            script.writes.find((w) => w.table === 'media_assets')!.values as Array<{
-              storageKey: string
-            }>
-          )[0]!.storageKey
-          send.mockClear()
-          // A collaborator deletes the slide while the media is being copied.
+          // A collaborator deletes the slide while the stamp is prepared.
           await editor!.transact((doc) => hydrateSlideDoc(doc).slides.delete(0, 1))
           return prepared
         },
       }),
     ).rejects.toMatchObject({ code: 'not_found' })
 
-    expect(script.writes.at(-1)).toMatchObject({ kind: 'delete', table: 'media_assets' })
-    const purge = send.mock.calls[0]![0] as {
-      input: { Delete: { Objects: Array<{ Key: string }> } }
-    }
-    expect(purge.input.Delete.Objects.map((o) => o.Key)).toContain(copiedKey)
+    expect(script.writes).toEqual([])
+    expect(send).not.toHaveBeenCalled()
   })
 
   it('leaves a picture the component does not own unresolved, and counts it', async () => {
@@ -389,7 +386,7 @@ describe('adoptMasterMedia (data migration 2026-09-30-component-media)', () => {
           // Someone else's deck: never copied, whatever the master says.
           { id: 'a_foreign', deckId: 'deckX', componentId: null, deckFolderId: 'f9' },
         ],
-        [assetRow('a_deck', { deckId: 'deck1' })], // copyMedia's read of deck1's asset
+        [placed(assetRow('a_deck', { deckId: 'deck1' }))], // copyMedia's read of deck1's asset
       ],
     })
     const deps = { db: script.db, log: quietLog, hocuspocus: () => hp }

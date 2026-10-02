@@ -114,11 +114,13 @@ export const objectInsertFromDeck = defineCommand({
   title: 'Insert objects read from another deck or component',
   description:
     'object.insert for objects read (query.slide / query.object) from ANOTHER deck (`fromDeck`) or component ' +
-    'master (`fromComponent`): the pictures and videos they use are copied into this document — a deck and a ' +
-    "master each own their media — the other deck's fonts too, colour and text-style tokens are rebound to this " +
-    "folder's when the folders differ, and links to the other document's slides are removed. Works on a master " +
-    'too (target componentId): the way to bring pictures from a deck into a master. Copying out of a deck needs ' +
-    'editor access to it (the same as exporting it); out of or into a component, owning its folder.',
+    'master (`fromComponent`): the pictures and videos they use come along — copied into this document, except ' +
+    "a component's within its own folder, which stays linked (a deck shows its folder's component media) — the " +
+    "other deck's fonts too, colour and text-style tokens are rebound to this folder's when the folders differ, " +
+    "and links to the other document's slides are removed. Works on a master too (target componentId): the way " +
+    'to bring pictures from a deck into a master. Copying out of a deck needs editor access to it (the same as ' +
+    'exporting it); out of a component, a role in its folder (editor when taken into another folder); into a ' +
+    'component, the editor role in its folder.',
   input: z
     .strictObject({
       slide: SlideRefSchema,
@@ -133,7 +135,9 @@ export const objectInsertFromDeck = defineCommand({
     }),
   output: z.object({
     objectIds: z.array(z.string()),
-    mediaRegistered: z.number().describe('Media assets copied into this document'),
+    mediaRegistered: z
+      .number()
+      .describe('Media assets copied into this document (linked component media is not copied)'),
     skippedImages: z.number().describe('Pictures whose file could not be copied'),
     droppedLinks: z.number().describe("Links to the other document's slides (removed)"),
     tokens: TokenRebindOutput.optional(),

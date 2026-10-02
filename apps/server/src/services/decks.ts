@@ -38,7 +38,7 @@ import {
 } from '../auth/permissions.js'
 import { listUsersBySubs } from '../auth/users.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
-import { purgeDeckBucketPrefix, purgeExplicitKeys } from '../media/bucketCleanup.js'
+import { purgeDeckBucketPrefix, purgeUnreferencedKeys } from '../media/bucketCleanup.js'
 import { listDeckFontAssets } from '../media/assets.js'
 import { activeEditorsByDeck } from '../hocuspocus/presence.js'
 import { closeConnectionsForDocument, closeDeckConnections } from '../hocuspocus/connections.js'
@@ -58,6 +58,7 @@ import { getOrProvisionDrafts } from './folders.js'
 import { readDocCopy, writeLiveDoc } from './liveDocs.js'
 import { applyTokenRebinding, planTokenRebinding } from './tokenRebind.js'
 import { copyStoredObject, stageDeckCopy, stageObjectInsert } from './deckInsert.js'
+import { localiseLinkedMedia } from './localiseMedia.js'
 import { discardDeckMedia, registerDeckMedia } from '../pptx/importDeck.js'
 
 /** Longest deck title the API accepts. */
@@ -530,7 +531,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     // Both loss-tolerant: errors are logged and swallowed.
     await Promise.all([
       purgeDeckBucketPrefix(id, deps.log),
-      purgeExplicitKeys(explicitKeys, deps.log),
+      purgeUnreferencedKeys(db, explicitKeys, deps.log),
     ])
   }
 
@@ -659,6 +660,21 @@ export function createDecksService(deps: ServiceDeps): DeckService {
       }
     }
 
+    // The pictures and videos the decks link from the source folder (its
+    // components', its own) cannot be shown in the destination: copy them
+    // into the decks first, so no reader ever meets a reference it cannot
+    // load (services/localiseMedia.ts).
+    const localise = (deckId: string) =>
+      localiseLinkedMedia(deps, {
+        userId,
+        deckId,
+        fromFolderId: sourceFolderId,
+        toFolderId: destFolderId,
+      })
+    if (sourceFolderId !== destFolderId) {
+      for (const id of moved) await localise(id)
+    }
+
     // Only decks still in the source folder move, all or none: a deck moved
     // away since the checks above fails the whole move.
     const result = await db
@@ -686,6 +702,16 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     // again — the members of the new folder in, anyone else out.
     for (const r of result) closeDeckConnections(r.id)
     closeConnectionsForDocument(`folder:${sourceFolderId}`)
+
+    // A collaborator may have linked another picture of the source folder
+    // while the decks moved: catch it up (usually there is nothing left).
+    if (sourceFolderId !== destFolderId) {
+      for (const r of result) {
+        await localise(r.id).catch((err: unknown) =>
+          deps.log.warn({ err, deckId: r.id }, 'move-decks: catching up linked media failed'),
+        )
+      }
+    }
 
     const tokens = await rebindTokens(
       result.map((r) => r.id),

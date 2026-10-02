@@ -9,10 +9,9 @@
 
 import { eq } from 'drizzle-orm'
 import type { ComponentMaster, ComponentRecord, ComponentService } from '@narrative/commands'
-import { components, decks } from '../db/schema.js'
+import { components, decks, mediaAssets } from '../db/schema.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
-import { listComponentMediaKeys } from '../media/assets.js'
-import { purgeComponentBucketPrefix, purgeExplicitKeys } from '../media/bucketCleanup.js'
+import { purgeExplicitKeys } from '../media/bucketCleanup.js'
 import { closeConnectionsForDocument } from '../hocuspocus/connections.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, notFound } from './errors.js'
@@ -90,25 +89,28 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
     componentId: string
     folderId?: string | undefined
   }): Promise<void> {
-    await requireComponentRole(db, args.componentId, args.userId, 'editor', {
+    const row = await requireComponentRole(db, args.componentId, args.userId, 'editor', {
       bypass: deps.bypass,
       folderId: args.folderId,
     })
-    // The master's own pictures and videos: tus originals are keyed by
-    // their upload id, outside the components/<id>/ prefix, so their keys
-    // are read before the cascade removes the rows.
-    const keys = await listComponentMediaKeys(db, [args.componentId])
-    // component_updates and the media rows cascade-delete (FK ON DELETE
-    // CASCADE). Stamped copies on slides are detached primitives with
-    // deck-owned media and stay as they are.
-    await db.delete(components).where(eq(components.id, args.componentId))
+    // The master's pictures and videos go to its folder, in the same
+    // transaction as the delete (the foreign key would cascade them away):
+    // the slides it was stamped on link them (media/visibleMedia.ts) and
+    // keep showing them. They are folder-owned from now on; the folder's
+    // deletion removes them. component_updates cascade-delete.
+    await db.transaction(async (tx) => {
+      await tx
+        .update(mediaAssets)
+        .set({ componentId: null, folderId: row.folderId })
+        .where(eq(mediaAssets.componentId, args.componentId))
+      await tx.delete(components).where(eq(components.id, args.componentId))
+    })
     // Nobody keeps the master open (a store that still runs finds its owner
     // gone and stores nothing — hocuspocus/persistence.ts).
     closeConnectionsForDocument(documentName('component', args.componentId))
-    await Promise.all([
-      purgeComponentBucketPrefix(args.componentId, deps.log),
-      purgeExplicitKeys(keys, deps.log),
-    ])
+    // Of the component's own files only its thumbnail goes: its media's
+    // files stay under components/<id>/, named by the rows the folder now owns.
+    if (row.thumbnailKey !== null) await purgeExplicitKeys([row.thumbnailKey], deps.log)
   }
 
   async function readMaster(args: {

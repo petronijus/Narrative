@@ -35,6 +35,9 @@ import { ListObjectsV2Command, DeleteObjectsCommand } from '@aws-sdk/client-s3'
 import type { ObjectIdentifier } from '@aws-sdk/client-s3'
 import { buildS3Client, MEDIA_BUCKET } from './s3Client.js'
 import { isStorageSafeId, mediaOwnerPrefix, type MediaOwner } from './mediaOwner.js'
+import { inArray, or } from 'drizzle-orm'
+import type { Database } from '../db/client.js'
+import { mediaAssets } from '../db/schema.js'
 
 interface MinimalLogger {
   warn: (obj: Record<string, unknown>, msg?: string) => void
@@ -58,8 +61,9 @@ export async function purgeDeckBucketPrefix(
  * `purgeDeckBucketPrefix` for a component master: everything under
  * `components/<componentId>/` (copied pictures and videos, their
  * transcodes, the thumbnail). Originals uploaded into the master by tus
- * are keyed by their upload id and need `purgeExplicitKeys` as well
- * (`listComponentMediaKeys`).
+ * are keyed by their upload id and need `purgeExplicitKeys` as well. Only
+ * a folder's deletion sweeps a component this way: deleting one component
+ * hands its media to the folder (services/components.ts).
  */
 export async function purgeComponentBucketPrefix(
   componentId: string,
@@ -200,4 +204,61 @@ export async function purgeExplicitKeys(
   }
 
   return { deleted: totalDeleted, pages, errors }
+}
+
+/**
+ * The keys among `keys` that a media row still names — as its stored file
+ * or a video's output. Several rows can share one stored file (a deleted
+ * folder font is cloned onto each deck of the folder under one key), so a
+ * delete must not remove a file another row still shows.
+ */
+export async function keysStillReferenced(
+  db: Database,
+  keys: ReadonlyArray<string>,
+): Promise<Set<string>> {
+  const wanted = [...new Set(keys.filter((k) => typeof k === 'string' && k !== ''))]
+  if (wanted.length === 0) return new Set()
+  const rows = await db
+    .select({
+      storageKey: mediaAssets.storageKey,
+      playbackKey: mediaAssets.playbackKey,
+      posterKey: mediaAssets.posterKey,
+      thumbnailKey: mediaAssets.thumbnailKey,
+    })
+    .from(mediaAssets)
+    .where(
+      or(
+        inArray(mediaAssets.storageKey, wanted),
+        inArray(mediaAssets.playbackKey, wanted),
+        inArray(mediaAssets.posterKey, wanted),
+        inArray(mediaAssets.thumbnailKey, wanted),
+      ),
+    )
+  const named = new Set<string>()
+  for (const r of rows) {
+    for (const k of [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey]) {
+      if (typeof k === 'string' && k !== '') named.add(k)
+    }
+  }
+  return new Set(wanted.filter((k) => named.has(k)))
+}
+
+/**
+ * `purgeExplicitKeys` for the keys of rows just deleted: a key another row
+ * still names (keysStillReferenced) is kept. Call it after the delete has
+ * committed, so the deleted rows no longer count.
+ */
+export async function purgeUnreferencedKeys(
+  db: Database,
+  keys: ReadonlyArray<string>,
+  log: MinimalLogger,
+): Promise<PurgeResult> {
+  const kept = await keysStillReferenced(db, keys)
+  if (kept.size > 0 && log.info) {
+    log.info({ kept: kept.size }, 'kept stored files other media rows still name')
+  }
+  return purgeExplicitKeys(
+    keys.filter((k) => !kept.has(k)),
+    log,
+  )
 }

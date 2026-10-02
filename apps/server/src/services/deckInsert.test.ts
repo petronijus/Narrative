@@ -103,6 +103,7 @@ function seedSource(): void {
 const mediaRow = {
   id: 'a_src',
   deckId: 'src',
+  componentId: null as string | null,
   folderId: null,
   uploaderUserId: 'someone',
   mimeType: 'image/png',
@@ -125,6 +126,15 @@ const mediaRow = {
   createdAt: new Date(),
 }
 
+/**
+ * A media row as copyMedia reads it (media/visibleMedia.ts readPlacedMedia):
+ * the row, with its component's folder joined.
+ */
+const placed = <R extends object>(row: R, componentFolderId: string | null = null) => ({
+  row,
+  componentFolderId,
+})
+
 describe('stageDeckInsert', () => {
   it('copies the slide range with notes, media and links into the target in one write', async () => {
     seedSource()
@@ -136,7 +146,7 @@ describe('stageDeckInsert', () => {
           { id: 'src', folderId: 'f1' },
           { id: 'dst', folderId: 'f1' },
         ],
-        [mediaRow], // referenced assets of the source deck
+        [placed(mediaRow)], // referenced assets of the source deck
       ],
     })
     const prepared = await stageDeckInsert(
@@ -339,7 +349,7 @@ describe('stageObjectInsert / insertObjectsFrom', () => {
       selects: [
         [{ folderId: 'f1' }], // the source's folder
         [{ folderId: 'f1' }], // the target's
-        [mediaRow],
+        [placed(mediaRow)],
         [], // deck fonts of the families the text uses (none)
       ],
     })
@@ -409,7 +419,7 @@ describe('stageObjectInsert / insertObjectsFrom', () => {
       selects: [
         [{ folderId: 'f1' }], // the source's folder
         [{ folderId: 'f1' }], // the target's
-        [mediaRow],
+        [placed(mediaRow)],
         [], // deck fonts of the families the text uses (none)
       ],
     })
@@ -475,7 +485,7 @@ describe('stageObjectInsert between a deck and a component master', () => {
         [{ folderId: 'f1' }], // the master's folder
         [component('cmp1', 'f1')], // requireComponentRole: the master…
         [{ role: 'editor' }], // …and the caller's role in its folder
-        [mediaRow],
+        [placed(mediaRow)],
       ],
     })
     const prepared = await stageObjectInsert(
@@ -501,7 +511,9 @@ describe('stageObjectInsert between a deck and a component master', () => {
     await sourceEditor.disconnect()
   })
 
-  it("copies a master's picture into a deck of its folder for a viewer of the folder", async () => {
+  it("links a master's picture in a deck of its folder, copying nothing, for a viewer of the folder", async () => {
+    // Within the folder the deck may show the master's own picture
+    // (media/visibleMedia.ts): the pasted object keeps its asset id.
     const script = scriptedDb({
       selects: [
         [{ folderId: 'f1' }], // the master's folder
@@ -509,10 +521,10 @@ describe('stageObjectInsert between a deck and a component master', () => {
         [component('cmp1', 'f1')],
         [{ role: 'viewer' }], // a paste within the folder needs only the viewer role
         [], // the master's stored rows (not open in an editor): its slide ids
-        [masterPicture], // the master's picture
+        [placed(masterPicture, 'f1')], // the master's picture
       ],
     })
-    await stageObjectInsert(
+    const prepared = await stageObjectInsert(
       { db: script.db, log: quietLog, hocuspocus: () => hp },
       {
         userId: 'u1',
@@ -521,11 +533,17 @@ describe('stageObjectInsert between a deck and a component master', () => {
         plan: planInsert(picture(), {}),
       },
     )
-    const [row] = script.writes.find((w) => w.table === 'media_assets')!.values as Array<
-      Record<string, unknown>
-    >
-    expect(row).toMatchObject({ deckId: 'dst', componentId: null })
+    expect(script.writes.filter((w) => w.table === 'media_assets')).toEqual([])
     expect(script.remaining().selects).toBe(0)
+
+    const target = createSlideDoc()
+    const objects = getSlideObjectsCtx(target, target.slides.get(0).get('id') as string)!
+    let result: ReturnType<typeof prepared.apply> | undefined
+    target.doc.transact(() => {
+      result = prepared.apply(objects)
+    })
+    expect((listSlides(target)[0]!.objects[0] as ImageObject).assetId).toBe(masterPicture.id)
+    expect(result).toMatchObject({ mediaRegistered: 0, skippedImages: 0 })
   })
 
   it("refuses a viewer of the master's folder copying it into a deck of another folder (403)", async () => {
@@ -564,7 +582,7 @@ describe('stageObjectInsert between a deck and a component master', () => {
         [component('cmp1', 'f1')],
         [{ role: 'editor' }],
         [], // the master's stored rows: its slide ids
-        [masterPicture],
+        [placed(masterPicture, 'f1')],
         [], // the two folders' token documents (no tokens to rebind)
         [],
       ],

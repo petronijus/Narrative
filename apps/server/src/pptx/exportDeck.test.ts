@@ -1,8 +1,9 @@
 /**
- * pptx/exportDeck.test.ts — the export's asset loader is scoped to the deck
- * (M6): it embeds the deck's own media and its folder's fonts, and nothing
- * else — an asset id that points at another deck's media is skipped like a
- * missing file, without touching storage.
+ * pptx/exportDeck.test.ts — the export's asset loader is scoped to what the
+ * deck may show (M6; media/visibleMedia.ts): its own media and its folder's
+ * — the components' pictures a stamp links, the folder's own, its fonts —
+ * and nothing else: an asset id that points at another deck's media is
+ * skipped like a missing file, without touching storage.
  */
 
 import { describe, it, expect, vi } from 'vitest'
@@ -22,6 +23,7 @@ function recordingDb(rows: unknown[]) {
   const wheres: SQL[] = []
   const chain = {
     from: () => chain,
+    leftJoin: () => chain,
     where: (w: SQL) => {
       wheres.push(w)
       return chain
@@ -32,12 +34,12 @@ function recordingDb(rows: unknown[]) {
 }
 
 describe('deckAssetScope', () => {
-  it('is the deck’s own rows, or fonts of the deck’s folder', () => {
+  it("is the deck's own rows, or its folder's components' and the folder's own", () => {
     const q = compile(deckAssetScope({ id: 'deck-1', folderId: 'folder-1' }))
     expect(q.sql).toBe(
-      '("media_assets"."deck_id" = $1 or ("media_assets"."folder_id" = $2 and "media_assets"."kind" = $3))',
+      '("media_assets"."deck_id" = $1 or ("media_assets"."component_id" is not null and "components"."folder_id" = $2) or "media_assets"."folder_id" = $3)',
     )
-    expect(q.params).toEqual(['deck-1', 'folder-1', 'font'])
+    expect(q.params).toEqual(['deck-1', 'folder-1', 'folder-1'])
   })
 
   it('is only the deck’s own rows for a deck without a folder', () => {
@@ -64,7 +66,7 @@ describe('createDeckAssetLoader', () => {
     const q = compile(wheres[0]!)
     expect(q.sql).toContain('"media_assets"."id" = $1')
     expect(q.sql).toContain('"media_assets"."deck_id" = $2')
-    expect(q.params).toEqual(['asset-1', 'deck-1', 'folder-1', 'font'])
+    expect(q.params).toEqual(['asset-1', 'deck-1', 'folder-1', 'folder-1'])
   })
 
   it('skips an asset outside the scope without reading storage, and remembers it', async () => {

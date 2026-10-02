@@ -34,14 +34,23 @@ import { serviceErrorOf } from '../test-support/serviceErrors.js'
 import type { ServiceDeps } from './deps.js'
 import { ServiceError } from './errors.js'
 import { readDocState, writeLiveDoc } from './liveDocs.js'
+import { localiseLinkedMedia } from './localiseMedia.js'
 import { createDecksService } from './decks.js'
 import { createComponentsService } from './components.js'
 import { createPptxService } from './pptx.js'
 import { closeConnectionsForDocument, closeDeckConnections } from '../hocuspocus/connections.js'
 
+// Moving a deck copies the media it links from its old folder
+// (services/localiseMedia.ts, its own tests against Postgres); here only
+// that the move asks for it, before and after.
+vi.mock('./localiseMedia.js', () => ({
+  localiseLinkedMedia: vi.fn().mockResolvedValue({ copied: 0, unresolved: 0 }),
+}))
+
 vi.mock('../media/bucketCleanup.js', () => ({
   purgeDeckBucketPrefix: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
   purgeExplicitKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
+  purgeUnreferencedKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
 }))
 
 // The services close live WebSocket connections through the process-wide
@@ -341,6 +350,10 @@ describe('decks.moveDecks', () => {
       table: 'decks',
       values: { folderId: 'f_dst' },
     })
+    // The linked media of the source folder: localised before the move, and
+    // once more after it for anything linked meanwhile.
+    const localise = { userId: 'u1', deckId: 'd1', fromFolderId: 'f_src', toFolderId: 'f_dst' }
+    expect(vi.mocked(localiseLinkedMedia).mock.calls.map((c) => c[1])).toEqual([localise, localise])
   })
 
   it("lets the source folder's owner move a deck without reading the deck grants", async () => {

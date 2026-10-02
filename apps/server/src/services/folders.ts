@@ -22,7 +22,7 @@ import type { DeckRole } from '../auth/permissions.js'
 import {
   purgeComponentBucketPrefix,
   purgeDeckBucketPrefix,
-  purgeExplicitKeys,
+  purgeUnreferencedKeys,
 } from '../media/bucketCleanup.js'
 import { buildS3Client, MEDIA_BUCKET, presignGetUrl } from '../media/s3Client.js'
 import { closeConnectionsForDocument, closeDeckConnections } from '../hocuspocus/connections.js'
@@ -365,7 +365,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
     await Promise.all([
       ...containedDecks.map((d) => purgeDeckBucketPrefix(d.id, deps.log)),
       ...componentIds.map((c) => purgeComponentBucketPrefix(c, deps.log)),
-      purgeExplicitKeys(explicitKeys, deps.log),
+      purgeUnreferencedKeys(db, explicitKeys, deps.log),
     ])
     return { deletedDeckCount: containedDecks.length }
   }

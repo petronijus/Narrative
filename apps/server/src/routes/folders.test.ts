@@ -39,6 +39,13 @@ import { scriptedDb } from '../test-support/scriptedDb.js'
 // Mock resolveDeckAccess (needed by deck route registration)
 // ---------------------------------------------------------------------------
 
+// Moving a deck copies the media it links from its old folder
+// (services/localiseMedia.ts, its own tests against Postgres); here only
+// that the move asks for it, before and after.
+vi.mock('../services/localiseMedia.js', () => ({
+  localiseLinkedMedia: vi.fn().mockResolvedValue({ copied: 0, unresolved: 0 }),
+}))
+
 vi.mock('../auth/permissions.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../auth/permissions.js')>()
   return {

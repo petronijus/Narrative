@@ -77,6 +77,7 @@ import {
   type StagedDeckMedia,
 } from '../pptx/importDeck.js'
 import { mediaOriginalPath, mediaOwnerPrefix, type MediaOwner } from '../media/mediaOwner.js'
+import { readPlacedMedia, visibleIn, type MediaHolder } from '../media/visibleMedia.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, forbidden, notFound } from './errors.js'
 import { readDocCopy, SERVER_EDIT_ORIGIN, writeLiveDoc } from './liveDocs.js'
@@ -399,7 +400,9 @@ export async function rewriteForTarget(
       const staged = await copyMedia(deps, {
         userId,
         source,
+        sourceFolderId: args.sourceFolderId,
         target,
+        targetFolderId: args.targetFolderId,
         assetIds: referencedAssets(records),
         families: referencedFamilies(records),
       })
@@ -821,18 +824,31 @@ function basename(key: string): string {
 }
 
 /**
- * Copy the media `assetIds` (owned by `source`) and — deck to deck only —
- * the source deck's own fonts in `families` into `target`'s namespace:
- * stored objects copied server side, new rows staged (not inserted) for the
- * target. A component master has no fonts of its own (its folder's fonts
- * cover it), so no font crosses between a deck and a component.
+ * Copy into `target`'s namespace the media of `assetIds` the target may not
+ * show (media/visibleMedia.ts) — the source's own, or the linked media of
+ * the source's folder when the target is in another folder — and, deck to
+ * deck only, the source deck's own fonts in `families`: stored objects
+ * copied server side, new rows staged (not inserted) for the target.
+ *
+ *   - Media the target may already show is kept as it is (`idMap` leaves it
+ *     out): a stamp or a paste out of a master within its folder links the
+ *     master's pictures instead of copying them.
+ *   - Media the source may not show either (another deck's, deleted) cannot
+ *     be copied: its references stay unresolved and are counted (`failed`).
+ *
+ * A component master has no fonts of its own (its folder's fonts cover it),
+ * so no font crosses between a deck and a component.
  */
 export async function copyMedia(
   deps: ServiceDeps,
   args: {
     userId: string
     source: MediaOwner
+    /** The source's folder (null: a deck in no folder). */
+    sourceFolderId: string | null
     target: MediaOwner
+    /** The target's folder (null: a deck in no folder). */
+    targetFolderId: string | null
     assetIds: ReadonlySet<string>
     families: ReadonlySet<string>
     /**
@@ -858,22 +874,21 @@ export async function copyMedia(
     'deckId' in owner
       ? eq(mediaAssets.deckId, owner.deckId)
       : eq(mediaAssets.componentId, owner.componentId)
-  let referenced =
-    args.assetIds.size === 0
-      ? []
-      : await db
-          .select()
-          .from(mediaAssets)
-          .where(and(inArray(mediaAssets.id, [...args.assetIds]), ownedBy(source)))
-  // A reference to media the source does not own (another deck's, or
-  // deleted) cannot be copied: it stays unresolved, and is counted as such.
-  // Nor can a font into a component master (its folder's fonts cover it).
-  if ('componentId' in target) {
-    const fonts = new Set(referenced.filter((r) => r.kind === 'font').map((r) => r.id))
-    referenced = referenced.filter((r) => !fonts.has(r.id))
-  }
-  const owned = new Set(referenced.map((r) => r.id))
-  failed += [...args.assetIds].filter((id) => !owned.has(id)).length
+  const from: MediaHolder = { owner: source, folderId: args.sourceFolderId }
+  const to: MediaHolder = { owner: target, folderId: args.targetFolderId }
+  const placed = await readPlacedMedia(db, [...args.assetIds])
+  // Already visible in the target: linked, kept as it is.
+  const kept = new Set(placed.filter((r) => visibleIn(r, to)).map((r) => r.id))
+  // Visible in the source but not in the target: copied. A font is not
+  // copied into a component master (its folder's fonts cover it).
+  let referenced: MediaRow[] = placed
+    .filter((r) => !kept.has(r.id) && visibleIn(r, from))
+    .map(({ componentFolderId: _folder, ...row }) => row)
+  if ('componentId' in target) referenced = referenced.filter((r) => r.kind !== 'font')
+  // The rest — another deck's, deleted, or a font a master cannot take —
+  // stays unresolved, and is counted as such.
+  const resolved = new Set([...kept, ...referenced.map((r) => r.id)])
+  failed += [...args.assetIds].filter((id) => !resolved.has(id)).length
   // The source deck's own fonts that the copied text uses, unless the target
   // already has a deck font of the same face.
   const families = 'deckId' in source && 'deckId' in target ? [...args.families] : []

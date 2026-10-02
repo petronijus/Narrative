@@ -35,6 +35,7 @@ import {
   mediaOriginalPath,
   type MediaOwner,
 } from '../media/mediaOwner.js'
+import { folderOfOwner, visibleIn } from '../media/visibleMedia.js'
 import {
   classifyUpload,
   extensionFromMimeOrFilename,
@@ -47,7 +48,7 @@ import {
   tooLargeMessage,
   type UploadKind,
 } from '../media/uploadPolicy.js'
-import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
+import { resolveDeckAccess, resolveFolderContentAccess, roleAtLeast } from '../auth/permissions.js'
 import type { ServiceDeps } from './deps.js'
 import {
   ServiceError,
@@ -130,15 +131,17 @@ export function createMediaService(deps: ServiceDeps): MediaService {
   }
 
   /**
-   * The caller may read (`viewer`) or delete (`owner`) the asset. A component
-   * master's picture or video is read by whoever may read its folder's
-   * content — a member, or anyone with access to one of the folder's decks,
-   * a share link included, so a stamp shows on a shared deck — and deleted
-   * by an editor of the folder. A deck's asset: the deck role, share links
-   * included, as always.
+   * The caller may read (`viewer`) or delete (`owner`) the asset.
+   *
+   *   - A component master's or a folder's picture or video (a deleted
+   *     component's, handed to its folder): read by whoever may read the
+   *     folder's content — a member, or anyone with access to one of the
+   *     folder's decks, a share link included, so a linked picture shows on
+   *     a shared deck — and deleted by an editor of the folder.
+   *   - A deck's asset: the deck role, share links included, as always.
    */
   async function requireAssetAccess(
-    asset: { deckId: string | null; componentId?: string | null },
+    asset: { deckId: string | null; componentId?: string | null; folderId?: string | null },
     userId: string | null,
     shareToken: string | null | undefined,
     required: 'viewer' | 'owner',
@@ -152,10 +155,28 @@ export function createMediaService(deps: ServiceDeps): MediaService {
       if (!allowed) throw forbidden('Forbidden')
       return
     }
+    const folderId = asset.deckId === null ? (asset.folderId ?? null) : null
+    if (folderId !== null) {
+      const access = await resolveFolderContentAccess(db, {
+        folderId,
+        userId,
+        shareToken: shareToken ?? null,
+      })
+      const allowed =
+        access !== null &&
+        (required === 'viewer' || (access.via === 'folder' && roleAtLeast(access.role, 'editor')))
+      if (!allowed) throw forbidden('Forbidden')
+      return
+    }
     await requireDeckRole(asset.deckId, userId, shareToken, required)
   }
 
-  /** Whether `asset` belongs to `owner` (any owner when none is named). */
+  /**
+   * Whether `asset` is `owner`'s own (any owner when none is named). Deleting
+   * goes by this, never by what the owner may show: a linked picture belongs
+   * to its master or folder, and removing it would empty every slide that
+   * links it.
+   */
   function ownedBy(
     asset: { deckId: string | null; componentId?: string | null },
     owner: MediaOwner | undefined,
@@ -164,6 +185,32 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     return 'componentId' in owner
       ? asset.componentId === owner.componentId
       : asset.deckId === owner.deckId && (asset.componentId ?? null) === null
+  }
+
+  /**
+   * Whether `owner` (a deck or a master an agent names) may show `asset`:
+   * its own, or — linked — its folder's components' and the folder's own
+   * (media/visibleMedia.ts). Any asset when no owner is named.
+   */
+  async function shownBy(
+    asset: { deckId: string | null; componentId?: string | null; folderId?: string | null },
+    owner: MediaOwner | undefined,
+  ): Promise<boolean> {
+    if (owner === undefined) return true
+    const componentId = asset.componentId ?? null
+    const [ownerFolder, componentFolder] = await Promise.all([
+      folderOfOwner(db, owner),
+      componentId === null ? null : folderOfOwner(db, { componentId }),
+    ])
+    return visibleIn(
+      {
+        deckId: asset.deckId,
+        componentId,
+        folderId: asset.folderId ?? null,
+        componentFolderId: componentFolder,
+      },
+      { owner, folderId: ownerFolder },
+    )
   }
 
   async function upload(args: {
@@ -317,7 +364,7 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     owner?: MediaOwner | undefined
   }): Promise<VideoInfo> {
     const asset = await getVideoAsset(db, args.assetId)
-    if (!asset || !ownedBy(asset, args.owner)) {
+    if (!asset || !(await shownBy(asset, args.owner))) {
       throw notFound('Video asset not found')
     }
     await requireAssetAccess(asset, args.userId, args.shareToken, 'viewer')
@@ -355,7 +402,7 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     owner?: MediaOwner | undefined
   }): Promise<{ url: string }> {
     const asset = await getMediaAsset(db, args.assetId)
-    if (!asset || !ownedBy(asset, args.owner)) {
+    if (!asset || !(await shownBy(asset, args.owner))) {
       throw notFound('Asset not found')
     }
     await requireAssetAccess(asset, args.userId, args.shareToken, 'viewer')

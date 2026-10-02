@@ -24,7 +24,7 @@
 
 import type { Readable } from 'node:stream'
 import * as Y from 'yjs'
-import { and, eq, or, type SQL } from 'drizzle-orm'
+import { and, eq, type SQL } from 'drizzle-orm'
 import { GetObjectCommand } from '@aws-sdk/client-s3'
 import {
   hydrateSlideDoc,
@@ -34,7 +34,8 @@ import {
   type FolderTokensSnapshot,
 } from '@narrative/slide-model'
 import type { Slide, SlideObject } from '@narrative/shared'
-import { decks, mediaAssets } from '../db/schema.js'
+import { components, decks, mediaAssets } from '../db/schema.js'
+import { visibleInSql } from '../media/visibleMedia.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { writeDeck, type AssetLoader } from './ooxml/writeDeck.js'
 import { getSlideNotesDoc, readFolderTokens, type NotesDoc } from '@narrative/slide-model'
@@ -106,15 +107,15 @@ export async function exportDeckToPptx(
 }
 
 /**
- * The media rows an export of `deck` may embed: the deck's own assets, plus
- * the fonts of its folder (folder fonts are shared by every deck in it and
- * carry `folder_id`, not `deck_id`). Anything else — another deck's image, a
- * font of another folder — is out of scope.
+ * The media rows an export of `deck` may embed: what the deck may show
+ * (media/visibleMedia.ts) — its own assets, and its folder's: the pictures
+ * and videos of the folder's components a stamp links, the folder's own (a
+ * deleted component's) and the folder fonts every deck in it shares.
+ * Anything else — another deck's image, another folder's — is out of scope.
+ * Applies to a query that left-joins `components` on the row's component.
  */
 export function deckAssetScope(deck: { id: string; folderId: string | null }): SQL {
-  const own = eq(mediaAssets.deckId, deck.id)
-  if (deck.folderId === null) return own
-  return or(own, and(eq(mediaAssets.folderId, deck.folderId), eq(mediaAssets.kind, 'font')))!
+  return visibleInSql({ owner: { deckId: deck.id }, folderId: deck.folderId })
 }
 
 /**
@@ -136,6 +137,7 @@ export function createDeckAssetLoader(
     const [row] = await db
       .select({ storageKey: mediaAssets.storageKey, mimeType: mediaAssets.mimeType })
       .from(mediaAssets)
+      .leftJoin(components, eq(components.id, mediaAssets.componentId))
       .where(and(eq(mediaAssets.id, assetId), scope))
       .limit(1)
     if (!row) {

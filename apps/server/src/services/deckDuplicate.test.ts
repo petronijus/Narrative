@@ -88,6 +88,7 @@ function seedSource(): void {
 }
 
 const mediaRow = {
+  componentId: null as string | null,
   id: 'a_src',
   deckId: 'src',
   folderId: null,
@@ -112,6 +113,12 @@ const mediaRow = {
   createdAt: new Date(),
 }
 
+/** A media row as copyMedia reads it: with its component's folder joined (media/visibleMedia.ts). */
+const placed = <R extends object>(row: R, componentFolderId: string | null = null) => ({
+  row,
+  componentFolderId,
+})
+
 describe('DecksService.duplicate', () => {
   it('copies the whole deck into a new deck of the caller, media included, in one write', async () => {
     seedSource()
@@ -120,7 +127,7 @@ describe('DecksService.duplicate', () => {
       selects: [
         [{ id: 'src', title: 'Pitch', folderId: 'f1', thumbnailKey: 'decks/src/thumb.png' }],
         [{ role: 'editor' }], // the caller is an editor of its folder
-        [mediaRow], // assets the slides show
+        [placed(mediaRow)], // assets the slides show
       ],
     })
     const service = createDecksService({ db: script.db, log: quietLog, hocuspocus: () => hp })
@@ -190,7 +197,7 @@ describe('DecksService.duplicate', () => {
           [{ id: 'src', title: 'Shared deck', folderId: 'theirs', thumbnailKey: null }],
           [...roleRows], // the caller's role in the source folder
           [{ id: 'drafts' }], // getOrProvisionDrafts finds the Drafts folder
-          [mediaRow],
+          [placed(mediaRow)],
           [], // stored rows of the source folder (no tokens)…
           [], // …and of Drafts: token references are rebound across folders
         ],

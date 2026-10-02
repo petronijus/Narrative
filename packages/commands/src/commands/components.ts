@@ -13,9 +13,10 @@
  * slide, on the server (POST /decks/:id/promote-component).
  *
  * A component owns its pictures and videos (A2.12b): promoting copies the
- * deck's media into the component, stamping copies the master's media into
- * the deck — the rule of pasting between decks, so a stamp never shows a
- * picture its deck does not own.
+ * deck's media into the component; stamping links the master's media — a
+ * deck may show the pictures of its folder's components (folder sharing
+ * step 2, apps/server/src/media/visibleMedia.ts), and a deleted component's
+ * pictures stay with the folder.
  *
  * `component.stamp` is a document command with an asynchronous `load`
  * phase: the service reads the master and stages its media for the deck,
@@ -278,8 +279,9 @@ export const componentDelete = defineCommand({
   id: 'component.delete',
   title: 'Delete component',
   description:
-    'Delete a component master from the folder. Objects already stamped from it stay on their slides (stamps are ' +
-    'independent copies); it just cannot be stamped any more. Cannot be undone; confirm with the user first.',
+    'Delete a component master from the folder. Objects already stamped from it stay on their slides with their ' +
+    "pictures and videos (the folder keeps the master's); it just cannot be stamped any more. Cannot be undone; " +
+    'confirm with the user first.',
   input: z.strictObject({ componentId: ComponentIdSchema }),
   output: z.object({ deleted: z.literal(true) }),
   undo: 'irreversible',
@@ -413,10 +415,10 @@ export const componentStamp = defineCommand({
     "master's animations are not copied — so editing the master later does not change this stamp. Without `at` " +
     'the copy lands where the master was drawn (its bounding box top-left); `at` moves that corner. `slots` maps ' +
     'slot names (component.get lists them: the names of the master objects) to text: a plain string keeps the ' +
-    "slot's formatting, { paragraphs } sets it explicitly. The master's pictures and videos are copied into this " +
-    'deck. Returns the new object ids in stacking order. Use the ' +
-    "folder's existing components for the roles they cover; do not stamp for one-off content. Needs the editor " +
-    "role on the deck and ownership of its folder (components are the folder owner's).",
+    "slot's formatting, { paragraphs } sets it explicitly. The stamp shows the master's own pictures and videos " +
+    "(linked, not copied: a deck may show its folder's component media). Returns the new object ids in stacking " +
+    "order. Use the folder's existing components for the roles they cover; do not stamp for one-off content. " +
+    "Needs the editor role on the deck and a role in its folder (the folder's components are its members').",
   input: z.strictObject({
     componentId: ComponentIdSchema,
     slide: SlideRefSchema,

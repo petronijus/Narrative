@@ -1,7 +1,8 @@
 # Folder sharing and linked component media
 
-Status: planned and decided by Petr on 2026-09-30. **Step 1 done and
-committed on 2026-09-30, not released** (see Progress); next is step 2. The
+Status: planned and decided by Petr on 2026-09-30. Step 1 released in
+0.10.16 (2026-10-02). **Step 2 built and committed on 2026-10-02, not yet
+reviewed or released** — what is left is in `HANDOVER.md` → "Spillover". The
 e2e suite was green (175 passed) on the committed tree; the test-loop
 speed-up to do first is in [`dev-speed.md`](dev-speed.md).
 
@@ -93,6 +94,40 @@ speed-up to do first is in [`dev-speed.md`](dev-speed.md).
   it. The folder's deletion removes it all.
 - PowerPoint export takes the linked media of the deck's folder into the
   file.
+
+### Step 2 design (2026-10-02)
+
+One notion carries it: **the media a document may show** — its own rows,
+plus the component- and folder-owned pictures and videos of its folder
+(`media/visibleMedia.ts`). Everything else follows from it:
+
+- **Copy rule** (`deckInsert.ts` `copyMedia`): a referenced asset is copied
+  into the target when the target may not show it; within one folder a
+  linked asset is kept as it is. So a stamp and a paste out of a master in
+  the same folder copy nothing; a paste of deck objects into a master
+  still copies the deck's own media (a master must not depend on a deck);
+  a copy into another folder (paste, `deck.insertFrom`, `deck.duplicate`)
+  copies the linked media too.
+- **Moving a deck to another folder** copies its linked media into the
+  deck and points the deck at the copies through the sync server, before
+  the deck moves — so no reader ever sees a reference it cannot load.
+  Unbudgeted, like the move itself (owner of the deck, editor of both
+  folders).
+- **Deleting a component** re-parents its rows to the folder in the same
+  transaction as the delete (`component_id = NULL, folder_id = folder`);
+  only the component's thumbnail is removed from storage. The folder's
+  deletion removes them with everything else.
+- **Reading**: a folder-owned picture or video is read by the folder's
+  content readers (members, guests of its decks, share links to them) and
+  deleted by its editors, like component media. `media.url` / `.status` on
+  a deck or master target accept what that document may show. PowerPoint
+  export takes the same set.
+- **Storage keys are never deleted while a row still names them** (a deck
+  delete used to remove a font file its folder's other decks still used —
+  `deleteFont` clones share one key). Deletes purge only keys no remaining
+  row references.
+- No data migration: the copies 0.10.15 made are deck- or component-owned
+  and stay valid.
 
 ### Drafts
 

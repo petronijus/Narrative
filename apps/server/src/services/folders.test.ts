@@ -35,6 +35,11 @@ vi.mock('../media/bucketCleanup.js', () => {
     purgeDeckBucketPrefix: record('deck'),
     purgeComponentBucketPrefix: record('component'),
     purgeExplicitKeys: record('explicit'),
+    // The keys of the deleted rows, of which those another row still names stay.
+    purgeUnreferencedKeys: vi.fn(async (_db: unknown, keys: unknown) => {
+      purgeCalls.push({ purge: 'explicit', arg: keys, deletesBefore: deletesSoFar() })
+      return { deleted: 0, failed: 0 }
+    }),
   }
 })
 vi.mock('../media/s3Client.js', () => ({
@@ -43,7 +48,7 @@ vi.mock('../media/s3Client.js', () => ({
   presignGetUrl: vi.fn(),
 }))
 
-const { purgeComponentBucketPrefix, purgeDeckBucketPrefix, purgeExplicitKeys } =
+const { purgeComponentBucketPrefix, purgeDeckBucketPrefix, purgeUnreferencedKeys } =
   await import('../media/bucketCleanup.js')
 const { createFoldersService, getOrProvisionDrafts } = await import('./folders.js')
 
@@ -58,7 +63,7 @@ beforeEach(() => {
   purgeCalls.length = 0
   vi.mocked(purgeDeckBucketPrefix).mockClear()
   vi.mocked(purgeComponentBucketPrefix).mockClear()
-  vi.mocked(purgeExplicitKeys).mockClear()
+  vi.mocked(purgeUnreferencedKeys).mockClear()
 })
 
 describe('deleting a folder', () => {
@@ -106,8 +111,8 @@ describe('deleting a folder', () => {
     const db = folderWithDeckAndComponent()
     await service(db).delete({ userId: 'u1', folderId: 'fold_1' })
 
-    expect(purgeExplicitKeys).toHaveBeenCalledTimes(1)
-    const [keys] = vi.mocked(purgeExplicitKeys).mock.calls[0]!
+    expect(purgeUnreferencedKeys).toHaveBeenCalledTimes(1)
+    const [, keys] = vi.mocked(purgeUnreferencedKeys).mock.calls[0]!
     expect([...keys].sort()).toEqual(
       [
         'decks/deck_a/img.png',
@@ -167,7 +172,7 @@ describe('deleting a folder', () => {
       'cmp_a',
       'cmp_b',
     ])
-    expect(vi.mocked(purgeExplicitKeys).mock.calls[0]![0]).toEqual(['uploads/tus/aa11'])
+    expect(vi.mocked(purgeUnreferencedKeys).mock.calls[0]![1]).toEqual(['uploads/tus/aa11'])
     // No deck to delete: only the folder row goes (its components cascade).
     expect(db.writes.filter((w) => w.kind === 'delete').map((w) => w.table)).toEqual(['folders'])
   })

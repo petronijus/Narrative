@@ -255,6 +255,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/services/component*", COMPONENTS),
     ("apps/server/src/routes/component*", COMPONENTS),
     ("apps/server/src/services/deckInsert.ts", COMPONENTS + ["slide-clipboard", "object-clipboard"]),
+    ("apps/server/src/services/localiseMedia.ts", COMPONENTS + ACCESS),
     ("apps/server/src/routes/insertObjects.ts", COMPONENTS + ["object-clipboard"]),
     ("apps/server/src/media/*", MEDIA),
     ("apps/server/src/services/media*", MEDIA),

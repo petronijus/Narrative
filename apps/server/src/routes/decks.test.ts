@@ -40,6 +40,7 @@ vi.mock('../auth/permissions.js', async (importOriginal) => {
 vi.mock('../media/bucketCleanup.js', () => ({
   purgeDeckBucketPrefix: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
   purgeExplicitKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
+  purgeUnreferencedKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
 }))
 
 const { resolveDeckAccess } = await import('../auth/permissions.js')
