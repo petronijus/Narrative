@@ -69,12 +69,7 @@ test('send backward keeps selection + no dropped ids + no render crash', async (
 
   // (a) No JS errors surfaced
   const realErrors = errors.filter(
-    (e) =>
-      !e.includes('No available adapters') &&
-      !e.includes('HocuspocusProvider') &&
-      // index.html declares no icon, so every page load 404s /favicon.ico.
-      // Unrelated to layer ordering; noise, not a render crash.
-      !e.includes('/favicon.ico'),
+    (e) => !e.includes('No available adapters') && !e.includes('HocuspocusProvider'),
   )
   expect(realErrors, `unexpected errors: ${realErrors.join(' | ')}`).toEqual([])
 
@@ -126,7 +121,8 @@ test('layer-reorder stress: 10 consecutive backward/forward presses', async ({ p
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
   page.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`)
+    // The location names what failed to load; the text alone does not.
+    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()} @ ${msg.location().url}`)
   })
 
   await createDeckAndOpen(page)
@@ -136,9 +132,16 @@ test('layer-reorder stress: 10 consecutive backward/forward presses', async ({ p
     api.addRect({ id: 'B', x: 120, y: 0, w: 100, h: 100, fill: 0x00ff00 })
     api.addRect({ id: 'C', x: 240, y: 0, w: 100, h: 100, fill: 0x0000ff })
   })
-  await page.waitForTimeout(300)
+  // Wait for the state itself, not a fixed delay: with the suite running in
+  // parallel a 50 ms pause did not always see the selection applied, and the
+  // presses below then moved nothing.
+  await expect
+    .poll(() => page.evaluate(() => [...window.__narrative_test_api!.sceneGraphIds()].sort()))
+    .toEqual(['A', 'B', 'C'])
   await page.evaluate(() => window.__narrative_test_api!.setSelection(['B']))
-  await page.waitForTimeout(50)
+  await expect
+    .poll(() => page.evaluate(() => window.__narrative_test_api!.getSelection()))
+    .toEqual(['B'])
 
   for (let i = 0; i < 10; i++) {
     await page.keyboard.press(i % 2 === 0 ? '[' : ']')
@@ -148,12 +151,7 @@ test('layer-reorder stress: 10 consecutive backward/forward presses', async ({ p
   await page.waitForTimeout(500)
 
   const realErrors = errors.filter(
-    (e) =>
-      !e.includes('No available adapters') &&
-      !e.includes('HocuspocusProvider') &&
-      // index.html declares no icon, so every page load 404s /favicon.ico.
-      // Unrelated to layer ordering; noise, not a render crash.
-      !e.includes('/favicon.ico'),
+    (e) => !e.includes('No available adapters') && !e.includes('HocuspocusProvider'),
   )
   expect(realErrors, realErrors.join(' | ')).toEqual([])
   expect(await page.evaluate(() => window.__narrative_test_api!.objectCount())).toBe(3)

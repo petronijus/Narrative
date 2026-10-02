@@ -60,14 +60,27 @@ exposed real problems besides test isolation:
   aria-hides it, waited 5 s for an editor after a reload, and filtered a
   console error by a URL Chrome does not put in the message text.
 
-Open, found on the way, not fixed:
+Also fixed on the way (2026-10-02): the sync server logged
+`FAILED to store snapshot` (a foreign-key error) whenever a deck or
+component was deleted while its document was still loaded — the debounced
+store ran after the delete. A store now locks its owner row `FOR KEY SHARE`
+and stores nothing when it is gone (`hocuspocus/persistence.ts`,
+`persistence.integration.test.ts`); deleting a component or a folder now
+also closes the connections on its documents, as deleting a deck does.
 
-- The sync server logs `FAILED to store snapshot` (foreign key on
-  `deck_updates` / `component_updates`) when a deck or component is deleted
-  while its document is still loaded: the debounced store runs after the
-  delete. Harmless (nothing is lost — the row is gone on purpose), but it is
-  logged as an ERROR; the store should skip a document whose deck no longer
-  exists, and deleting a deck should unload its document.
+Open (2026-10-02), seen only while another build loaded the machine
+(load 25–42: a Gradle build, then an ARM kernel cross-compile), not on a
+quiet machine — to be checked there before calling them flaky or broken:
+
+- `folder-tokens` "a colour token changed while the deck is open…" and
+  `htmltext-texture-isolation` "rapid invalidations…": the Pixi canvas
+  painted nothing at all for 15–20 s (objects mounted, canvas blank) — the
+  headless GPU path starving, not token logic.
+- `component-promote-stamp`: the cleanup `DELETE /folders/:id` timed out at
+  90 s (also seen once on 2026-09-30).
+- `layer-reorder` once failed with "no live deck document (the provider is
+  between mounts)" right after a cold start of the stack; not reproduced in
+  22 repeats.
 
 ## How to work (applies to every change)
 

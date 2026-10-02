@@ -155,11 +155,7 @@ test('right-click on unselected object → menu opens, items fire', async ({ pag
 
   // No error spam.
   const realErrors = errors.filter(
-    (e) =>
-      !e.includes('No available adapters') &&
-      !e.includes('HocuspocusProvider') &&
-      // index.html declares no icon, so every page load 404s /favicon.ico.
-      !e.includes('favicon'),
+    (e) => !e.includes('No available adapters') && !e.includes('HocuspocusProvider'),
   )
   expect(realErrors, `unexpected errors: ${realErrors.join(' | ')}`).toEqual([])
 })

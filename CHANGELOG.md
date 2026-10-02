@@ -8,6 +8,11 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ### Added
 
+- **The Narrative logo and an app icon.** The logo and its short form (the
+  N card) are in `docs/brand/`; the browser tab and the iOS home screen show
+  the short logo (`apps/web/public/favicon.ico`, `apple-touch-icon.png`).
+  The page also no longer logs a 404 for `/favicon.ico` on every load.
+
 - **Folder roles** (folder sharing, step 1 —
   [ADR 0013](docs/adr/0013-folder-sharing-roles.md)): migration 0030 adds
   `folder_permissions` and makes every folder's owner its first member. A
@@ -20,6 +25,12 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
   Nothing changes for anyone until folders can be shared (step 3).
 
 ### Fixed
+
+- **No more "FAILED to store snapshot" errors after a delete.** Deleting a
+  deck, folder or component while its document was open made the sync
+  server's next save fail on a foreign key and log an error. The save now
+  sees the owner is gone and stores nothing; deleting a component or folder
+  also closes the connections to its documents.
 
 - **A drag is always one undo step.** Until now a drag, a resize or a
   column boundary pulled with the pointer was one step only while no two of
