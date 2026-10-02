@@ -6,6 +6,14 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+## 0.10.16 — Folder roles; drag undo, parallel e2e (2026-10-02)
+
+Migrations 0030 (`folder_permissions`, every folder's owner its first
+member) and 0031 (an owner row for every deck's creator). Production was
+checked before the deploy: no deck whose creator is not its folder's owner,
+none without its creator's row, so neither migration changes anyone's
+access.
+
 ### Added
 
 - **The Narrative logo and an app icon.** The logo and its short form (the

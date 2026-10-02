@@ -181,6 +181,27 @@ components keep working as documents but cannot take media. As of
 2026-09-30 neither query had been run on production or on a dev database.
 Only the shell quoting was checked (by `echo`).
 
+## Releasing folder roles — 0.10.16
+
+0.10.16 brings two data-only migrations (folder sharing step 1,
+[ADR 0013](./adr/0013-folder-sharing-roles.md)): **0030** creates
+`folder_permissions` and gives every folder's owner an owner row; **0031**
+gives every deck's creator an owner row in `deck_permissions` and drops the
+`decks.owner_user_id` fallback with it. Both only insert (`ON CONFLICT`), so
+they cannot fail on existing data. Checked on production on 2026-10-02
+before the deploy, both 0 (4 decks, 3 folders):
+
+```bash
+docker exec narrative-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM decks d JOIN folders f ON f.id = d.folder_id WHERE d.owner_user_id <> f.owner_user_id;"'
+docker exec narrative-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM decks d WHERE NOT EXISTS (SELECT 1 FROM deck_permissions p WHERE p.deck_id = d.id AND p.user_id = d.owner_user_id);"'
+```
+
+A deck whose creator is not its folder's owner would give the folder's
+owner the owner role on it after 0030 — decide before deploying if the
+first query ever returns more than 0.
+
 ## Access
 
 The VM is reachable only through the Proxmox host (`pve`), which is the jump
