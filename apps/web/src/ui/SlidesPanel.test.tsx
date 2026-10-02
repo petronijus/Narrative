@@ -239,8 +239,14 @@ describe('SlidesPanel — drag to reorder', () => {
     const card = document
       .querySelector('[data-slide-id="s1"]')
       ?.querySelector('[aria-hidden="true"]') as HTMLElement
-    // jsdom has no layout, so the panel falls back to its 90 px row height:
-    // 200 px down is two rows — the gap below s2.
+    // jsdom has no layout: give the rows the panel's — 90 px thumbnails, an
+    // 8 px gap — since the drop is read off the rows' positions. 200 px is
+    // past s2 (98–188) and above the middle of s3 (196–286, middle 241): the
+    // slide lands between them.
+    for (const [i, id] of ['s1', 's2', 's3'].entries()) {
+      const row = document.querySelector(`[data-slide-id="${id}"]`) as HTMLElement
+      row.getBoundingClientRect = () => new DOMRect(0, i * 98, 200, 90)
+    }
     act(() => {
       fireEvent.pointerDown(card, { button: 0, clientX: 0, clientY: 0, pointerId: 1 })
     })

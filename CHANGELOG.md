@@ -26,6 +26,13 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ### Fixed
 
+- **A slide dragged in the slides panel lands under the pointer.**
+  Scrolling the panel with the wheel or a trackpad mid-drag made the drop
+  lag behind the pointer, and on long drags the gaps between thumbnails
+  shifted it by a row even without scrolling. The drop is now read off the
+  rows on screen and follows a scroll as it happens
+  (`e2e/slides-panel-drag.spec.ts`).
+
 - **No more "FAILED to store snapshot" errors after a delete.** Deleting a
   deck, folder or component while its document was open made the sync
   server's next save fail on a foreign key and log an error. The save now

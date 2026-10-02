@@ -67,6 +67,7 @@ TEXT = [
     "list-feature-smoke",
 ]
 SLIDES_PANEL = [
+    "slides-panel-drag",
     "slide-clipboard",
     "slide-duplicate",
     "slide-multi-select",

@@ -575,7 +575,6 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   // trailing synthetic `click` (which fires on the captured origin row) can be
   // suppressed — otherwise reordering a multi-selection collapses it to one.
   const didDragRef = useRef(false)
-  const itemHeightRef = useRef<number>(90)
 
   // Panel-level multi-select (separate from the canvas SelectionContext).
   // Always contains activeSlideId when not empty.
@@ -933,15 +932,32 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   // Drag math
   // ---------------------------------------------------------------------------
 
-  const getItemHeight = useCallback((): number => {
-    const list = listRef.current
-    if (list === null) return 90
-    const firstItem = list.querySelector('[data-slide-id]') as HTMLElement | null
-    if (firstItem === null) return 90
-    const h = firstItem.getBoundingClientRect().height
-    if (h > 0) itemHeightRef.current = h
-    return itemHeightRef.current
-  }, [])
+  /**
+   * The insertion point under the pointer, from the rows as they are on
+   * screen now: before the first row whose middle is below the pointer, the
+   * rows being dragged left out (they are lifted out of the list). Reading
+   * the rows' own positions keeps the drop under the pointer whatever moved
+   * the list since the press — the wheel or a trackpad scrolling it, the
+   * gaps between thumbnails, collapsed rows of zero height. (It used to be
+   * the pointer's travel divided by a row height, which lagged behind as
+   * soon as the panel scrolled.)
+   */
+  const insertionUnderPointer = useCallback(
+    (clientY: number, dragged: ReadonlySet<string>): number => {
+      const list = listRef.current
+      if (list === null) return slides.length
+      const index = new Map(slides.map((s, i) => [s.id, i]))
+      for (const row of list.querySelectorAll<HTMLElement>('[data-slide-id]')) {
+        const id = row.dataset['slideId']
+        if (id === undefined || dragged.has(id)) continue
+        const box = row.getBoundingClientRect()
+        if (box.height < 1) continue // collapsed under its parent
+        if (clientY < box.top + box.height / 2) return index.get(id) ?? slides.length
+      }
+      return slides.length
+    },
+    [slides],
+  )
 
   /**
    * Clamps a proposed indent against the post-move previous slide. An
@@ -970,11 +986,14 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
 
   const computeDragOutcome = useCallback(
     (ds: DragState): { insertAt: number; indent: number } => {
-      const h = getItemHeight()
-      const deltaY = ds.currentY - ds.startY
+      const ownIds = new Set(ds.slideIds)
       const deltaX = ds.currentX - ds.startX
-      const rawRowOffset = Math.round(deltaY / h)
-      let insertAt = Math.max(0, Math.min(slides.length, ds.fromIndex + rawRowOffset))
+      let insertAt = insertionUnderPointer(ds.currentY, ownIds)
+      // Between the dragged slides themselves (the block's own place) is
+      // where it already is: no move.
+      const lo = Math.min(insertAt, ds.fromIndex)
+      const hi = Math.max(insertAt, ds.fromIndex)
+      if (slides.slice(lo, hi).every((s) => ownIds.has(s.id))) insertAt = ds.fromIndex
       const rawIndent = ds.fromIndent + Math.round(deltaX / INDENT_STEP_PX)
       const indent = clampIndent(rawIndent, insertAt, ds.slideIds)
 
@@ -983,7 +1002,6 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       // than the dropped block, walk past the whole run of deeper
       // slides so the foreign subtree stays intact. The dragged slides
       // themselves are skipped — they're "lifted out" during the drag.
-      const ownIds = new Set(ds.slideIds)
       while (insertAt < slides.length) {
         const next = slides[insertAt]
         if (next === undefined) break
@@ -1000,7 +1018,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
 
       return { insertAt, indent }
     },
-    [slides, getItemHeight, clampIndent],
+    [slides, insertionUnderPointer, clampIndent],
   )
 
   // ---------------------------------------------------------------------------
@@ -1061,6 +1079,17 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
     [slides, selectedIds],
   )
 
+  /** Take `next` as the drag's state, its drop recomputed. */
+  const updateDrag = useCallback(
+    (next: DragState) => {
+      const outcome = computeDragOutcome(next)
+      const state: DragState = { ...next, insertAt: outcome.insertAt, indent: outcome.indent }
+      dragStateRef.current = state
+      setDragState(state)
+    },
+    [computeDragOutcome],
+  )
+
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLElement>) => {
       const ds = dragStateRef.current
@@ -1073,15 +1102,24 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       ) {
         didDragRef.current = true
       }
-      const next: DragState = { ...ds, currentX: e.clientX, currentY: e.clientY }
-      const outcome = computeDragOutcome(next)
-      next.insertAt = outcome.insertAt
-      next.indent = outcome.indent
-      dragStateRef.current = next
-      setDragState({ ...next })
+      updateDrag({ ...ds, currentX: e.clientX, currentY: e.clientY })
     },
-    [computeDragOutcome],
+    [updateDrag],
   )
+
+  // Scrolling the list under a still pointer (the wheel, a trackpad) moves
+  // the rows, not the pointer: recompute the drop for the same pointer.
+  const dragging = dragState !== null
+  useEffect(() => {
+    const list = listRef.current
+    if (!dragging || list === null) return
+    const onScroll = () => {
+      const ds = dragStateRef.current
+      if (ds !== null) updateDrag(ds)
+    }
+    list.addEventListener('scroll', onScroll, { passive: true })
+    return () => list.removeEventListener('scroll', onScroll)
+  }, [dragging, updateDrag])
 
   const handlePointerUp = useCallback(
     (_e: React.PointerEvent<HTMLElement>) => {
