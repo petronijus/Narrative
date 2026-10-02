@@ -29,6 +29,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SPEC_DIR = ROOT / "apps" / "web" / "e2e"
 
+# The app boots and works at all: the API, the editor painting its canvas,
+# text, present mode and an anonymous share-link visit — ~10 s in parallel.
+# For changes that can only break that (the page shell, static files,
+# styles), and as `just e2e-smoke`.
+SMOKE = [
+    "destructive-flows",
+    "share-link-folder-tokens",
+    "text-overflow-clip",
+    "present-layout",
+    "fit-to-screen",
+]
+
 RENDER = [
     "renderer-visual",
     "inspector-flows",
@@ -99,6 +111,11 @@ CANVAS_TOOLS = [
 
 # (glob, specs). Every matching row counts; order does not matter.
 AREAS: list[tuple[str, list[str]]] = [
+    # ── web: the page shell, static files, styles ─────────────────────────
+    ("apps/web/index.html", SMOKE),
+    ("apps/web/public/*", SMOKE),
+    ("apps/web/src/index.css", SMOKE),
+    ("apps/web/src/styles/*", SMOKE),
     # ── web: renderer and canvas ──────────────────────────────────────────
     ("apps/web/src/renderer/playTransition*", PRESENT),
     ("apps/web/src/renderer/*", RENDER),
@@ -342,10 +359,13 @@ def main() -> int:
     parser.add_argument(
         "--check", action="store_true", help="only verify the table names existing specs"
     )
+    parser.add_argument(
+        "--smoke", action="store_true", help="run the smoke set, whatever changed"
+    )
     args, playwright_args = parser.parse_known_args()
 
     existing = {p.name.removesuffix(".spec.ts") for p in SPEC_DIR.glob("*.spec.ts")}
-    named = {spec for _, row in AREAS for spec in row if spec != "*"}
+    named = {spec for _, row in AREAS for spec in row if spec != "*"} | set(SMOKE)
     unknown = sorted(named - existing)
     if unknown:
         print(
@@ -355,6 +375,14 @@ def main() -> int:
         return 2
     if args.check:
         return 0
+
+    if args.smoke:
+        targets = [f"e2e/{spec}.spec.ts" for spec in SMOKE]
+        print(f"e2e-affected: the smoke set ({len(targets)} specs)")
+        if args.list:
+            return 0
+        sys.stdout.flush()
+        os.execvp("just", ["just", "e2e", *targets, *playwright_args])
 
     files = changed_files(args.base)
     specs, whole, unclaimed = affected(files)

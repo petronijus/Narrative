@@ -66,6 +66,7 @@ ESLint on Ubuntu's Node, the system Chrome for Playwright on Ubuntu 26.04).
 | `just services` / `just dev`             | docker services / web :5173 + server :3001 (WebSocket :3002) + video worker                                                       |
 | `just e2e [args]`                        | Playwright against the dev stack (`just e2e -g "folder-tokens"`)                                                                  |
 | `just e2e-affected [--list]`             | the e2e specs the current change needs (the table below, as `tools/dev/e2e-affected.py`)                                          |
+| `just e2e-smoke`                         | five specs (~10 s): the app boots, paints, presents and opens a share link                                                        |
 | `just eval [args]`                       | agent eval, headless Claude Code — costs subscription usage                                                                       |
 | `just capabilities`                      | regenerate the capability manifest and the Claude Code plugin                                                                     |
 | `just bump X.Y.Z` / `just deploy vX.Y.Z` | release versions / images, the tagged tree to the VM, deploy, verify (`docs/deploy.md`)                                           |
@@ -93,9 +94,12 @@ below that match it.
 | Editor render path (FCP / LCP / TTI)                                                                                                  | `just lighthouse`                                                                                                                                                                                  |
 | `packages/slide-model/src/{mutations,slides}.ts` deep changes                                                                         | `just mutate` — **broken since 2026-09-26** (`@stryker-mutator/vitest-runner` 8.x vs vitest 4): say so instead of skipping silently                                                                |
 
-`just e2e-affected` runs the e2e part of this table for the working tree
-(`--base REF` for a branch): the specs of every area a changed file belongs
-to. A shared package, the schema or a source file no area claims runs the
+Run as few e2e specs as the change needs: `just e2e-affected` while
+working (it runs the e2e part of this table for the working tree, `--base
+REF` for a branch: the specs of every area a changed file belongs to; the
+page shell, static files and styles get the smoke set), and the full
+`just e2e` (~3 min) once — before a release, or when e2e-affected asks for
+it. A shared package, the schema or a source file no area claims runs the
 whole suite, and names the file — add a new file's area to `AREAS` in
 `tools/dev/e2e-affected.py` rather than living with full runs.
 

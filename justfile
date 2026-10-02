@@ -95,6 +95,10 @@ e2e *args: _stack
     eval "$(tools/dev/playwright-env.sh)"
     exec pnpm --filter web test:e2e "$@"
 
+# The smoke set: does the app boot, paint and present at all (~10 s; tools/dev/e2e-affected.py SMOKE)
+e2e-smoke *args:
+    tools/dev/e2e-affected.py --smoke {{ args }}
+
 # The e2e specs the current change needs (tools/dev/e2e-affected.py: `--base REF`, `--list`; other args go to Playwright)
 e2e-affected *args:
     tools/dev/e2e-affected.py {{ args }}

@@ -68,9 +68,10 @@ and stores nothing when it is gone (`hocuspocus/persistence.ts`,
 `persistence.integration.test.ts`); deleting a component or a folder now
 also closes the connections on its documents, as deleting a deck does.
 
-Open (2026-10-02), seen only while another build loaded the machine
-(load 25–42: a Gradle build, then an ARM kernel cross-compile), not on a
-quiet machine — to be checked there before calling them flaky or broken:
+Seen only while another build loaded the machine (load 25–42: a Gradle
+build, then an ARM kernel cross-compile) on 2026-10-02; the full suite on
+the quiet machine right after was green, 175/175 — load artefacts, not
+bugs. Watch for them; a run on a loaded machine proves little:
 
 - `folder-tokens` "a colour token changed while the deck is open…" and
   `htmltext-texture-isolation` "rapid invalidations…": the Pixi canvas
@@ -81,6 +82,16 @@ quiet machine — to be checked there before calling them flaky or broken:
 - `layer-reorder` once failed with "no live deck document (the provider is
   between mounts)" right after a cold start of the stack; not reproduced in
   22 repeats.
+
+## Test tiers
+
+- `just check` (~40 s) on every change — the Stop and pre-push hooks run it.
+- `just e2e-affected` while working: the specs of the areas the change
+  touches. The page shell, static files and styles get the smoke set.
+- `just e2e-smoke` (~10 s, five specs): the app boots, paints, presents and
+  opens a share link.
+- `just e2e` (~3 min) once — before a release, after a change to a shared
+  package or the schema, or when e2e-affected asks for it.
 
 ## How to work (applies to every change)
 
