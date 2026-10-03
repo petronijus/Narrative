@@ -231,8 +231,11 @@ hand-written:
   (`{ "type": "string" }`): `deckId` for deck commands — and `componentId` to act on a
   component master instead, only on commands that accept one (`acceptsComponent` in
   the registry: document commands, document queries and the `agent_*` run tools; the
-  host refuses a `componentId` for every other command with `no_target`) —,
-  `folderId` for folder commands, nothing for account commands, and an optional
+  host refuses a `componentId` for every other command with `no_target`), and
+  `folderId` to act on a folder's own media, only on commands that accept a folder
+  (`acceptsFolder`: `media_delete`, since 2026-10-03; such a command may need a
+  different role per target, `roleOn`) —, `folderId` for folder commands, nothing
+  for account commands, and an optional
   `runId`. What they mean is said once in the server `instructions`, not per tool.
   Union inputs (`object.update`) are flattened into one object and their forms named
   in the description. Identical alternatives of a union are said once

@@ -106,9 +106,13 @@ the rest of the folder.
   Accepted (Petr, 2026-10-03): ids are `nanoid(16)`, so the exposure is
   the ids a guest has already seen; the "Move to…" dialog warns when the
   deck has an active share link.
-- Taking linked media into another folder needs the editor role on the
-  folder that owns it (Petr, 2026-10-03), the same bar as the component
-  content itself.
+- Whoever may read a folder's pictures and videos may also take them into
+  another folder (Petr, 2026-10-03): inside the folder they stay links,
+  outside it they become copies the new owner keeps, also after losing
+  access to the folder. A viewer or a deck guest can therefore keep copies
+  of the component media they could see. Removing a picture or video from
+  a master is a folder editor's, and hands it to the folder; deleting
+  folder-owned media is the folder owner's.
 - Until step 4 the folder-scoped commands still declare the owner role, so an
   agent of a folder editor is refused writes the web app allows.
 - Removing someone from a folder (step 3) leaves their deck grants in

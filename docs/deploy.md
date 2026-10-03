@@ -181,6 +181,31 @@ components keep working as documents but cannot take media. As of
 2026-09-30 neither query had been run on production or on a dev database.
 Only the shell quoting was checked (by `echo`).
 
+## Releasing linked component media
+
+Folder sharing step 2 ([ADR 0013](./adr/0013-folder-sharing-roles.md)) adds
+migration **0032** (`deck_moved_media`, created empty: each linked picture
+a deck move copied, with its copy) and the
+storage-purge fix: until this release every `DeleteObjects` against MinIO
+failed, so no purge has ever removed a file on production. From this
+release purges really delete, and every one of them keeps a key that a
+remaining row still names. Before deploying, list the media rows whose file
+lies under another owner's prefix — those are the files a purge without
+that guard would have taken:
+
+```bash
+docker exec narrative-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT id, kind, deck_id, component_id, folder_id, storage_key FROM media_assets
+   WHERE (storage_key LIKE '\''decks/%'\'' AND (deck_id IS NULL OR storage_key NOT LIKE '\''decks/'\''||deck_id||'\''/%''))
+      OR (storage_key LIKE '\''components/%'\'' AND (component_id IS NULL OR storage_key NOT LIKE '\''components/'\''||component_id||'\''/%''));"'
+```
+
+Expected: folder fonts uploaded before migration 0009 (`folder_id` set,
+key under `decks/<origin deck>/fonts/`) and their per-deck clones. They are
+safe now — the sweep keeps them — but they are the rows to look at if a
+deleted deck ever takes a font with it. The orphans the failed purges left
+on production stay; sweeping them is a separate, deliberate step.
+
 ## Releasing folder roles — 0.10.16
 
 0.10.16 brings two data-only migrations (folder sharing step 1,

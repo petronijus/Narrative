@@ -83,14 +83,14 @@ Commands: **129**. Known missing: **7**. Deliberately excluded: **20**.
 
 ## media
 
-| Command               | What it does                | Role   | Undo         | Confirm                    | Hints     |
-| --------------------- | --------------------------- | ------ | ------------ | -------------------------- | --------- |
-| `media.delete`        | Delete media                | owner  | irreversible | always                     |           |
-| `media.fontUrl`       | Font file URL               | owner  | n/a          | never                      | read-only |
-| `media.status`        | Video status                | viewer | n/a          | never                      | read-only |
-| `media.upload`        | Upload media                | editor | undoable     | never (asks for URL files) |           |
-| `media.uploadSession` | Upload a local file (shell) | editor | n/a          | never                      |           |
-| `media.url`           | Image URL                   | viewer | n/a          | never                      | read-only |
+| Command               | What it does                | Role                  | Undo         | Confirm                    | Hints     |
+| --------------------- | --------------------------- | --------------------- | ------------ | -------------------------- | --------- |
+| `media.delete`        | Delete media                | owner; master: editor | irreversible | always                     |           |
+| `media.fontUrl`       | Font file URL               | owner                 | n/a          | never                      | read-only |
+| `media.status`        | Video status                | viewer                | n/a          | never                      | read-only |
+| `media.upload`        | Upload media                | editor                | undoable     | never (asks for URL files) |           |
+| `media.uploadSession` | Upload a local file (shell) | editor                | n/a          | never                      |           |
+| `media.url`           | Image URL                   | viewer                | n/a          | never                      | read-only |
 
 ## object
 

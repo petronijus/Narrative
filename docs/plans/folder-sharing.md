@@ -99,7 +99,8 @@ speed-up to do first is in [`dev-speed.md`](dev-speed.md).
 
 One notion carries it: **the media a document may show** — its own rows,
 plus the component- and folder-owned pictures and videos of its folder
-(`media/visibleMedia.ts`). Everything else follows from it:
+(`media/visibleMedia.ts`; only `image` and `video` rows link — the
+folder's fonts are not slide media). Everything else follows from it:
 
 - **Copy rule** (`deckInsert.ts` `copyMedia`): a referenced asset is copied
   into the target when the target may not show it; within one folder a
@@ -107,25 +108,87 @@ plus the component- and folder-owned pictures and videos of its folder
   the same folder copy nothing; a paste of deck objects into a master
   still copies the deck's own media (a master must not depend on a deck);
   a copy into another folder (paste, `deck.insertFrom`, `deck.duplicate`)
-  copies the linked media too.
+  copies the linked media too — for **whoever may read it** in its folder:
+  members of any role, guests of its decks (Petr, 2026-10-03, replacing the
+  editor-only rule of the first review). Only what the source document may
+  show is a candidate, and every candidate passes a read check for the
+  caller; an id they cannot read, or one of another folder, is never copied
+  and is reported (`skippedImages` / `skipped.images`). A paste may name
+  ids its source no longer shows (a cut, then a paste elsewhere): the read
+  check decides, not what the source references now. The PowerPoint export
+  reads what the deck shows — its editors are content readers of its
+  folder — and skips anything merely named in the document.
 - **Moving a deck to another folder** copies its linked media into the
   deck and points the deck at the copies through the sync server, before
-  the deck moves — so no reader ever sees a reference it cannot load.
-  Unbudgeted, like the move itself (owner of the deck, editor of both
-  folders).
+  the deck changes folders — so no reader ever meets a reference it cannot
+  load — and records each asset with its copy, the folder it came from and
+  who moved the deck (`deck_moved_media`, migration 0032; the mover goes to
+  NULL with their account). A copy that fails (503) or that the mover may
+  not make (403) stops the move before any deck changes folders. Decks
+  handled earlier in the same move may already show their own copies by
+  then: a reader sees the same pictures, and a retry reuses the recorded
+  copies — re-pointing is idempotent. References that were broken already
+  do not stop it. What a collaborator links during the move is caught up
+  afterwards and reported (`MoveDecksResult.media`, the `media` output of
+  `deck.moveToFolder`). Unbudgeted, like the move itself (owner of the
+  deck, editor of both folders).
+- **Old references after a move** (security review N1, 2026-10-03): an
+  undo in an editor or an agent run's revert can bring back a reference to
+  the old folder's media. After a revert (`RunManager` `afterDeckRevert`)
+  and after the sync server stores the deck (`PostgresPersistence`
+  `onDeckStored`, off the store's path, one pass per deck at a time) the
+  server **only re-points** such a reference at its recorded copy
+  (`localiseMedia.ts` `repointMovedMedia`), however often it comes back —
+  undo/redo cycles copy nothing. An id the move did not record is never
+  copied, so a planted id pulls nothing in. A fresh copy is made only when
+  the recorded copy is gone (its row deleted, or its file): at most once
+  per recorded id, at most ten per pass, on the mover's authority (they
+  must still read the folder) and media copy budget, and a video only with
+  its finished outputs — this path never queues a transcode. An undo that
+  restores a slide the deck no longer referenced when it moved brings back
+  a reference nobody of the new folder can load: accepted, the price of
+  never copying an unrecorded id.
+- **A write racing a move**: a stamp is staged for the deck's folder read
+  at that moment (409 when the deck already left the master's folder);
+  `object.insertFromDeck` and `deck.insertFrom` stage the target's linked
+  media the same way. Each is settled after the write (the command
+  framework's `settle` phase, and the editor's routes after their own
+  write): a deck that moved meanwhile gets what the write linked carried
+  into it — on the writer's authority and copy budget, recorded like a
+  move's copies (`localiseMedia.ts` `carryLinkedMedia`). Checking only
+  before the write would leave a window; after it, a move that commits
+  later still runs its own catch-up pass over a document that holds the
+  write.
 - **Deleting a component** re-parents its rows to the folder in the same
   transaction as the delete (`component_id = NULL, folder_id = folder`);
-  only the component's thumbnail is removed from storage. The folder's
-  deletion removes them with everything else.
-- **Reading**: a folder-owned picture or video is read by the folder's
-  content readers (members, guests of its decks, share links to them) and
-  deleted by its editors, like component media. `media.url` / `.status` on
-  a deck or master target accept what that document may show. PowerPoint
-  export takes the same set.
+  its `components/<id>/` prefix is swept of whatever no row names (the
+  thumbnail, leftovers). The folder's deletion removes the rows with
+  everything else, and sweeps the prefixes of components deleted earlier
+  (named only by the rows' keys now).
+- **Reading and removing**: a folder-owned picture or video is read by the
+  folder's content readers (members, guests of its decks, share links to
+  them), like component media. `media.url` / `.status` on a deck or master
+  target accept what that document may show. Removing a master's picture
+  or video hands it to the folder as deleting the component does — stamps
+  keep showing it — for a **folder editor**, on every surface
+  (`DELETE /api/media/:id`, `media.delete` on a master target, whose role
+  is `editor` there; Petr, 2026-10-03). Deleting folder-owned media is the
+  folder owner's alone (or the folder's deletion), and agents reach it
+  through `media.delete` with a folder target (`acceptsFolder`, owner).
+  `media.delete` reports what happened (`outcome`: `deleted` or
+  `handedToFolder`). A folder font is refused there with a pointer to
+  `DELETE /api/folders/:id/fonts/:assetId` (review M2/M3).
 - **Storage keys are never deleted while a row still names them** (a deck
   delete used to remove a font file its folder's other decks still used —
-  `deleteFont` clones share one key). Deletes purge only keys no remaining
-  row references.
+  `deleteFont` clones share one key, and a pre-0009 folder font lives
+  under the deck it was uploaded in). Prefix sweeps and explicit purges
+  alike keep any key a remaining row names; `media.delete` and
+  `folder.fonts.delete` remove the deleted row's files under the same
+  rule. A prefix sweep also keeps what no row names _yet_ — a video's
+  outputs under `videos/<id>/` of an existing row (the worker writes them
+  before it records them; review N5) and anything younger than the
+  15-minute grace window — and runs once more after the window when the
+  owner is gone (`docs/storage.md`, "Cleanup").
 - No data migration: the copies 0.10.15 made are deck- or component-owned
   and stay valid.
 
@@ -281,8 +344,8 @@ Left for later steps:
   (`folder.fonts.list`, `media.fontUrl`, `token.*`, `text.style.*`,
   `deck.moveToFolder`, `deck.activeEditors`, `component.stamp`,
   `object.insertFromDeck` — viewer within the folder, editor across folders
-  and into a master —, `media.delete` — a folder editor deletes component
-  media —, `deck.duplicate` — the source folder when the user is an editor
+  and into a master —, `media.delete` — a folder editor hands component
+  media to the folder —, `deck.duplicate` — the source folder when the user is an editor
   there —, and `deck.create`, whose `folderId` must be a folder where the
   user is an editor), with `just eval`; re-record `deck-create-in-folder`
   (its recording predates `role` in `folder.list`).
@@ -304,23 +367,42 @@ d.folder_id WHERE d.owner_user_id <> f.owner_user_id`); expected 0.
 The code review and the security review of step 2 (2026-10-03) raised four
 questions; Petr's answers:
 
-- **Taking linked media out of a folder** (paste, `deck.insertFrom`,
-  `deck.duplicate` into another folder) needs the editor role on the
-  folder that owns it, as step 1 decided for component content. Without
-  it the asset is not copied and is reported as unresolved: a deck-only
-  editor who duplicates a stamped deck into their own folder gets the
-  stamped pictures unresolved.
+- ~~**Taking linked media out of a folder** needs the editor role on the
+  folder that owns it.~~ Replaced on 2026-10-03 (below): whoever may read
+  it may carry it out as a copy.
 - **Deleting a picture or video of a master** detaches it and hands it to
   the folder, as deleting the component does, so the stamps keep showing
   it. Folder-owned media is deleted only by the folder's owner, or with
   the folder.
-- **Undo or a run revert after a move** that brings back a reference to
-  the old folder's media is repaired: the deck remembers the folders it
-  was moved out of, and localisation runs again from them (only from
-  them, never for an arbitrary asset id) after a run revert and when the
-  document is stored.
+- ~~**Undo or a run revert after a move** is repaired by localising again
+  from the folders the deck left.~~ Replaced by the recorded copies of
+  the second round (below): a repair only re-points.
 - **Deck guests read the folder's component and folder media by id**,
   share-link holders included, and a share-linked deck moved into another
   folder opens that folder's media to the link: accepted as designed
   (ids are unguessable), recorded in ADR 0013; the "Move to…" dialog warns
   when the deck has an active share link.
+
+The second round of reviews (code and security, 2026-10-03) found the
+repair after an undo unbounded — any deck editor, an editor share link
+included, could re-insert an old id and get a fresh copy on every store —
+and Petr decided two more questions the same day:
+
+- **Copying linked media out of its folder** (D1): whoever may READ a
+  piece of folder media — a content reader of its folder: members, guests
+  of its decks, share links per the read rules — may carry it into
+  another folder (paste, also after a cut; `deck.insertFrom`;
+  `deck.duplicate`). Outside the folder's permission scope it becomes a
+  copy; within the folder it stays a link. Every id the client names still
+  passes a per-asset read check, and one the caller cannot read is never
+  copied and is reported as unresolved. Pictures and videos only.
+- **Removing a master's picture or video** (D2): a folder editor, on every
+  surface; the agent command takes the role per target (`media.delete`:
+  deck owner, master editor, folder owner) and gains a folder target for
+  the folder's own media.
+- **The repair after an undo** (N1, the fix): the move records each asset
+  with its copy (`deck_moved_media`); a later store or revert only
+  re-points at the recorded copy, never copies an unrecorded id, and makes
+  a fresh copy only when the recorded one is gone — once per id, on the
+  mover's budget, never transcoding (see "Old references after a move"
+  above).

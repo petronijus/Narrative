@@ -83,12 +83,28 @@ server, not the browser, now decides what happens to the media involved.
    `components/<id>/` plus the master's tus originals. Their keys lie
    outside the prefix, so they are read before the FK cascade removes the
    rows.
+   _Amended 2026-10-03 (folder sharing step 2):_ no purge deletes a key a
+   remaining row names; a prefix sweep also keeps `videos/<id>/…` of any
+   existing media row (the worker writes outputs before the row names them)
+   and anything younger than 15 minutes, and runs once more after that
+   window when the owner is gone ([`docs/storage.md`](../storage.md),
+   "Cleanup").
 7. **Server-side copies are budgeted per person**: 60 copies with media per
    minute (`services/mediaCopyBudget.ts`, 429). This covers every
    server-side copy (promote, stamp, paste, slide insert and duplicate),
    whether the editor or an agent asked. Media staged in a command's `load`
    is released if the host never reaches the write (`CommandDef.release`,
    `PreparedInvocation.abandon()`).
+   _Amended 2026-10-03 (folder sharing step 2):_ a command may also declare
+   `CommandDef.settle`, which the host runs through
+   `PreparedInvocation.settle()` once the write has committed — at most
+   once, never after a refused or abandoned write, and best effort (it
+   never throws). It reconciles what `load` staged with the world after the
+   write: `component.stamp`, `object.insertFromDeck` and `deck.insertFrom`
+   stage linked media for the deck's folder as it was at `load`, and carry
+   it into the deck if the deck moved to another folder meanwhile
+   (`services/localiseMedia.ts` `carryLinkedMedia`). The editor's routes for
+   the same writes call `settle` after their own write.
 8. **Legacy masters are adopted once** (data migration
    `2026-09-30-component-media`, `adoptMasterMedia`). Media that belongs to
    a deck in the component's own folder is copied into the component and

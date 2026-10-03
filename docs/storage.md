@@ -38,16 +38,64 @@ narrative-media/
                                 #   thumb.<ext> (the master snapshot, PUT /components/:id/thumbnail)
 ```
 
-Folder fonts belong to a folder (`folder_id`). A component never takes
-fonts. A tus upload's object key is its compound upload id
+A folder owns its fonts (`folder_id`, keys under `fonts/<folderId>/`) and,
+since folder sharing step 2, pictures and videos too: deleting a component —
+or removing a picture or video from a master — hands its rows to the folder
+(`component_id = NULL, folder_id = folder`); their files stay where they
+are, under `components/<old id>/`. A component never takes fonts. A tus
+upload's object key is its compound upload id
 `<assetId>:<deckId|unknown>:<base64url(path)>` (`@tus/s3-store` keys objects
-by upload id), with the path above encoded in it. Cleanup therefore purges
-the owner prefix **and** reads the tus originals' keys from the rows before
-the cascade (component delete, folder delete). Ids that name a key segment
-must match `^[A-Za-z0-9_-]{1,64}$` (`isStorageSafeId`). Media is copied,
-never shared, when an object crosses owners (promote, stamp, paste).
+by upload id), with the path above encoded in it. Ids that name a key
+segment must match `^[A-Za-z0-9_-]{1,64}$` (`isStorageSafeId`).
 
-Object versioning is NOT enabled. Deletes are hard-deletes. Per-deck object cleanup on deck deletion is not implemented in M11; tracked for M17 (comments — was M21).
+**Linked, not copied, within a folder** (folder sharing step 2,
+[`plans/folder-sharing.md`](./plans/folder-sharing.md) → "Step 2 design").
+A deck or a master shows its own rows and, by link, the pictures and videos
+of its folder's components and of the folder itself
+(`apps/server/src/media/visibleMedia.ts`). A stamp or a paste out of a master
+inside the folder points at the master's own asset: nothing is copied. A
+copy is made only when media crosses into a document that may not show it:
+
+- into another folder (paste, `deck.insertFrom`, `deck.duplicate`) — for
+  whoever may read the media in its folder (members, guests of its decks);
+  for anyone else the reference stays unresolved and is counted;
+- from a deck into a master (a master must not depend on a deck);
+- when a deck moves to another folder: the move copies what the deck links
+  into the deck first and records each asset with its copy
+  (`deck_moved_media`, migration 0032). An undo or a run revert that brings
+  an old reference back is re-pointed at the recorded copy; an id the move
+  did not record is never copied, and a lost copy is made again at most
+  once, on the mover's copy budget, never by queuing a transcode
+  (`apps/server/src/services/localiseMedia.ts`).
+
+Every server-side copy with media spends one unit of the person's copy
+budget (60 a minute, `services/mediaCopyBudget.ts`); a deck move is
+unbudgeted.
+
+**Cleanup** (`apps/server/src/media/bucketCleanup.ts`). Deleting a deck, a
+component or a folder sweeps the owner's prefix (`decks/<id>/`,
+`components/<id>/` — a folder's deletion also sweeps the prefixes of
+components deleted earlier, named only by the keys of the rows it took
+over) and purges the tus originals by the keys read from the rows before
+the cascade. Two rules keep files that are still in use:
+
+- **a key a remaining row names is never deleted** — several rows can
+  share one file (a deleted folder font's per-deck clones, a pre-0009
+  folder font stored under the deck it was uploaded in, a deleted
+  component's media under its old prefix). Explicit purges
+  (`purgeUnreferencedKeys`: `media.delete`, `folder.fonts.delete`, deck
+  and folder deletion) follow the same rule;
+- **a sweep keeps what a row does not name yet**: the video worker writes
+  `<prefix>/videos/<assetId>/…` before it records the keys on the row, and
+  a copy is stored before its row is registered. Everything under
+  `videos/<id>/` of an existing row stays, and so does every object younger
+  than the **grace window of 15 minutes** (`MEDIA_SWEEP_GRACE_MS` overrides
+  it). When the owner itself is gone (a deleted deck, component or folder),
+  the sweep runs once more after the window, in process and best effort.
+
+Object versioning is NOT enabled. Deletes are hard-deletes. There is no
+background garbage collection: what a failed purge leaves stays until its
+owner's prefix is swept again.
 
 ## Access patterns
 

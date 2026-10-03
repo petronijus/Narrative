@@ -6,7 +6,12 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
-No migration and no env var.
+Migration 0032 (`deck_moved_media`: the media copies a deck move made,
+created empty). One optional env var: `MEDIA_SWEEP_GRACE_MS` (default 15
+minutes) — storage sweeps keep files younger than this, so a video still
+being transcoded keeps its outputs.
+Before deploying, check production for media files stored under another
+owner's prefix (`docs/deploy.md`, "Releasing linked component media").
 
 ### Added
 
@@ -31,13 +36,25 @@ No migration and no env var.
   or a paste out of a master in the same folder, now copies nothing; a
   paste of deck objects into a master still copies the deck's own media,
   and a copy into another folder (paste, `deck.insertFrom`,
-  `deck.duplicate`) copies the linked media too. Moving a deck to another
-  folder first copies its linked media into the deck and re-points the
-  deck at the copies, so no reader meets a reference they cannot load.
-  Deleting a component hands its pictures and videos to the folder instead
-  of deleting them, so the decks stamped from it keep working. Reading,
-  agent `media.url` / `media.status` and the PowerPoint export follow the
-  same rule. The copies 0.10.15 made stay as they are.
+  `deck.duplicate`) copies the linked media too, for anyone who may read
+  it — a cut and paste included; a picture the caller may not read is
+  reported as skipped. Moving a deck to
+  another folder first copies its linked media into the deck and re-points
+  the deck at the copies, so no reader meets a reference they cannot load;
+  a copy that fails stops the move (503), and what collaborators linked
+  during the move is caught up and reported in the result (the editor
+  shows it). The copies a move made are recorded (migration 0032), so an
+  undo or an agent run's revert that brings back the old folder's media is
+  pointed at those copies again instead of copying anew. Deleting a
+  component, or a picture or video of a master (a folder editor), hands
+  the media to the folder instead of deleting it, so the decks stamped
+  from it keep working; folder-owned media is deleted only by the folder's
+  owner (`media.delete` gained a folder target), and folder fonts only
+  through the folder's font route. An agent asked to move a deck with an
+  active share link is told that the link's holders will see the
+  destination folder's component media. Reading, agent `media.url` /
+  `media.status` and the PowerPoint export follow the same rule. The
+  copies 0.10.15 made stay as they are.
 
 ### Fixed
 
@@ -67,8 +84,11 @@ No migration and no env var.
   again (`media/s3Client.ts`). Files left behind on production before
   this release are not swept.
 - **A deck delete could remove a font file its folder's other decks
-  still used.** Font clones share one storage key; a purge now removes
-  only keys no remaining row names.
+  still used.** Font clones share one storage key, and a folder font
+  uploaded before migration 0009 still lies under the deck it was uploaded
+  in. Every purge, prefix sweeps included, now removes only keys no
+  remaining row names. Deleting a component also sweeps its leftover files,
+  and deleting a folder those of components deleted earlier.
 
 ## 0.10.16 — Folder roles; drag undo, parallel e2e (2026-10-02)
 
