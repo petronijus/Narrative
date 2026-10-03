@@ -762,4 +762,8 @@ export class MemoryWorld implements World {
   async fetchBinary(): Promise<Uint8Array> {
     throw new UnsupportedInWorld('the memory world has no file storage to download from')
   }
+
+  async approveConfirmation(): Promise<void> {
+    throw new UnsupportedInWorld('the memory world has no confirmation page to approve on')
+  }
 }

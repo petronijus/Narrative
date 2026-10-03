@@ -281,6 +281,28 @@ export class LiveWorld implements World {
     return new Uint8Array(await res.arrayBuffer())
   }
 
+  async approveConfirmation(confirmationId: string): Promise<void> {
+    if (!this.opts.bypass) {
+      throw new SkipScenario(
+        "approving a confirmation needs the BYPASS_AUTH dev session (otherwise a person approves it on Narrative's page)",
+      )
+    }
+    // No token: the confirmation routes take the browser session only, which
+    // a request without credentials is under BYPASS_AUTH (the dev user).
+    const res = await request(
+      `${this.opts.apiUrl}/agent-confirmations/${encodeURIComponent(confirmationId)}/decision`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: this.opts.webUrl },
+        body: JSON.stringify({ decision: 'approve' }),
+      },
+    )
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string }
+      throw new Error(`approving confirmation failed: HTTP ${res.status} ${body.error ?? ''}`)
+    }
+  }
+
   /** After each scenario: close its editor tabs. */
   async endScenario(): Promise<void> {
     await this.browser.closePages()

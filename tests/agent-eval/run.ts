@@ -226,7 +226,8 @@ async function runScenarioOnce(
       steps,
       stepTimeoutMs: scenario.stepTimeoutMs ?? DEFAULT_STEP_TIMEOUT_MS,
       ...(env.opts.maxBudgetUsd !== undefined ? { maxBudgetUsd: env.opts.maxBudgetUsd } : {}),
-      betweenSteps: async (index) => scenario.afterStep?.(env.world, fixture, index, notes),
+      betweenSteps: async (index, transcript) =>
+        scenario.afterStep?.(env.world, fixture, index, notes, transcript),
       ...(env.opts.verbose
         ? { onToolCall: (line: string) => console.log(`    ${scenario.id}: ${line}`) }
         : {}),

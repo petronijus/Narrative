@@ -1,6 +1,10 @@
 import { Checks, callsOf, norm, plainText, readSlide } from '../lib/checks.js'
+import { gradientPng } from '../lib/png.js'
 import { defineScenario } from '../lib/types.js'
 import { buildDeck, deckRef, titledSlide } from './helpers.js'
+
+/** The master's own picture: a stamp in the same folder links it, never copies it. */
+const MARK = gradientPng(96, 96)
 
 const SLOT_TITLE = 'Revenue up 12%'
 const SLOT_SUBTITLE = 'Driven by EMEA'
@@ -23,6 +27,12 @@ export default defineScenario({
   async setup(world) {
     const componentName = `Headline block ${world.tag}`
     const componentId = await world.createComponent(world.evalFolderId, componentName)
+    // A picture the component owns (folder sharing step 2: linked when stamped).
+    const { assetId: markAssetId } = await world.run<{ assetId: string }>(
+      { componentId },
+      'media.upload',
+      { file: { base64: Buffer.from(MARK).toString('base64'), filename: 'mark.png' } },
+    )
     // The server writes a new component's empty master slide; draw the
     // master on it with the ordinary document commands.
     await world.batch({ componentId }, [
@@ -74,6 +84,21 @@ export default defineScenario({
           },
         },
       },
+      {
+        command: 'object.create',
+        input: {
+          slide: { index: 0 },
+          object: {
+            type: 'image',
+            name: 'mark',
+            assetId: markAssetId,
+            x: 1700,
+            y: 60,
+            width: 96,
+            height: 96,
+          },
+        },
+      },
     ])
     const deck = await buildDeck(
       world,
@@ -86,6 +111,7 @@ export default defineScenario({
       title: deck.title,
       componentId,
       componentName,
+      markAssetId,
       folderId: world.evalFolderId,
     }
   },
@@ -110,7 +136,23 @@ export default defineScenario({
       "the master's accent bar came along",
       slide.objects.some((o) => o.type === 'rectangle' && o.width === 120 && o.height === 8),
     )
-    c.eq('the stamp placed exactly the three master objects', slide.objects.length, 3)
+    c.eq('the stamp placed exactly the four master objects', slide.objects.length, 4)
+    // Linked, not copied: the stamped picture is the master's own asset (a
+    // copy would be a new deck asset with a new id), and the deck may show it.
+    const mark = slide.objects.find((o) => o.type === 'image') as { assetId?: string } | undefined
+    c.eq(
+      "the stamped picture keeps the master's asset id (no deck copy)",
+      mark?.assetId,
+      fx.markAssetId,
+    )
+    try {
+      const served = await world.run<{ url: string }>({ deckId: fx.deckId }, 'media.url', {
+        assetId: fx.markAssetId,
+      })
+      c.ok("media.url resolves the master's picture on the deck", served.url.length > 0)
+    } catch (err) {
+      c.error("media.url resolves the master's picture on the deck", err)
+    }
     const master = await world.run<{ slots: Slot[] }>({ folderId: fx.folderId }, 'component.get', {
       componentId: fx.componentId,
     })

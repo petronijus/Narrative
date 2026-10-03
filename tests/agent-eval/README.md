@@ -149,7 +149,7 @@ registry, so they run unchanged in both worlds.
 | `transition-remove-direction` | direction removed, push and duration kept; the next slide's push untouched                                                       | yes    |
 | `deck-create-in-folder`       | deck with the exact title in the named folder, one title slide, title larger than subtitle                                       | yes    |
 | `insert-slides-from-deck`     | slides 2-3 of deck B after slide 1 of deck A; B unchanged                                                                        | no     |
-| `component-stamp-slots`       | folder component stamped with slot text; master unchanged                                                                        | no     |
+| `component-stamp-slots`       | folder component stamped with slot text; its picture stays linked (same asset id, `media.url` on the deck); master unchanged ¹   | no     |
 | `export-pptx-roundtrip`       | export link in the answer serves a valid .pptx whose re-import has the same slide count and titles                               | no     |
 | `revert-last-run`             | "undo what you just did" uses `agent_revert` and restores every slide structurally                                               | yes    |
 | `selected-slide-context`      | a real editor tab (Playwright) selects an object; the agent resolves "this" with `editor_context`                                | yes    |
@@ -157,6 +157,7 @@ registry, so they run unchanged in both worlds.
 | `slide-notes-talking-points`  | formatted speaker notes written on slide 2 (`slide.notes.set` / `.get`)                                                          | yes    |
 | `slides-copy-block`           | slides 2–3 copied to the end of the same deck (`slide.copyTo`)                                                                   | yes    |
 | `deck-duplicate-named`        | a deck duplicated under a new title (`deck.duplicate`)                                                                           | no     |
+| `deck-move-folder-media`      | a deck with a stamped picture moved to another folder after a confirmation the harness approves; the picture is a deck copy ¹    | no     |
 | `slides-outline-nest`         | a slide moved to the end as a sub-slide of the last one (`slide.move`)                                                           | yes    |
 | `photo-resize-centered`       | a cropped photo enlarged around its centre; the crop scales with it (`object.resize`)                                            | yes    |
 | `photo-crop-zoom`             | zoom into a photo inside its frame; the frame stays (`object.crop.set`)                                                          | yes    |
@@ -184,6 +185,15 @@ registry, so they run unchanged in both worlds.
 | `folder-styles-apply`         | heading linked to the folder's Title, paragraph to Body, no overrides, text kept (`token.list`, `text.style.apply`)              | yes    |
 | `title-style-folderwide`      | Title style 88 px / 800; linked titles in two decks follow, a hand-set size stays, no per-box edits (`token.update`)             | yes    |
 | `quote-style-from-box`        | a hand-styled quote saved as "Testimonial" (size, weight, colour) and applied to two more quotes (`text.style.createFromObject`) | yes    |
+
+¹ Written or extended on 2026-10-03 (folder sharing step 2) and **not run
+live yet**: both need a live run (`just eval --filter
+component-stamp-slots,deck-move-folder-media`) before they can be trusted.
+`deck-move-folder-media` is the first scenario that completes a
+confirm-always command: after the first step the harness approves the
+confirmation the agent asked for (`World.approveConfirmation`, the
+BYPASS_AUTH session; `afterStep` receives the transcript so far), and the
+second step tells the agent it was approved.
 
 The scenario list is `scenarios/index.ts`; `just eval --list` prints
 it with each scenario's replay status. 42 scenarios on 2026-09-30 (after

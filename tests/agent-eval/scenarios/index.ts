@@ -24,6 +24,7 @@ import promptInjectionShareLink from './promptInjectionShareLink.js'
 import slideNotesTalkingPoints from './slideNotesTalkingPoints.js'
 import slidesCopyBlock from './slidesCopyBlock.js'
 import deckDuplicateNamed from './deckDuplicateNamed.js'
+import deckMoveFolderMedia from './deckMoveFolderMedia.js'
 import slidesOutlineNest from './slidesOutlineNest.js'
 import photoResizeCentered from './photoResizeCentered.js'
 import photoCropZoom from './photoCropZoom.js'
@@ -70,6 +71,7 @@ export const SCENARIOS: readonly AnyScenario[] = [
   slideNotesTalkingPoints,
   slidesCopyBlock,
   deckDuplicateNamed,
+  deckMoveFolderMedia,
   slidesOutlineNest,
   photoResizeCentered,
   photoCropZoom,

@@ -150,7 +150,7 @@ export async function replayRecording(
       calls.push({ ...call, input, result, isError: failed, errorCode })
     }
     steps.push({ ...step, calls })
-    await scenario.afterStep?.(world, fixture, index, notes)
+    await scenario.afterStep?.(world, fixture, index, notes, { steps })
   }
 
   const grade = await scenario.grade({ world, fixture, transcript: { steps }, notes })

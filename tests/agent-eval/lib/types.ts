@@ -94,6 +94,13 @@ export interface World {
   openEditor(deckId: string, options: OpenEditorOptions): Promise<void>
   /** Download a URL (export links). Live only. */
   fetchBinary(url: string): Promise<Uint8Array>
+  /**
+   * Approve a pending agent confirmation (the `confirmationId` of a
+   * `confirmation_required` error) as the user would on Narrative's
+   * confirmation page. Live only, and only on the BYPASS_AUTH dev stack,
+   * where a request without credentials is the dev user's browser session.
+   */
+  approveConfirmation(confirmationId: string): Promise<void>
 }
 
 /** One tool call the agent made, parsed from the transcript. */
@@ -199,8 +206,18 @@ export interface Scenario<F extends Fixture = Fixture> {
   prepare?(world: World, fixture: F, notes: Notes): Promise<void>
   /** The user's messages, sent one after another in one conversation. */
   steps(fixture: F): readonly string[]
-  /** Between steps (after step `index` finished, before the next is sent). */
-  afterStep?(world: World, fixture: F, index: number, notes: Notes): Promise<void>
+  /**
+   * Between steps (after step `index` finished, before the next is sent),
+   * with the transcript of the steps so far (e.g. to approve the
+   * confirmation the agent asked for).
+   */
+  afterStep?(
+    world: World,
+    fixture: F,
+    index: number,
+    notes: Notes,
+    transcript: Transcript,
+  ): Promise<void>
   grade(ctx: GradeContext<F>): Promise<Grade>
 }
 

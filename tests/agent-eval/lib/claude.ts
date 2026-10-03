@@ -54,8 +54,8 @@ export interface AgentRunOptions {
   steps: readonly string[]
   stepTimeoutMs: number
   maxBudgetUsd?: number
-  /** Called after step `index` finished and before the next one is sent. */
-  betweenSteps?: (index: number) => Promise<void>
+  /** Called after step `index` finished and before the next one is sent, with the steps so far. */
+  betweenSteps?: (index: number, transcript: Transcript) => Promise<void>
   /** Echo each tool call as it happens. */
   onToolCall?: (line: string) => void
   /** Files put in the agent's working directory before the first prompt. */
@@ -242,7 +242,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       return
     }
     try {
-      await opts.betweenSteps?.(done)
+      await opts.betweenSteps?.(done, { steps: [...builder.steps] })
     } catch (err) {
       builder.warnings.push(`between steps ${done} and ${done + 1}: ${(err as Error).message}`)
     }
