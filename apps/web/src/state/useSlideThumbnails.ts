@@ -22,6 +22,10 @@
  *   differently are re-rendered. The first slide's thumbnail is uploaded as
  *   the deck's preview (SlidesPanel), so one rendered before the tokens
  *   arrived must not stay the last one.
+ * - A failed render is retried with backoff (state/thumbnailRetry.ts): a few
+ *   attempts per slide, and none while the renderer keeps failing for every
+ *   slide — those wait for the next render that succeeds. Only a render
+ *   rejected because this hook let its renderer go (unmount) stays silent.
  *
  * Usage:
  *   const thumbnails = useSlideThumbnails(slideIds)
@@ -38,6 +42,7 @@ import type { SlideMutationContext } from '@narrative/slide-model'
 import type { SlideObject, SlideBackground } from '@narrative/shared'
 import { computeSlideNumber } from '@narrative/shared'
 import { useDeckCtx } from './useDeckCtx.js'
+import { decideThumbnailRetry, THUMBNAIL_RETRY_POLICY } from './thumbnailRetry.js'
 import { useSlides } from './useSlides.js'
 import type * as Y from 'yjs'
 
@@ -236,6 +241,28 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
   const inFlightRef = useRef<string | null>(null)
   const pendingDirtyRef = useRef<Map<string, RenderPriority>>(new Map())
 
+  /**
+   * Retry bookkeeping (state/thumbnailRetry.ts). `slideFailures` counts a
+   * slide's failed renders since its last render request from outside (an
+   * edit, a reorder, a token change — new content, new budget);
+   * `consecutiveFailures` counts failures across slides since the last
+   * success. A retry waits in `retryTimers`; a slide `parked` while the
+   * renderer looked gone is re-queued by the next success.
+   */
+  const slideFailuresRef = useRef<Map<string, number>>(new Map())
+  const consecutiveFailuresRef = useRef(0)
+  const retryTimersRef = useRef<Map<string, number>>(new Map())
+  const parkedRef = useRef<Set<string>>(new Set())
+
+  /** Forget a slide's failures and any retry it was waiting for. */
+  const clearRetry = useCallback((slideId: string): void => {
+    const timer = retryTimersRef.current.get(slideId)
+    if (timer !== undefined) window.clearTimeout(timer)
+    retryTimersRef.current.delete(slideId)
+    slideFailuresRef.current.delete(slideId)
+    parkedRef.current.delete(slideId)
+  }, [])
+
   const enqueue = useCallback((slideId: string, priority: RenderPriority): void => {
     if (inFlightRef.current === slideId) {
       // Its render already read the old state: run it once more after.
@@ -248,6 +275,45 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
       urgentRef.current.add(slideId)
     } else if (!urgentRef.current.has(slideId)) {
       backgroundRef.current.add(slideId)
+    }
+  }, [])
+
+  /**
+   * Record a failed render and decide its retry. Returns the delay before the
+   * slide is rendered again, or null when it is not retried from here (parked,
+   * given up, gone, or already asked for again).
+   */
+  const handleRenderFailure = useCallback((slideId: string, err: unknown): number | null => {
+    const slideFailures = (slideFailuresRef.current.get(slideId) ?? 0) + 1
+    slideFailuresRef.current.set(slideId, slideFailures)
+    consecutiveFailuresRef.current += 1
+    const consecutive = consecutiveFailuresRef.current
+    if (slideFailures === 1) console.error('[useSlideThumbnails] renderSlide failed:', err)
+    else console.warn(`[useSlideThumbnails] renderSlide failed again (${slideFailures}×):`, err)
+
+    if (!trackedSlideIdsRef.current.has(slideId)) return null
+    // Asked for again while this render ran: that render is the retry.
+    if (pendingDirtyRef.current.has(slideId)) return null
+
+    const decision = decideThumbnailRetry({ slideFailures, consecutiveFailures: consecutive })
+    switch (decision.kind) {
+      case 'retry':
+        return decision.delayMs
+      case 'park':
+        if (consecutive === THUMBNAIL_RETRY_POLICY.rendererFailureLimit) {
+          console.warn(
+            `[useSlideThumbnails] ${consecutive} thumbnail renders failed in a row; ` +
+              'retries wait until a render succeeds',
+          )
+        }
+        parkedRef.current.add(slideId)
+        return null
+      case 'give-up':
+        console.warn(
+          `[useSlideThumbnails] giving up on the thumbnail of ${slideId} after ` +
+            `${slideFailures} failed renders; the next change to the slide tries again`,
+        )
+        return null
     }
   }, [])
 
@@ -277,6 +343,15 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
     renderer
       .renderSlide(objects, background, slideNumber)
       .then((dataUrl) => {
+        // The renderer works: whatever was parked while it did not gets
+        // another go, with a fresh budget.
+        slideFailuresRef.current.delete(id)
+        consecutiveFailuresRef.current = 0
+        for (const parked of parkedRef.current) {
+          slideFailuresRef.current.delete(parked)
+          enqueue(parked, 'background')
+        }
+        parkedRef.current.clear()
         if (!trackedSlideIdsRef.current.has(id)) return
         setThumbnails((prev) => {
           const next = new Map(prev)
@@ -285,10 +360,24 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
         })
       })
       .catch((err: unknown) => {
-        if (err instanceof Error && err.message.includes('renderer has been destroyed')) {
-          return
-        }
-        console.error('[useSlideThumbnails] renderSlide failed:', err)
+        // This hook let the renderer go (unmount, StrictMode remount): its
+        // queued renders reject with "renderer has been destroyed" — expected.
+        if (rendererRef.current !== renderer) return
+        const delayMs = handleRenderFailure(id, err)
+        if (delayMs === null) return
+        // A retry is a background render that keeps the slide's failure
+        // count — unlike scheduleRender, which starts a new budget.
+        const previous = retryTimersRef.current.get(id)
+        if (previous !== undefined) window.clearTimeout(previous)
+        retryTimersRef.current.set(
+          id,
+          window.setTimeout(() => {
+            retryTimersRef.current.delete(id)
+            if (!trackedSlideIdsRef.current.has(id)) return
+            enqueue(id, 'background')
+            pump()
+          }, delayMs),
+        )
       })
       .finally(() => {
         inFlightRef.current = null
@@ -299,14 +388,17 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
         }
         pump()
       })
-  }, [enqueue])
+  }, [enqueue, handleRenderFailure])
 
   const scheduleRender = useCallback(
     (slideId: string, priority: RenderPriority = 'urgent'): void => {
+      // A request from outside (new content, a reorder, a token change)
+      // supersedes a pending retry and starts the slide's budget over.
+      clearRetry(slideId)
       enqueue(slideId, priority)
       pump()
     },
-    [enqueue, pump],
+    [clearRetry, enqueue, pump],
   )
 
   // ---------------------------------------------------------------------------
@@ -345,13 +437,17 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
     [scheduleRender],
   )
 
-  const removeDebouncer = useCallback((slideId: string): void => {
-    const db = debouncersRef.current.get(slideId)
-    db?.cancel()
-    debouncersRef.current.delete(slideId)
-    latestObjectsRef.current.delete(slideId)
-    latestBackgroundRef.current.delete(slideId)
-  }, [])
+  const removeDebouncer = useCallback(
+    (slideId: string): void => {
+      const db = debouncersRef.current.get(slideId)
+      db?.cancel()
+      debouncersRef.current.delete(slideId)
+      latestObjectsRef.current.delete(slideId)
+      latestBackgroundRef.current.delete(slideId)
+      clearRetry(slideId)
+    },
+    [clearRetry],
+  )
 
   // ---------------------------------------------------------------------------
   // Deck-level subscription — mounted once, never torn down until unmount.
@@ -584,6 +680,10 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
+    // The retry bookkeeping lives for the hook's lifetime (never reassigned).
+    const retryTimers = retryTimersRef.current
+    const slideFailures = slideFailuresRef.current
+    const parked = parkedRef.current
     return () => {
       for (const slideId of [...debouncersRef.current.keys()]) {
         removeDebouncer(slideId)
@@ -592,6 +692,11 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
       urgentRef.current.clear()
       backgroundRef.current.clear()
       pendingDirtyRef.current.clear()
+      for (const timer of retryTimers.values()) window.clearTimeout(timer)
+      retryTimers.clear()
+      slideFailures.clear()
+      parked.clear()
+      consecutiveFailuresRef.current = 0
       // React 18 StrictMode persists refs across the mount→unmount→remount cycle.
       // Reset lastSlideIdsRef so remount re-seeds all slides.
       lastSlideIdsRef.current = []

@@ -28,20 +28,34 @@ import type * as SlideModel from '@narrative/slide-model'
 // Hoist mock values so they are available when vi.mock factories are called
 // ---------------------------------------------------------------------------
 
-const { mockRenderSlide, mockRendererDestroy, mockThumbnailRenderer, slideSubscriptions } =
-  vi.hoisted(() => {
-    const mockRenderSlide = vi.fn()
-    const mockRendererDestroy = vi.fn()
-    const mockThumbnailRenderer = {
-      renderSlide: mockRenderSlide,
-      destroy: mockRendererDestroy,
-    }
+const {
+  mockRenderSlide,
+  mockRendererDestroy,
+  mockThumbnailRenderer,
+  slideSubscriptions,
+  deckEvents,
+} = vi.hoisted(() => {
+  const mockRenderSlide = vi.fn()
+  const mockRendererDestroy = vi.fn()
+  const mockThumbnailRenderer = {
+    renderSlide: mockRenderSlide,
+    destroy: mockRendererDestroy,
+  }
 
-    type ObjectsCallback = (changes: { snapshot: object[] }) => void
-    const slideSubscriptions = new Map<string, ObjectsCallback>()
+  type ObjectsCallback = (changes: { snapshot: object[] }) => void
+  const slideSubscriptions = new Map<string, ObjectsCallback>()
 
-    return { mockRenderSlide, mockRendererDestroy, mockThumbnailRenderer, slideSubscriptions }
-  })
+  /** The hook's deck-level listener: call it to report edited slides. */
+  const deckEvents: { emit: ((ids: Set<string>) => void) | null } = { emit: null }
+
+  return {
+    mockRenderSlide,
+    mockRendererDestroy,
+    mockThumbnailRenderer,
+    slideSubscriptions,
+    deckEvents,
+  }
+})
 
 // ---------------------------------------------------------------------------
 // Mock: createThumbnailRenderer
@@ -62,6 +76,14 @@ vi.mock('@narrative/slide-model', async (importOriginal) => {
 
   return {
     ...actual,
+    subscribeToDeckSlideEvents: vi
+      .fn()
+      .mockImplementation((_ctx: unknown, callback: (ids: Set<string>) => void) => {
+        deckEvents.emit = callback
+        return () => {
+          if (deckEvents.emit === callback) deckEvents.emit = null
+        }
+      }),
     subscribeToSlideObjects: vi
       .fn()
       .mockImplementation((_ctx: unknown, slideId: string, callback: ObjectsCallback) => {
@@ -338,5 +360,109 @@ describe('useSlideThumbnails', () => {
     // Called exactly once with the latest snapshot
     expect(mockRenderSlide).toHaveBeenCalledTimes(1)
     expect(mockRenderSlide).toHaveBeenCalledWith([makeSlideObject('e')])
+  })
+
+  // -------------------------------------------------------------------------
+  // Retry after a failed render (state/thumbnailRetry.ts)
+  // -------------------------------------------------------------------------
+
+  /** Let the deferred renderer start and the first render settle. */
+  async function startRenderer(): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+  }
+
+  it('retries a failed render with backoff, and the thumbnail arrives', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockRenderSlide
+      .mockRejectedValueOnce(new Error('[ThumbnailRenderer] render failed: geometry'))
+      .mockResolvedValue(STUB_URL_A)
+    const { getThumbnails } = renderWithContext(['slide-1'])
+    await startRenderer()
+    expect(mockRenderSlide).toHaveBeenCalledTimes(1)
+    expect(getThumbnails()['slide-1']).toBeUndefined()
+    expect(error).toHaveBeenCalledTimes(1)
+
+    // Not before the first backoff delay (1 s)…
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(900)
+    })
+    expect(mockRenderSlide).toHaveBeenCalledTimes(1)
+    // …and then once.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200)
+    })
+    expect(mockRenderSlide).toHaveBeenCalledTimes(2)
+    expect(getThumbnails()['slide-1']).toBe(STUB_URL_A)
+  })
+
+  it('stops retrying a slide once its budget is spent', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockRenderSlide.mockRejectedValue(new Error('[ThumbnailRenderer] render failed: geometry'))
+    renderWithContext(['slide-1'])
+    await startRenderer()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000)
+    })
+    // The first render and four retries, then nothing more.
+    expect(mockRenderSlide).toHaveBeenCalledTimes(5)
+    expect(warn).toHaveBeenLastCalledWith(expect.stringContaining('giving up on the thumbnail'))
+  })
+
+  it('parks retries while every render fails, and resumes them after a success', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockRenderSlide.mockRejectedValue(new Error('[ThumbnailRenderer] render failed: geometry'))
+    const { getThumbnails } = renderWithContext(['slide-1', 'slide-2'])
+    await startRenderer()
+
+    // Six failures in a row (both slides, three each) mark the renderer as
+    // gone: no further retries, however long it stays that way.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000)
+    })
+    const callsWhileGone = mockRenderSlide.mock.calls.length
+    expect(callsWhileGone).toBeLessThanOrEqual(7)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('failed in a row'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000)
+    })
+    expect(mockRenderSlide).toHaveBeenCalledTimes(callsWhileGone)
+
+    // The renderer works again: an edit to slide 1 renders it, and the
+    // parked slide 2 — which nobody touched — follows.
+    mockRenderSlide.mockResolvedValue(STUB_URL_B)
+    act(() => {
+      deckEvents.emit?.(new Set(['slide-1']))
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600)
+    })
+    expect(getThumbnails()).toEqual({ 'slide-1': STUB_URL_B, 'slide-2': STUB_URL_B })
+  })
+
+  it('stays silent about renders rejected because the hook let its renderer go', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let rejectRender!: (err: Error) => void
+    mockRenderSlide.mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectRender = reject
+        }),
+    )
+    const { unmount } = renderWithContext(['slide-1'])
+    await startRenderer()
+    expect(mockRenderSlide).toHaveBeenCalledTimes(1)
+
+    unmount()
+    await act(async () => {
+      rejectRender(new Error('[ThumbnailRenderer] renderer has been destroyed'))
+      await vi.advanceTimersByTimeAsync(60_000)
+    })
+    expect(error).not.toHaveBeenCalled()
+    expect(mockRenderSlide).toHaveBeenCalledTimes(1)
   })
 })
