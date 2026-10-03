@@ -303,9 +303,11 @@ Fixed within step 1:
   creator's access can be revoked like anyone's (security H2).
 - `folder:<id>` is read-only for every browser connection; tokens change
   only through the server, which validates them (security M1).
-- Copying out of a master into another folder is an export and needs the
-  editor role in the component's folder; inside the folder a viewer role
-  is enough (security M2).
+- Copying out of a master into another folder was an export needing the
+  editor role there (security M2); since 2026-10-03 (Petr) any role in the
+  component's folder may copy a master's content anywhere — it arrives as
+  plain objects with copied media, and the component itself never leaves
+  its folder.
 - `moveDecks` moves only decks still in the source folder, all or none in
   one transaction (409 otherwise), and checks the deck owner role in one
   query (security L5, review 8).

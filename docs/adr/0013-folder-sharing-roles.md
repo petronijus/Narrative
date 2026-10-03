@@ -110,7 +110,9 @@ the rest of the folder.
   another folder (Petr, 2026-10-03): inside the folder they stay links,
   outside it they become copies the new owner keeps, also after losing
   access to the folder. A viewer or a deck guest can therefore keep copies
-  of the component media they could see. Removing a picture or video from
+  of the component media they could see. Likewise any member may copy a
+  master's content into another folder as plain objects; the component
+  itself never leaves its folder. Removing a picture or video from
   a master is a folder editor's, and hands it to the folder; deleting
   folder-owned media is the folder owner's.
 - Until step 4 the folder-scoped commands still declare the owner role, so an

@@ -508,11 +508,11 @@ export async function stageObjectInsert(
   ])
   if ('deckId' in source) await requireCopyAccess(deps, userId, source.deckId)
   else {
-    // Inside its folder a master is read by any member (a paste within the
-    // folder); copying it into another folder takes it out, which — like
-    // copying a deck (requireCopyAccess) — needs the editor role.
-    const required = sourceFolderId === targetFolderId ? 'viewer' : 'editor'
-    await requireComponentRole(deps.db, source.componentId, userId, required, {
+    // Whoever reads a master may copy its content, into its own folder or
+    // another one (Petr, 2026-10-03): what lands in the target is plain
+    // objects — the component itself never leaves its folder — and their
+    // media follows the copy rule (linked inside the folder, copied outside).
+    await requireComponentRole(deps.db, source.componentId, userId, 'viewer', {
       bypass: deps.bypass,
       unseen: 'not_found',
     })

@@ -119,7 +119,7 @@ export const objectInsertFromDeck = defineCommand({
     "what you may not read is skipped (skippedImages) — the other deck's fonts too, colour and text-style tokens are rebound to this folder's when the folders differ, " +
     "and links to the other document's slides are removed. Works on a master too (target componentId): the way " +
     'to bring pictures from a deck into a master. Copying out of a deck needs editor access to it (the same as ' +
-    'exporting it); out of a component, a role in its folder (editor when taken into another folder); into a ' +
+    'exporting it); out of a component, any role in its folder (its objects arrive as plain objects); into a ' +
     'component, the editor role in its folder.',
   input: z
     .strictObject({

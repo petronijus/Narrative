@@ -38,7 +38,9 @@ owner's prefix (`docs/deploy.md`, "Releasing linked component media").
   and a copy into another folder (paste, `deck.insertFrom`,
   `deck.duplicate`) copies the linked media too, for anyone who may read
   it — a cut and paste included; a picture the caller may not read is
-  reported as skipped. Moving a deck to
+  reported as skipped. The same goes for a master's content: any member of
+  its folder may paste it into a deck of another folder, where it arrives as
+  plain objects (the component itself stays in its folder). Moving a deck to
   another folder first copies its linked media into the deck and re-points
   the deck at the copies, so no reader meets a reference they cannot load;
   a copy that fails stops the move (503), and what collaborators linked

@@ -684,14 +684,13 @@ describe('stageObjectInsert between a deck and a component master', () => {
     expect(result).toMatchObject({ mediaRegistered: 0, skippedImages: 0 })
   })
 
-  it("refuses a viewer of the master's folder copying it into a deck of another folder (403)", async () => {
-    // Taking a master out of its folder is an export: it needs the editor role there.
+  it("answers someone outside the master's folder with 404, before copying anything", async () => {
     const script = scriptedDb({
       selects: [
         [{ folderId: 'f1' }], // the master's folder
         [{ folderId: 'f2' }], // the deck's folder: another one
         [component('cmp1', 'f1')],
-        [{ role: 'viewer' }],
+        [], // no role in f1
       ],
     })
     const err = await serviceErrorOf(
@@ -705,23 +704,24 @@ describe('stageObjectInsert between a deck and a component master', () => {
         },
       ),
     )
-    expect(err.status).toBe(403)
-    expect(err.message).toMatch(/editor role/)
+    expect(err.status).toBe(404)
     expect(script.writes).toEqual([])
     expect(script.remaining().selects).toBe(0)
     expect(send).not.toHaveBeenCalled()
   })
 
-  it("copies a master into a deck of another folder for an editor of the master's folder", async () => {
+  it("copies a master's content into a deck of another folder for a viewer of the master's folder", async () => {
+    // Its content may leave the folder with anyone who reads it; the picture
+    // arrives as the target deck's own copy.
     const script = scriptedDb({
       selects: [
         [{ folderId: 'f1' }], // the master's folder
         [{ folderId: 'f2' }], // the deck's folder: another one
         [component('cmp1', 'f1')],
-        [{ role: 'editor' }],
+        [{ role: 'viewer' }],
         [], // the master's stored rows: its slide ids
         [placed(masterPicture, 'f1')],
-        [{ role: 'editor' }], // the picture's read check: the caller reads f1 (copyMedia)
+        [{ role: 'viewer' }], // the picture's read check: the caller reads f1 (copyMedia)
         [], // the two folders' token documents (no tokens to rebind)
         [],
       ],
