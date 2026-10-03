@@ -45,6 +45,7 @@ const mockDeleteDeck = vi.fn()
 const mockRenameDeck = vi.fn()
 const mockMoveDecks = vi.fn()
 const mockDuplicateDeck = vi.fn()
+const mockListShareLinks = vi.fn().mockResolvedValue([])
 
 const stableApiClient = {
   get listFolders() {
@@ -67,6 +68,9 @@ const stableApiClient = {
   },
   get duplicateDeck() {
     return mockDuplicateDeck
+  },
+  get listShareLinks() {
+    return mockListShareLinks
   },
 }
 
@@ -267,8 +271,9 @@ describe('FolderDecks', () => {
       expect(screen.getByText('Drafts')).toBeTruthy()
     })
 
-    // Confirm
+    // Confirm, once the share-link check has let the button go.
     const moveHereBtn = screen.getByRole('button', { name: 'Move here' })
+    await waitFor(() => expect(moveHereBtn).not.toBeDisabled())
     fireEvent.click(moveHereBtn)
 
     await waitFor(() => {

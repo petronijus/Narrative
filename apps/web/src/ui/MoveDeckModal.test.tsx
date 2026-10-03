@@ -5,9 +5,20 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MoveDeckModal } from './MoveDeckModal'
 import type { FolderSummary } from '../api/client'
+
+// The dialog reads the decks' share links (the warning); none here.
+const listShareLinks = vi.fn().mockResolvedValue([])
+vi.mock('../api/client.js', () => ({ useApi: () => ({ listShareLinks }) }))
+
+/** "Move here" waits for the share-link check; click it once it is enabled. */
+async function clickMoveHere(name: string | RegExp = 'Move here') {
+  const button = screen.getByRole('button', { name })
+  await waitFor(() => expect(button).not.toBeDisabled())
+  fireEvent.click(button)
+}
 
 const FOLDERS: FolderSummary[] = [
   {
@@ -74,7 +85,7 @@ describe('MoveDeckModal', () => {
     expect(names.some((n) => n?.includes('Work'))).toBe(false)
   })
 
-  it('offers only folders the user may add decks to (not one they only view)', () => {
+  it('offers only folders the user may add decks to (not one they only view)', async () => {
     const onConfirm = vi.fn()
     renderModal({
       currentFolderId: 'folder-work',
@@ -88,7 +99,7 @@ describe('MoveDeckModal', () => {
     const names = screen.getAllByRole('option').map((el) => el.textContent)
     expect(names.some((n) => n?.includes('Shared'))).toBe(false)
     // The first folder offered is pre-selected: the editor one, not the viewer one.
-    fireEvent.click(screen.getByRole('button', { name: /move here/i }))
+    await clickMoveHere(/move here/i)
     expect(onConfirm).toHaveBeenCalledWith('folder-drafts')
   })
 
@@ -113,11 +124,11 @@ describe('MoveDeckModal', () => {
     expect(personalOption.getAttribute('aria-selected')).toBe('true')
   })
 
-  it('calls onConfirm with selected folder id when Move here is clicked', () => {
+  it('calls onConfirm with selected folder id when Move here is clicked', async () => {
     const onConfirm = vi.fn()
     renderModal({ onConfirm, currentFolderId: 'folder-work' })
     // Drafts is pre-selected
-    fireEvent.click(screen.getByRole('button', { name: 'Move here' }))
+    await clickMoveHere()
     expect(onConfirm).toHaveBeenCalledWith('folder-drafts')
   })
 

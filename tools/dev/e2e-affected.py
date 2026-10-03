@@ -81,7 +81,12 @@ SYNC = [
     "sync-after-slide-switch",
     "share-link-folder-tokens",
 ]
-ACCESS = ["destructive-flows", "share-link-folder-tokens", "access-tokens"]
+ACCESS = [
+    "destructive-flows",
+    "share-link-folder-tokens",
+    "access-tokens",
+    "move-deck-share-link",
+]
 TOKENS = ["folder-tokens", "share-link-folder-tokens", "folder-font-preview"]
 COMPONENTS = [
     "component-master-upload",
@@ -173,6 +178,9 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/ui/ResizableSidebar.tsx", ["sidebar-holds-position"]),
     ("apps/web/src/ui/PerfHud*", ["idle-cpu-measurement"]),
     ("apps/web/src/ui/VersionChip.tsx", []),
+    # Around every route: a broken boundary or lazy wrapper blanks the app.
+    ("apps/web/src/ui/RouteErrorBoundary.tsx", SMOKE + ["route-load-failure"]),
+    ("apps/web/src/ui/lazyRoute.tsx", SMOKE + ["route-load-failure"]),
     ("apps/web/src/ui/ThemeToggle.tsx", []),
     ("apps/web/src/ui/UserMenu.tsx", ACCESS),
     ("apps/web/src/ui/handleVisuals.tsx", CANVAS_TOOLS),
@@ -216,6 +224,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/state/clipboard.ts", ["object-clipboard", "slide-clipboard"]),
     ("apps/web/src/state/useObjectClipboard.ts", ["object-clipboard"]),
     ("apps/web/src/state/useSlideThumbnails.ts", SLIDES_PANEL + TOKENS),
+    ("apps/web/src/state/thumbnailRetry.ts", SLIDES_PANEL + TOKENS),
     ("apps/web/src/state/deckThumbnailCache.ts", SLIDES_PANEL),
     ("apps/web/src/state/useSlides.ts", SLIDES_PANEL + SYNC),
     ("apps/web/src/state/useAnimations.ts", PRESENT),
