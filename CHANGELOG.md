@@ -6,6 +6,70 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+No migration and no env var.
+
+### Added
+
+- **A page that fails to load shows a card instead of a blank screen.**
+  When the code of a page cannot be fetched (the network changed during
+  the load, or a deploy replaced the files), the editor used to unmount
+  and stay white. The lazy routes now sit in an error boundary
+  (`ui/RouteErrorBoundary.tsx`, `ui/lazyRoute.tsx`) with Retry, which
+  re-imports the page in place, and Reload. After a deploy the page
+  reloads by itself once per new version (`/version.json`).
+- **"Move to…" warns about share links.** Moving a deck that has an
+  active share link says that the link's holders will see the pictures
+  and videos of the destination folder's components.
+
+### Changed
+
+- **Components link their media inside a folder** (folder sharing, step 2
+  — [ADR 0013](docs/adr/0013-folder-sharing-roles.md), narrowing decision 3
+  of [ADR 0012](docs/adr/0012-component-owned-media.md)). A deck or a
+  master shows its own media plus the pictures and videos of its folder's
+  components and of the folder itself (`media/visibleMedia.ts`). A stamp,
+  or a paste out of a master in the same folder, now copies nothing; a
+  paste of deck objects into a master still copies the deck's own media,
+  and a copy into another folder (paste, `deck.insertFrom`,
+  `deck.duplicate`) copies the linked media too. Moving a deck to another
+  folder first copies its linked media into the deck and re-points the
+  deck at the copies, so no reader meets a reference they cannot load.
+  Deleting a component hands its pictures and videos to the folder instead
+  of deleting them, so the decks stamped from it keep working. Reading,
+  agent `media.url` / `media.status` and the PowerPoint export follow the
+  same rule. The copies 0.10.15 made stay as they are.
+
+### Fixed
+
+- **A slide thumbnail whose render failed stayed stale** until the slide
+  was edited again. Failed renders are retried (1, 2, 4, 8 s); when the
+  renderer looks gone, the slides wait for the next successful render
+  (`state/thumbnailRetry.ts`).
+- **The editor canvas could stop painting for good.** Tearing down a Pixi
+  application (`app.destroy(true, …)`) emptied Pixi's global pools, which
+  every renderer in the page shares, and destroyed draw batches another
+  live renderer was still using; that renderer then threw
+  `Cannot read properties of null (reading 'geometry')` on every frame and
+  the scheduler stopped. In production it followed a thumbnail renderer
+  unmounting (slides panel, presenter) or a promote-to-component, and has
+  done so since the first renderer releases. Applications are now torn
+  down without releasing the shared pools
+  (`renderer/pixiApplication.ts`); `RenderScheduler` skips a frame that
+  throws, rebuilds the render groups' instructions and retries, and stops
+  after 10 failures in a row until the next scene change; a thumbnail
+  render error is logged instead of passing for "renderer destroyed".
+  A lint rule (`narrative-pixi/application-destroy`) refuses an
+  application teardown outside `renderer/pixiApplication.ts`.
+- **Deleting a deck, a component or a folder left its files in storage.**
+  The AWS SDK (≥ 3.729) stopped sending `Content-MD5` on `DeleteObjects`,
+  and MinIO refuses the call without it, so every purge failed and only
+  logged "batch delete failed (orphans left)". The client adds the header
+  again (`media/s3Client.ts`). Files left behind on production before
+  this release are not swept.
+- **A deck delete could remove a font file its folder's other decks
+  still used.** Font clones share one storage key; a purge now removes
+  only keys no remaining row names.
+
 ## 0.10.16 — Folder roles; drag undo, parallel e2e (2026-10-02)
 
 Migrations 0030 (`folder_permissions`, every folder's owner its first

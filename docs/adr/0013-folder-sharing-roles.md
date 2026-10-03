@@ -4,7 +4,8 @@
 sharing a folder shows everything in it with no hierarchy inside, sharing a
 deck shows that deck only, the folder roles are the deck roles, the same
 roles bind agents over MCP, and component media is linked rather than copied
-inside a folder. Step 1 (the access core) is built; steps 2–5 are planned in
+inside a folder. Step 1 (the access core) shipped in 0.10.16; step 2
+(linked component media) is built; steps 3–5 are planned in
 [`plans/folder-sharing.md`](../plans/folder-sharing.md).
 **Scope**: `folder_permissions` (migration 0030), `apps/server/src/auth/permissions.ts`,
 `apps/server/src/services/shared.ts` (`requireFolderRole`,
@@ -98,6 +99,16 @@ the rest of the folder.
   its folder's token document, so everyone re-authenticates; revoking
   folder membership (step 3) must close the user's connections on the
   folder's decks, components and token document.
+- Since step 2 a deck's guests, share-link holders included, can read every
+  picture and video owned by the deck's folder or its components by id,
+  not only those the deck shows, and a share-linked deck moved into
+  another folder opens that folder's media to the link's holders.
+  Accepted (Petr, 2026-10-03): ids are `nanoid(16)`, so the exposure is
+  the ids a guest has already seen; the "Move to…" dialog warns when the
+  deck has an active share link.
+- Taking linked media into another folder needs the editor role on the
+  folder that owns it (Petr, 2026-10-03), the same bar as the component
+  content itself.
 - Until step 4 the folder-scoped commands still declare the owner role, so an
   agent of a folder editor is refused writes the web app allows.
 - Removing someone from a folder (step 3) leaves their deck grants in

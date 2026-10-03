@@ -298,3 +298,29 @@ d.folder_id WHERE d.owner_user_id <> f.owner_user_id`); expected 0.
 - Moving a deck between folders changes who sees it: it needs the owner
   role on the deck and editor on both folders.
 - No share link for a whole folder (anonymous access stays per deck).
+
+## Decided after the step 2 reviews (Petr, 2026-10-03)
+
+The code review and the security review of step 2 (2026-10-03) raised four
+questions; Petr's answers:
+
+- **Taking linked media out of a folder** (paste, `deck.insertFrom`,
+  `deck.duplicate` into another folder) needs the editor role on the
+  folder that owns it, as step 1 decided for component content. Without
+  it the asset is not copied and is reported as unresolved: a deck-only
+  editor who duplicates a stamped deck into their own folder gets the
+  stamped pictures unresolved.
+- **Deleting a picture or video of a master** detaches it and hands it to
+  the folder, as deleting the component does, so the stamps keep showing
+  it. Folder-owned media is deleted only by the folder's owner, or with
+  the folder.
+- **Undo or a run revert after a move** that brings back a reference to
+  the old folder's media is repaired: the deck remembers the folders it
+  was moved out of, and localisation runs again from them (only from
+  them, never for an arbitrary asset id) after a run revert and when the
+  document is stored.
+- **Deck guests read the folder's component and folder media by id**,
+  share-link holders included, and a share-linked deck moved into another
+  folder opens that folder's media to the link: accepted as designed
+  (ids are unguessable), recorded in ADR 0013; the "Move to…" dialog warns
+  when the deck has an active share link.
