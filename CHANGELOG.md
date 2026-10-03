@@ -6,6 +6,8 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+## 0.10.17 — Linked component media; a canvas that keeps painting (2026-10-04)
+
 Migration 0032 (`deck_moved_media`: the media copies a deck move made,
 created empty). One optional env var: `MEDIA_SWEEP_GRACE_MS` (default 15
 minutes) — storage sweeps keep files younger than this, so a video still
