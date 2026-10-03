@@ -32,6 +32,7 @@
  */
 
 import { expect, test, type Page } from '@playwright/test'
+import { PNG } from 'pngjs'
 
 const ENABLE_PIXEL_PERFECT = process.env['RUN_VISUAL_BASELINES'] === '1'
 
@@ -265,6 +266,104 @@ test.describe('Renderer — sampled thumbnail regressions', () => {
     expect(corner).not.toBeNull()
     expect(corner!.r).toBeGreaterThan(220)
     expect(corner!.b).toBeGreaterThan(220)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Page-wide Pixi state (renderer/pixiApplication.ts)
+// ---------------------------------------------------------------------------
+
+test.describe('Renderer — one page, several Pixi applications', () => {
+  /**
+   * Pixi keeps module-global pools (draw batches, render textures, canvases)
+   * that every Application in the page shares, and `renderer.destroy(true)`
+   * empties them — destroying the batches another, live renderer is still
+   * drawing with. The editor canvas then threw `Cannot read properties of
+   * null (reading 'geometry')` in `BatcherPipe.execute` on every frame and
+   * never painted again. Every app is torn down through
+   * `destroyPixiApplication` now, which leaves the pools alone.
+   *
+   * A thumbnail renderer is the second application here, exactly as the
+   * SlidesPanel, the presenter view and promote-to-component create and
+   * destroy one while the editor canvas is open.
+   */
+  test('tearing down another Pixi application leaves the editor canvas painting', async ({
+    page,
+  }) => {
+    test.setTimeout(45_000)
+    const renderErrors: string[] = []
+    page.on('console', (m) => {
+      if (m.type() === 'error' && m.text().includes('[RenderScheduler]'))
+        renderErrors.push(m.text())
+    })
+    const deckId = await createDeck(page)
+    try {
+      await page.setViewportSize({ width: 1920, height: 1080 })
+      await openDeckReady(page, deckId)
+      await page.evaluate(() => {
+        window.__narrative_test_api!.addRect({
+          id: 'rv-teardown',
+          x: 200,
+          y: 200,
+          w: 1500,
+          h: 700,
+          fill: 0xff2bd6,
+        })
+      })
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.__narrative_test_api!.sceneGraphHasMountedNode('rv-teardown')),
+        )
+        .toBe(true)
+      // Let the canvas and the sidebar thumbnail settle, so the canvas's
+      // draw batches have been through Pixi's pool.
+      const pink = await sampleThumbnailPixelWhenReady(page, 900, 500)
+      expect(pink.r).toBeGreaterThan(200)
+      await page.waitForTimeout(1000)
+
+      // A second application comes and goes, without drawing anything.
+      await page.evaluate(async () => {
+        const path = '/src/renderer/thumbnails.ts'
+        const { createThumbnailRenderer } = (await import(/* @vite-ignore */ path)) as {
+          createThumbnailRenderer: (opts?: { width?: number }) => Promise<{ destroy(): void }>
+        }
+        const other = await createThumbnailRenderer({ width: 200 })
+        other.destroy()
+      })
+
+      // The editor canvas still paints a change…
+      await page.evaluate(() => {
+        window.__narrative_test_api!.updateObject('rv-teardown', { fill: 0x00c8ff })
+      })
+      await expect
+        .poll(
+          async () => {
+            const box = await page.locator('.artboard').boundingBox()
+            if (box === null) return 0
+            const shot = PNG.sync.read(
+              await page.screenshot({
+                clip: { x: box.x, y: box.y, width: box.width, height: box.height },
+              }),
+            )
+            let cyan = 0
+            for (let i = 0; i < shot.data.length; i += 4) {
+              if (shot.data[i]! < 30 && shot.data[i + 1]! > 170 && shot.data[i + 2]! > 230) cyan++
+            }
+            return Math.min(cyan, 100_000)
+          },
+          { timeout: 10_000 },
+        )
+        .toBe(100_000)
+      // …and so does the sidebar's thumbnail renderer.
+      await expect
+        .poll(async () => (await sampleThumbnailPixel(page, 900, 500))?.r ?? 255, {
+          timeout: 10_000,
+        })
+        .toBeLessThan(60)
+      expect(renderErrors).toEqual([])
+    } finally {
+      await page.request.delete(`http://localhost:3001/decks/${deckId}`)
+    }
   })
 })
 

@@ -10,6 +10,12 @@ import {
   ONE_DOOR_PENDING,
   ONE_DOOR_RULES,
 } from './apps/web/eslint.one-door.js'
+import {
+  PIXI_DESTROY_FILES,
+  PIXI_DESTROY_IGNORES,
+  PIXI_DESTROY_PLUGIN,
+  PIXI_DESTROY_RULES,
+} from './apps/web/eslint.pixi-destroy.js'
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
@@ -79,6 +85,17 @@ export default [
     files: ONE_DOOR_FILES,
     ignores: [...ONE_DOOR_IGNORES, ...ONE_DOOR_PENDING.map((p) => p.file)],
     rules: ONE_DOOR_RULES,
+  },
+  // A Pixi Application is torn down only by destroyPixiApplication
+  // (apps/web/src/renderer/pixiApplication.ts): `app.destroy(true, …)`
+  // releases Pixi's page-wide pools under every other Application. A local
+  // rule, not no-restricted-syntax (which the one-door block owns, and which
+  // cannot tell an Application from a Texture): apps/web/eslint.pixi-destroy.js.
+  {
+    files: PIXI_DESTROY_FILES,
+    ignores: PIXI_DESTROY_IGNORES,
+    plugins: { 'narrative-pixi': PIXI_DESTROY_PLUGIN },
+    rules: PIXI_DESTROY_RULES,
   },
   // Server runtime code must log through pino (structured, leveled, parseable
   // by the prod log pipeline), NOT bare `console.*`. The exceptions below are

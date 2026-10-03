@@ -41,6 +41,7 @@ import { stripFilterEffectsTree } from './filterEffects.js'
 import { applyBackground } from './ArtboardBackground.js'
 import { getDefaultImageUrlResolver } from './imageUrl.js'
 import { patchHTMLTextRace } from './patchHTMLTextRace.js'
+import { destroyPixiApplication } from './pixiApplication.js'
 import { DEFAULT_BACKGROUND } from '@narrative/shared'
 import type { SlideBackground, SlideObject } from '@narrative/shared'
 import { setRenderingSlideNumber } from './slideNumberContext.js'
@@ -145,6 +146,30 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
   // ---------------------------------------------------------------------------
   // Internal render implementation
   // ---------------------------------------------------------------------------
+
+  /**
+   * One synchronous frame of the offscreen app. A frame that throws abandons
+   * this thumbnail (its temporary container goes with it) and the queue moves
+   * on; the next render adds a new container, so the stage's instructions are
+   * rebuilt from scratch.
+   *
+   * It is reported as a render failure, not as teardown: callers stay quiet
+   * about "renderer has been destroyed" only (useSlideThumbnails), and
+   * labelling every Pixi exception that way once hid that Pixi's page-wide
+   * pools had been released under this renderer (pixiApplication.ts) — its
+   * thumbnails silently stopped updating.
+   */
+  function renderFrame(slideContainer: Container): void {
+    try {
+      app.renderer.render(app.stage)
+    } catch (err) {
+      if (!slideContainer.destroyed) slideContainer.destroy({ children: true })
+      throw new Error(
+        `[ThumbnailRenderer] render failed: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      )
+    }
+  }
 
   async function renderSlideInternal(
     objects: SlideObject[],
@@ -274,19 +299,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     app.stage.addChild(slideContainer)
 
     // Render one frame synchronously — the offscreen app is not running a ticker.
-    // Wrap in try/catch because Pixi v8's HTMLTextPipe occasionally throws
-    // `_getFinalPadding of null` when a text node was destroyed mid-batch
-    // (we've seen it during SlidesPanel ↔ PresentLayout navigation while
-    // background thumbnail renders are in flight). Treat as a recoverable
-    // "abandon this thumbnail" condition so the queue keeps moving.
-    try {
-      app.renderer.render(app.stage)
-    } catch (err) {
-      if (!slideContainer.destroyed) slideContainer.destroy({ children: true })
-      throw new Error(
-        `[ThumbnailRenderer] renderer has been destroyed (${err instanceof Error ? err.message : String(err)})`,
-      )
-    }
+    renderFrame(slideContainer)
 
     // Pixi v8's HTMLText rasterizes its SVG asynchronously. The first
     // render() above kicks off that work but the Texture is still EMPTY
@@ -311,15 +324,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
         slideContainer.destroy({ children: true })
         throw new Error('[ThumbnailRenderer] renderer has been destroyed')
       }
-      // Same defensive try/catch as the first render above.
-      try {
-        app.renderer.render(app.stage)
-      } catch (err) {
-        if (!slideContainer.destroyed) slideContainer.destroy({ children: true })
-        throw new Error(
-          `[ThumbnailRenderer] renderer has been destroyed (${err instanceof Error ? err.message : String(err)})`,
-        )
-      }
+      renderFrame(slideContainer)
     }
 
     // Extract PNG. Pixi 8.x's extract.base64 returns Promise<string>; the
@@ -425,8 +430,10 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     destroy(): void {
       if (destroyed) return
       destroyed = true
-      // Destroy the offscreen Application and all GPU resources it holds.
-      app.destroy(true, { children: true, texture: true })
+      // Destroy the offscreen Application and all GPU resources it holds —
+      // but not Pixi's page-wide pools, which the editor canvas is drawing
+      // with (pixiApplication.ts).
+      destroyPixiApplication(app)
     },
   }
 }

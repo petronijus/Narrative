@@ -30,15 +30,30 @@
  *     runtime where the data flow already passes through.
  */
 
-import type { Application } from 'pixi.js'
+import type { Application, Container, RenderGroup } from 'pixi.js'
+
+/**
+ * Consecutive failed frames after which the scheduler stops retrying on its
+ * own. Below it, a failed frame schedules one retry on the next animation
+ * frame; at it, the canvas waits for the next real scene change (`markDirty`
+ * / `renderNow` from outside), so a renderer that keeps throwing costs at most
+ * this many frames (~170 ms at 60 Hz) and never spins in an error loop.
+ *
+ * Why 10, not 1: a recovery can take several frames. Measured on Pixi's
+ * destroyed-batch failure (pixiApplication.ts): the first frame throws on the
+ * dead instructions, and each rebuild after it uses up one dead pooled batch
+ * before it throws — a slide whose instructions held N batches renders again
+ * on frame N + 2.
+ */
+export const MAX_CONSECUTIVE_RENDER_FAILURES = 10
 
 export class RenderScheduler {
   private app: Application | null
   private rafHandle: number | null = null
   private destroyed = false
   private postRender: Array<() => void> = []
-  /** Set while renders keep failing, so a failure is reported once, not every frame. */
-  private failing = false
+  /** Failed frames since the last one that rendered (0 = healthy). */
+  private consecutiveFailures = 0
 
   constructor(app: Application) {
     this.app = app
@@ -105,18 +120,15 @@ export class RenderScheduler {
     try {
       app.renderer.render(app.stage)
     } catch (err) {
-      // A live renderer that throws is a bug, and it rarely throws once:
-      // Pixi leaves the render group half-updated, so every later frame
-      // fails too and the canvas stops drawing. This used to be swallowed
-      // as if it were teardown — which hid a canvas that went blank after
-      // a slide was duplicated. Report the first failure of each run.
-      if (!this.failing) {
-        this.failing = true
-        console.error('[RenderScheduler] render failed; the canvas stops updating', err)
-      }
+      this.renderFailed(app, err)
       return
     }
-    this.failing = false
+    if (this.consecutiveFailures > 0) {
+      console.warn(
+        `[RenderScheduler] rendering recovered after ${this.consecutiveFailures} failed frame(s)`,
+      )
+      this.consecutiveFailures = 0
+    }
     // Snapshot subscribers so an unsubscribe inside a callback can't
     // skip the next entry in the same render pass.
     const subs = this.postRender.slice()
@@ -127,6 +139,56 @@ export class RenderScheduler {
         console.error('[RenderScheduler] onAfterRender subscriber threw', err)
       }
     }
+  }
+
+  /**
+   * A live renderer threw mid-frame. Skip the frame, have Pixi rebuild its
+   * instructions, and retry — up to MAX_CONSECUTIVE_RENDER_FAILURES in a row.
+   *
+   * Pixi abandons a throwing frame half-way, and it replays a render group's
+   * instruction set until the scene's structure changes: an instruction set
+   * left half-built, or holding objects destroyed under it, fails the same
+   * way on every later frame. Until 2026-10 that stopped the canvas for good
+   * — one bad frame (Pixi's page-wide pools released under the live canvas,
+   * pixiApplication.ts) left it blank until a reload. So every render group
+   * is flagged to rebuild from the scene before the retry.
+   *
+   * Reported twice per streak at most: when it starts and when the retries
+   * run out; the frame that renders again ends the streak with a warning.
+   */
+  private renderFailed(app: Application, err: unknown): void {
+    this.consecutiveFailures += 1
+    const failures = this.consecutiveFailures
+    if (failures === 1) {
+      console.error('[RenderScheduler] render failed; skipping the frame and retrying', err)
+    }
+    rebuildInstructionsOnNextRender(app.stage)
+    if (failures < MAX_CONSECUTIVE_RENDER_FAILURES) {
+      this.markDirty()
+    } else if (failures === MAX_CONSECUTIVE_RENDER_FAILURES) {
+      console.error(
+        `[RenderScheduler] render failed ${failures} frames in a row; ` +
+          'no more retries until the scene changes',
+        err,
+      )
+    }
+  }
+}
+
+/**
+ * Flag every render group under `stage` (the stage's own and the nested
+ * ones) to rebuild its instruction set on the next render — what Pixi does
+ * itself when a child is added or removed.
+ */
+function rebuildInstructionsOnNextRender(stage: Container): void {
+  // Pixi types it as always set, but a stage gets its render group on its
+  // first render, and a torn-down or test-double stage has none.
+  const root: RenderGroup | null | undefined = stage.renderGroup
+  if (root == null) return
+  const pending: RenderGroup[] = [root]
+  for (let group = pending.pop(); group !== undefined; group = pending.pop()) {
+    group.structureDidChange = true
+    pending.push(...group.renderGroupChildren)
   }
 }
 

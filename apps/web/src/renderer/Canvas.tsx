@@ -27,6 +27,7 @@ import { OverlayCompositor } from './overlay/OverlayCompositor'
 import { RenderScheduler, setDefaultRenderScheduler } from './RenderScheduler'
 import { installPixiBindGroupPatch } from './pixiBindGroupPatch.js'
 import { patchHTMLTextRace } from './patchHTMLTextRace.js'
+import { destroyPixiApplication } from './pixiApplication.js'
 
 // Install the BindGroup crash workaround once at module load. See the
 // patch file for the full Pixi v8 bug writeup.
@@ -166,7 +167,10 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize, zoom = 1 }: CanvasP
       })
 
       if (cancelled) {
-        app.destroy(true, { children: true, texture: true })
+        // Unmounted while init() ran (in dev: StrictMode's first mount, which
+        // can resolve after the second mount has painted). Must not release
+        // Pixi's page-wide pools under the live canvas — pixiApplication.ts.
+        destroyPixiApplication(app)
         return
       }
 
@@ -316,7 +320,7 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize, zoom = 1 }: CanvasP
         // componentInstance on the slide. Swallow so the rest of the
         // editor unmount finishes; the Pixi GL context will be GC'd.
         try {
-          liveApp.destroy(true, { children: true, texture: true })
+          destroyPixiApplication(liveApp)
         } catch {
           // Pixi v8 TexturePool race during edit↔present navigation
           // (HTMLText texture mid-flight at SystemRunner emit time).
