@@ -16,9 +16,13 @@
  *      `elicitation/create` on the tool call's own stream with one required
  *      yes/no field. Only `accept` with the box ticked runs the command;
  *      `decline` or an unticked box refuse, and nothing runs. `cancel` (the
- *      question dismissed without an answer — headless Claude Code cancels
- *      every question), a timeout (5 min) or a failed request fall back to
- *      path 3: nothing runs, and the user may still approve on the page.
+ *      question dismissed without an answer), a timeout (5 min) or a failed
+ *      request fall back to path 3: nothing runs, and the user may still
+ *      approve on the page. Headless Claude Code (`claude -p`) declares form
+ *      elicitation but has no one to ask: earlier versions cancelled at once;
+ *      2.1.288 leaves the question open until the timeout (measured
+ *      2026-10-03), unless an `Elicitation` hook answers it (the agent eval's
+ *      does, tests/agent-eval/lib/claude.ts).
  *   2. URL-mode elicitation (client declared `elicitation.url`, MCP
  *      2025-11-25): a pending confirmation is created (agent/confirmations.ts)
  *      and the client is sent its Narrative page with `elicitation/create`
@@ -189,8 +193,8 @@ async function askWithForm(req: ConfirmRequest): Promise<ConfirmationOutcome> {
   if (result.action === 'accept' && result.content?.['confirm'] === true)
     return { ok: true, confirmation: { via: 'elicitation', commands: [req.def.id] } }
   if (result.action === 'cancel') {
-    // Dismissed without an answer — Claude Code in headless mode (`claude -p`)
-    // declares form elicitation but cancels every question. Not a "no": offer
+    // Dismissed without an answer (a client with no one to ask, such as
+    // headless Claude Code with an Elicitation hook). Not a "no": offer
     // the page, where only the signed-in user can approve. An explicit
     // decline (or an unticked box) stays final.
     return linkError(

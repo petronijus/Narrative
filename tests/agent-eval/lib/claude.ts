@@ -26,6 +26,8 @@
  *                                             2026-09-28, probes/listChanged.ts)
  *   ENABLE_CLAUDEAI_MCP_SERVERS=false         no claude.ai connectors
  *   --no-session-persistence                  nothing written to ~/.claude/projects
+ *   <workspace>/.claude/settings.json         one Elicitation hook that cancels every
+ *                                             MCP elicitation (ELICITATION_HOOK below)
  * The MCP config names the token as `${NARRATIVE_EVAL_TOKEN}`, which Claude
  * Code expands from the environment, so the secret never touches disk.
  * (docs/mcp.md registers with `claude mcp add --scope local`; that writes
@@ -34,7 +36,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { MCP_SERVER_NAME } from './mcpNames.js'
@@ -44,6 +46,32 @@ import type { Transcript, Usage } from './types.js'
 export const DEFAULT_STEP_TIMEOUT_MS = 8 * 60_000
 const KILL_GRACE_MS = 5_000
 const STDERR_TAIL = 4000
+
+/**
+ * Headless Claude Code declares form elicitation at initialize but has no one
+ * to show the question to, and since 2.1.x it no longer cancels it: it lets
+ * the request run until the server's timeout (CONFIRMATION_TIMEOUT_MS, 5 min,
+ * measured 2026-10-03 on 2.1.288 — deck-move-folder-media took 5m17s). The
+ * hook answers `cancel` at once, which Narrative treats as "this client could
+ * not ask" and answers with the URL confirmation a scenario approves through
+ * World.approveConfirmation. Not `decline`: that is the user's "no", final.
+ */
+export const ELICITATION_HOOK = {
+  hooks: {
+    Elicitation: [
+      {
+        hooks: [
+          {
+            type: 'command',
+            command: `echo '${JSON.stringify({
+              hookSpecificOutput: { hookEventName: 'Elicitation', action: 'cancel' },
+            })}'`,
+          },
+        ],
+      },
+    ],
+  },
+} as const
 
 export interface AgentRunOptions {
   mcpUrl: string
@@ -144,6 +172,10 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     }),
     { mode: 0o600 },
   )
+  // --setting-sources project reads <cwd>/.claude/settings.json: the only
+  // settings the agent runs with.
+  await mkdir(path.join(dir, '.claude'))
+  await writeFile(path.join(dir, '.claude', 'settings.json'), JSON.stringify(ELICITATION_HOOK))
   for (const [name, bytes] of Object.entries(opts.files ?? {})) {
     if (name.includes('/') || name.startsWith('.')) throw new Error(`workspace file name '${name}'`)
     await writeFile(path.join(dir, name), bytes)
