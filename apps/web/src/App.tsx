@@ -21,7 +21,7 @@
  *   folder, landing and auth routes stay eager.
  */
 
-import { Suspense, lazy } from 'react'
+import { Suspense } from 'react'
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { AuthProvider } from './state/AuthContext.js'
 import { ThemeProvider } from './state/ThemeContext.js'
@@ -37,49 +37,40 @@ import { ThemeToggle } from './ui/ThemeToggle.js'
 import { PerfHudToggle } from './ui/PerfHudToggle.js'
 import { PerfHud } from './ui/PerfHud.js'
 import { ACCESS_TOKENS_PATH } from './ui/UserMenu.js'
+import { lazyRoute } from './ui/lazyRoute.js'
+import { RouteErrorBoundary, RouteSpinner } from './ui/RouteErrorBoundary.js'
 
 // PERF-5: heavy editor routes, lazily loaded so vendor-pixi / vendor-tiptap
 // / vendor-gsap split into their own chunks and stay off the dashboard +
-// login critical path. Each module exports a named component, so we adapt
-// it to the { default } shape React.lazy expects.
-const DeckShell = lazy(() =>
-  import('./components/DeckShell.js').then((m) => ({ default: m.DeckShell })),
+// login critical path. `lazyRoute` is React.lazy that the error boundary can
+// re-arm after a failed chunk load (ui/lazyRoute.tsx); each module exports a
+// named component, which `pick` selects.
+const DeckShell = lazyRoute(
+  () => import('./components/DeckShell.js'),
+  (m) => m.DeckShell,
 )
-const DeckEditor = lazy(() =>
-  import('./pages/DeckEditor.js').then((m) => ({ default: m.DeckEditor })),
+const DeckEditor = lazyRoute(
+  () => import('./pages/DeckEditor.js'),
+  (m) => m.DeckEditor,
 )
-const DeckPresent = lazy(() =>
-  import('./pages/DeckPresent.js').then((m) => ({ default: m.DeckPresent })),
+const DeckPresent = lazyRoute(
+  () => import('./pages/DeckPresent.js'),
+  (m) => m.DeckPresent,
 )
 // Account settings: small, rarely visited — kept off the dashboard chunk.
-const AccessTokens = lazy(() =>
-  import('./pages/AccessTokens.js').then((m) => ({ default: m.AccessTokens })),
+const AccessTokens = lazyRoute(
+  () => import('./pages/AccessTokens.js'),
+  (m) => m.AccessTokens,
 )
 // The agent confirmation page: opened from a link an agent hands the user.
-const ConfirmAgentAction = lazy(() =>
-  import('./pages/ConfirmAgentAction.js').then((m) => ({ default: m.ConfirmAgentAction })),
+const ConfirmAgentAction = lazyRoute(
+  () => import('./pages/ConfirmAgentAction.js'),
+  (m) => m.ConfirmAgentAction,
 )
-const ComponentMasterEditor = lazy(() =>
-  import('./pages/ComponentMasterEditor.js').then((m) => ({
-    default: m.ComponentMasterEditor,
-  })),
+const ComponentMasterEditor = lazyRoute(
+  () => import('./pages/ComponentMasterEditor.js'),
+  (m) => m.ComponentMasterEditor,
 )
-
-/**
- * Suspense fallback while a lazy editor chunk downloads. Centred spinner —
- * same visual idiom (`animate-spin`) the upload/toolbar chrome already uses.
- */
-function RouteFallback() {
-  return (
-    <div
-      className="flex h-screen w-screen items-center justify-center"
-      role="status"
-      aria-label="Loading editor"
-    >
-      <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-600 border-t-blue-400" />
-    </div>
-  )
-}
 
 export function App() {
   return (
@@ -89,31 +80,35 @@ export function App() {
           <AuthProvider>
             {/* Single Suspense boundary: eager routes resolve synchronously
                 so the fallback only ever shows while a lazy editor chunk is
-                in flight. */}
-            <Suspense fallback={<RouteFallback />}>
-              <Routes>
-                {/* Public auth routes (callback is handled server-side). */}
-                <Route path="/auth/login" element={<AuthLogin />} />
-                <Route path="/auth/error" element={<AuthError />} />
+                in flight. The error boundary around it turns a failed chunk
+                load (or any route error) into a Retry / Reload card instead
+                of a blank page. */}
+            <RouteErrorBoundary>
+              <Suspense fallback={<RouteSpinner label="Loading editor" />}>
+                <Routes>
+                  {/* Public auth routes (callback is handled server-side). */}
+                  <Route path="/auth/login" element={<AuthLogin />} />
+                  <Route path="/auth/error" element={<AuthError />} />
 
-                {/* Protected routes — require session or share_token */}
-                <Route element={<ProtectedRoute />}>
-                  <Route path="/" element={<FoldersHome />} />
-                  <Route path="/folder/:folderId" element={<FolderDecks />} />
-                  <Route path="/folder/:folderId/settings" element={<FolderSettings />} />
-                  <Route path={ACCESS_TOKENS_PATH} element={<AccessTokens />} />
-                  <Route path="/confirm/:id" element={<ConfirmAgentAction />} />
-                  <Route
-                    path="/folder/:folderId/component/:componentId"
-                    element={<ComponentMasterEditor />}
-                  />
-                  <Route path="/deck/:id" element={<DeckShell />}>
-                    <Route index element={<DeckEditor />} />
-                    <Route path="present" element={<DeckPresent />} />
+                  {/* Protected routes — require session or share_token */}
+                  <Route element={<ProtectedRoute />}>
+                    <Route path="/" element={<FoldersHome />} />
+                    <Route path="/folder/:folderId" element={<FolderDecks />} />
+                    <Route path="/folder/:folderId/settings" element={<FolderSettings />} />
+                    <Route path={ACCESS_TOKENS_PATH} element={<AccessTokens />} />
+                    <Route path="/confirm/:id" element={<ConfirmAgentAction />} />
+                    <Route
+                      path="/folder/:folderId/component/:componentId"
+                      element={<ComponentMasterEditor />}
+                    />
+                    <Route path="/deck/:id" element={<DeckShell />}>
+                      <Route index element={<DeckEditor />} />
+                      <Route path="present" element={<DeckPresent />} />
+                    </Route>
                   </Route>
-                </Route>
-              </Routes>
-            </Suspense>
+                </Routes>
+              </Suspense>
+            </RouteErrorBoundary>
             {/* Global bottom-left chrome: auto-bumping build version, a
                 tri-state theme toggle (system / light / dark) and a
                 perf-HUD button. Hidden on present route — the presenter

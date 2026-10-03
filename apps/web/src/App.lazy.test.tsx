@@ -1,31 +1,32 @@
 /**
  * App.lazy.test.tsx
  *
- * PERF-5 coverage: the editor routes are React.lazy() behind a single
- * <Suspense> boundary. We can't cheaply mount the real <App> (it boots
+ * PERF-5 coverage: the editor routes are lazy (`lazyRoute`, a re-armable
+ * React.lazy) behind a single <Suspense> boundary. We can't cheaply mount the real <App> (it boots
  * Pixi + Hocuspocus), so we assert the two load-bearing properties the
  * change relies on:
  *
  *   1. The heavy route modules are NOT statically imported by App — they
  *      live behind dynamic import() (verified by a source-level check that
- *      App declares them via `lazy(() => import(...))`).
+ *      App declares them via `lazyRoute(() => import(...), pick)`).
  *   2. A lazy route element renders its Suspense fallback first, then the
  *      resolved component — i.e. the boundary actually catches the pending
  *      chunk and swaps in the real UI (the mechanism App uses).
  */
 
 import { describe, it, expect } from 'vitest'
-import { Suspense, lazy } from 'react'
+import { Suspense } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
+import { lazyRoute } from './ui/lazyRoute.js'
 import { resolve } from 'node:path'
 
 // vitest runs with cwd = the web package root (apps/web).
 const appSource = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8')
 
 describe('PERF-5 — App lazy-loads the heavy editor routes', () => {
-  it('declares the editor routes via lazy(() => import(...))', () => {
+  it('declares the editor routes via lazyRoute(() => import(...))', () => {
     // Each heavy route must be code-split, not a static top-level import.
     for (const mod of [
       './components/DeckShell.js',
@@ -39,7 +40,7 @@ describe('PERF-5 — App lazy-loads the heavy editor routes', () => {
         new RegExp(`^import\\s.*from\\s+'${mod.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`, 'm'),
       )
     }
-    expect(appSource).toContain('lazy(')
+    expect(appSource).toContain('lazyRoute(')
     expect(appSource).toContain('<Suspense')
   })
 
@@ -52,10 +53,9 @@ describe('PERF-5 — App lazy-loads the heavy editor routes', () => {
   })
 
   it('renders the Suspense fallback then the resolved lazy route', async () => {
-    const Lazy = lazy(() =>
-      Promise.resolve({
-        default: () => <div data-testid="resolved">Editor</div>,
-      }),
+    const Lazy = lazyRoute(
+      () => Promise.resolve({ Editor: () => <div data-testid="resolved">Editor</div> }),
+      (m) => m.Editor,
     )
 
     render(
