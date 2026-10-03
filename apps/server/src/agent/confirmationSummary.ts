@@ -11,12 +11,12 @@
  * Only facts the user may see are looked up: the host has already
  * authorised the user for the target, and every id in the input is resolved
  * WITHIN that target (a collaborator of this deck, an invite or link of this
- * deck, an asset of this deck or folder, a component of this folder, a
+ * deck, an asset of this deck, master or folder, a component of this folder, a
  * destination folder the user is a member of). Anything else is shown as the raw id,
  * so a model cannot use the page to look up a stranger's email.
  */
 
-import { and, count, eq } from 'drizzle-orm'
+import { and, count, eq, gt, isNull, or } from 'drizzle-orm'
 import type {
   AnyCommandDef,
   CommandTarget,
@@ -54,14 +54,19 @@ export interface ConfirmationLookups {
   invite(deckId: string, inviteId: string): Promise<string | null>
   /** A share link of `deckId` ("viewer link, created 27 Sep 2026"). */
   shareLink(deckId: string, linkId: string): Promise<string | null>
-  /** A media asset of the deck or the folder (file name or kind). */
-  asset(scope: { deckId?: string; folderId?: string }, assetId: string): Promise<string | null>
+  /** A media asset of the deck, the component master or the folder (file name or kind). */
+  asset(
+    scope: { deckId?: string; componentId?: string; folderId?: string },
+    assetId: string,
+  ): Promise<string | null>
   /** A component master of `folderId`. */
   componentInFolder(folderId: string, componentId: string): Promise<string | null>
   /** A folder `userId` is a member of (a destination). */
   memberFolder(userId: string, folderId: string): Promise<string | null>
   /** How many decks a folder holds. */
   folderDeckCount(folderId: string): Promise<number>
+  /** How many share links of `deckId` are active (not revoked, not expired). */
+  activeShareLinks(deckId: string): Promise<number>
 }
 
 const ROLE_WORDS: Readonly<Record<string, string>> = {
@@ -157,9 +162,11 @@ export async function buildConfirmationSummary(args: {
       shown = await lookups.asset(
         target.deckId !== undefined
           ? { deckId: target.deckId }
-          : target.folderId !== undefined
-            ? { folderId: target.folderId }
-            : {},
+          : target.componentId !== undefined
+            ? { componentId: target.componentId }
+            : target.folderId !== undefined
+              ? { folderId: target.folderId }
+              : {},
         value,
       )
     else if (key === 'componentId' && target.folderId !== undefined)
@@ -175,6 +182,28 @@ export async function buildConfirmationSummary(args: {
   if (def.id === 'folder.delete' && target.folderId !== undefined) {
     const n = await lookups.folderDeckCount(target.folderId)
     details.push({ label: 'Decks deleted with it', value: String(n) })
+  }
+  if (def.id === 'media.delete') {
+    // What removing it does differs by target (services/media.ts remove).
+    details.push({
+      label: 'What happens',
+      value:
+        target.componentId !== undefined
+          ? 'Detached from the master and handed to its folder: it is not deleted, the slides it was stamped on keep showing it, and the master no longer owns it'
+          : target.deckId === undefined && target.folderId !== undefined
+            ? "Deleted with its file: the folder's decks that still show it go blank"
+            : 'Deleted with its file: objects still showing it go blank',
+    })
+  }
+  if (def.id === 'deck.moveToFolder' && target.deckId !== undefined) {
+    // A share link follows the deck (ADR 0013): its holders then read the
+    // destination folder's component media too.
+    const links = await lookups.activeShareLinks(target.deckId)
+    if (links > 0)
+      details.push({
+        label: 'Share links',
+        value: `${links} active: whoever holds one will also see the destination folder's component pictures and videos`,
+      })
   }
   for (const d of args.conditional?.details ?? [])
     details.push({ label: clip(d.label, 60), value: clip(d.value) })
@@ -247,7 +276,7 @@ export function failSafeLookups(
         return await fn(...args)
       } catch (err) {
         onError(name, err)
-        return name === 'folderDeckCount' ? 0 : null
+        return name === 'folderDeckCount' || name === 'activeShareLinks' ? 0 : null
       }
     }
   }
@@ -317,9 +346,11 @@ export function createDbConfirmationLookups(db: Database): ConfirmationLookups {
       const where =
         scope.deckId !== undefined
           ? and(eq(mediaAssets.id, assetId), eq(mediaAssets.deckId, scope.deckId))
-          : scope.folderId !== undefined
-            ? and(eq(mediaAssets.id, assetId), eq(mediaAssets.folderId, scope.folderId))
-            : undefined
+          : scope.componentId !== undefined
+            ? and(eq(mediaAssets.id, assetId), eq(mediaAssets.componentId, scope.componentId))
+            : scope.folderId !== undefined
+              ? and(eq(mediaAssets.id, assetId), eq(mediaAssets.folderId, scope.folderId))
+              : undefined
       if (where === undefined) return null
       const [row] = await db
         .select({ filename: mediaAssets.originalFilename, kind: mediaAssets.kind })
@@ -351,6 +382,19 @@ export function createDbConfirmationLookups(db: Database): ConfirmationLookups {
     },
     async folderDeckCount(folderId) {
       const [row] = await db.select({ n: count() }).from(decks).where(eq(decks.folderId, folderId))
+      return row?.n ?? 0
+    },
+    async activeShareLinks(deckId) {
+      const [row] = await db
+        .select({ n: count() })
+        .from(shareLinks)
+        .where(
+          and(
+            eq(shareLinks.deckId, deckId),
+            eq(shareLinks.revoked, false),
+            or(isNull(shareLinks.expiresAt), gt(shareLinks.expiresAt, new Date())),
+          ),
+        )
       return row?.n ?? 0
     },
   }

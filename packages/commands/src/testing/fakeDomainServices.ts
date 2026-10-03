@@ -408,17 +408,24 @@ export function createDomainFakes(
             detached: 0,
             unmatched: 0,
           })),
+          media: args.deckIds.map((deckId) => ({
+            deckId,
+            copied: 1,
+            unresolved: 0,
+            copyFailed: 0,
+          })),
         }
       },
       async moveDeck(args) {
         rDecks('moveDeck', args)
         const d = requireDeck(args.deckId)
         requireFolder(args.destFolderId)
-        if (d.folderId === args.destFolderId) return { movedCount: 0, tokens: [] }
+        if (d.folderId === args.destFolderId) return { movedCount: 0, tokens: [], media: [] }
         decks.set(d.id, { ...d, folderId: args.destFolderId })
         return {
           movedCount: 1,
           tokens: [{ deckId: d.id, rebound: 3, literalised: 1, detached: 0, unmatched: 0 }],
+          media: [{ deckId: d.id, copied: 1, unresolved: 0, copyFailed: 0 }],
         }
       },
       async activeEditors(args) {
@@ -455,6 +462,9 @@ export function createDomainFakes(
             }
           },
           async discard() {},
+          async settle() {
+            rDecks('settleObjectInsert', {})
+          },
         }
       },
     },
@@ -706,6 +716,13 @@ export function createDomainFakes(
         if (args.assetId !== 'asset-fixture' && args.assetId !== 'video_fixture') {
           throw notFound('asset', args.assetId)
         }
+        // A master's picture is handed to its folder; a deck's or a folder's own is deleted (the real service).
+        return {
+          outcome:
+            args.owner !== undefined && 'componentId' in args.owner
+              ? ('handedToFolder' as const)
+              : ('deleted' as const),
+        }
       },
     },
 
@@ -773,7 +790,7 @@ export function createDomainFakes(
       async prepareStamp(args) {
         rComponents('prepareStamp', args)
         const folderId = requireDeck(args.deckId).folderId ?? undefined
-        // The fixture master shows no pictures: nothing to copy.
+        // The fixture master shows no pictures: nothing to copy or catch up.
         return {
           master: {
             component: requireComponent(args.componentId, folderId),
@@ -782,6 +799,7 @@ export function createDomainFakes(
           mediaRegistered: 0,
           skippedImages: 0,
           async discard() {},
+          async settle() {},
         }
       },
       async access(args) {
@@ -861,6 +879,9 @@ export function createDomainFakes(
           },
           async discard() {
             rPptx('discard', {})
+          },
+          async settle() {
+            rPptx('settle', {})
           },
         }
       },

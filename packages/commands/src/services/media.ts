@@ -128,6 +128,26 @@ export interface MediaService {
     assetId: string
     folderId?: string | undefined
   }): Promise<FontUrlInfo>
-  /** Remove an asset's row: the deck's owner, or the owner of its component's folder. */
-  delete(args: { userId: string; assetId: string; owner?: DocumentRef | undefined }): Promise<void>
+  /**
+   * Remove an asset from its owner's media — of `owner` when named (a deck,
+   * a component master, or a folder's own media), else wherever it lives. A
+   * deck's asset is deleted (its row and stored files) by the deck's owner.
+   * A component master's picture or video is detached from the master and
+   * handed to its folder (the master no longer owns it; stamps keep showing
+   * it) by an editor of the folder. A folder's own picture or video is
+   * deleted only by the folder's owner. A folder font is refused here:
+   * folder.fonts.delete removes it.
+   */
+  delete(args: {
+    userId: string
+    assetId: string
+    owner?: MediaOwnerRef | undefined
+  }): Promise<{ outcome: MediaDeleteOutcome }>
 }
+
+/** Whose media an asset is: a deck's, a component master's, or a folder's own. */
+export type MediaOwnerRef = DocumentRef | { folderId: string }
+
+/** What removing an asset did: `deleted` (row and files gone) or `handedToFolder` (a master's, now its folder's). */
+export type MediaDeleteOutcome = 'deleted' | 'handedToFolder'
+

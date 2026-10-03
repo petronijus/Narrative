@@ -8,7 +8,10 @@
  *     update, attributed on the server to the run's origin;
  *   - every op of a run is logged, failures included;
  *   - what a command's `load` staged outside the document is released when
- *     the write never runs, and left to the handler once it did.
+ *     the write never runs, and left to the handler once it did; and it is
+ *     settled once after a committed write, never after a refused one;
+ *   - a deck command that also takes a folder (`acceptsFolder`) is
+ *     authorised on that folder with the role it names for it (`roleOn`).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -451,6 +454,7 @@ describe("what a command's load staged", () => {
     token: string
   }
   const release = vi.fn(async (_staged: Staged) => undefined)
+  const settleStaged = vi.fn(async (_staged: Staged) => undefined)
   const handled: string[] = []
   /** Runs inside `load`, after the staging (what goes wrong before the write). */
   let afterStaging: (() => Promise<void>) | null = null
@@ -479,6 +483,7 @@ describe("what a command's load staged", () => {
       return staged
     },
     release,
+    settle: settleStaged,
     handler(ctx, _input, staged) {
       if (failHandler) throw new CommandError('not_found', 'no such slide')
       handled.push(staged.token)
@@ -492,6 +497,7 @@ describe("what a command's load staged", () => {
 
   beforeEach(async () => {
     release.mockClear()
+    settleStaged.mockClear()
     handled.length = 0
     afterStaging = null
     failHandler = false
@@ -510,6 +516,7 @@ describe("what a command's load staged", () => {
     expect(handled).toEqual([])
     expect(release).toHaveBeenCalledTimes(1)
     expect(release).toHaveBeenCalledWith({ token: 'staged-media' })
+    expect(settleStaged).not.toHaveBeenCalled()
   })
 
   it('is released once when attaching the run to the document fails before the write', async () => {
@@ -522,6 +529,8 @@ describe("what a command's load staged", () => {
     expect(out).toMatchObject({ ok: false, error: { code: 'failed' } })
     expect(handled).toEqual([])
     expect(release).toHaveBeenCalledTimes(1)
+    // Never settled: the write was refused before it ran.
+    expect(settleStaged).not.toHaveBeenCalled()
     await settle()
     expect(human.remoteUpdates).toHaveLength(0)
   })
@@ -533,6 +542,22 @@ describe("what a command's load staged", () => {
     expect(handled).toEqual(['staged-media'])
     await eventually(() => human.doc.getArray('slides').length === 3)
     expect(release).not.toHaveBeenCalled()
+    // Settled exactly once, after the write committed (the stamp racing a
+    // move: what it linked follows the deck).
+    expect(settleStaged).toHaveBeenCalledExactlyOnceWith({ token: 'staged-media' })
+    expect(handled).toEqual(['staged-media'])
+  })
+
+  it('settles after the write and before the result returns', async () => {
+    let slidesWhenSettled = -1
+    settleStaged.mockImplementationOnce(async () => {
+      const doc = await world.hocuspocus.openDirectConnection('deck1')
+      slidesWhenSettled = doc.document!.getArray('slides').length
+      await doc.disconnect()
+    })
+    const out = await stage()
+    expect(out.ok).toBe(true)
+    expect(slidesWhenSettled).toBe(3)
   })
 
   it('is left to the handler when the handler itself refuses', async () => {
@@ -540,5 +565,72 @@ describe("what a command's load staged", () => {
     const out = await stage()
     expect(out).toMatchObject({ ok: false, error: { code: 'not_found' } })
     expect(release).not.toHaveBeenCalled()
+    expect(settleStaged).not.toHaveBeenCalled()
+  })
+})
+
+describe('a deck command that also takes a folder', () => {
+  // media.delete: a deck's asset for its owner, a master's picture for a
+  // folder editor (handed to the folder), a folder's own for the folder owner.
+  const deleteOn = (userId: string, target: HostRequest['target']) =>
+    exec({
+      actor: { userId },
+      target,
+      invocation: { command: 'media.delete', input: { assetId: 'a1' } },
+      confirmation: { via: 'elicitation', commands: ['media.delete'] },
+    })
+
+  it('is authorised on the folder, with the role it needs there', async () => {
+    const remove = vi
+      .spyOn(world.runtime.services.media, 'delete')
+      .mockResolvedValue({ outcome: 'deleted' })
+    world.grant('folder:f1', 'fo', 'owner')
+    world.grant('folder:f1', 'fe', 'editor')
+    const editor = await deleteOn('fe', { folderId: 'f1' })
+    expect(editor).toMatchObject({
+      ok: false,
+      error: {
+        code: 'forbidden',
+        message: expect.stringMatching(/needs the owner role; you are editor/),
+      },
+    })
+    const stranger = await deleteOn('nobody', { folderId: 'f1' })
+    expect(stranger).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+    expect(remove).not.toHaveBeenCalled()
+
+    const owner = await deleteOn('fo', { folderId: 'f1' })
+    expect(owner).toMatchObject({ ok: true, result: { outcome: 'deleted' } })
+    expect(remove).toHaveBeenCalledExactlyOnceWith({
+      userId: 'fo',
+      assetId: 'a1',
+      owner: { folderId: 'f1' },
+    })
+    // A folder has no document: none was opened.
+    expect(world.hocuspocus.getDocumentsCount()).toBe(0)
+  })
+
+  it('takes a master from a folder editor, and refuses a folder for a deck-only command', async () => {
+    const remove = vi
+      .spyOn(world.runtime.services.media, 'delete')
+      .mockResolvedValue({ outcome: 'handedToFolder' })
+    world.createDeck('component:c1')
+    world.grant('component:c1', 'ce', 'editor')
+    const onMaster = await deleteOn('ce', { componentId: 'c1' })
+    expect(onMaster).toMatchObject({ ok: true, result: { outcome: 'handedToFolder' } })
+    expect(remove).toHaveBeenCalledWith({
+      userId: 'ce',
+      assetId: 'a1',
+      owner: { componentId: 'c1' },
+    })
+    // On a deck the same editor is refused: deleting a deck's asset is its owner's.
+    const onDeck = await deleteOn('ed', { deckId: 'deck1' })
+    expect(onDeck).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+
+    const shareOnFolder = await exec({
+      actor: { userId: 'ed' },
+      target: { folderId: 'f1' },
+      invocation: { command: 'share.links.list', input: {} },
+    })
+    expect(shareOnFolder).toMatchObject({ ok: false, error: { code: 'no_target' } })
   })
 })

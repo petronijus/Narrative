@@ -6,8 +6,11 @@
  * copied — the pictures and videos of its folder: those of every component
  * in the folder (a stamp of a master points at the master's own picture)
  * and those the folder itself owns (a deleted component's media is handed
- * to its folder). Another deck's media is never visible: deck media is
- * copied whenever it crosses into another document.
+ * to its folder, so is a picture deleted from a master). Only pictures and
+ * videos link: the folder's fonts are not media a slide shows by asset id
+ * (they are read by family through the folder's font list). Another deck's
+ * media is never visible: deck media is copied whenever it crosses into
+ * another document.
  *
  * The copy rules (`services/deckInsert.ts` copyMedia), the read rules
  * (`services/media.ts`) and the PowerPoint export all ask this one question.
@@ -32,6 +35,26 @@ export interface MediaPlacement {
   folderId: string | null
   /** The folder of `componentId`'s component (null when the row is not a component's). */
   componentFolderId: string | null
+  kind: 'image' | 'video' | 'font'
+}
+
+/** The kinds a document may link from its folder (its components' and the folder's own). */
+export const LINKABLE_KINDS = ['image', 'video'] as const
+
+/** Whether `row` is a picture or video a document of its folder may link. */
+export function isLinkable(row: Pick<MediaPlacement, 'kind'>): boolean {
+  return (LINKABLE_KINDS as readonly string[]).includes(row.kind)
+}
+
+/**
+ * The folder whose documents may link `row` — its component's folder, or
+ * the folder that owns it — or null for a deck's row and anything that is
+ * not a picture or video.
+ */
+export function linkFolderOf(row: MediaPlacement): string | null {
+  if (row.deckId !== null || !isLinkable(row)) return null
+  if (row.componentId !== null) return row.componentFolderId
+  return row.folderId
 }
 
 /** Whether `holder` may show the media row placed at `row`. */
@@ -40,8 +63,7 @@ export function visibleIn(row: MediaPlacement, holder: MediaHolder): boolean {
   if ('deckId' in owner && row.deckId === owner.deckId) return true
   if ('componentId' in owner && row.componentId === owner.componentId) return true
   if (folderId === null) return false
-  if (row.componentId !== null) return row.componentFolderId === folderId
-  return row.folderId === folderId
+  return linkFolderOf(row) === folderId
 }
 
 /**
@@ -58,8 +80,13 @@ export function visibleInSql(holder: MediaHolder): SQL {
   if (folderId === null) return own
   return or(
     own,
-    and(isNotNull(mediaAssets.componentId), eq(components.folderId, folderId)),
-    eq(mediaAssets.folderId, folderId),
+    and(
+      inArray(mediaAssets.kind, [...LINKABLE_KINDS]),
+      or(
+        and(isNotNull(mediaAssets.componentId), eq(components.folderId, folderId)),
+        eq(mediaAssets.folderId, folderId),
+      ),
+    ),
   ) as SQL
 }
 

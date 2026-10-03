@@ -41,11 +41,13 @@ vi.mock('../media/bucketCleanup.js', () => ({
   purgeDeckBucketPrefix: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
   purgeExplicitKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
   purgeUnreferencedKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
+  sweepAgainAfterGrace: vi.fn(),
 }))
 
 const { resolveDeckAccess } = await import('../auth/permissions.js')
 const resolveMock = resolveDeckAccess as ReturnType<typeof vi.fn>
-const { purgeDeckBucketPrefix, purgeExplicitKeys } = await import('../media/bucketCleanup.js')
+const { purgeDeckBucketPrefix, purgeExplicitKeys, sweepAgainAfterGrace } =
+  await import('../media/bucketCleanup.js')
 const purgeMock = purgeDeckBucketPrefix as ReturnType<typeof vi.fn>
 const purgeKeysMock = purgeExplicitKeys as ReturnType<typeof vi.fn>
 
@@ -321,7 +323,12 @@ describe('DELETE /decks/:id', () => {
 
     expect(res.statusCode).toBe(204)
     expect(purgeMock).toHaveBeenCalledOnce()
-    expect(purgeMock).toHaveBeenCalledWith('deck-purge', expect.anything())
+    expect(purgeMock).toHaveBeenCalledWith(expect.anything(), 'deck-purge', expect.anything())
+    // And once more after the grace window (a transcode still writing its outputs).
+    const again = vi.mocked(sweepAgainAfterGrace).mock.calls[0]?.[0]
+    expect(again).toBeTypeOf('function')
+    await again!()
+    expect(purgeMock).toHaveBeenCalledTimes(2)
   })
 
   it('does not sweep bucket when delete returns 404', async () => {

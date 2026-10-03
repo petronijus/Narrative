@@ -48,6 +48,33 @@ describe('runMigrations', () => {
       'select unnest(enum_range(NULL::media_asset_kind))::text as v',
     )
     expect(kinds.rows.map((r) => r.v)).toContain('font')
+    // 0032: the linked media a deck took along when it moved — gone with the
+    // deck; the copy, the folder and the mover go to NULL (no dangling ids).
+    const moved = await pool.query<{ column_name: string; is_nullable: string }>(
+      "select column_name, is_nullable from information_schema.columns where table_name = 'deck_moved_media' order by column_name",
+    )
+    expect(moved.rows).toEqual([
+      { column_name: 'copy_asset_id', is_nullable: 'YES' },
+      { column_name: 'deck_id', is_nullable: 'NO' },
+      { column_name: 'from_folder_id', is_nullable: 'YES' },
+      { column_name: 'moved_at', is_nullable: 'NO' },
+      { column_name: 'moved_by_user_id', is_nullable: 'YES' },
+      { column_name: 'recopied_at', is_nullable: 'YES' },
+      { column_name: 'source_asset_id', is_nullable: 'NO' },
+    ])
+    const rules = await pool.query<{ column: string; table: string; rule: string }>(
+      `select kcu.column_name as column, ccu.table_name as table, rc.delete_rule as rule
+         from information_schema.referential_constraints rc
+         join information_schema.key_column_usage kcu on kcu.constraint_name = rc.constraint_name
+         join information_schema.constraint_column_usage ccu on ccu.constraint_name = rc.constraint_name
+        where kcu.table_name = 'deck_moved_media' order by kcu.column_name`,
+    )
+    expect(rules.rows).toEqual([
+      { column: 'copy_asset_id', table: 'media_assets', rule: 'SET NULL' },
+      { column: 'deck_id', table: 'decks', rule: 'CASCADE' },
+      { column: 'from_folder_id', table: 'folders', rule: 'SET NULL' },
+      { column: 'moved_by_user_id', table: 'users', rule: 'SET NULL' },
+    ])
 
     const second = await runMigrations(pool, folder)
     expect(second).toEqual({ applied: [], skipped: journal.entries.length })

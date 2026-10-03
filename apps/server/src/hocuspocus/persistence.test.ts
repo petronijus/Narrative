@@ -422,6 +422,34 @@ describe('PostgresPersistence', () => {
     expect(db._rowCountFor('comp-gone')).toBe(0)
   })
 
+  it('tells the server about every stored deck — not folders, masters or decks that are gone', async () => {
+    // The server checks there whether an undo brought back media of a folder
+    // the deck has left (services/localiseMedia.ts); it must not slow the store.
+    const db = makeFakeDb()
+    const onDeckStored = vi.fn()
+    const persistence = new PostgresPersistence({ db: db as never, onDeckStored })
+    addObject(doc, 'a')
+    await persistence.onStoreDocument(makePayload('deck:d-1', doc) as never)
+    await persistence.onStoreDocument(makePayload('legacy-bare', doc) as never)
+    await persistence.onStoreDocument(makePayload('folder:f-1', doc) as never)
+    await persistence.onStoreDocument(makePayload('component:c-1', doc) as never)
+    db._deleteOwner('d-gone')
+    await persistence.onStoreDocument(makePayload('deck:d-gone', doc) as never)
+    expect(onDeckStored.mock.calls).toEqual([['d-1'], ['legacy-bare']])
+
+    // A hook that throws never fails the store.
+    const throwing = new PostgresPersistence({
+      db: db as never,
+      onDeckStored: () => {
+        throw new Error('boom')
+      },
+    })
+    await expect(
+      throwing.onStoreDocument(makePayload('deck:d-2', doc) as never),
+    ).resolves.toBeUndefined()
+    expect(db._rowCountFor('d-2')).toBe(1)
+  })
+
   it('does not persist writes from a viewer context', async () => {
     const db = makeFakeDb()
     const persistence = new PostgresPersistence({ db: db as never })

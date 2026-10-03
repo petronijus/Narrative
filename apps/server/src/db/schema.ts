@@ -248,6 +248,49 @@ export const folderPermissions = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// deck_moved_media — the linked media a deck took along when it left a folder
+// (folder sharing, step 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * One linked picture or video a deck referenced when it moved out of a
+ * folder, and the copy the move made of it in the deck. A deck links its
+ * folder's pictures and videos without owning them; the move copies them
+ * into the deck, but an undo or an agent run's revert can bring an old
+ * reference back. The server then only re-points it at `copyAssetId`
+ * (services/localiseMedia.ts) — it never copies an asset without a row
+ * here. A fresh copy is made only when the recorded copy is gone, at most
+ * once per row (`recopiedAt`), on `movedByUserId`'s authority and copy
+ * budget. The copy, the folder and the mover go to NULL when deleted.
+ * Migration 0032.
+ */
+export const deckMovedMedia = pgTable(
+  'deck_moved_media',
+  {
+    deckId: text('deck_id')
+      .notNull()
+      .references(() => decks.id, { onDelete: 'cascade' }),
+    /** The linked asset the deck referenced (a reference documents may hold; may be deleted since). */
+    sourceAssetId: text('source_asset_id').notNull(),
+    /** The deck's copy of it; NULL once that copy was deleted. */
+    copyAssetId: text('copy_asset_id').references(() => mediaAssets.id, { onDelete: 'set null' }),
+    /** The folder the asset belonged to when the deck left it; NULL once deleted. */
+    fromFolderId: text('from_folder_id').references(() => folders.id, { onDelete: 'set null' }),
+    /** Who moved the deck (`users.sub`); NULL once the account is gone, or for a principal with no users row. */
+    movedByUserId: text('moved_by_user_id').references(() => users.sub, { onDelete: 'set null' }),
+    movedAt: timestamp('moved_at').defaultNow().notNull(),
+    /** Set when the server copied the asset once more because the recorded copy was gone. */
+    recopiedAt: timestamp('recopied_at'),
+  },
+  (t) => [
+    primaryKey({ columns: [t.deckId, t.sourceAssetId] }),
+    index('deck_moved_media_copy_idx').on(t.copyAssetId),
+    index('deck_moved_media_folder_idx').on(t.fromFolderId),
+    index('deck_moved_media_mover_idx').on(t.movedByUserId),
+  ],
+)
+
+// ---------------------------------------------------------------------------
 // share_links — public-token-based access (M10)
 // ---------------------------------------------------------------------------
 
@@ -278,9 +321,10 @@ export const shareLinks = pgTable(
  *   - Row is inserted by the media agent on tus upload finalize (phase 2).
  *   - ON DELETE CASCADE from decks ensures rows are removed when a deck is deleted.
  *   - DELETE /decks/:id and DELETE /folders/:id both call
- *     `purgeDeckBucketPrefix(deckId)` after the cascade so MinIO blobs
+ *     `purgeDeckBucketPrefix(db, deckId)` after the cascade so MinIO blobs
  *     under `decks/<deckId>/` (originals, HLS bundles, thumbnails,
- *     folder fonts, untracked HLS segments) are swept too.
+ *     untracked HLS segments) are swept too — except files another media
+ *     row still names, such as a pre-0009 folder font uploaded in the deck.
  *
  * imgproxy variants (thumb, display, original) are generated on demand from the
  * original stored at storageKey — no variant rows needed here.

@@ -36,11 +36,13 @@ vi.mock('../media/imgproxyUrl.js', () => ({
 // Deleting a component purges its storage; no MinIO here.
 const purgeComponentBucketPrefix = vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 })
 const purgeExplicitKeys = vi.fn().mockResolvedValue({ deleted: 0, errors: 0 })
+const sweepAgainAfterGrace = vi.fn()
 vi.mock('../media/bucketCleanup.js', () => ({
   purgeComponentBucketPrefix: (...a: unknown[]) => purgeComponentBucketPrefix(...a),
   purgeExplicitKeys: (...a: unknown[]) => purgeExplicitKeys(...a),
   purgeDeckBucketPrefix: vi.fn(),
   purgeUnreferencedKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
+  sweepAgainAfterGrace: (...a: unknown[]) => sweepAgainAfterGrace(...a),
 }))
 
 // ---------------------------------------------------------------------------
@@ -487,13 +489,20 @@ describe('DELETE /components/:id', () => {
 
     expect(res.statusCode).toBe(204)
     // Its pictures and videos go to the folder, files and all: the slides it
-    // was stamped on link them. Only its own thumbnail leaves storage.
+    // was stamped on link them. Its prefix is swept of what no row names any
+    // more — the thumbnail, leftovers (media/bucketCleanup.ts keeps the
+    // files the folder's rows name); the thumbnail sits under that prefix.
     expect(db._mediaHandedOver()).toEqual([{ componentId: null, folderId: 'folder-1' }])
-    expect(purgeComponentBucketPrefix).not.toHaveBeenCalled()
-    expect(purgeExplicitKeys).toHaveBeenCalledWith(
-      ['components/comp-1/thumb.jpg'],
+    expect(purgeComponentBucketPrefix).toHaveBeenCalledWith(
+      expect.anything(),
+      'comp-1',
       expect.anything(),
     )
+    expect(purgeExplicitKeys).not.toHaveBeenCalled()
+    // Swept again after the grace window: a video's outputs still being written.
+    expect(sweepAgainAfterGrace).toHaveBeenCalledWith(expect.any(Function), expect.anything(), {
+      componentId: 'comp-1',
+    })
   })
 
   it('deletes it for an editor of the folder, and refuses a viewer', async () => {

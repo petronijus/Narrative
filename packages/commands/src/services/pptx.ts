@@ -69,6 +69,12 @@ export interface PreparedSlideInsert {
    * write failed validation). Safe to call only if `apply` never ran.
    */
   discard(): Promise<void>
+  /**
+   * After the write committed: the media the slides link from the target
+   * deck's folder follows the deck if it changed folders meanwhile. Best
+   * effort: never throws.
+   */
+  settle(): Promise<void>
 }
 
 export type PptxExportResult =

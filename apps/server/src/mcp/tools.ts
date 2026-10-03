@@ -24,11 +24,14 @@
  *                transport arguments, bare (`{ type: 'string' }`):
  *                  deck scope    `deckId`; also `componentId` for commands
  *                                that accept a component master
- *                                (`acceptsComponent`) — exactly one of the
- *                                two, which the host enforces (JSON Schema's
- *                                oneOf is not allowed at the root of a
- *                                Claude tool), and the host refuses a
- *                                componentId for every other command
+ *                                (`acceptsComponent`) and `folderId` for
+ *                                those that accept a folder
+ *                                (`acceptsFolder`, media_delete) — exactly
+ *                                one of them, which the host enforces (JSON
+ *                                Schema's oneOf is not allowed at the root of
+ *                                a Claude tool), and the host refuses a
+ *                                componentId / folderId for every other
+ *                                command
  *                  folder scope  `folderId`
  *                  user scope    none
  *                  every tool    optional `runId`
@@ -319,13 +322,22 @@ function targetArgumentsFor(
   if (inputProperties.has('deckId'))
     throw new ToolSchemaError(`command '${def.id}': deck scope, but its input has its own deckId`)
   // Only commands that really work on a component master offer `componentId`
-  // (the registry's `acceptsComponent`); the host refuses it for the rest.
-  if (def.acceptsComponent !== true) return ['deckId'] as const
-  if (inputProperties.has('componentId'))
+  // (the registry's `acceptsComponent`), and only those that work on a
+  // folder's own media `folderId` (`acceptsFolder`); the host refuses them
+  // for the rest.
+  if (def.acceptsComponent === true && inputProperties.has('componentId'))
     throw new ToolSchemaError(
       `command '${def.id}': accepts a component master as its target, but its input has its own componentId`,
     )
-  return ['deckId', 'componentId'] as const
+  if (def.acceptsFolder === true && inputProperties.has('folderId'))
+    throw new ToolSchemaError(
+      `command '${def.id}': accepts a folder as its target, but its input has its own folderId`,
+    )
+  return [
+    'deckId',
+    ...(def.acceptsComponent === true ? (['componentId'] as const) : []),
+    ...(def.acceptsFolder === true ? (['folderId'] as const) : []),
+  ] as const
 }
 
 /** Transport argument names: not part of what an example has to show. */

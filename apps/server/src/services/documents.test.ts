@@ -41,16 +41,27 @@ import { createPptxService } from './pptx.js'
 import { closeConnectionsForDocument, closeDeckConnections } from '../hocuspocus/connections.js'
 
 // Moving a deck copies the media it links from its old folder
-// (services/localiseMedia.ts, its own tests against Postgres); here only
-// that the move asks for it, before and after.
+// (services/localiseMedia.ts, its own tests against Postgres); here that the
+// move asks for it, before and after, and what it does with the answers.
+const LOCALISED_NOTHING = {
+  copied: 0,
+  repointed: 0,
+  unresolved: 0,
+  refused: 0,
+  copyFailed: 0,
+  replaced: new Set<string>(),
+}
 vi.mock('./localiseMedia.js', () => ({
-  localiseLinkedMedia: vi.fn().mockResolvedValue({ copied: 0, unresolved: 0 }),
+  localiseLinkedMedia: vi.fn(),
+  carryLinkedMediaAfterWrite: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../media/bucketCleanup.js', () => ({
   purgeDeckBucketPrefix: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
+  purgeComponentBucketPrefix: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
   purgeExplicitKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
   purgeUnreferencedKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
+  sweepAgainAfterGrace: vi.fn(),
 }))
 
 // The services close live WebSocket connections through the process-wide
@@ -69,6 +80,7 @@ let hp: Hocuspocus
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(localiseLinkedMedia).mockReset().mockResolvedValue(LOCALISED_NOTHING)
   persistence = new MemoryPersistence()
   hp = new Hocuspocus({
     quiet: true,
@@ -343,17 +355,132 @@ describe('decks.moveDecks', () => {
     expect(result).toEqual({
       movedCount: 1,
       tokens: [{ deckId: 'd1', rebound: 1, literalised: 0, detached: 0, unmatched: 0 }],
+      media: [{ deckId: 'd1', copied: 0, unresolved: 0, copyFailed: 0 }],
     })
     expect(firstFill(persistence.snapshots.get('d1'))).toEqual({ $token: 'colors.dst_brand' })
-    expect(script.writes[0]).toMatchObject({
-      kind: 'update',
-      table: 'decks',
-      values: { folderId: 'f_dst' },
-    })
+    // The move itself is the folder change alone: the copies and their
+    // record are the localisation's (deck_moved_media, its own tests).
+    expect(script.writes).toEqual([
+      expect.objectContaining({ kind: 'update', table: 'decks', values: expect.objectContaining({ folderId: 'f_dst' }) }),
+    ])
     // The linked media of the source folder: localised before the move, and
     // once more after it for anything linked meanwhile.
     const localise = { userId: 'u1', deckId: 'd1', fromFolderId: 'f_src', toFolderId: 'f_dst' }
     expect(vi.mocked(localiseLinkedMedia).mock.calls.map((c) => c[1])).toEqual([localise, localise])
+  })
+
+  it('moves nothing when a linked picture cannot be copied into the deck first', async () => {
+    vi.mocked(localiseLinkedMedia).mockResolvedValueOnce({
+      ...LOCALISED_NOTHING,
+      copied: 2,
+      copyFailed: 1,
+    })
+    const script = scriptedDb({
+      selects: [
+        [SRC],
+        [{ role: 'owner' }],
+        [DST],
+        [{ role: 'editor' }],
+        [{ id: 'd1', folderId: 'f_src' }],
+      ],
+    })
+    const err = await serviceErrorOf(
+      createDecksService(deps(script.db)).moveDecks(moveArgs(['d1'])),
+    )
+    expect(err.status).toBe(503)
+    expect(err.message).toMatch(/could not be copied into it, so no deck changed folders/)
+    expect(err.message).toMatch(/copies already made are reused/)
+    expect(script.writes).toEqual([])
+    expect(closedDecks).not.toHaveBeenCalled()
+    expect(vi.mocked(localiseLinkedMedia)).toHaveBeenCalledTimes(1)
+  })
+
+  it('moves nothing when a linked picture may not be copied by the mover', async () => {
+    vi.mocked(localiseLinkedMedia).mockResolvedValueOnce({
+      ...LOCALISED_NOTHING,
+      unresolved: 1,
+      refused: 1,
+    })
+    const script = scriptedDb({
+      selects: [
+        [SRC],
+        [{ role: 'owner' }],
+        [DST],
+        [{ role: 'editor' }],
+        [{ id: 'd1', folderId: 'f_src' }],
+      ],
+    })
+    const err = await serviceErrorOf(
+      createDecksService(deps(script.db)).moveDecks(moveArgs(['d1'])),
+    )
+    expect(err.status).toBe(403)
+    expect(err.message).toMatch(/may not be copied by you, so no deck changed folders/)
+    expect(script.writes).toEqual([])
+    expect(closedDecks).not.toHaveBeenCalled()
+  })
+
+  it('counts copies an earlier attempt made, reused, as taken along', async () => {
+    vi.mocked(localiseLinkedMedia)
+      .mockResolvedValueOnce({ ...LOCALISED_NOTHING, copied: 1, repointed: 2 })
+      .mockResolvedValueOnce(LOCALISED_NOTHING)
+    const script = scriptedDb({
+      selects: [
+        [SRC],
+        [{ role: 'owner' }],
+        [DST],
+        [{ role: 'editor' }],
+        [{ id: 'd1', folderId: 'f_src' }],
+        [],
+        [],
+      ],
+      updates: [[{ id: 'd1' }]],
+    })
+    const result = await createDecksService(deps(script.db)).moveDecks(moveArgs(['d1']))
+    expect(result.media).toEqual([{ deckId: 'd1', copied: 3, unresolved: 0, copyFailed: 0 }])
+  })
+
+  it('moves despite references that were broken already, and reports what the catch-up could not copy', async () => {
+    vi.mocked(localiseLinkedMedia)
+      .mockResolvedValueOnce({ ...LOCALISED_NOTHING, copied: 1, unresolved: 2 })
+      .mockResolvedValueOnce({ ...LOCALISED_NOTHING, copied: 1, unresolved: 2, copyFailed: 1 })
+    const script = scriptedDb({
+      selects: [
+        [SRC],
+        [{ role: 'owner' }],
+        [DST],
+        [{ role: 'editor' }],
+        [{ id: 'd1', folderId: 'f_src' }],
+        [],
+        [],
+      ],
+      updates: [[{ id: 'd1' }]],
+    })
+    const result = await createDecksService(deps(script.db)).moveDecks(moveArgs(['d1']))
+    expect(result.movedCount).toBe(1)
+    expect(result.media).toEqual([{ deckId: 'd1', copied: 2, unresolved: 2, copyFailed: 1 }])
+  })
+
+  it('reports a catch-up that failed as a whole; the move stands', async () => {
+    vi.mocked(localiseLinkedMedia)
+      .mockResolvedValueOnce({ ...LOCALISED_NOTHING, copied: 1 })
+      .mockRejectedValueOnce(new Error('sync server gone'))
+    const script = scriptedDb({
+      selects: [
+        [SRC],
+        [{ role: 'owner' }],
+        [DST],
+        [{ role: 'editor' }],
+        [{ id: 'd1', folderId: 'f_src' }],
+        [],
+        [],
+      ],
+      updates: [[{ id: 'd1' }]],
+    })
+    const result = await createDecksService(deps(script.db)).moveDecks(moveArgs(['d1']))
+    expect(result.movedCount).toBe(1)
+    expect(result.media).toEqual([
+      { deckId: 'd1', copied: 1, unresolved: 0, copyFailed: 0, error: 'sync server gone' },
+    ])
   })
 
   it("lets the source folder's owner move a deck without reading the deck grants", async () => {

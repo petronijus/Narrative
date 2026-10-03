@@ -214,9 +214,19 @@ export class PostgresPersistence implements Extension {
    */
   private readonly lastStoredBytes = new Map<string, number>()
 
-  constructor(opts: { db: Database }) {
+  /**
+   * Called after a deck's snapshot was stored (not for folders or masters).
+   * Must return at once and not throw: whatever it starts runs off the
+   * store's path. The server checks there whether an undo or a revert
+   * brought back references to media of a folder the deck has left
+   * (services/localiseMedia.ts `checkMovedMediaAfterStore`).
+   */
+  private readonly onDeckStored: ((deckId: string) => void) | undefined
+
+  constructor(opts: { db: Database; onDeckStored?: (deckId: string) => void }) {
     this.db = opts.db
     this.maxDocBytes = resolveMaxDocBytes()
+    this.onDeckStored = opts.onDeckStored
   }
 
   async onLoadDocument(data: onLoadDocumentPayload): Promise<Y.Doc | void> {
@@ -383,6 +393,13 @@ export class PostgresPersistence implements Extension {
         },
         'stored snapshot',
       )
+      if (target.kind === 'deck' && this.onDeckStored !== undefined) {
+        try {
+          this.onDeckStored(target.id)
+        } catch (err) {
+          log.error({ id: target.id, err }, 'after-store check of a deck failed to start')
+        }
+      }
     } catch (err) {
       // CRITICAL: a swallowed persistence error means the in-memory Y.Doc
       // diverges from the database. Hocuspocus retries onStoreDocument on

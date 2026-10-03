@@ -26,7 +26,7 @@ export type {
   RouteRef,
   UndoPolicy,
 } from './types.js'
-export { ROLE_RANK } from './types.js'
+export { ROLE_RANK, requiredRole } from './types.js'
 export { CommandError, type CommandErrorCode, type CommandIssue } from './errors.js'
 export {
   CommandRegistry,

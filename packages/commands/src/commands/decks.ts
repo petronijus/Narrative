@@ -163,7 +163,8 @@ export const deckDuplicate = defineCommand({
   title: 'Duplicate deck',
   description:
     'Copy this deck whole into a NEW deck the user owns: every slide (objects, rich text, tables, animations, ' +
-    'speaker notes, outline), the deck guides and the media the slides show. Lands in `folderId` (one of the ' +
+    "speaker notes, outline), the deck guides and the media the slides show (into another folder, the folder's " +
+    'linked component media is copied too). Lands in `folderId` (one of the ' +
     "user's folders), else this deck's folder when the user owns it, else Drafts; in another folder, token " +
     'references are rebound as deck.moveToFolder does. Sharing is not copied. Needs editor access to this deck. ' +
     'Returns the new deck — target its `id` to edit the copy. To copy only some slides into an existing deck use ' +
@@ -261,17 +262,27 @@ export const deckMoveToFolder = defineCommand({
   domain: 'deck',
   title: 'Move deck to folder',
   description:
-    'Move the deck into another of your folders (folder.list), and rebind its design tokens to that folder: every ' +
-    'colour / text-style / effect reference is pointed at the destination token with the same name (case and ' +
-    'spacing ignored); a colour with no same-named token becomes its literal colour and a text style with none is ' +
-    'detached (the text keeps its look), so the deck looks the same afterwards. Returns how many references were ' +
-    'rebound, literalised and detached. Moving back does not re-link literalised colours, so confirm with the ' +
-    'user first. Only the deck owner can move it, and only between their own folders.',
+    'Move the deck into another folder (folder.list). Media it links from its current folder (a stamped ' +
+    "component's pictures and videos, the folder's own) is copied into it first, so the new folder can load it; " +
+    'if a copy fails nothing moves. Design tokens are rebound: each colour / text-style / effect reference points ' +
+    'at the destination token of the same name (case and spacing ignored); a colour without one becomes its ' +
+    'literal colour, a text style without one is detached (the text keeps its look). Returns the media copied / ' +
+    'unresolved and the references rebound, literalised and detached. Moving back re-links neither, so confirm ' +
+    "with the user first. Its active share links follow it and then show the new folder's component media too. " +
+    'Needs the owner role on the deck and the editor role in both folders.',
   input: z.strictObject({
     folderId: IdSchema.describe('Destination folder id'),
   }),
   output: z.object({
     moved: z.boolean().describe('False when the deck already was in that folder'),
+    media: z
+      .object({
+        copied: z.number().describe('Linked media copied into the deck'),
+        unresolved: z.number().describe('References broken before the move'),
+        copyFailed: z.number().describe('Media linked during the move that failed to copy'),
+        error: z.string().optional().describe('The catch-up after the move failed'),
+      })
+      .optional(),
     tokens: TokenRebindOutput.extend({
       error: z.string().optional().describe('Set when the references could not be rewritten'),
     }).optional(),
@@ -293,8 +304,19 @@ export const deckMoveToFolder = defineCommand({
       origin: ctx.origin,
     })
     const report = result.tokens.find((t) => t.deckId === deckId)
+    const media = result.media.find((m) => m.deckId === deckId)
     return {
       moved: result.movedCount > 0,
+      ...(media !== undefined
+        ? {
+            media: {
+              copied: media.copied,
+              unresolved: media.unresolved,
+              copyFailed: media.copyFailed,
+              ...(media.error !== undefined ? { error: media.error } : {}),
+            },
+          }
+        : {}),
       ...(report !== undefined
         ? {
             tokens: {

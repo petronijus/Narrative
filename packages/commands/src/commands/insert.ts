@@ -115,8 +115,8 @@ export const objectInsertFromDeck = defineCommand({
   description:
     'object.insert for objects read (query.slide / query.object) from ANOTHER deck (`fromDeck`) or component ' +
     'master (`fromComponent`): the pictures and videos they use come along — copied into this document, except ' +
-    "a component's within its own folder, which stays linked (a deck shows its folder's component media) — the " +
-    "other deck's fonts too, colour and text-style tokens are rebound to this folder's when the folders differ, " +
+    "a component's within its own folder, which stays linked (a deck shows its folder's component media); " +
+    "what you may not read is skipped (skippedImages) — the other deck's fonts too, colour and text-style tokens are rebound to this folder's when the folders differ, " +
     "and links to the other document's slides are removed. Works on a master too (target componentId): the way " +
     'to bring pictures from a deck into a master. Copying out of a deck needs editor access to it (the same as ' +
     'exporting it); out of a component, a role in its folder (editor when taken into another folder); into a ' +
@@ -138,7 +138,9 @@ export const objectInsertFromDeck = defineCommand({
     mediaRegistered: z
       .number()
       .describe('Media assets copied into this document (linked component media is not copied)'),
-    skippedImages: z.number().describe('Pictures whose file could not be copied'),
+    skippedImages: z
+      .number()
+      .describe('Pictures and videos not brought along: unreadable, gone or failed to copy'),
     droppedLinks: z.number().describe("Links to the other document's slides (removed)"),
     tokens: TokenRebindOutput.optional(),
   }),
@@ -178,6 +180,7 @@ export const objectInsertFromDeck = defineCommand({
     return { plan, prepared }
   },
   release: (loaded) => loaded.prepared.discard(),
+  settle: (loaded) => loaded.prepared.settle(),
   handler(ctx, input, loaded) {
     let objects
     try {

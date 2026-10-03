@@ -2,26 +2,29 @@
  * services/componentStaging.ts
  *
  * Moving objects between a deck and a component master on the server
- * (A2.12b). A component owns its pictures and videos (`media_assets.
- * component_id`, keys under `components/<id>/`), the same way a deck owns
- * its own, so both directions copy media like a paste between decks
- * (services/deckInsert.ts `rewriteForTarget`):
+ * (A2.12b; linked media since folder sharing step 2). A component owns its
+ * pictures and videos (`media_assets.component_id`, keys under
+ * `components/<id>/`), the same way a deck owns its own. A deck may show
+ * the pictures and videos of its folder's components without owning them
+ * (media/visibleMedia.ts), so (services/deckInsert.ts `rewriteForTarget`):
  *
  *   promote  deck slide objects → a new master. The deck is read live, the
  *            master built in a scratch document (`promoteToComponent` +
- *            `writeComponentMaster`), the media it shows copied into the
- *            component and links to the deck's slides removed. The
- *            component row and its media rows commit in one transaction;
- *            only then is the master written through the sync server. The
- *            slide is not changed.
- *   stamp    a master → a deck slide. The master's media is copied into the
- *            deck and registered before the deck is touched; the stamp
- *            itself is `stampMaster` (packages/commands), run by the
+ *            `writeComponentMaster`), the deck's own media it shows copied
+ *            into the component (a master must not depend on a deck) and
+ *            links to the deck's slides removed. The component row and its
+ *            media rows commit in one transaction; only then is the master
+ *            written through the sync server. The slide is not changed.
+ *   stamp    a master → a slide of a deck in the same folder. The master's
+ *            pictures and videos are linked, not copied; the stamp itself
+ *            is `stampMaster` (packages/commands), run by the
  *            `component.stamp` command inside the host's transaction or by
- *            `stampComponentIntoDeck` for the editor.
+ *            `stampComponentIntoDeck` for the editor. A deck that moved to
+ *            another folder while the stamp was staged is caught up after
+ *            the write (`settle`).
  *
- * Both need the deck's folder to be the user's: components are the folder
- * owner's (the rule of the `component:<id>` document).
+ * Promoting needs the editor role in the deck's folder; stamping a role in
+ * it (the rule of the `component:<id>` document) and the deck's editor role.
  *
  * `adoptMasterMedia` brings a master from before this rule under it (the
  * data migration `2026-09-30-component-media`).
@@ -57,6 +60,7 @@ import { readDocCopy, SERVER_EDIT_ORIGIN, writeLiveDoc } from './liveDocs.js'
 import { requireFolderRole } from './shared.js'
 import { copyMedia, pointAssetsAt, referencedAssets, rewriteForTarget } from './deckInsert.js'
 import { componentRecord, MAX_COMPONENT_NAME } from './components.js'
+import { carryLinkedMediaAfterWrite } from './localiseMedia.js'
 
 /**
  * The folder of `deckId`, where the deck's components live and in which the
@@ -224,7 +228,7 @@ export async function promoteComponent(
     master.destroy()
     await discardOwnedMedia({ db, owner: { componentId }, media: staged.media, log })
     // Copied video outputs live under the prefix, not in the rows' keys.
-    await purgeComponentBucketPrefix(componentId, log)
+    await purgeComponentBucketPrefix(db, componentId, log)
     throw err
   }
   if (row === undefined) throw new Error('promote: the component row was not created')
@@ -251,7 +255,7 @@ export async function promoteComponent(
       // (the rows' keys, then the prefix with the copied video outputs).
       await discardOwnedMedia({ db, owner: { componentId }, media: staged.media, log })
       await db.delete(components).where(eq(components.id, componentId))
-      await purgeComponentBucketPrefix(componentId, log)
+      await purgeComponentBucketPrefix(db, componentId, log)
     }
     throw err
   } finally {
@@ -269,9 +273,22 @@ export async function promoteComponent(
 
 /**
  * `component.stamp`'s load phase: `master` (read with the deck's rule — a
- * component of the deck's folder, in which the user is a member) with its media
- * copied into the deck and registered there. `discard` removes the copies
- * when the stamp is not written.
+ * component of the deck's folder, in which the user is a member) staged for
+ * the deck. Its pictures and videos are linked: the deck may show its
+ * folder's component media, so nothing is copied (only what the deck could
+ * not show otherwise would be, and registered before the deck is touched).
+ * `discard` removes such copies when the stamp is not written.
+ *
+ * The deck can move to another folder between this and the write. Checked
+ * here (the deck must still be in the master's folder, else 409) and again
+ * in `settle`, after the write: a deck that has moved by then gets the
+ * pictures the stamp linked copied in (services/localiseMedia.ts
+ * `carryLinkedMedia`), on the stamper's authority and copy budget, and
+ * recorded like a move's copies. Checking only before the write would leave
+ * a window between the check and the write; checking after it closes the
+ * race by construction — a move that commits later still has its own
+ * catch-up pass to come, which then reads a document holding the stamp
+ * (services/decks.ts moveDecks).
  */
 export async function prepareComponentStamp(
   deps: ServiceDeps,
@@ -285,6 +302,18 @@ export async function prepareComponentStamp(
   const { db, log } = deps
   const { userId, componentId, deckId, master } = args
   const folderId = master.component.folderId
+  // The folder the stamp is staged for is the deck's, read now.
+  const [deck] = await db
+    .select({ folderId: decks.folderId })
+    .from(decks)
+    .where(eq(decks.id, deckId))
+    .limit(1)
+  if (!deck) throw notFound('Deck not found')
+  if (deck.folderId !== folderId) {
+    throw conflict(
+      "The deck moved to another folder while the component was being stamped; stamp one of its new folder's components",
+    )
+  }
 
   const scratch = new Y.Doc()
   let staged: Awaited<ReturnType<typeof rewriteForTarget>>
@@ -323,6 +352,7 @@ export async function prepareComponentStamp(
   }
 
   let discarded = false
+  let settled = false
   return {
     master: { component: master.component, state },
     mediaRegistered: staged.media.mediaAssetRows.length,
@@ -332,16 +362,30 @@ export async function prepareComponentStamp(
       discarded = true
       await discardOwnedMedia({ db, owner: { deckId }, media: staged.media, log })
     },
+    async settle() {
+      if (settled) return
+      settled = true
+      // The stamp linked the master's pictures for the deck's folder as it
+      // was at staging; a deck that moved since gets them carried along.
+      await carryLinkedMediaAfterWrite(deps, {
+        userId,
+        deckId,
+        assetIds: staged.linked,
+        stagedFolderId: folderId,
+        what: `stamp of component ${componentId}`,
+      })
+    },
   }
 }
 
 /**
  * The editor's stamp (POST /decks/:id/stamp-component): `component.stamp`
  * as one server write onto slide `slideId`. The slide is looked up first,
- * so a stale slide costs no media copy; then `prepare` (the component
- * service's `prepareStamp`) stages the master's media. The stamp reaches
- * open editors as a remote change, like a paste from another deck; the
- * staged media is discarded when the deck was not touched.
+ * so a stale slide costs nothing; then `prepare` (the component service's
+ * `prepareStamp`) stages the master for the deck. The stamp reaches open
+ * editors as a remote change, like a paste from another deck; staged copies
+ * are discarded when the deck was not touched, and the stamp is settled
+ * once written (a deck that moved meanwhile gets its linked media copied).
  */
 export async function stampComponentIntoDeck(
   deps: ServiceDeps,
@@ -363,8 +407,9 @@ export async function stampComponentIntoDeck(
   }
   const prepared = await args.prepare()
   const wrote = { value: false }
+  let stamped: StampResult
   try {
-    return await writeLiveDoc(
+    stamped = await writeLiveDoc(
       deps,
       'deck',
       args.deckId,
@@ -381,6 +426,8 @@ export async function stampComponentIntoDeck(
     if (!wrote.value) await prepared.discard()
     throw err
   }
+  await prepared.settle()
+  return stamped
 }
 
 /**
@@ -464,7 +511,7 @@ export async function adoptMasterMedia(
       for (const [from, to] of staged.idMap) idMap.set(from, to)
       media.mediaAssetRows.push(...staged.rows)
       media.videoTranscodeJobs.push(...staged.videoJobs)
-      unresolved += staged.failed
+      unresolved += staged.unresolved + staged.copyFailed
     }
     if (idMap.size === 0) return { copied: 0, unresolved }
     await registerOwnedMedia({ db, owner: target, ownerUserId: owner.userId, media, log })

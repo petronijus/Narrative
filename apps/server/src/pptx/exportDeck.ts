@@ -11,11 +11,16 @@
  *   2. List slides as plain snapshots and resolve folder token references to
  *      concrete colours with the folder's (live) tokens; a reference to a
  *      token the folder no longer has is written as a neutral grey.
- *   3. Media is embedded only when it belongs to this deck: a row of the
- *      deck itself, or a font of the deck's folder (`deckAssetScope`). An
- *      asset id pointing at another deck's media — pasted in by a
- *      collaborator or an agent — is skipped like a missing asset, so an
- *      export can never be used to read media the exporter has no access to.
+ *   3. Media is embedded only when the deck may show it (`deckAssetScope`,
+ *      media/visibleMedia.ts): a row of the deck itself, or a picture or
+ *      video its folder lets every deck link (a component's, the folder's
+ *      own). Exporting is reading what the deck shows: whoever may export
+ *      the deck (its editors) reads its folder's linked media anyway, as a
+ *      content reader of the folder. An asset id merely named in the
+ *      document — pasted in by a collaborator or an agent — that points at
+ *      another deck's media, another folder's or the folder's fonts is
+ *      skipped like a missing asset, so an export can never be used to read
+ *      media the exporter has no access to.
  *   4. Hand the slides to `writeDeck` (pptx/ooxml/) — the OOXML writer that
  *      shares its units, vocabulary and element readers with the importer, so
  *      an exported deck imports back as the same model (pptx/roundtrip.test.ts)
@@ -108,10 +113,10 @@ export async function exportDeckToPptx(
 
 /**
  * The media rows an export of `deck` may embed: what the deck may show
- * (media/visibleMedia.ts) — its own assets, and its folder's: the pictures
- * and videos of the folder's components a stamp links, the folder's own (a
- * deleted component's) and the folder fonts every deck in it shares.
- * Anything else — another deck's image, another folder's — is out of scope.
+ * (media/visibleMedia.ts) — its own assets, and its folder's pictures and
+ * videos: those of the folder's components a stamp links and the folder's
+ * own (a deleted component's). Anything else — another deck's image,
+ * another folder's, a font row — is out of scope (fonts are not embedded).
  * Applies to a query that left-joins `components` on the row's component.
  */
 export function deckAssetScope(deck: { id: string; folderId: string | null }): SQL {

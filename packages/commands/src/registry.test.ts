@@ -15,7 +15,7 @@ import {
   commandTargetProblems,
   defineCommand,
 } from './registry.js'
-import type { CommandDef } from './types.js'
+import { requiredRole, type CommandDef } from './types.js'
 
 function def(overrides: Partial<CommandDef>): CommandDef {
   return defineCommand({
@@ -108,6 +108,55 @@ describe('commandTargetProblems', () => {
     expect(commandTargetProblems(def({ scope: 'deck', acceptsComponent: true }))).toEqual([])
     expect(commandTargetProblems(def({ scope: 'folder', acceptsComponent: true }))).toHaveLength(1)
     expect(commandTargetProblems(def({ scope: 'user', acceptsComponent: true }))).toHaveLength(1)
+  })
+
+  it('lets only deck-scoped server commands without a document accept a folder', () => {
+    expect(commandTargetProblems(def({ scope: 'deck', acceptsFolder: true }))).toEqual([])
+    expect(commandTargetProblems(def({ scope: 'folder', acceptsFolder: true }))).toHaveLength(1)
+    expect(
+      commandTargetProblems(
+        def({
+          scope: 'deck',
+          acceptsFolder: true,
+          acceptsComponent: true,
+          effects: ['doc', 'server'],
+        }),
+      ),
+    ).toEqual([
+      'acceptsFolder is for server commands that do not use a document (a folder has none)',
+    ])
+    expect(
+      commandTargetProblems(def({ scope: 'deck', acceptsFolder: true, readsDocument: true })),
+    ).toHaveLength(1)
+  })
+
+  it('takes a per-target role only for a target the command accepts', () => {
+    expect(
+      commandTargetProblems(
+        def({ scope: 'deck', acceptsComponent: true, roleOn: { component: 'editor' } }),
+      ),
+    ).toEqual([])
+    expect(commandTargetProblems(def({ scope: 'deck', roleOn: { component: 'editor' } }))).toEqual([
+      'roleOn.component needs acceptsComponent',
+    ])
+    expect(commandTargetProblems(def({ scope: 'deck', roleOn: { folder: 'owner' } }))).toEqual([
+      'roleOn.folder needs acceptsFolder',
+    ])
+    expect(commandTargetProblems(def({ scope: 'folder', roleOn: {} }))).toHaveLength(1)
+  })
+
+  it('needs the per-target role on that target, else the command role', () => {
+    const media = def({
+      scope: 'deck',
+      role: 'owner',
+      acceptsComponent: true,
+      acceptsFolder: true,
+      roleOn: { component: 'editor' },
+    })
+    expect(requiredRole(media, { deckId: 'd' })).toBe('owner')
+    expect(requiredRole(media, { componentId: 'c' })).toBe('editor')
+    expect(requiredRole(media, { folderId: 'f' })).toBe('owner')
+    expect(requiredRole(def({ scope: 'folder', role: 'editor' }), { folderId: 'f' })).toBe('editor')
   })
 
   it('requires every pure document edit to accept one', () => {

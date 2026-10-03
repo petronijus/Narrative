@@ -77,8 +77,8 @@ export class Guidance {
       `Start with ${t('deck.list')} to find the deck, then ${t('query.deck')} for its outline and ${t('query.slide')}`,
       'before editing.',
       `Targets: deck tools take \`deckId\` (from ${t('deck.list')}); a tool that also offers \`componentId\` works on a`,
-      `component master instead (id from ${t('component.list')}; send one of the two, and address the master's only`,
-      'slide as { "index": 0 }). Folder tools take `folderId` (from ' +
+      `component master instead (id from ${t('component.list')}; address the master's only slide as { "index": 0 }),`,
+      "one that offers `folderId` on that folder's own media; send exactly one. Folder tools take `folderId` (from " +
         `${t('folder.list')}); account tools take neither.`,
       `Every tool also takes an optional \`runId\`: a run you started with ${t('agent.startRun')} (default: your`,
       `current run on that deck or master). Call ${t('agent.startRun')} once per user request, group edits with`,

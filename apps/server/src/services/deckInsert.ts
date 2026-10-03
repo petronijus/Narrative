@@ -16,12 +16,15 @@
  *      "forbidden".
  *   2. The source is read LIVE (liveDocs.ts) into a scratch copy; every
  *      rewrite below happens in that copy, never in the source.
- *   3. Media is deck-scoped (a slide may only show assets whose row belongs
- *      to its deck), so every asset the copied slides reference is copied:
- *      the stored object(s) under the target deck's namespace
+ *   3. A slide may show its deck's own media and — linked — the pictures
+ *      and videos of its folder (media/visibleMedia.ts), so every asset the
+ *      copied slides reference that the target may not show is copied: the
+ *      stored object(s) under the target deck's namespace
  *      (`decks/<target>/…`, reaped with the target) and a new
  *      `media_assets` row for the target, and the references in the copied
- *      slides are pointed at the new ids. A finished video keeps its
+ *      slides are pointed at the new ids. Linked media leaves its folder as a
+ *      copy with anyone who may read it there; for anyone else it stays
+ *      unresolved and is counted (`copyMedia`). A finished video keeps its
  *      transcoded outputs; an unfinished one is transcoded again. The
  *      source deck's own fonts (deck-scoped copies of deleted folder fonts)
  *      that the copied text uses come along the same way. The rows are
@@ -66,7 +69,8 @@ import {
   type SlideInsertResult,
 } from '@narrative/commands'
 import { components, decks, mediaAssets } from '../db/schema.js'
-import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
+import { resolveDeckAccess, resolveFolderContentAccess, roleAtLeast } from '../auth/permissions.js'
+import { purgeExplicitKeys } from '../media/bucketCleanup.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { extensionFromMimeOrFilename } from '../media/uploadPolicy.js'
 import {
@@ -77,13 +81,19 @@ import {
   type StagedDeckMedia,
 } from '../pptx/importDeck.js'
 import { mediaOriginalPath, mediaOwnerPrefix, type MediaOwner } from '../media/mediaOwner.js'
-import { readPlacedMedia, visibleIn, type MediaHolder } from '../media/visibleMedia.js'
+import {
+  linkFolderOf,
+  readPlacedMedia,
+  visibleIn,
+  type MediaHolder,
+} from '../media/visibleMedia.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, forbidden, notFound } from './errors.js'
 import { readDocCopy, SERVER_EDIT_ORIGIN, writeLiveDoc } from './liveDocs.js'
-import { requireComponentRole } from './shared.js'
+import { bypassAliases, requireComponentRole } from './shared.js'
 import { applyTokenRebinding, planTokenRebinding, type RebindCounts } from './tokenRebind.js'
 import { spendMediaCopyBudget } from './mediaCopyBudget.js'
+import { carryLinkedMediaAfterWrite } from './localiseMedia.js'
 
 type MediaRow = typeof mediaAssets.$inferInsert
 const ASSET_KEYS = new Set(['assetId', 'posterAssetId'])
@@ -284,6 +294,8 @@ interface StagedCopy {
   newSlideIds: string[]
   /** Media copied into the target's namespace, not yet registered. */
   media: Pick<StagedDeckMedia, 'mediaAssetRows' | 'videoTranscodeJobs'>
+  /** Pictures and videos the target shows by link from its folder. */
+  linked: ReadonlySet<string>
   skippedImages: number
   tokens: RebindCounts | undefined
   droppedLinks: number
@@ -336,6 +348,8 @@ async function stageCopy(
 interface Rewritten {
   /** Media copied into the target's namespace, not yet registered. */
   media: Pick<StagedDeckMedia, 'mediaAssetRows' | 'videoTranscodeJobs'>
+  /** Pictures and videos the target shows by link from its folder (copyMedia `linked`). */
+  linked: ReadonlySet<string>
   skippedImages: number
   tokens: RebindCounts | undefined
   droppedLinks: number
@@ -345,10 +359,11 @@ interface Rewritten {
  * Steps 3–5 of the file header, on `records` (slides, or a scratch slide of
  * objects) in `scratch`, a detached document: point slide links at copied
  * slides (`slideIdMap`) or remove those into the source deck, copy the media
- * and fonts they use into the target's namespace, and rebind token
- * references when the folders differ. The source and the target are decks
- * or component masters (a promote copies deck media into a component, a
- * stamp copies it back out). Nothing is registered and no real document is
+ * and fonts they use into the target's namespace (what the target may not
+ * show already — copyMedia), and rebind token references when the folders
+ * differ. The source and the target are decks or component masters (a
+ * promote copies deck media into a component; a stamp within the folder
+ * links the master's media and copies nothing). Nothing is registered and no real document is
  * touched; on failure the copied media is discarded (the caller destroys
  * the scratch).
  */
@@ -374,6 +389,7 @@ export async function rewriteForTarget(
     let droppedLinks = 0
     let tokens: RebindCounts | undefined
     let skippedImages = 0
+    let linked: ReadonlySet<string> = new Set()
 
     scratch.transact(() => {
       // 4. Slide links: into the copies, or removed when they point at an uncopied source slide.
@@ -408,7 +424,10 @@ export async function rewriteForTarget(
       })
       media.mediaAssetRows = staged.rows
       media.videoTranscodeJobs = staged.videoJobs
-      skippedImages = staged.failed
+      linked = staged.linked
+      // Unresolved (incl. linked media the caller may not read) and
+      // failed copies alike: the references the target cannot show.
+      skippedImages = staged.unresolved + staged.copyFailed
       if (staged.idMap.size > 0) {
         scratch.transact(() => pointAssetsAt(records, staged.idMap))
       }
@@ -435,7 +454,7 @@ export async function rewriteForTarget(
       }
     }
 
-    return { media, skippedImages, tokens, droppedLinks }
+    return { media, linked, skippedImages, tokens, droppedLinks }
   } catch (err) {
     await discardOwnedMedia({ db: deps.db, owner: target, media, log: deps.log })
     throw err
@@ -509,7 +528,9 @@ export async function stageObjectInsert(
   }
 
   // The source's slide ids, read live: a link to one of them would jump
-  // nowhere in the target.
+  // nowhere in the target. (The assets the objects name need not be in the
+  // source any more — a cut: copyMedia checks each against what the source
+  // may show and what the caller may read.)
   const sourceDoc = await readDocCopy(
     deps,
     'deckId' in source ? 'deck' : 'component',
@@ -562,6 +583,7 @@ export async function stageObjectInsert(
   }
 
   let settled = false
+  let reconciled = false
   return {
     apply(objects: ObjectsMutationContext): ObjectInsertResult {
       if (settled) throw new Error('object insert: already applied or discarded')
@@ -586,6 +608,20 @@ export async function stageObjectInsert(
       settled = true
       scratch.destroy()
       await discardOwnedMedia({ db, owner: target, media: staged.media, log })
+    },
+    async settle() {
+      // A deck target that changed folders since staging gets the linked
+      // media of the folder it was staged for carried along (a master never
+      // changes folders).
+      if (reconciled || !('deckId' in target)) return
+      reconciled = true
+      await carryLinkedMediaAfterWrite(deps, {
+        userId,
+        deckId: target.deckId,
+        assetIds: staged.linked,
+        stagedFolderId: targetFolderId,
+        what: 'object insert',
+      })
     },
   }
 }
@@ -617,8 +653,9 @@ export async function insertObjectsFrom(
     plan,
   })
   const touched = { value: false }
+  let result: ObjectInsertResult
   try {
-    return await writeLiveDoc(
+    result = await writeLiveDoc(
       deps,
       'deckId' in args.target ? 'deck' : 'component',
       'deckId' in args.target ? args.target.deckId : args.target.componentId,
@@ -642,6 +679,9 @@ export async function insertObjectsFrom(
     if (!touched.value) await prepared.discard()
     throw err
   }
+  // Written: what it linked follows a deck that changed folders meanwhile.
+  await prepared.settle()
+  return result
 }
 
 export async function stageDeckInsert(
@@ -677,7 +717,8 @@ export async function stageDeckInsert(
     choose: (all) => chooseSlides(all, args),
     freshSlideIds: true,
   })
-  const { scratch, chosen, newSlideIds, media, skippedImages, tokens, droppedLinks } = staged
+  const { scratch, chosen, newSlideIds, media, linked, skippedImages, tokens, droppedLinks } =
+    staged
 
   // Rows committed (and transcodes enqueued) before anything reaches the target document.
   try {
@@ -689,6 +730,7 @@ export async function stageDeckInsert(
   }
 
   let settled = false
+  let reconciled = false
   return {
     slideCount: chosen.length,
     apply(deck: DeckMutationContext, at?: number): SlideInsertResult {
@@ -732,6 +774,19 @@ export async function stageDeckInsert(
       settled = true
       scratch.destroy()
       await discardDeckMedia({ db, deckId: targetDeckId, media, log })
+    },
+    async settle(): Promise<void> {
+      // The target deck may have changed folders since staging: what the
+      // slides link from the folder they were staged for follows it.
+      if (reconciled) return
+      reconciled = true
+      await carryLinkedMediaAfterWrite(deps, {
+        userId,
+        deckId: targetDeckId,
+        assetIds: linked,
+        stagedFolderId: target.folderId,
+        what: 'slide insert',
+      })
     },
   }
 }
@@ -823,6 +878,33 @@ function basename(key: string): string {
   return key.split('/').pop() ?? 'file'
 }
 
+/** What `copyMedia` staged, and what it left as it was. */
+export interface CopiedMedia {
+  /** Source asset id → the copy's id, for every referenced asset copied. */
+  idMap: Map<string, string>
+  /** The copies' rows, not yet inserted. */
+  rows: MediaRow[]
+  videoJobs: StagedDeckMedia['videoTranscodeJobs']
+  /**
+   * Referenced pictures and videos the target shows by link, kept as they
+   * are: its folder's component and folder media (a stamp, a paste within
+   * the folder). A target deck that changes folders before the write needs
+   * them carried along (`settle`, services/localiseMedia.ts).
+   */
+  linked: Set<string>
+  /**
+   * References that could not be taken along and stay as they were: an
+   * asset the source may not show either (another deck's, deleted), a font
+   * a master cannot take, linked media the caller may not read
+   * (`refused`), an unfinished video where no transcode may be queued.
+   */
+  unresolved: number
+  /** Of `unresolved`: linked media left behind because the caller may not read its folder. */
+  refused: number
+  /** Copies that failed in storage (the asset itself is fine; trying again may work). */
+  copyFailed: number
+}
+
 /**
  * Copy into `target`'s namespace the media of `assetIds` the target may not
  * show (media/visibleMedia.ts) — the source's own, or the linked media of
@@ -832,9 +914,22 @@ function basename(key: string): string {
  *
  *   - Media the target may already show is kept as it is (`idMap` leaves it
  *     out): a stamp or a paste out of a master within its folder links the
- *     master's pictures instead of copying them.
- *   - Media the source may not show either (another deck's, deleted) cannot
- *     be copied: its references stay unresolved and are counted (`failed`).
+ *     master's pictures instead of copying them (`linked`).
+ *   - Media the source may not show either (another deck's, another
+ *     folder's, deleted) cannot be copied: its references stay unresolved
+ *     and are counted. That is what bounds a client-named id: only what the
+ *     source document may show is ever a candidate.
+ *   - Every candidate passes a read check for the caller. The source's own
+ *     media is read through the source (the caller is an editor of the
+ *     source deck, or holds a role on the source master — the callers check
+ *     it); a component's or a folder's picture or video is read by the
+ *     folder's content readers — members, guests of its decks — and whoever
+ *     may read it may carry it into another folder as a copy (Petr,
+ *     2026-10-03). For anyone else it stays unresolved and is counted
+ *     (`refused`). A paste may name ids its live source no longer shows (a
+ *     cut): the read check is the rule, not what the source references now.
+ *   - `transcodes: false` (the server's own repairs) never queues a
+ *     transcode: an unfinished video stays unresolved instead.
  *
  * A component master has no fonts of its own (its folder's fonts cover it),
  * so no font crosses between a deck and a component.
@@ -853,22 +948,22 @@ export async function copyMedia(
     families: ReadonlySet<string>
     /**
      * Spend the caller's media copy budget (mediaCopyBudget.ts) when there is
-     * something to copy. Off only for the server's own one-time migrations.
+     * something to copy. Off for the server's own work (migrations, a deck
+     * moving folders).
      */
     budgeted?: boolean
+    /** Queue a transcode for a copied video that is not done yet (default true). */
+    transcodes?: boolean
   },
-): Promise<{
-  idMap: Map<string, string>
-  rows: MediaRow[]
-  videoJobs: StagedDeckMedia['videoTranscodeJobs']
-  failed: number
-}> {
+): Promise<CopiedMedia> {
   const { db, log } = deps
   const { source, target } = args
   const idMap = new Map<string, string>()
   const rows: MediaRow[] = []
   const videoJobs: StagedDeckMedia['videoTranscodeJobs'] = []
-  let failed = 0
+  let unresolved = 0
+  let refused = 0
+  let copyFailed = 0
 
   const ownedBy = (owner: MediaOwner) =>
     'deckId' in owner
@@ -877,18 +972,51 @@ export async function copyMedia(
   const from: MediaHolder = { owner: source, folderId: args.sourceFolderId }
   const to: MediaHolder = { owner: target, folderId: args.targetFolderId }
   const placed = await readPlacedMedia(db, [...args.assetIds])
-  // Already visible in the target: linked, kept as it is.
-  const kept = new Set(placed.filter((r) => visibleIn(r, to)).map((r) => r.id))
+  // Already visible in the target: kept as it is; linked when it is the
+  // folder's rather than the target's own.
+  const keptRows = placed.filter((r) => visibleIn(r, to))
+  const kept = new Set(keptRows.map((r) => r.id))
+  const linked = new Set(keptRows.filter((r) => linkFolderOf(r) !== null).map((r) => r.id))
   // Visible in the source but not in the target: copied. A font is not
   // copied into a component master (its folder's fonts cover it).
-  let referenced: MediaRow[] = placed
-    .filter((r) => !kept.has(r.id) && visibleIn(r, from))
-    .map(({ componentFolderId: _folder, ...row }) => row)
-  if ('componentId' in target) referenced = referenced.filter((r) => r.kind !== 'font')
-  // The rest — another deck's, deleted, or a font a master cannot take —
-  // stays unresolved, and is counted as such.
+  const candidates = placed.filter(
+    (r) => !kept.has(r.id) && visibleIn(r, from) && !('componentId' in target && r.kind === 'font'),
+  )
+  // The per-asset read check for linked media (see above), once per folder.
+  const readsFolder = new Map<string, boolean>()
+  const mayRead = async (folderId: string): Promise<boolean> => {
+    let allowed = readsFolder.get(folderId)
+    if (allowed === undefined) {
+      const access = await resolveFolderContentAccess(db, {
+        folderId,
+        userId: args.userId,
+        shareToken: null,
+        alsoAs: bypassAliases(deps.bypass),
+      })
+      allowed = access !== null
+      readsFolder.set(folderId, allowed)
+    }
+    return allowed
+  }
+  const referenced: MediaRow[] = []
+  for (const placedRow of candidates) {
+    const { componentFolderId: _folder, ...row } = placedRow
+    const linkFolder = linkFolderOf(placedRow)
+    if (linkFolder !== null && !(await mayRead(linkFolder))) {
+      refused++
+      continue
+    }
+    // Copying an unfinished video means transcoding it again: not on the
+    // server's own initiative.
+    if (args.transcodes === false && row.kind === 'video' && row.transcodeStatus !== 'done') {
+      continue
+    }
+    referenced.push(row)
+  }
+  // The rest — another deck's, deleted, a font a master cannot take, linked
+  // media the caller may not read, an unfinished video — stays unresolved.
   const resolved = new Set([...kept, ...referenced.map((r) => r.id)])
-  failed += [...args.assetIds].filter((id) => !resolved.has(id)).length
+  unresolved += [...args.assetIds].filter((id) => !resolved.has(id)).length
   // The source deck's own fonts that the copied text uses, unless the target
   // already has a deck font of the same face.
   const families = 'deckId' in source && 'deckId' in target ? [...args.families] : []
@@ -932,8 +1060,11 @@ export async function copyMedia(
       newId,
       ext,
     )
+    // What this asset's copy stored so far: removed again if it fails half way.
+    const written: string[] = []
     try {
       await copy(row.storageKey, storageKey)
+      written.push(storageKey)
       const outputs: Partial<MediaRow> = {}
       let transcodeStatus = row.transcodeStatus
       if (row.kind === 'video') {
@@ -943,6 +1074,7 @@ export async function copyMedia(
             if (typeof from !== 'string' || from === '') continue
             const to = `${mediaOwnerPrefix(target)}/videos/${newId}/${basename(from)}`
             await copy(from, to)
+            written.push(to)
             outputs[key] = to
           }
         } else {
@@ -974,12 +1106,14 @@ export async function copyMedia(
       })
       if (args.assetIds.has(row.id)) idMap.set(row.id, newId)
     } catch (err) {
-      failed++
+      copyFailed++
       log.warn(
         { err, assetId: row.id, source, target },
         'media copy: copying an asset failed; its references stay unresolved in the target',
       )
+      // Nothing names the half-made copy: its files go (fresh keys, no row).
+      if (written.length > 0) await purgeExplicitKeys(written, log)
     }
   }
-  return { idMap, rows, videoJobs, failed }
+  return { idMap, rows, videoJobs, linked, unresolved, refused, copyFailed }
 }

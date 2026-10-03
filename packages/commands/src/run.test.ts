@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 import { z } from 'zod'
 import { LOCAL_ORIGIN, agentOrigin, createUndoManager, listSlides } from '@narrative/slide-model'
@@ -379,5 +379,88 @@ describe('prepareInvocation — abandoning what load staged', () => {
       {},
     )
     await expect(abandoned.abandon()).resolves.toBeUndefined()
+  })
+})
+
+describe('prepareInvocation — settling what load staged after the write', () => {
+  function settlingRegistry(
+    settle: (loaded: { staged: string }) => Promise<void>,
+    handler: () => Record<string, never> = () => ({}),
+  ) {
+    return new CommandRegistry().register(
+      defineCommand({
+        id: 'object.settledProbe',
+        domain: 'object',
+        title: 'Settled probe',
+        description: 'Stages something in load and reconciles it once the write committed.',
+        input: z.object({}),
+        output: z.object({}),
+        role: 'editor',
+        effects: ['doc', 'server'],
+        undo: 'undoable',
+        confirm: 'never',
+        hosts: ['browser', 'server'],
+        implementedWith: [],
+        examples: [{ title: 'probe', input: {} }],
+        load: async () => ({ staged: 'stamp' }),
+        settle,
+        handler,
+      }),
+    )
+  }
+
+  const serverCtx = () =>
+    ctxFor(undefined, { host: 'server', services: {} as unknown as ServerServices })
+
+  it('settles once after a successful write, never before or without one', async () => {
+    const settled: string[] = []
+    const registry = settlingRegistry(async (loaded) => {
+      settled.push(loaded.staged)
+    })
+    const prepared = await prepareInvocation(registry, serverCtx(), 'object.settledProbe', {})
+    await prepared.settle()
+    expect(settled).toEqual([])
+    prepared.execute()
+    await prepared.settle()
+    await prepared.settle()
+    expect(settled).toEqual(['stamp'])
+
+    const abandoned = await prepareInvocation(registry, serverCtx(), 'object.settledProbe', {})
+    await abandoned.abandon()
+    await abandoned.settle()
+    expect(settled).toEqual(['stamp'])
+  })
+
+  it('does not settle a write that threw, and swallows a failing settle', async () => {
+    const settle = vi.fn(async () => {
+      throw new Error('storage down')
+    })
+    const failing = await prepareInvocation(
+      settlingRegistry(settle, () => {
+        throw new CommandError('not_found', 'gone')
+      }),
+      serverCtx(),
+      'object.settledProbe',
+      {},
+    )
+    expect(() => failing.execute()).toThrow(/gone/)
+    await failing.settle()
+    expect(settle).not.toHaveBeenCalled()
+
+    const ok = await prepareInvocation(
+      settlingRegistry(settle),
+      serverCtx(),
+      'object.settledProbe',
+      {},
+    )
+    ok.execute()
+    await expect(ok.settle()).resolves.toBeUndefined()
+    expect(settle).toHaveBeenCalledOnce()
+  })
+
+  it('runCommand settles after the write', async () => {
+    const settle = vi.fn(async () => undefined)
+    await runCommand(settlingRegistry(settle), serverCtx(), 'object.settledProbe', {})
+    expect(settle).toHaveBeenCalledOnce()
   })
 })

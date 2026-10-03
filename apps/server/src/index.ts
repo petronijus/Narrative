@@ -29,6 +29,7 @@ import path from 'path'
 import { db, pool } from './db/client.js'
 import { runMigrations } from './db/runMigrations.js'
 import { runDataMigrations } from './services/dataMigrations.js'
+import { checkMovedMediaAfterStore } from './services/localiseMedia.js'
 import { createHocuspocusServer } from './hocuspocus/index.js'
 import { registerHttpRoutes } from './http/registerRoutes.js'
 import {
@@ -259,6 +260,13 @@ const hocuspocus = createHocuspocusServer({
   bypass: bypassAuth,
   clientIpHeader: process.env['CLIENT_IP_HEADER'] || undefined,
   principalKeys,
+  // An undo in an editor can bring back references to media of a folder the
+  // deck has left: pointed at the deck's copies again after the store.
+  onDeckStored: (deckId) =>
+    checkMovedMediaAfterStore(
+      { db, log: app.log, bypass: bypassAuth, hocuspocus: () => hocuspocus },
+      deckId,
+    ),
 })
 
 // The web app's public origin: OAuth redirects back to it, and agents hand

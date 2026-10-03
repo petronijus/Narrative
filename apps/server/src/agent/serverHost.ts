@@ -67,6 +67,7 @@ import type { Document } from '@hocuspocus/server'
 import {
   CommandError,
   ROLE_RANK,
+  requiredRole,
   commandReadsFolderFonts,
   commandReadsFolderTokens,
   commandUsesDocument,
@@ -252,6 +253,7 @@ const NO_LOOKUPS: ConfirmationLookups = {
   componentInFolder: async () => null,
   memberFolder: async () => null,
   folderDeckCount: async () => 0,
+  activeShareLinks: async () => 0,
 }
 
 /** What an invalid call "needs": nothing — it never runs. */
@@ -274,11 +276,17 @@ function targetFor(def: AnyCommandDef, raw: CommandTarget): CommandTarget {
   const present = TARGET_KEYS.filter((k) => typeof raw[k] === 'string' && raw[k] !== '')
   const describe = (): string => (present.length === 0 ? 'none' : present.join(', '))
   if (scope === 'deck') {
+    // A deck command that also works on a folder's own media (`acceptsFolder`).
+    if (def.acceptsFolder === true && present.length === 1 && present[0] === 'folderId') {
+      return { folderId: raw.folderId! }
+    }
     const docKeys = present.filter((k) => k !== 'folderId')
     if (docKeys.length !== 1 || present.includes('folderId')) {
       throw new CommandError(
         'no_target',
-        `this command acts on a deck: name exactly one deckId (or componentId for a component master); got ${describe()}`,
+        `this command acts on a deck: name exactly one deckId (or componentId for a component master${
+          def.acceptsFolder === true ? ", or folderId for the folder's own media" : ''
+        }); got ${describe()}`,
       )
     }
     if (raw.deckId !== undefined) return { deckId: raw.deckId }
@@ -388,7 +396,8 @@ export class ServerHost {
   ): Promise<Role | null> {
     const { access } = this.deps
     if (scope === 'user') return 'owner'
-    if (scope === 'folder') return access.folderRole(target.folderId!, userId)
+    if (scope === 'folder' || target.folderId !== undefined)
+      return access.folderRole(target.folderId!, userId)
     if (target.componentId !== undefined) return access.componentRole(target.componentId, userId)
     return access.deckRole(target.deckId!, userId)
   }
@@ -415,10 +424,11 @@ export class ServerHost {
         'you do not have access to this target (or it does not exist)',
       )
     }
-    if (ROLE_RANK[role] < ROLE_RANK[def.role]) {
+    const needed = requiredRole(def, target)
+    if (ROLE_RANK[role] < ROLE_RANK[needed]) {
       throw new CommandError(
         'forbidden',
-        `command '${commandId}' needs the ${def.role} role; you are ${role}`,
+        `command '${commandId}' needs the ${needed} role; you are ${role}`,
       )
     }
     return { def, target, role }
@@ -760,7 +770,9 @@ export class ServerHost {
     const documentName = documentNameOf(target)
     if (documentName === null || !commandUsesDocument(def)) {
       const prepared = await prepareInvocation(this.deps.registry, ctx, commandId, input)
-      return prepared.execute()
+      const output = await prepared.execute()
+      await prepared.settle()
+      return output
     }
 
     const write = writesDocument(def)
@@ -798,7 +810,11 @@ export class ServerHost {
       }
       // Validation and the async `load` phase happen here, before any transaction.
       const prepared = await prepareInvocation(this.deps.registry, docCtx, commandId, input)
-      if (!prepared.synchronous) return await prepared.execute()
+      if (!prepared.synchronous) {
+        const output = await prepared.execute()
+        await prepared.settle()
+        return output
+      }
 
       try {
         const activeRun = run!
@@ -823,6 +839,9 @@ export class ServerHost {
           // so the next op never merges into this one.
           this.deps.runs.afterDocumentWrite(activeRun, document, touched)
         }
+        // The write is committed: reconcile what `load` staged with the
+        // world as it is now (a no-op unless the command has `settle`).
+        await prepared.settle()
         return output
       } finally {
         // The write never ran (the run refused it, the connection failed

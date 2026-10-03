@@ -28,8 +28,11 @@
  *     Folder-scoped custom font management. See "Folder fonts (M16 P3)" section.
  *
  *   DELETE /api/media/:assetId
- *     Removes the media_assets row (owner only).
- *     The MinIO object is NOT deleted — documented M29 GC TODO.
+ *     A deck's asset: its row and stored files go (deck owner). A component
+ *     master's picture or video is handed to its folder (folder editor):
+ *     the stamps that link it keep showing it. A folder's own picture or
+ *     video: folder owner only. A folder font answers 400 naming
+ *     DELETE /api/folders/:folderId/fonts/:assetId (services/media.ts remove).
  *
  * Security notes:
  *   - Share token (viewer via share link) does NOT permit uploads — only reads.
@@ -37,8 +40,8 @@
  *   - A component master's picture or video (A2.12b, `component_id` set):
  *     url and video-info answer whoever may read the component's folder
  *     content — its members and the guests of its decks, share links
- *     included (canReadComponentMedia); DELETE needs an editor of the
- *     folder (canWriteComponentMedia).
+ *     included (canReadComponentMedia); DELETE hands it to the folder and
+ *     needs an editor of the folder.
  *   - MEDIA-1: the MinIO bucket is PRIVATE (no anonymous download policy).
  *     Every media URL handed to a client is either an imgproxy-signed URL
  *     (images, posters, thumbnails — stable HMAC) or a short-TTL S3 presigned
@@ -360,7 +363,9 @@ export async function registerMediaRoutes(
   })
 
   // -------------------------------------------------------------------------
-  // DELETE /api/media/:assetId  (owner only)
+  // DELETE /api/media/:assetId — a deck's asset: its owner; a master's
+  // picture or video is handed to its folder by a folder editor; a folder's
+  // own: the folder owner (services/media.ts `remove`). 204 either way.
   // -------------------------------------------------------------------------
   app.delete<{
     Params: { assetId: string }

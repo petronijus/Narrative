@@ -24,6 +24,10 @@ export interface CapabilityEntry {
   title: string
   description: string
   role: string
+  /** The role on a component master or a folder target where it differs (only present when set). */
+  roleOn?: { component?: string; folder?: string }
+  /** A deck command that also takes a folder in place of a deck (only present when true). */
+  acceptsFolder?: true
   effects: string[]
   undo: string
   confirm: string
@@ -55,6 +59,8 @@ export function buildManifest(registry: CommandRegistry): CapabilityManifest {
       title: def.title,
       description: def.description,
       role: def.role,
+      ...(def.roleOn !== undefined ? { roleOn: { ...def.roleOn } } : {}),
+      ...(def.acceptsFolder === true ? { acceptsFolder: true as const } : {}),
       effects: [...def.effects],
       undo: def.undo,
       confirm: def.confirm,
@@ -101,8 +107,13 @@ export function renderManifestMarkdown(manifest: CapabilityManifest): string {
       const hints = [c.readOnly ? 'read-only' : '', c.idempotent ? 'idempotent' : '']
         .filter((h) => h !== '')
         .join(', ')
+      const role = [
+        c.role,
+        ...(c.roleOn?.component !== undefined ? [`master: ${c.roleOn.component}`] : []),
+        ...(c.roleOn?.folder !== undefined ? [`folder: ${c.roleOn.folder}`] : []),
+      ].join('; ')
       lines.push(
-        `| \`${c.id}\` | ${cell(c.title)} | ${c.role} | ${c.undo} | ${c.confirm}${c.confirmWhen ? ' (asks for URL files)' : ''} | ${hints} |`,
+        `| \`${c.id}\` | ${cell(c.title)} | ${role} | ${c.undo} | ${c.confirm}${c.confirmWhen ? ' (asks for URL files)' : ''} | ${hints} |`,
       )
     }
     lines.push('')

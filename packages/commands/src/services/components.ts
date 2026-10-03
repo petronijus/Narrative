@@ -44,18 +44,24 @@ export interface PromotedComponent {
 }
 
 /**
- * A master staged for stamping into a deck: its pictures and videos are
- * copied into the deck (registered as the deck's media) and `master` points
+ * A master staged for stamping into a deck of its folder. The stamp links
+ * the master's pictures and videos (the deck may show its folder's
+ * component media, so nothing is copied); only what the deck could not show
+ * otherwise is copied into the deck and registered, with `master` pointing
  * at the copies. Stamp from `master`; call `discard` when the stamp will not
- * be written, so the copies do not stay behind.
+ * be written, so any copies do not stay behind, and `settle` once it was
+ * written: if the deck moved to another folder meanwhile, the stamp's linked
+ * media is copied into it then.
  */
 export interface PreparedStamp {
   master: ComponentMaster
-  /** Media rows registered for the deck. */
+  /** Media rows registered for the deck (copies; linked media is not counted). */
   mediaRegistered: number
   /** Pictures whose file could not be copied. */
   skippedImages: number
   discard(): Promise<void>
+  /** After the stamp was written. Best effort: never throws. */
+  settle(): Promise<void>
 }
 
 export interface ComponentService {
@@ -66,7 +72,11 @@ export interface ComponentService {
     name: string
     folderId?: string | undefined
   }): Promise<ComponentRecord>
-  /** Delete the master. Objects already stamped from it are untouched (stamps are detached copies). */
+  /**
+   * Delete the master. Objects already stamped from it are untouched: they
+   * are detached copies of its objects, and the pictures and videos they
+   * link are handed to the folder, so they keep showing.
+   */
   delete(args: {
     userId: string
     componentId: string
@@ -75,7 +85,7 @@ export interface ComponentService {
   /**
    * Read a master. With `folderId` the component must live in that folder;
    * with `deckId` it must live in the deck's folder (a deck stamps only its
-   * own folder's components). The user must own the component's folder.
+   * own folder's components). The user needs a role in the component's folder.
    */
   readMaster(args: {
     userId: string
@@ -99,8 +109,9 @@ export interface ComponentService {
     name: string
   }): Promise<PromotedComponent>
   /**
-   * `readMaster` with the deck's rule, and the master's media copied into
-   * the deck — see {@link PreparedStamp}.
+   * `readMaster` with the deck's rule, staged for the deck: the master's
+   * media linked (copied only where the deck could not show it) — see
+   * {@link PreparedStamp}.
    */
   prepareStamp(args: {
     userId: string

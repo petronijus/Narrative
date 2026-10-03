@@ -83,20 +83,39 @@ export function commandMetadataProblems(
 }
 
 /**
- * Target rules (see `acceptsComponent` in types.ts). Empty when `def` is
- * consistent; `register` refuses a command with any problem.
- *   - Only a deck-scoped command can work on a component master instead.
+ * Target rules (see `acceptsComponent`, `acceptsFolder` and `roleOn` in
+ * types.ts). Empty when `def` is consistent; `register` refuses a command
+ * with any problem.
+ *   - Only a deck-scoped command can work on a component master or a
+ *     folder instead, and only a server command that uses no document on a
+ *     folder; a per-target role names a target the command accepts.
  *   - A pure document edit (effects exactly `['doc']`) must: a master is a
  *     document like a deck, and an edit command that could not reach one
  *     would be a silent gap in what an agent can do to a master.
  */
 export function commandTargetProblems(
-  def: Pick<AnyCommandDef, 'scope' | 'effects' | 'acceptsComponent'>,
+  def: Pick<
+    AnyCommandDef,
+    'scope' | 'effects' | 'acceptsComponent' | 'acceptsFolder' | 'roleOn' | 'readsDocument'
+  >,
 ): string[] {
   const problems: string[] = []
   const scope = def.scope ?? 'deck'
   if (def.acceptsComponent === true && scope !== 'deck')
     problems.push(`acceptsComponent is for deck-scoped commands, but its scope is '${scope}'`)
+  if (def.acceptsFolder === true && scope !== 'deck')
+    problems.push(`acceptsFolder is for deck-scoped commands, but its scope is '${scope}'`)
+  if (
+    def.acceptsFolder === true &&
+    (def.effects.includes('doc') || def.readsDocument === true || !def.effects.includes('server'))
+  )
+    problems.push('acceptsFolder is for server commands that do not use a document (a folder has none)')
+  if (def.roleOn !== undefined && scope !== 'deck')
+    problems.push(`roleOn is for deck-scoped commands, but its scope is '${scope}'`)
+  if (def.roleOn?.component !== undefined && def.acceptsComponent !== true)
+    problems.push('roleOn.component needs acceptsComponent')
+  if (def.roleOn?.folder !== undefined && def.acceptsFolder !== true)
+    problems.push('roleOn.folder needs acceptsFolder')
   if (
     scope === 'deck' &&
     def.effects.length > 0 &&

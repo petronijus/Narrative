@@ -115,12 +115,16 @@ describe('component-owned media in Postgres', () => {
   })
 
   it("removes a component's media rows with the component, and leaves other owners' rows", async () => {
-    await db.insert(mediaAssets).values(
+    await db.insert(mediaAssets).values([
       mediaRow({
         storageKey: `components/${componentA}/uploads/c/original.png`,
         componentId: componentA,
       }),
-    )
+      mediaRow({
+        storageKey: `components/${componentB}/uploads/b/original.png`,
+        componentId: componentB,
+      }),
+    ])
     const countOf = async (componentId: string): Promise<number> =>
       (
         await db

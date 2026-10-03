@@ -19,7 +19,9 @@
  *      (target `{ componentId }`): one with `acceptsComponent` must accept
  *      it (any failure is about the input, never the target), one without
  *      must refuse it with `no_target` — so the metadata the MCP tools and
- *      the host rely on matches what the handlers really do.
+ *      the host rely on matches what the handlers really do; and against a
+ *      folder (target `{ folderId }`, no document), which only commands
+ *      with `acceptsFolder` take.
  *
  * Examples run the way the server host runs them: `runCommand` on the
  * server host, with the fixture deck as the target document and in-memory
@@ -202,6 +204,33 @@ describe('command contract', () => {
             if (accepts) {
               // The fixture master may lack an id the example names (a run
               // of the deck, say); what matters is that the target is taken.
+              if (error !== undefined) {
+                expect(error, example.title).toBeInstanceOf(CommandError)
+                expect(['no_target', 'wrong_host'], example.title).not.toContain(
+                  (error as CommandError).code,
+                )
+              }
+            } else {
+              expect(error, example.title).toBeInstanceOf(CommandError)
+              expect((error as CommandError).code, example.title).toBe('no_target')
+            }
+          }
+        })
+      }
+
+      if ((def.scope ?? 'deck') === 'deck') {
+        const accepts = def.acceptsFolder === true
+        it(`${accepts ? 'accepts' : 'refuses'} a folder as its target`, async () => {
+          for (const example of def.examples) {
+            // A folder has no document: the host provides none.
+            const { deck: _deck, ...ctx } = ctxFor({ folderId: FIXTURE_FOLDER_ID })
+            let error: unknown
+            try {
+              await runCommand(registry, ctx, def.id, example.input)
+            } catch (e) {
+              error = e
+            }
+            if (accepts) {
               if (error !== undefined) {
                 expect(error, example.title).toBeInstanceOf(CommandError)
                 expect(['no_target', 'wrong_host'], example.title).not.toContain(

@@ -18,6 +18,22 @@ export type Role = 'viewer' | 'editor' | 'owner'
 export const ROLE_RANK: Readonly<Record<Role, number>> = { viewer: 0, editor: 1, owner: 2 }
 
 /**
+ * The role a command needs on `target`: `roleOn.component` on a component
+ * master, `roleOn.folder` on a folder named in place of a deck
+ * (`acceptsFolder`), else `role`.
+ */
+export function requiredRole(
+  def: { role: Role; scope?: CommandScope; roleOn?: { component?: Role; folder?: Role } },
+  target: CommandTarget | undefined,
+): Role {
+  if ((def.scope ?? 'deck') !== 'deck' || target === undefined) return def.role
+  if (target.componentId !== undefined) return def.roleOn?.component ?? def.role
+  if (target.deckId === undefined && target.folderId !== undefined)
+    return def.roleOn?.folder ?? def.role
+  return def.role
+}
+
+/**
  * What a command touches. Only commands whose effects are exactly `['doc']`
  * (or read-only, `[]`) may run inside an atomic batch, because a batch is
  * executed on a fork of the deck document and applied as one delta.
@@ -274,6 +290,23 @@ export interface CommandDef<
    * of every command that sets it against a component master too.
    */
   acceptsComponent?: true
+  /**
+   * `deck`-scoped server commands only: the command also works on a folder
+   * (target `{ folderId }` instead of `{ deckId }`) — `media.delete` removes
+   * a picture or video the folder itself owns. The host resolves the folder
+   * role for it. A folder has no document, so a command that edits or reads
+   * the target document cannot set it (registry.ts `commandTargetProblems`).
+   * Drives the MCP tool's target arguments.
+   */
+  acceptsFolder?: true
+  /**
+   * The role needed on a target other than a deck, where it differs from
+   * `role` (deck-scoped commands; `component` needs `acceptsComponent`,
+   * `folder` needs `acceptsFolder`). `media.delete` deletes a deck's asset
+   * for the deck's owner, but hands a master's picture to its folder for a
+   * folder editor. See `requiredRole`.
+   */
+  roleOn?: { component?: Role; folder?: Role }
   effects: readonly Effect[]
   /**
    * The handler reads the target document (to resolve slide/object refs)
@@ -389,6 +422,15 @@ export interface CommandDef<
    * write cleans up itself. Best effort: it must not throw.
    */
   release?(loaded: L): Promise<void>
+  /**
+   * Reconcile what `load` staged with the world AFTER the handler's write
+   * has committed — e.g. `component.stamp` links media of the deck's folder
+   * as it was at `load`; if the deck moved to another folder meanwhile, the
+   * stamp's linked media is copied into it now. The runner calls it through
+   * `PreparedInvocation.settle` once the handler returned (outside the
+   * document transaction). Best effort: it must not throw.
+   */
+  settle?(loaded: L): Promise<void>
   handler(ctx: CommandContext, input: z.output<I>, loaded: L): z.input<O> | Promise<z.input<O>>
 }
 

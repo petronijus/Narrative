@@ -160,6 +160,12 @@ export interface AgentWorldOptions {
   log?: FastifyBaseLogger
   /** Hostnames URL downloads may reach without a confirmation (AGENT_URL_FETCH_ALLOWED_HOSTS). */
   urlFetchAllowedHosts?: readonly string[]
+  /**
+   * After a revert changed a deck (the runtime's default copies old folder
+   * media back into it against Postgres; the world has no database, so by
+   * default nothing happens).
+   */
+  afterDeckRevert?: (deckId: string) => Promise<void>
 }
 
 export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<AgentWorld> {
@@ -217,6 +223,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     componentInFolder: async () => null,
     memberFolder: async () => null,
     folderDeckCount: async () => 0,
+    activeShareLinks: async () => 0,
   }
   // The database's decks.folder_id / components.folder_id, in memory; the
   // folder document itself is read like the production reader reads it
@@ -258,6 +265,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     access,
     // No bucket in unit tests (services/exportSweep.test.ts covers the sweep).
     exportSweep: null,
+    afterDeckRevert: opts.afterDeckRevert ?? (async () => undefined),
     confirmationLookups,
     ...(opts.urlFetchAllowedHosts === undefined
       ? {}

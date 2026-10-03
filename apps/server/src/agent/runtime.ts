@@ -42,6 +42,7 @@ import { createDrizzleRunStore, type RunStore } from './runStore.js'
 import { createDbConfirmationLookups, type ConfirmationLookups } from './confirmationSummary.js'
 import { AgentConfirmations } from './confirmations.js'
 import { ServerHost } from './serverHost.js'
+import { repointMovedMedia } from '../services/localiseMedia.js'
 import { createDbFolderFontsReader, type FolderFontsReader } from './folderFonts.js'
 import { createDbFolderTokensReader, type FolderTokensReader } from './folderTokens.js'
 
@@ -172,6 +173,13 @@ export interface AgentRuntimeOptions {
    * Default: `sweepExpiredExports` against the media bucket.
    */
   exportSweep?: (() => Promise<unknown>) | null
+  /**
+   * After a revert changed a deck (RunManager `afterDeckRevert`). Default:
+   * point references to linked media the deck took along when it moved,
+   * which the revert brought back, at the deck's copies again
+   * (services/localiseMedia.ts `repointMovedMedia`).
+   */
+  afterDeckRevert?: (deckId: string) => Promise<void>
   /** Run retention window (default `AGENT_RUN_RETENTION_MS`). */
   runRetentionMs?: number
   /**
@@ -238,6 +246,20 @@ export async function createAgentRuntime(opts: AgentRuntimeOptions): Promise<Age
     ...(opts.maxOpenRunsPerUser === undefined
       ? {}
       : { maxOpenRunsPerUser: opts.maxOpenRunsPerUser }),
+    // A revert can bring back references to media of a folder the deck has left since.
+    afterDeckRevert:
+      opts.afterDeckRevert ??
+      (async (deckId) => {
+        await repointMovedMedia(
+          {
+            db: opts.db,
+            log: opts.log,
+            ...(opts.bypass === undefined ? {} : { bypass: opts.bypass }),
+            hocuspocus: () => opts.hocuspocus,
+          },
+          deckId,
+        )
+      }),
   })
   const services = createServerServices({
     db: opts.db,

@@ -177,9 +177,10 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
 
   // -------------------------------------------------------------------------
   // POST /decks/:id/stamp-component — `component.stamp` for the editor: the
-  // master stamped onto slide `slideId` as one server write (its media
-  // copied into the deck), reaching open editors as a remote change.
-  // Editor of the deck, owner of its folder.
+  // master stamped onto slide `slideId` as one server write (its pictures
+  // and videos linked, not copied: the deck may show its folder's component
+  // media), reaching open editors as a remote change. Editor of the deck,
+  // and a role in its folder.
   // -------------------------------------------------------------------------
   app.post<{ Params: { id: string }; Body: unknown }>(
     '/decks/:id/stamp-component',

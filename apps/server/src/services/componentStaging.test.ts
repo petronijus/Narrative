@@ -1,10 +1,12 @@
 /**
  * services/componentStaging.test.ts — objects and their media moving
- * between a deck and a component master (A2.12b): promoting copies the
- * deck's pictures into the component, which owns them, and writes the
- * master through the sync server without touching the slide; stamping
- * copies the master's pictures back into the deck before the deck is
- * written, and drops the copies again when the stamp is refused.
+ * between a deck and a component master (A2.12b, linked media since folder
+ * sharing step 2): promoting copies the deck's pictures into the component,
+ * which owns them, and writes the master through the sync server without
+ * touching the slide; stamping links the master's pictures (a deck shows
+ * its folder's component media) and copies nothing, refuses a deck that has
+ * left the master's folder, and — when the deck moves while the stamp is
+ * written — copies the linked pictures into it afterwards.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -34,15 +36,22 @@ vi.mock('../media/enqueue.js', () => ({
 vi.mock('../media/imgproxyUrl.js', () => ({
   signImgproxyUrl: ({ storageKey }: { storageKey: string }) => `https://img/${storageKey}`,
 }))
+// Carrying linked media into a deck that moved is localiseMedia's (its own
+// tests against Postgres); here: what the stamp hands it after the write.
+vi.mock('./localiseMedia.js', () => ({
+  carryLinkedMediaAfterWrite: vi.fn().mockResolvedValue(undefined),
+}))
 
 const { adoptMasterMedia, promoteComponent, prepareComponentStamp, stampComponentIntoDeck } =
   await import('./componentStaging.js')
+const { carryLinkedMediaAfterWrite } = await import('./localiseMedia.js')
 
 let hp: Hocuspocus
 let persistence: MemoryPersistence
 
 beforeEach(() => {
   send.mockClear()
+  vi.mocked(carryLinkedMediaAfterWrite).mockClear()
   persistence = new MemoryPersistence()
   hp = new Hocuspocus({ quiet: true, stopOnSignals: false, extensions: [persistence] })
 })
@@ -279,7 +288,10 @@ describe('prepareComponentStamp + stampComponentIntoDeck', () => {
     // the master's own pictures (media/visibleMedia.ts): no copy, no row.
     await seedDeck()
     const script = scriptedDb({
-      selects: [[placed(assetRow('a_cmp', { componentId: 'cmp1' }), 'f1')]],
+      selects: [
+        [{ folderId: 'f1' }], // the deck's folder, read when the stamp is staged
+        [placed(assetRow('a_cmp', { componentId: 'cmp1' }), 'f1')],
+      ],
     })
     const deps = { db: script.db, log: quietLog, hocuspocus: () => hp }
     const prepared = await prepareComponentStamp(deps, {
@@ -305,6 +317,61 @@ describe('prepareComponentStamp + stampComponentIntoDeck', () => {
     expect(stamped).toHaveLength(2)
     expect((stamped.find((o) => o.type === 'image') as ImageObject).assetId).toBe('a_cmp')
     await deck.disconnect()
+    expect(script.remaining().selects).toBe(0)
+    // Settled once, after the write: the linked picture and the folder it
+    // was staged for (a deck that moved meanwhile gets it carried along).
+    expect(carryLinkedMediaAfterWrite).toHaveBeenCalledExactlyOnceWith(deps, {
+      userId: 'u1',
+      deckId: 'deck1',
+      assetIds: new Set(['a_cmp']),
+      stagedFolderId: 'f1',
+      what: 'stamp of component cmp1',
+    })
+  })
+
+  it('refuses (409) a deck that has left the master’s folder before the stamp is staged', async () => {
+    await seedDeck()
+    const script = scriptedDb({ selects: [[{ folderId: 'f2' }]] })
+    const err = await serviceErrorOf(
+      prepareComponentStamp(
+        { db: script.db, log: quietLog, hocuspocus: () => hp },
+        { userId: 'u1', componentId: 'cmp1', deckId: 'deck1', master: masterWithPicture() },
+      ),
+    )
+    expect(err.status).toBe(409)
+    expect(script.writes).toEqual([])
+  })
+
+  it('settles once, and never when the stamp was not written', async () => {
+    await seedDeck()
+    const script = scriptedDb({
+      selects: [[{ folderId: 'f1' }], [placed(assetRow('a_cmp', { componentId: 'cmp1' }), 'f1')]],
+    })
+    const deps = { db: script.db, log: quietLog, hocuspocus: () => hp }
+    const prepared = await prepareComponentStamp(deps, {
+      userId: 'u1',
+      componentId: 'cmp1',
+      deckId: 'deck1',
+      master: masterWithPicture(),
+    })
+    // A slide the deck no longer has: the write refuses before touching it.
+    await expect(
+      stampComponentIntoDeck(deps, {
+        deckId: 'deck1',
+        componentId: 'cmp1',
+        slideId: 'S1',
+        prepare: async () => {
+          const doc = await hp.openDirectConnection('deck1')
+          await doc.transact((d) => hydrateSlideDoc(d).slides.get(0).set('id', 'renamed'))
+          await doc.disconnect()
+          return prepared
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'not_found' })
+    expect(carryLinkedMediaAfterWrite).not.toHaveBeenCalled()
+    await prepared.settle()
+    await prepared.settle()
+    expect(carryLinkedMediaAfterWrite).toHaveBeenCalledTimes(1)
   })
 
   it('checks the slide before copying anything: a stale slide costs no copy', async () => {
@@ -323,7 +390,7 @@ describe('prepareComponentStamp + stampComponentIntoDeck', () => {
   it('writes nothing when the slide goes before the deck is written', async () => {
     await seedDeck()
     const script = scriptedDb({
-      selects: [[placed(assetRow('a_cmp', { componentId: 'cmp1' }), 'f1')]],
+      selects: [[{ folderId: 'f1' }], [placed(assetRow('a_cmp', { componentId: 'cmp1' }), 'f1')]],
     })
     const deps = { db: script.db, log: quietLog, hocuspocus: () => hp }
     await expect(
@@ -351,7 +418,7 @@ describe('prepareComponentStamp + stampComponentIntoDeck', () => {
 
   it('leaves a picture the component does not own unresolved, and counts it', async () => {
     await seedDeck()
-    const script = scriptedDb({ selects: [[]] })
+    const script = scriptedDb({ selects: [[{ folderId: 'f1' }], []] })
     const prepared = await prepareComponentStamp(
       { db: script.db, log: quietLog, hocuspocus: () => hp },
       { userId: 'u1', componentId: 'cmp1', deckId: 'deck1', master: masterWithPicture() },

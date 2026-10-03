@@ -8,7 +8,8 @@
  * bucket: every storage key of what the folder held is collected BEFORE the
  * cascade removes the rows, and swept after it — the contained decks'
  * `decks/<id>/` prefixes, the contained component masters'
- * `components/<id>/` prefixes (A2.12b), and the explicit keys of their media
+ * `components/<id>/` prefixes (A2.12b) and those of components deleted
+ * earlier (their media is the folder's now), and the explicit keys of their media
  * rows, which reach outside those prefixes (tus originals under `uploads/`,
  * video playback / poster / thumbnail outputs, folder fonts).
  * The database is scripted (test-support/scriptedDb.ts); the bucket cleanup
@@ -22,23 +23,33 @@ import { serviceErrorOf } from '../test-support/serviceErrors.js'
 
 /** How many database deletes had been issued when each purge ran. */
 const purgeCalls: Array<{ purge: string; arg: unknown; deletesBefore: number }> = []
+/** The sweeps scheduled to run again after the grace window. */
+const secondSweeps: Array<() => Promise<unknown>> = []
 let current: ScriptedDb | null = null
 const deletesSoFar = (): number => current?.writes.filter((w) => w.kind === 'delete').length ?? 0
 
-vi.mock('../media/bucketCleanup.js', () => {
+vi.mock('../media/bucketCleanup.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../media/bucketCleanup.js')>()
   const record = (purge: string) =>
-    vi.fn(async (arg: unknown) => {
+    vi.fn(async (_db: unknown, arg: unknown) => {
       purgeCalls.push({ purge, arg, deletesBefore: deletesSoFar() })
       return { deleted: 0, failed: 0 }
     })
   return {
+    componentIdsInKeys: original.componentIdsInKeys,
     purgeDeckBucketPrefix: record('deck'),
     purgeComponentBucketPrefix: record('component'),
-    purgeExplicitKeys: record('explicit'),
+    purgeExplicitKeys: vi.fn(async (keys: unknown) => {
+      purgeCalls.push({ purge: 'explicit', arg: keys, deletesBefore: deletesSoFar() })
+      return { deleted: 0, failed: 0 }
+    }),
     // The keys of the deleted rows, of which those another row still names stay.
     purgeUnreferencedKeys: vi.fn(async (_db: unknown, keys: unknown) => {
       purgeCalls.push({ purge: 'explicit', arg: keys, deletesBefore: deletesSoFar() })
       return { deleted: 0, failed: 0 }
+    }),
+    sweepAgainAfterGrace: vi.fn((sweep: () => Promise<unknown>) => {
+      secondSweeps.push(sweep)
     }),
   }
 })
@@ -61,6 +72,7 @@ function service(db: ScriptedDb) {
 
 beforeEach(() => {
   purgeCalls.length = 0
+  secondSweeps.length = 0
   vi.mocked(purgeDeckBucketPrefix).mockClear()
   vi.mocked(purgeComponentBucketPrefix).mockClear()
   vi.mocked(purgeUnreferencedKeys).mockClear()
@@ -82,6 +94,7 @@ describe('deleting a folder', () => {
         [
           // a deck picture under its own prefix
           {
+            folderId: null,
             storageKey: 'decks/deck_a/img.png',
             playbackKey: null,
             posterKey: null,
@@ -90,6 +103,7 @@ describe('deleting a folder', () => {
           // the component's video: its tus original lives outside
           // components/cmp_a/, its outputs next to it
           {
+            folderId: null,
             storageKey: 'uploads/tus/3f9c0a',
             playbackKey: 'components/cmp_a/video/playback.mp4',
             posterKey: 'components/cmp_a/video/poster.jpg',
@@ -97,6 +111,7 @@ describe('deleting a folder', () => {
           },
           // a folder font
           {
+            folderId: 'fold_1',
             storageKey: 'folders/fold_1/fonts/brand.woff2',
             playbackKey: '',
             posterKey: null,
@@ -131,8 +146,21 @@ describe('deleting a folder', () => {
     const out = await service(db).delete({ userId: 'u1', folderId: 'fold_1' })
 
     expect(out).toEqual({ deletedDeckCount: 1 })
-    expect(vi.mocked(purgeDeckBucketPrefix).mock.calls.map((c) => c[0])).toEqual(['deck_a'])
-    expect(vi.mocked(purgeComponentBucketPrefix).mock.calls.map((c) => c[0])).toEqual(['cmp_a'])
+    expect(vi.mocked(purgeDeckBucketPrefix).mock.calls.map((c) => c[1])).toEqual(['deck_a'])
+    expect(vi.mocked(purgeComponentBucketPrefix).mock.calls.map((c) => c[1])).toEqual(['cmp_a'])
+
+    // Once more after the grace window: what a transcode or a copy was still
+    // writing (media/bucketCleanup.ts) — the same prefixes, no explicit keys.
+    expect(secondSweeps).toHaveLength(1)
+    await secondSweeps[0]!()
+    expect(vi.mocked(purgeDeckBucketPrefix).mock.calls.map((c) => c[1])).toEqual([
+      'deck_a',
+      'deck_a',
+    ])
+    expect(vi.mocked(purgeComponentBucketPrefix).mock.calls.map((c) => c[1])).toEqual([
+      'cmp_a',
+      'cmp_a',
+    ])
   })
 
   it('sweeps the bucket only after the decks and the folder rows are deleted', async () => {
@@ -156,6 +184,7 @@ describe('deleting a folder', () => {
         [{ id: 'cmp_a' }, { id: 'cmp_b' }],
         [
           {
+            folderId: null,
             storageKey: 'uploads/tus/aa11',
             playbackKey: null,
             posterKey: null,
@@ -168,13 +197,68 @@ describe('deleting a folder', () => {
 
     expect(out).toEqual({ deletedDeckCount: 0 })
     expect(purgeDeckBucketPrefix).not.toHaveBeenCalled()
-    expect(vi.mocked(purgeComponentBucketPrefix).mock.calls.map((c) => c[0])).toEqual([
+    expect(vi.mocked(purgeComponentBucketPrefix).mock.calls.map((c) => c[1])).toEqual([
       'cmp_a',
       'cmp_b',
     ])
     expect(vi.mocked(purgeUnreferencedKeys).mock.calls[0]![1]).toEqual(['uploads/tus/aa11'])
     // No deck to delete: only the folder row goes (its components cascade).
     expect(db.writes.filter((w) => w.kind === 'delete').map((w) => w.table)).toEqual(['folders'])
+  })
+
+  it('sweeps the prefixes of components deleted earlier, named by the media the folder took over', async () => {
+    const tusOriginal = `v1:unknown:${Buffer.from('components/cmp_gone/uploads/v1/original.mp4').toString('base64url')}`
+    const db = scriptedDb({
+      selects: [
+        [FOLDER],
+        [{ role: 'owner' }],
+        [],
+        // no live component any more
+        [],
+        [
+          // a deleted component's picture, now the folder's
+          {
+            folderId: 'fold_1',
+            storageKey: 'components/cmp_old/uploads/p1/original.png',
+            playbackKey: null,
+            posterKey: null,
+            thumbnailKey: null,
+          },
+          // another one's video, its original a tus upload id
+          {
+            folderId: 'fold_1',
+            storageKey: tusOriginal,
+            playbackKey: 'components/cmp_gone/videos/v1/playback.mp4',
+            posterKey: null,
+            thumbnailKey: null,
+          },
+          // a folder font: no component prefix
+          {
+            folderId: 'fold_1',
+            storageKey: 'fonts/fold_1/f1/original.otf',
+            playbackKey: null,
+            posterKey: null,
+            thumbnailKey: null,
+          },
+        ],
+      ],
+    })
+    await service(db).delete({ userId: 'u1', folderId: 'fold_1' })
+
+    expect(
+      vi
+        .mocked(purgeComponentBucketPrefix)
+        .mock.calls.map((c) => c[1])
+        .sort(),
+    ).toEqual(['cmp_gone', 'cmp_old'])
+    expect([...vi.mocked(purgeUnreferencedKeys).mock.calls[0]![1]].sort()).toEqual(
+      [
+        'components/cmp_old/uploads/p1/original.png',
+        tusOriginal,
+        'components/cmp_gone/videos/v1/playback.mp4',
+        'fonts/fold_1/f1/original.otf',
+      ].sort(),
+    )
   })
 
   it('refuses the Drafts folder and sweeps nothing', async () => {

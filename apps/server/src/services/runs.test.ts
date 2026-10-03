@@ -247,6 +247,28 @@ describe('revert', () => {
   })
 })
 
+describe('after a revert of a deck', () => {
+  it('catches up old folder media once the revert changed the deck; a failure leaves the revert standing', async () => {
+    // A revert can bring back pictures of a folder the deck has left since
+    // the run (services/localiseMedia.ts): the hook copies them into it.
+    const afterDeckRevert = vi.fn(async (_deckId: string) => undefined)
+    await setup({ afterDeckRevert })
+    const run = await must({ invocation: update('r1', { fill: '#ff0000' }) })
+    await must({ invocation: { command: 'agent.revert', input: { runId: run.runId } } })
+    expect(afterDeckRevert).toHaveBeenCalledExactlyOnceWith('deck1')
+
+    afterDeckRevert.mockRejectedValueOnce(new Error('storage down'))
+    const second = await must({ invocation: update('r2', { fill: '#00ff00' }) })
+    const out = await world.runtime.runs.revertRun({
+      userId: 'ed',
+      target: { kind: 'deck', deckId: 'deck1' },
+      runId: second.runId!,
+    })
+    expect(out).toMatchObject({ revertedChanges: 1, status: 'reverted' })
+    expect(prop(world.hocuspocus.documents.get('deck1')!, 'r2', 'fill')).toBe(0x4060e0)
+  })
+})
+
 describe('the known limit: revert needs the loaded document', () => {
   beforeEach(() => setup({ documentLingerMs: 0 }))
 

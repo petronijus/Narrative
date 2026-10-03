@@ -11,7 +11,7 @@ import * as Y from 'yjs'
 import type { DeckMutationContext } from '@narrative/slide-model'
 import type { AnyCommandDef, CommandRegistry } from './registry.js'
 import { CommandError, issuesFromZod } from './errors.js'
-import { ROLE_RANK, type CommandContext, type CommandInvocation } from './types.js'
+import { ROLE_RANK, requiredRole, type CommandContext, type CommandInvocation } from './types.js'
 
 interface Prepared {
   def: AnyCommandDef
@@ -33,10 +33,11 @@ function prepare(
       `command '${commandId}' cannot run on the ${ctx.host} host (runs on: ${def.hosts.join(', ')})`,
     )
   }
-  if (ROLE_RANK[ctx.actor.role] < ROLE_RANK[def.role]) {
+  const needed = requiredRole(def, ctx.target)
+  if (ROLE_RANK[ctx.actor.role] < ROLE_RANK[needed]) {
     throw new CommandError(
       'forbidden',
-      `command '${commandId}' needs the ${def.role} role; the caller is ${ctx.actor.role}`,
+      `command '${commandId}' needs the ${needed} role; the caller is ${ctx.actor.role}`,
     )
   }
   const parsed = def.input.safeParse(rawInput)
@@ -56,7 +57,8 @@ function prepare(
     scope === 'deck' &&
     ctx.deck === undefined &&
     ctx.target?.deckId === undefined &&
-    ctx.target?.componentId === undefined
+    ctx.target?.componentId === undefined &&
+    !(def.acceptsFolder === true && ctx.target?.folderId !== undefined)
   ) {
     throw new CommandError(
       'no_target',
@@ -211,6 +213,13 @@ export interface PreparedInvocation {
    * write. Never throws.
    */
   abandon(): Promise<void>
+  /**
+   * After `execute()` returned and its write committed: run the command's
+   * `settle` (what it staged reconciled with the world as it is now). A
+   * no-op when `execute()` was not called or failed, or the command has
+   * none; at most once. Never throws.
+   */
+  settle(): Promise<void>
 }
 
 /**
@@ -231,14 +240,24 @@ export async function prepareInvocation(
   const loaded = def.load === undefined ? undefined : await def.load(ctx, input)
   const synchronous = def.effects.includes('doc') || def.transaction === 'self'
   let used = false
+  let succeeded = false
+  let settled = false
   return {
     def,
     synchronous,
     execute() {
       if (used) throw new CommandError('failed', `invocation of '${commandId}' executed twice`)
       used = true
-      if (synchronous) return executeSync(def, ctx, input, loaded)
-      return Promise.resolve(def.handler(ctx, input, loaded)).then((raw) => finish(def, raw))
+      if (synchronous) {
+        const output = executeSync(def, ctx, input, loaded)
+        succeeded = true
+        return output
+      }
+      return Promise.resolve(def.handler(ctx, input, loaded)).then((raw) => {
+        const output = finish(def, raw)
+        succeeded = true
+        return output
+      })
     },
     async abandon() {
       if (used) return
@@ -248,6 +267,16 @@ export async function prepareInvocation(
         await def.release(loaded)
       } catch {
         // Best effort by contract: what stays behind is reaped with its owner.
+      }
+    },
+    async settle() {
+      if (!succeeded || settled) return
+      settled = true
+      if (def.settle === undefined || def.load === undefined) return
+      try {
+        await def.settle(loaded)
+      } catch {
+        // Best effort by contract: the write stands; the command logs what it could not do.
       }
     },
   }
@@ -261,7 +290,9 @@ export async function runCommand(
   rawInput: unknown,
 ): Promise<unknown> {
   const prepared = await prepareInvocation(registry, ctx, commandId, rawInput)
-  return prepared.execute()
+  const output = await prepared.execute()
+  await prepared.settle()
+  return output
 }
 
 /**

@@ -3,7 +3,9 @@
  * path: bytes decide the type, the shared upload policy decides the limits,
  * the shared finalize step does the checks) and the asset scoping of the
  * read / delete methods, with the folder-sharing rules for a component's
- * media and a folder's fonts (docs/plans/folder-sharing.md);
+ * media (removing it hands it to the folder), a folder's own media (only
+ * its owner deletes it) and a folder's fonts (their own route) —
+ * docs/plans/folder-sharing.md;
  * SharingService.setRole and revoke.
  */
 
@@ -38,9 +40,16 @@ vi.mock('../auth/permissions.js', async (importOriginal) => {
     resolveDeckAccess: vi.fn(),
     grantPermission: vi.fn(),
     revokePermission: vi.fn(),
+    resolveFolderAccess: vi.fn(),
     resolveFolderContentAccess: vi.fn(),
   }
 })
+/** The files a removal deletes (those no other media row names). */
+const purgeUnreferencedKeys = vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 })
+vi.mock('../media/bucketCleanup.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../media/bucketCleanup.js')>()),
+  purgeUnreferencedKeys: (...a: unknown[]) => purgeUnreferencedKeys(...a),
+}))
 vi.mock('../auth/users.js', () => ({
   getUserBySub: vi.fn(),
   getUserByEmail: vi.fn(),
@@ -73,8 +82,13 @@ vi.mock('../media/visibleMedia.js', async (importOriginal) => ({
 
 const { finalizeMediaUpload, UploadRejected } = await import('../media/finalizeUpload.js')
 const { getMediaAsset, getFontAsset, deleteMediaAsset } = await import('../media/assets.js')
-const { resolveDeckAccess, grantPermission, revokePermission, resolveFolderContentAccess } =
-  await import('../auth/permissions.js')
+const {
+  resolveDeckAccess,
+  grantPermission,
+  revokePermission,
+  resolveFolderAccess,
+  resolveFolderContentAccess,
+} = await import('../auth/permissions.js')
 const { getUserBySub } = await import('../auth/users.js')
 const { closeDeckConnections, closeUserConnectionsOnDocument } =
   await import('../hocuspocus/connections.js')
@@ -256,6 +270,7 @@ describe('MediaService scoping', () => {
       deckId: null,
       componentId: 'c1',
       storageKey: 'k',
+      kind: 'image',
     } as never)
     canReadComponentMedia.mockResolvedValue(true)
     expect(
@@ -271,6 +286,7 @@ describe('MediaService scoping', () => {
       deckId: null,
       componentId: 'c9',
       storageKey: 'k',
+      kind: 'image',
     } as never)
     expect(
       await status(
@@ -320,6 +336,7 @@ describe('MediaService scoping', () => {
       componentId: null,
       folderId: 'F1',
       storageKey: 'k',
+      kind: 'image',
     } as never)
     vi.mocked(resolveFolderContentAccess).mockResolvedValue({ role: 'viewer', via: 'deck' })
     expect(await status(media().url({ userId: 'u1', assetId: 'af', variant: 'display' }))).toBe(200)
@@ -358,23 +375,182 @@ describe('MediaService scoping', () => {
     expect(resolveDeckAccess).not.toHaveBeenCalled()
   })
 
-  it("deletes a component's media only for an editor of its folder, never on the read rule", async () => {
+  it("hands a master's picture to its folder for an editor of the folder, deleting nothing", async () => {
     vi.mocked(getMediaAsset).mockResolvedValue({
       id: 'a1',
       deckId: null,
       componentId: 'c1',
+      folderId: null,
       storageKey: 'k',
+      kind: 'image',
     } as never)
     canReadComponentMedia.mockResolvedValue(true)
-    canWriteComponentMedia.mockResolvedValue(false)
-    expect(await status(media().delete({ userId: 'u1', assetId: 'a1' }))).toBe(403)
+
+    // A viewer of the folder may read it, never remove it.
+    const viewer = scriptedDb({ selects: [[{ folderId: 'F1' }]] })
+    vi.mocked(resolveFolderAccess).mockResolvedValueOnce({ role: 'viewer', reason: 'direct' })
+    expect(
+      await status(
+        createMediaService({ db: viewer.db, log: quietLog }).delete({
+          userId: 'u1',
+          assetId: 'a1',
+        }),
+      ),
+    ).toBe(403)
+    expect(viewer.writes).toEqual([])
+
+    const editor = scriptedDb({ selects: [[{ folderId: 'F1' }]], updates: [[{ id: 'a1' }]] })
+    vi.mocked(resolveFolderAccess).mockResolvedValueOnce({ role: 'editor', reason: 'direct' })
+    await expect(
+      createMediaService({ db: editor.db, log: quietLog }).delete({
+        userId: 'u1',
+        assetId: 'a1',
+        owner: { componentId: 'c1' },
+      }),
+    ).resolves.toEqual({ outcome: 'handedToFolder' })
+    expect(editor.writes).toEqual([
+      { kind: 'update', table: 'media_assets', values: { componentId: null, folderId: 'F1' } },
+    ])
+    expect(resolveFolderAccess).toHaveBeenLastCalledWith(expect.anything(), {
+      folderId: 'F1',
+      userId: 'u1',
+      alsoAs: [],
+    })
+    expect(deleteMediaAsset).not.toHaveBeenCalled()
+    expect(purgeUnreferencedKeys).not.toHaveBeenCalled()
+    expect(canReadComponentMedia).not.toHaveBeenCalled()
+  })
+
+  it("deletes a folder's own picture only for the folder's owner, files included", async () => {
+    vi.mocked(getMediaAsset).mockResolvedValue({
+      id: 'af',
+      deckId: null,
+      componentId: null,
+      folderId: 'F1',
+      storageKey: 'components/c-old/uploads/af/original.png',
+      playbackKey: null,
+      posterKey: null,
+      thumbnailKey: null,
+      kind: 'image',
+    } as never)
+    vi.mocked(resolveFolderContentAccess).mockResolvedValue({ role: 'editor', via: 'folder' })
+
+    // Any deck of the folder may link it: an editor may not delete it.
+    vi.mocked(resolveFolderAccess).mockResolvedValueOnce({ role: 'editor', reason: 'direct' })
+    const refused = await serviceErrorOf(media().delete({ userId: 'u1', assetId: 'af' }))
+    expect(refused.status).toBe(403)
+    expect(refused.message).toMatch(/only the folder's owner/)
     expect(deleteMediaAsset).not.toHaveBeenCalled()
 
-    canWriteComponentMedia.mockResolvedValue(true)
-    await media().delete({ userId: 'u1', assetId: 'a1' })
-    expect(canWriteComponentMedia).toHaveBeenLastCalledWith(expect.anything(), 'c1', 'u1')
-    expect(deleteMediaAsset).toHaveBeenCalledWith(expect.anything(), 'a1')
-    expect(canReadComponentMedia).not.toHaveBeenCalled()
+    vi.mocked(resolveFolderAccess).mockResolvedValueOnce({ role: 'owner', reason: 'direct' })
+    await expect(media().delete({ userId: 'u1', assetId: 'af' })).resolves.toEqual({
+      outcome: 'deleted',
+    })
+    expect(deleteMediaAsset).toHaveBeenCalledWith(expect.anything(), 'af')
+    expect(purgeUnreferencedKeys).toHaveBeenCalledWith(
+      expect.anything(),
+      ['components/c-old/uploads/af/original.png'],
+      expect.anything(),
+    )
+  })
+
+  it("takes a folder target for the folder's own media, and nothing else there", async () => {
+    vi.mocked(getMediaAsset).mockResolvedValue({
+      id: 'af',
+      deckId: null,
+      componentId: null,
+      folderId: 'F1',
+      storageKey: 'components/c-old/uploads/af/original.png',
+      playbackKey: null,
+      posterKey: null,
+      thumbnailKey: null,
+      kind: 'image',
+    } as never)
+    vi.mocked(resolveFolderContentAccess).mockResolvedValue({ role: 'owner', via: 'folder' })
+    vi.mocked(resolveFolderAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
+    // Another folder named as the owner: not found, nothing deleted.
+    const elsewhere = await serviceErrorOf(
+      media().delete({ userId: 'u1', assetId: 'af', owner: { folderId: 'F2' } }),
+    )
+    expect(elsewhere.status).toBe(404)
+    // A deck target cannot reach the folder's own media either.
+    const viaDeck = await serviceErrorOf(
+      media().delete({ userId: 'u1', assetId: 'af', owner: { deckId: 'd1' } }),
+    )
+    expect(viaDeck.status).toBe(404)
+    expect(deleteMediaAsset).not.toHaveBeenCalled()
+
+    await expect(
+      media().delete({ userId: 'u1', assetId: 'af', owner: { folderId: 'F1' } }),
+    ).resolves.toEqual({ outcome: 'deleted' })
+    expect(deleteMediaAsset).toHaveBeenCalledWith(expect.anything(), 'af')
+
+    // A master's picture is not the folder's own: a folder target refuses it.
+    vi.mocked(deleteMediaAsset).mockClear()
+    vi.mocked(getMediaAsset).mockResolvedValue({
+      id: 'am',
+      deckId: null,
+      componentId: 'c1',
+      folderId: null,
+      storageKey: 'k',
+      kind: 'image',
+    } as never)
+    const master = await serviceErrorOf(
+      media().delete({ userId: 'u1', assetId: 'am', owner: { folderId: 'F1' } }),
+    )
+    expect(master.status).toBe(404)
+    expect(deleteMediaAsset).not.toHaveBeenCalled()
+  })
+
+  it('refuses a folder font and names the font route that keeps its decks rendering', async () => {
+    vi.mocked(getMediaAsset).mockResolvedValue({
+      id: 'font-1',
+      deckId: null,
+      componentId: null,
+      folderId: 'F1',
+      storageKey: 'fonts/F1/font-1/original.otf',
+      kind: 'font',
+    } as never)
+    vi.mocked(resolveFolderContentAccess).mockResolvedValue({ role: 'owner', via: 'folder' })
+    vi.mocked(resolveFolderAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
+    const err = await serviceErrorOf(media().delete({ userId: 'u1', assetId: 'font-1' }))
+    expect(err.status).toBe(400)
+    expect(err.message).toContain('DELETE /api/folders/F1/fonts/font-1')
+    expect(deleteMediaAsset).not.toHaveBeenCalled()
+
+    // Someone who cannot see the folder learns nothing about it.
+    vi.mocked(resolveFolderContentAccess).mockResolvedValue(null)
+    const outsider = await serviceErrorOf(media().delete({ userId: 'u2', assetId: 'font-1' }))
+    expect(outsider.status).toBe(403)
+    expect(outsider.message).not.toContain('F1')
+  })
+
+  it("deletes a deck's own asset for the deck's owner, with the files no other row names", async () => {
+    vi.mocked(getMediaAsset).mockResolvedValue({
+      id: 'v1',
+      deckId: 'd1',
+      componentId: null,
+      folderId: null,
+      storageKey: 'decks/d1/uploads/v1/original.mp4',
+      playbackKey: 'decks/d1/videos/v1/playback.mp4',
+      posterKey: 'decks/d1/videos/v1/poster.jpg',
+      thumbnailKey: null,
+      kind: 'video',
+    } as never)
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
+    await expect(
+      media().delete({ userId: 'u1', assetId: 'v1', owner: { deckId: 'd1' } }),
+    ).resolves.toEqual({ outcome: 'deleted' })
+    expect(deleteMediaAsset).toHaveBeenCalledWith(expect.anything(), 'v1')
+    expect(purgeUnreferencedKeys).toHaveBeenCalledWith(
+      expect.anything(),
+      [
+        'decks/d1/uploads/v1/original.mp4',
+        'decks/d1/videos/v1/playback.mp4',
+        'decks/d1/videos/v1/poster.jpg',
+      ],
+      expect.anything(),
+    )
   })
 
   it("answers 404 for another deck's asset, before any access check", async () => {
@@ -396,7 +572,14 @@ describe('MediaService scoping', () => {
   })
 
   it('needs the owner role to delete', async () => {
-    vi.mocked(getMediaAsset).mockResolvedValue({ id: 'a1', deckId: 'd1', storageKey: 'k' } as never)
+    vi.mocked(getMediaAsset).mockResolvedValue({
+      id: 'a1',
+      deckId: 'd1',
+      componentId: null,
+      folderId: null,
+      storageKey: 'k',
+      kind: 'image',
+    } as never)
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
     expect(
       await status(media().delete({ userId: 'u1', assetId: 'a1', owner: { deckId: 'd1' } })),

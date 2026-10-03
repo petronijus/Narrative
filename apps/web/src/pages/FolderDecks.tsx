@@ -28,6 +28,7 @@ import { FolderFontsProvider, useFolderFonts } from '../state/useFolderFonts.js'
 import { FolderFontLoader } from '../state/FolderFontLoader.js'
 import { useFolderComponents } from '../state/useFolderComponents.js'
 import { usePptxImport } from '../ui/usePptxImport.js'
+import { moveMediaNotice } from './moveMediaNotice.js'
 
 // ---------------------------------------------------------------------------
 // FolderDecks
@@ -242,7 +243,9 @@ function FolderDecksInner() {
       // Optimistic remove from current view
       setDecks((prev) => prev.filter((d) => d.id !== id))
       try {
-        await api.moveDecks(folderId, [id], destFolderId)
+        const result = await api.moveDecks(folderId, [id], destFolderId)
+        const notice = moveMediaNotice(result)
+        if (notice !== null) setError(notice)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to move deck')
         void fetchData()

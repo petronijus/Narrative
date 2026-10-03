@@ -120,8 +120,9 @@ export const deckInsertFrom = defineCommand({
     'taken from a .pptx file (URL or base64, at most 200 MB) or from another Narrative deck you can edit ' +
     '(optionally slides `from`..`to`, or exactly the slide ids in `slides`; copying needs the same editor ' +
     'access as exporting that deck, so a deck ' +
-    'you can only view is refused). Slides keep their objects, animations, speaker notes, transition and background; their media ' +
-    'is copied into this deck. From a deck in another folder, token references are rebound to this folder the ' +
+    'you can only view is refused). Slides keep their objects, animations, speaker notes, transition and background; media this deck ' +
+    "could not show is copied into it, the source folder's linked media included. From a deck in another " +
+    'folder, token references are rebound to this folder the ' +
     'way deck.moveToFolder does it. It is one change, reverted as one step. Returns the new slide ids — restyle ' +
     'them next if they should match this deck. For a new deck from a file use deck.importPptx.',
   input: z.strictObject({
@@ -181,6 +182,7 @@ export const deckInsertFrom = defineCommand({
     })
   },
   release: (prepared) => prepared.discard(),
+  settle: (prepared) => prepared.settle(),
   handler(ctx, input, prepared) {
     let deck
     try {

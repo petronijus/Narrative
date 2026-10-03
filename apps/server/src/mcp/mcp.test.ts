@@ -101,6 +101,25 @@ describe('tools are generated from the registry', () => {
     expect(listed.get('editor_show')!.inputSchema.properties).not.toHaveProperty('componentId')
   })
 
+  it("offers folderId on a deck tool exactly when its command takes a folder's own media", async () => {
+    const listed = await tools(await w.client(token1))
+    for (const def of createDefaultRegistry().list()) {
+      if ((def.scope ?? 'deck') !== 'deck') continue
+      // deck.duplicate / deck.create name a destination folder in their own input.
+      const shape = (def.input as { shape?: Record<string, unknown> }).shape ?? {}
+      if ('folderId' in shape) continue
+      const props = (listed.get(toolNameForCommand(def.id))!.inputSchema.properties ??
+        {}) as Record<string, unknown>
+      expect('folderId' in props, def.id).toBe(def.acceptsFolder === true)
+    }
+    const remove = listed.get('media_delete')!.inputSchema
+    expect(Object.keys(remove.properties as object)).toEqual(
+      expect.arrayContaining(['deckId', 'componentId', 'folderId', 'assetId']),
+    )
+    // Optional: a deck or a master is named instead (the host checks exactly one).
+    expect(remove.required ?? []).not.toContain('folderId')
+  })
+
   it('flattens a union input into one object and names its forms', async () => {
     const tool = (await tools(await w.client(token1))).get('object_update')!
     expect(tool.inputSchema.type).toBe('object')

@@ -108,9 +108,35 @@ export interface TokenRebindReport {
   error?: string
 }
 
+/**
+ * What moving a deck to another folder did to the pictures and videos it
+ * linked from its old folder (its components', the folder's own): they are
+ * copied into the deck before it moves, so the new folder's readers can load
+ * them (apps/server/src/services/localiseMedia.ts). A copy that fails before
+ * the move stops it; what a collaborator linked during the move is caught up
+ * afterwards and reported here.
+ */
+export interface MovedDeckMedia {
+  deckId: string
+  /**
+   * Pictures and videos taken along: copied into the deck, its references
+   * pointed at the copies (a copy an earlier, failed attempt made is reused
+   * and counted).
+   */
+  copied: number
+  /** References that stay broken: their asset is gone or another deck's (they were broken before). */
+  unresolved: number
+  /** Copies that failed after the deck had moved: those references show nothing in the new folder. */
+  copyFailed: number
+  /** Set when the catch-up after the move failed as a whole; the move itself still happened. */
+  error?: string
+}
+
 export interface MoveDecksResult {
   movedCount: number
   tokens: TokenRebindReport[]
+  /** One entry per moved deck when the folder changed (empty otherwise). */
+  media: MovedDeckMedia[]
 }
 
 export interface DeckService {
@@ -157,8 +183,10 @@ export interface DeckService {
   /** Delete the deck, its document, permissions, share links and media (rows and storage). */
   delete(args: { deckId: string }): Promise<void>
   /**
-   * Move decks the user owns from one of their folders to another, and
-   * rebind the decks' token references to the destination folder's tokens.
+   * Move decks from one folder to another — the user needs the owner role on
+   * every deck and the editor role in both folders — copying the media each
+   * deck links from the source folder into it first (`media`), and rebind
+   * the decks' token references to the destination folder's tokens.
    * `origin` is the Yjs transaction origin of the document rewrites.
    */
   moveDecks(args: {
@@ -184,12 +212,14 @@ export interface DeckService {
   listFonts(args: { deckId: string }): Promise<FontFaceInfo[]>
   /**
    * Stage objects read from another document (planned by `planInsert`) for
-   * insertion into `target`: the pictures and videos they use are copied
-   * into the target (a deck, or a component master, owns its media), the
-   * source deck's own fonts too between decks, token references rebound
-   * when the folders differ, and links to the source's slides removed.
-   * Copying out of a deck needs editor access to it (it is exporting it);
-   * out of or into a component needs owning its folder.
+   * insertion into `target`: the pictures and videos the target may not
+   * show are copied into it (a deck, or a component master, owns its media;
+   * its folder's component media stays linked), the source deck's own fonts
+   * too between decks, token references rebound when the folders differ,
+   * and links to the source's slides removed. Copying out of a deck needs
+   * editor access to it (it is exporting it); out of a component a role in
+   * its folder (editor into another folder); into a component the editor
+   * role. Linked media is copied for whoever may read its folder.
    */
   prepareObjectInsert(args: {
     userId: string
@@ -203,7 +233,7 @@ export interface ObjectInsertResult {
   objectIds: string[]
   /** Media rows registered for the target, copied from the source. */
   mediaRegistered: number
-  /** Pictures that could not be copied (their source file is gone). */
+  /** Pictures and videos left unresolved: not copied (unreadable, gone) or failed to copy. */
   skippedImages: number
   /** Links to slides of the source deck (removed: they do not exist here). */
   droppedLinks: number
@@ -214,9 +244,13 @@ export interface ObjectInsertResult {
 /**
  * Objects staged for insertion (media registered under the target);
  * `apply` adds them to a slide synchronously, inside the host's one
- * transaction. `discard` releases the staged media when `apply` will not run.
+ * transaction. `discard` releases the staged media when `apply` will not run;
+ * `settle`, once the write committed, carries the media the objects link from
+ * the target deck's folder into the deck if it changed folders meanwhile.
  */
 export interface PreparedObjectInsert {
   apply(objects: ObjectsMutationContext): ObjectInsertResult
   discard(): Promise<void>
+  /** After the write. Best effort: never throws. */
+  settle(): Promise<void>
 }

@@ -1,7 +1,7 @@
 /**
  * media/bucketCleanup.ts
  *
- * Best-effort cleanup of a deck's MinIO objects.
+ * Best-effort cleanup of a deck's (or a component master's) MinIO objects.
  *
  * Two complementary passes are needed:
  *
@@ -21,6 +21,25 @@
  * Folder-level fonts (deckId NULL, folderId set) are uploaded the same way
  * and likewise need pass 2.
  *
+ * A prefix sweep also keeps what may belong to a row that does not name it
+ * YET: the video worker writes `<prefix>/videos/<rowId>/…` before it records
+ * the keys on the row, and a copy is stored before its row is registered.
+ * So every object under `videos/<id>/` of a row that exists stays, and so
+ * does every object younger than the grace window (`sweepGraceMs`, 15
+ * minutes — far longer than any upload of a video's outputs or a copy in
+ * flight takes). A sweep of an owner that is gone (a deleted deck or folder)
+ * runs once more after the window (`sweepAgainAfterGrace`), for what was too
+ * young the first time and what a transcode finished meanwhile.
+ *
+ * Neither the prefix sweep nor `purgeUnreferencedKeys` deletes a key that a
+ * remaining media row still names (`keysStillReferenced`): several rows can
+ * share one stored file, and a file can outlive the owner whose prefix it
+ * sits under — a folder font uploaded before migration 0009 lives under
+ * `decks/<originDeck>/fonts/…` and its `deleteFont` clones share that key;
+ * a deleted component's media stays under `components/<id>/`, named by the
+ * rows its folder now owns. Run them after the delete committed, so the
+ * deleted rows no longer count.
+ *
  * Loss-tolerant: every S3 error is logged and swallowed. The DB cascade
  * has already removed the corresponding rows by the time this runs, so
  * any storage failures only leave orphans that a future GC pass can
@@ -34,7 +53,12 @@
 import { ListObjectsV2Command, DeleteObjectsCommand } from '@aws-sdk/client-s3'
 import type { ObjectIdentifier } from '@aws-sdk/client-s3'
 import { buildS3Client, MEDIA_BUCKET } from './s3Client.js'
-import { isStorageSafeId, mediaOwnerPrefix, type MediaOwner } from './mediaOwner.js'
+import {
+  isStorageSafeId,
+  mediaOwnerPrefix,
+  parseTusUploadId,
+  type MediaOwner,
+} from './mediaOwner.js'
 import { inArray, or } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { mediaAssets } from '../db/schema.js'
@@ -50,29 +74,114 @@ export interface PurgeResult {
   errors: number
 }
 
-export async function purgeDeckBucketPrefix(
-  deckId: string,
-  log: MinimalLogger,
-): Promise<PurgeResult> {
-  return purgeBucketPrefix({ deckId }, log)
+/** Objects younger than this are never swept (see the file header). */
+export const DEFAULT_SWEEP_GRACE_MS = 15 * 60_000
+
+/**
+ * The grace window of prefix sweeps: `MEDIA_SWEEP_GRACE_MS` when set (a
+ * non-negative number of milliseconds; the integration tests set 0), else
+ * `DEFAULT_SWEEP_GRACE_MS`. Read at every sweep.
+ */
+export function sweepGraceMs(): number {
+  const raw = process.env['MEDIA_SWEEP_GRACE_MS']
+  const value = raw === undefined || raw === '' ? Number.NaN : Number(raw)
+  return Number.isFinite(value) && value >= 0 ? value : DEFAULT_SWEEP_GRACE_MS
 }
 
 /**
- * `purgeDeckBucketPrefix` for a component master: everything under
- * `components/<componentId>/` (copied pictures and videos, their
- * transcodes, the thumbnail). Originals uploaded into the master by tus
- * are keyed by their upload id and need `purgeExplicitKeys` as well. Only
- * a folder's deletion sweeps a component this way: deleting one component
- * hands its media to the folder (services/components.ts).
+ * Run `sweep` once more after the grace window (and a minute), off any
+ * request: for the prefix of an owner that is gone, what was too young to
+ * sweep the first time — a copy or a transcode that was still writing. In
+ * process and best effort (a restart forgets it); never throws.
+ */
+export function sweepAgainAfterGrace(
+  sweep: () => Promise<unknown>,
+  log: MinimalLogger,
+  what: Record<string, unknown>,
+): void {
+  const timer = setTimeout(() => {
+    sweep().catch((err: unknown) => log.warn({ err, ...what }, 'the second prefix sweep failed'))
+  }, sweepGraceMs() + 60_000)
+  timer.unref()
+}
+
+export async function purgeDeckBucketPrefix(
+  db: Database,
+  deckId: string,
+  log: MinimalLogger,
+): Promise<PurgeResult> {
+  return purgeBucketPrefix(db, { deckId }, log)
+}
+
+/**
+ * `purgeDeckBucketPrefix` for a component master: whatever no media row
+ * names any more under `components/<componentId>/` (the thumbnail, outputs
+ * of media deleted earlier, what a failed copy left). Originals uploaded
+ * into the master by tus are keyed by their upload id and need
+ * `purgeUnreferencedKeys` as well. A deleted component hands its media to
+ * the folder (services/components.ts), so its sweep keeps those files.
  */
 export async function purgeComponentBucketPrefix(
+  db: Database,
   componentId: string,
   log: MinimalLogger,
 ): Promise<PurgeResult> {
-  return purgeBucketPrefix({ componentId }, log)
+  return purgeBucketPrefix(db, { componentId }, log)
 }
 
-async function purgeBucketPrefix(owner: MediaOwner, log: MinimalLogger): Promise<PurgeResult> {
+/**
+ * The listed keys that may go: those no media row names. A tus upload's
+ * `<key>.info` sidecar stays with its key. Throws when the database cannot
+ * answer — a sweep that cannot tell must delete nothing.
+ */
+async function unreferencedOf(db: Database, keys: readonly string[]): Promise<string[]> {
+  const base = (k: string) => (k.endsWith('.info') ? k.slice(0, -'.info'.length) : k)
+  const kept = await keysStillReferenced(db, [...new Set([...keys, ...keys.map(base)])])
+  return keys.filter((k) => !kept.has(k) && !kept.has(base(k)))
+}
+
+/**
+ * The listed objects a prefix sweep must keep although no row names them
+ * yet: those younger than the grace window, and those under
+ * `<prefix>/videos/<id>/` of a media row that exists (a transcode's outputs
+ * before the worker records them). Throws when the database cannot answer.
+ */
+async function pendingOf(
+  db: Database,
+  prefix: string,
+  objects: ReadonlyArray<{ Key?: string | undefined; LastModified?: Date | undefined }>,
+  now: number,
+): Promise<Set<string>> {
+  const keep = new Set<string>()
+  const grace = sweepGraceMs()
+  const videoOf = new Map<string, string>()
+  for (const o of objects) {
+    if (typeof o.Key !== 'string') continue
+    const modified = o.LastModified?.getTime()
+    // An object of unknown age is kept: a sweep that cannot tell deletes nothing.
+    if (modified === undefined || now - modified < grace) keep.add(o.Key)
+    if (o.Key.startsWith(`${prefix}videos/`)) {
+      const id = o.Key.slice(`${prefix}videos/`.length).split('/')[0] ?? ''
+      if (id !== '') videoOf.set(o.Key, id)
+    }
+  }
+  const ids = [...new Set(videoOf.values())]
+  if (ids.length > 0) {
+    const rows = await db
+      .select({ id: mediaAssets.id })
+      .from(mediaAssets)
+      .where(inArray(mediaAssets.id, ids))
+    const existing = new Set(rows.map((r) => r.id))
+    for (const [key, id] of videoOf) if (existing.has(id)) keep.add(key)
+  }
+  return keep
+}
+
+async function purgeBucketPrefix(
+  db: Database,
+  owner: MediaOwner,
+  log: MinimalLogger,
+): Promise<PurgeResult> {
   // An id that is not storage safe would widen the prefix into another
   // owner's keys (mediaOwner.ts): refuse the sweep, keep the orphans.
   if (!isStorageSafeId('deckId' in owner ? owner.deckId : owner.componentId)) {
@@ -84,6 +193,7 @@ async function purgeBucketPrefix(owner: MediaOwner, log: MinimalLogger): Promise
 
   let continuationToken: string | undefined
   let totalDeleted = 0
+  let kept = 0
   let pages = 0
   let errors = 0
 
@@ -108,10 +218,23 @@ async function purgeBucketPrefix(owner: MediaOwner, log: MinimalLogger): Promise
 
     pages++
 
-    const objects: ObjectIdentifier[] = (page.Contents ?? [])
-      .map((o) => o.Key)
-      .filter((k): k is string => typeof k === 'string')
-      .map((Key) => ({ Key }))
+    const contents = page.Contents ?? []
+    const listed = contents.map((o) => o.Key).filter((k): k is string => typeof k === 'string')
+    let keys: string[]
+    try {
+      const pending = await pendingOf(db, Prefix, contents, Date.now())
+      const candidates = listed.filter((k) => !pending.has(k))
+      keys = candidates.length === 0 ? [] : await unreferencedOf(db, candidates)
+    } catch (err) {
+      log.warn(
+        { err, ...owner, prefix: Prefix },
+        'bucket prefix purge: reading which files media rows still name failed (cleanup aborted, orphans left)',
+      )
+      errors++
+      break
+    }
+    kept += listed.length - keys.length
+    const objects: ObjectIdentifier[] = keys.map((Key) => ({ Key }))
 
     if (objects.length > 0) {
       try {
@@ -141,11 +264,36 @@ async function purgeBucketPrefix(owner: MediaOwner, log: MinimalLogger): Promise
     continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined
   } while (continuationToken)
 
-  if (log.info && (totalDeleted > 0 || errors > 0)) {
-    log.info({ ...owner, deleted: totalDeleted, pages, errors }, 'bucket prefix purge complete')
+  if (log.info && (totalDeleted > 0 || kept > 0 || errors > 0)) {
+    log.info(
+      { ...owner, deleted: totalDeleted, kept, pages, errors },
+      'bucket prefix purge complete',
+    )
   }
 
   return { deleted: totalDeleted, pages, errors }
+}
+
+/**
+ * The component ids whose `components/<id>/` prefix holds one of `keys` —
+ * directly, or as the storage path a tus upload id encodes. A folder's
+ * deletion sweeps these prefixes too: the media of a component deleted
+ * earlier is the folder's now, and its rows' keys are all that is left of
+ * that component. Ids that are not storage safe are left out (their prefix
+ * would reach into another owner's keys).
+ */
+export function componentIdsInKeys(keys: Iterable<string>): Set<string> {
+  const ids = new Set<string>()
+  const add = (path: string | null) => {
+    if (path === null || !path.startsWith('components/')) return
+    const id = path.slice('components/'.length).split('/')[0] ?? ''
+    if (isStorageSafeId(id) && path.length > `components/${id}/`.length) ids.add(id)
+  }
+  for (const key of keys) {
+    if (key.startsWith('components/')) add(key)
+    else add(parseTusUploadId(key)?.path ?? null)
+  }
+  return ids
 }
 
 /**
@@ -246,14 +394,24 @@ export async function keysStillReferenced(
 /**
  * `purgeExplicitKeys` for the keys of rows just deleted: a key another row
  * still names (keysStillReferenced) is kept. Call it after the delete has
- * committed, so the deleted rows no longer count.
+ * committed, so the deleted rows no longer count. When the database cannot
+ * say which keys are still named, nothing is deleted.
  */
 export async function purgeUnreferencedKeys(
   db: Database,
   keys: ReadonlyArray<string>,
   log: MinimalLogger,
 ): Promise<PurgeResult> {
-  const kept = await keysStillReferenced(db, keys)
+  let kept: Set<string>
+  try {
+    kept = await keysStillReferenced(db, keys)
+  } catch (err) {
+    log.warn(
+      { err, keys: keys.length },
+      'reading which files media rows still name failed (nothing deleted, orphans left)',
+    )
+    return { deleted: 0, pages: 0, errors: 1 }
+  }
   if (kept.size > 0 && log.info) {
     log.info({ kept: kept.size }, 'kept stored files other media rows still name')
   }

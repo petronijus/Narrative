@@ -4,9 +4,11 @@
  * same pipeline as a browser upload (media/finalizeUpload.ts); the rest
  * mirrors the /api/media routes.
  *
- * Media is deck-scoped: an asset belongs to one deck and only that deck's
- * slides may show it, so every command here names its deck (or, for fonts,
- * its folder) and refuses assets of another.
+ * An asset belongs to one deck, one component master or one folder; a deck
+ * shows its own and, linked, its folder's component and folder pictures and
+ * videos (apps/server/src/media/visibleMedia.ts). Every command here names
+ * its deck or master (or, for fonts and a folder's own media, its folder)
+ * and refuses assets it may not reach.
  */
 
 import { z } from 'zod'
@@ -107,8 +109,9 @@ export const mediaStatus = defineCommand({
   id: 'media.status',
   title: 'Video status',
   description:
-    'Transcode state of an uploaded video — pending, processing, done or failed (with the error) — plus its ' +
-    'duration, size and playback / poster / thumbnail URLs once done. Poll it after media.upload until ' +
+    'Transcode state of a video the deck (or the targeted master) shows — its own, or one it links from its ' +
+    'folder — pending, processing, done or failed (with the error), plus its duration, size and playback / ' +
+    'poster / thumbnail URLs once done. Poll it after media.upload until ' +
     '`transcodeStatus` is "done" (typically seconds to a few minutes). Images and fonts need no processing: they ' +
     'are ready as soon as media.upload returns.',
   input: z.strictObject({ assetId: AssetIdSchema }),
@@ -145,8 +148,8 @@ export const mediaUrl = defineCommand({
   id: 'media.url',
   title: 'Image URL',
   description:
-    "A signed URL of an image the deck (or the targeted component master) shows — its own, or a component's of " +
-    'its folder that a stamp links — in a size variant: thumb (small), preview, display (default, ' +
+    'A signed URL of an image the deck (or the targeted master) shows — its own, or one it links from its ' +
+    "folder (a stamped component's, the folder's own) — in a size variant: thumb (small), preview, display (default, " +
     'slide size) or original. Use it to look at an image a slide shows, or to hand it to the user. For videos use ' +
     'media.status; slide screenshots are query.render (planned, not available yet).',
   input: z.strictObject({
@@ -216,25 +219,34 @@ export const mediaDelete = defineCommand({
   id: 'media.delete',
   title: 'Delete media',
   description:
-    "Remove an asset from the deck's (or the targeted component master's) media. Any object still showing it " +
-    'breaks (an empty image / video box), so first delete or re-point those objects (object.delete, ' +
-    "object.update). Cannot be undone; confirm with the user first. The deck's owner, or the component folder's.",
+    "Remove an asset: delete a deck's own with its file, hand a component master's picture or video to its " +
+    'folder (nothing is deleted; stamps keep showing it), or — target folderId — delete a picture or video the ' +
+    'folder owns. Objects still showing a deleted asset go blank: delete or re-point them first (object.delete, ' +
+    'object.update). Folder fonts: folder.fonts.delete. Cannot be undone; confirm with the user first. Deck ' +
+    "owner; on a master its folder's editors; on a folder its owner.",
   input: z.strictObject({ assetId: AssetIdSchema }),
-  output: z.object({ deleted: z.literal(true) }),
+  output: z.object({
+    outcome: z
+      .enum(['deleted', 'handedToFolder'])
+      .describe('deleted: the asset and its file are gone; handedToFolder: the folder owns it now'),
+  }),
   role: 'owner',
+  roleOn: { component: 'editor' },
   scope: 'deck',
   acceptsComponent: true,
+  acceptsFolder: true,
   undo: 'irreversible',
   confirm: 'always',
   routes: [DELETE('/api/media/:assetId')],
   examples: [{ title: 'Delete an unused image', input: { assetId: 'asset-fixture' } }],
   async handler(ctx, input) {
-    await requireServices(ctx).media.delete({
+    const folderId = ctx.target?.deckId === undefined ? ctx.target?.folderId : undefined
+    const { outcome } = await requireServices(ctx).media.delete({
       userId: ctx.actor.userId,
       assetId: input.assetId,
-      owner: targetDocument(ctx),
+      owner: folderId !== undefined ? { folderId } : targetDocument(ctx),
     })
-    return { deleted: true as const }
+    return { outcome }
   },
 })
 

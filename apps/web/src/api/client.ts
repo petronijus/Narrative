@@ -130,15 +130,13 @@ export interface ApiClient {
    */
   deleteFolder(id: string): Promise<void>
   /**
-   * Bulk-move decks from srcFolderId to destFolderId.
-   * All deckIds must be owned by the caller and currently live in srcFolderId.
-   * Returns the count of decks actually moved.
+   * Bulk-move decks from srcFolderId to destFolderId: the caller owns every
+   * deck and is an editor of both folders; the decks must live in
+   * srcFolderId. Returns how many moved and, per deck, the linked pictures
+   * and videos taken along (`media`; a copy that failed after the deck had
+   * moved shows nothing in the new folder).
    */
-  moveDecks(
-    srcFolderId: string,
-    deckIds: string[],
-    destFolderId: string,
-  ): Promise<{ movedCount: number }>
+  moveDecks(srcFolderId: string, deckIds: string[], destFolderId: string): Promise<MoveDecksResult>
   /**
    * List active editors per deck for a folder. Returns only decks with
    * at least one editor besides the caller. Used by the folder view to
@@ -469,6 +467,21 @@ export interface ActiveEditorUser {
 export interface ActiveEditorsEntry {
   deckId: string
   users: ActiveEditorUser[]
+}
+
+/** What moving decks did (services/decks.ts `moveDecks`). */
+export interface MoveDecksResult {
+  movedCount: number
+  /** Per moved deck, when the folder changed: the linked media it took along. */
+  media?: Array<{
+    deckId: string
+    copied: number
+    unresolved: number
+    /** Copies that failed after the deck had moved: those pictures show nothing there. */
+    copyFailed: number
+    /** The pass after the move failed as a whole (the move itself happened). */
+    error?: string
+  }>
 }
 
 /** Summary returned by the .pptx import endpoint — drives the success toast. */
@@ -876,7 +889,7 @@ export function createApiClient(): ApiClient {
     },
 
     moveDecks: (srcFolderId, deckIds, destFolderId) =>
-      requestJson<{ movedCount: number }>(`/folders/${srcFolderId}/move-decks`, {
+      requestJson<MoveDecksResult>(`/folders/${srcFolderId}/move-decks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deckIds, destFolderId }),

@@ -5,23 +5,32 @@
  * finalize step as the tus upload (media/finalizeUpload.ts) and the same
  * policy (media/uploadPolicy.ts).
  *
- * Per-asset reads and deletes follow the asset's owner (media/mediaOwner.ts):
- * a deck's media by the deck role (a share link reads), a component master's
- * media by owning the component's folder — a share link never does.
+ * Per-asset reads and removals follow the asset's owner (media/mediaOwner.ts):
+ * a deck's media by the deck role (a share link reads); a component
+ * master's or a folder's pictures and videos are read by whoever may read
+ * the folder's content (a deck guest and a share link included, so linked
+ * media shows on a shared deck). Removing follows `remove`: a master's
+ * media is handed to its folder by a folder editor, the folder's own is
+ * deleted by the folder owner only.
  */
 
 import { nanoid } from 'nanoid'
+import { and, eq } from 'drizzle-orm'
 import { PutObjectCommand } from '@aws-sdk/client-s3'
 import type {
   BinarySource,
   FontUrlInfo,
   ImageVariant,
+  MediaDeleteOutcome,
+  MediaOwnerRef,
   MediaService,
   MediaUploadResult,
   UploadSessionInfo,
   VideoInfo,
 } from '@narrative/commands'
+import { components, mediaAssets } from '../db/schema.js'
 import { deleteMediaAsset, getFontAsset, getMediaAsset, getVideoAsset } from '../media/assets.js'
+import { purgeUnreferencedKeys } from '../media/bucketCleanup.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { buildS3Client, MEDIA_BUCKET, presignGetUrl } from '../media/s3Client.js'
 import {
@@ -48,17 +57,23 @@ import {
   tooLargeMessage,
   type UploadKind,
 } from '../media/uploadPolicy.js'
-import { resolveDeckAccess, resolveFolderContentAccess, roleAtLeast } from '../auth/permissions.js'
+import {
+  resolveDeckAccess,
+  resolveFolderAccess,
+  resolveFolderContentAccess,
+  roleAtLeast,
+} from '../auth/permissions.js'
 import type { ServiceDeps } from './deps.js'
 import {
   ServiceError,
   badRequest,
+  conflict,
   forbidden,
   notFound,
   tooLarge,
   unsupportedType,
 } from './errors.js'
-import { requireFolderContentReader } from './shared.js'
+import { bypassAliases, folderRoleRefusal, requireFolderContentReader } from './shared.js'
 import { UploadSessionLimitError } from '../media/uploadSessions.js'
 import { LARGE_DOWNLOAD_TIMEOUT_MS, withBinarySource, type BinaryFile } from './binarySource.js'
 
@@ -131,28 +146,23 @@ export function createMediaService(deps: ServiceDeps): MediaService {
   }
 
   /**
-   * The caller may read (`viewer`) or delete (`owner`) the asset.
-   *
-   *   - A component master's or a folder's picture or video (a deleted
-   *     component's, handed to its folder): read by whoever may read the
-   *     folder's content — a member, or anyone with access to one of the
-   *     folder's decks, a share link included, so a linked picture shows on
-   *     a shared deck — and deleted by an editor of the folder.
-   *   - A deck's asset: the deck role, share links included, as always.
+   * The caller may read the asset: a component master's or a folder's
+   * picture or video (a deleted component's, handed to its folder) by
+   * whoever may read the folder's content — a member, or anyone with access
+   * to one of the folder's decks, a share link included, so a linked picture
+   * shows on a shared deck; a deck's asset by the deck role, share links
+   * included, as always. Who may remove an asset is `remove`'s.
    */
-  async function requireAssetAccess(
+  async function requireAssetReader(
     asset: { deckId: string | null; componentId?: string | null; folderId?: string | null },
     userId: string | null,
     shareToken: string | null | undefined,
-    required: 'viewer' | 'owner',
   ): Promise<void> {
     const componentId = asset.componentId ?? null
     if (componentId !== null) {
-      const allowed =
-        required === 'viewer'
-          ? await canReadComponentMedia(db, componentId, userId, shareToken)
-          : await canWriteComponentMedia(db, componentId, userId)
-      if (!allowed) throw forbidden('Forbidden')
+      if (!(await canReadComponentMedia(db, componentId, userId, shareToken))) {
+        throw forbidden('Forbidden')
+      }
       return
     }
     const folderId = asset.deckId === null ? (asset.folderId ?? null) : null
@@ -162,13 +172,10 @@ export function createMediaService(deps: ServiceDeps): MediaService {
         userId,
         shareToken: shareToken ?? null,
       })
-      const allowed =
-        access !== null &&
-        (required === 'viewer' || (access.via === 'folder' && roleAtLeast(access.role, 'editor')))
-      if (!allowed) throw forbidden('Forbidden')
+      if (access === null) throw forbidden('Forbidden')
       return
     }
-    await requireDeckRole(asset.deckId, userId, shareToken, required)
+    await requireDeckRole(asset.deckId, userId, shareToken, 'viewer')
   }
 
   /**
@@ -193,7 +200,12 @@ export function createMediaService(deps: ServiceDeps): MediaService {
    * (media/visibleMedia.ts). Any asset when no owner is named.
    */
   async function shownBy(
-    asset: { deckId: string | null; componentId?: string | null; folderId?: string | null },
+    asset: {
+      deckId: string | null
+      componentId?: string | null
+      folderId?: string | null
+      kind: 'image' | 'video' | 'font'
+    },
     owner: MediaOwner | undefined,
   ): Promise<boolean> {
     if (owner === undefined) return true
@@ -208,6 +220,7 @@ export function createMediaService(deps: ServiceDeps): MediaService {
         componentId,
         folderId: asset.folderId ?? null,
         componentFolderId: componentFolder,
+        kind: asset.kind,
       },
       { owner, folderId: ownerFolder },
     )
@@ -364,10 +377,10 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     owner?: MediaOwner | undefined
   }): Promise<VideoInfo> {
     const asset = await getVideoAsset(db, args.assetId)
-    if (!asset || !(await shownBy(asset, args.owner))) {
+    if (!asset || !(await shownBy({ ...asset, kind: 'video' }, args.owner))) {
       throw notFound('Video asset not found')
     }
-    await requireAssetAccess(asset, args.userId, args.shareToken, 'viewer')
+    await requireAssetReader(asset, args.userId, args.shareToken)
 
     const posterUrl = asset.posterKey
       ? signImgproxyUrl({ storageKey: asset.posterKey, variant: 'display', extension: 'jpg' })
@@ -405,7 +418,7 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     if (!asset || !(await shownBy(asset, args.owner))) {
       throw notFound('Asset not found')
     }
-    await requireAssetAccess(asset, args.userId, args.shareToken, 'viewer')
+    await requireAssetReader(asset, args.userId, args.shareToken)
     return { url: signImgproxyUrl({ storageKey: asset.storageKey, variant: args.variant }) }
   }
 
@@ -433,18 +446,109 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     }
   }
 
+  /** The caller's role in a folder (BYPASS_AUTH counts the legacy demo user too), or null. */
+  async function folderRole(folderId: string, userId: string) {
+    if (userId === '') return null
+    const access = await resolveFolderAccess(db, {
+      folderId,
+      userId,
+      alsoAs: bypassAliases(deps.bypass),
+    })
+    return access?.role ?? null
+  }
+
+  /**
+   * Remove an asset from its owner's media (MediaService.delete):
+   *
+   *   - a component master's picture or video is detached from the master
+   *     and handed to its folder — `component_id = NULL, folder_id =
+   *     folder`, as deleting the component does — so the stamps that link it
+   *     keep showing it; the master no longer owns it. An editor of the
+   *     folder may (the right to change the master).
+   *   - a folder's own picture or video (a deleted component's, or one
+   *     handed over as above) may be linked by any deck of the folder:
+   *     only the folder's owner deletes it (or deleting the folder does).
+   *   - a folder font is not removed here: `DELETE /api/folders/:id/fonts/
+   *     :assetId` (folder.fonts.delete) keeps the decks that use it
+   *     rendering, which a bare row delete would not.
+   *   - a deck's asset: the deck's owner.
+   *
+   * `owner`, when named (an agent's target), must be the asset's owner: a
+   * deck, a master, or the folder for its own media. A deleted row's stored
+   * files go too, unless another row still names them
+   * (media/bucketCleanup.ts).
+   */
   async function remove(args: {
     userId: string
     assetId: string
-    owner?: MediaOwner | undefined
-  }): Promise<void> {
+    owner?: MediaOwnerRef | undefined
+  }): Promise<{ outcome: MediaDeleteOutcome }> {
     const asset = await getMediaAsset(db, args.assetId)
-    if (!asset || !ownedBy(asset, args.owner)) {
+    const owner = args.owner
+    const owned =
+      asset !== null &&
+      (owner !== undefined && 'folderId' in owner
+        ? asset.deckId === null &&
+          (asset.componentId ?? null) === null &&
+          asset.folderId === owner.folderId
+        : ownedBy(asset, owner))
+    if (!asset || !owned) {
       throw notFound('Asset not found')
     }
-    await requireAssetAccess(asset, args.userId, null, 'owner')
-    // NOTE: the MinIO object remains — see TODO(M29) for the GC job.
-    await deleteMediaAsset(db, args.assetId)
+
+    const componentId = asset.componentId ?? null
+    const folderId = asset.deckId === null ? (asset.folderId ?? null) : null
+    if (componentId !== null) {
+      const [component] = await db
+        .select({ folderId: components.folderId })
+        .from(components)
+        .where(eq(components.id, componentId))
+        .limit(1)
+      if (!component) throw notFound('Asset not found')
+      const role = await folderRole(component.folderId, args.userId)
+      if (role === null) throw forbidden('Forbidden')
+      if (!roleAtLeast(role, 'editor')) throw forbidden(folderRoleRefusal('editor'))
+      const [handed] = await db
+        .update(mediaAssets)
+        .set({ componentId: null, folderId: component.folderId })
+        .where(and(eq(mediaAssets.id, asset.id), eq(mediaAssets.componentId, componentId)))
+        .returning({ id: mediaAssets.id })
+      if (!handed) throw conflict('The asset changed while it was being removed; try again')
+      return { outcome: 'handedToFolder' }
+    }
+
+    if (folderId !== null) {
+      // Say nothing about the folder's media to someone who cannot see it.
+      const reader = await resolveFolderContentAccess(db, {
+        folderId,
+        userId: args.userId === '' ? null : args.userId,
+        shareToken: null,
+        alsoAs: bypassAliases(deps.bypass),
+      })
+      if (reader === null) throw forbidden('Forbidden')
+      if (asset.kind === 'font') {
+        throw badRequest(
+          `Asset '${asset.id}' is a font of its folder: remove it with ` +
+            `DELETE /api/folders/${folderId}/fonts/${asset.id} (folder.fonts.delete), ` +
+            'which keeps the decks that use it rendering',
+        )
+      }
+      if ((await folderRole(folderId, args.userId)) !== 'owner') {
+        throw forbidden(
+          "Forbidden: a picture or video the folder owns may be linked by any of its decks; only the folder's " +
+            'owner may delete it',
+        )
+      }
+    } else {
+      await requireDeckRole(asset.deckId, args.userId, null, 'owner')
+    }
+
+    const keys = [asset.storageKey, asset.playbackKey, asset.posterKey, asset.thumbnailKey].filter(
+      (k): k is string => typeof k === 'string' && k !== '',
+    )
+    await deleteMediaAsset(db, asset.id)
+    await purgeUnreferencedKeys(db, keys, deps.log)
+    return { outcome: 'deleted' }
   }
 
   async function openUploadSession(args: {

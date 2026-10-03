@@ -225,6 +225,13 @@
       "when": 1790794349217,
       "tag": "0031_deck_creator_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1791058865486,
+      "tag": "0032_deck_moved_media",
+      "breakpoints": true
     }
   ]
 }

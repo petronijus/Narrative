@@ -7,7 +7,7 @@
 
 import { nanoid } from 'nanoid'
 import { and, asc, eq, inArray, or, sql, type SQL } from 'drizzle-orm'
-import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
+import { PutObjectCommand } from '@aws-sdk/client-s3'
 import type {
   BinarySource,
   FolderListPage,
@@ -20,8 +20,10 @@ import type {
 import { components, decks, folderPermissions, folders, mediaAssets } from '../db/schema.js'
 import type { DeckRole } from '../auth/permissions.js'
 import {
+  componentIdsInKeys,
   purgeComponentBucketPrefix,
   purgeDeckBucketPrefix,
+  sweepAgainAfterGrace,
   purgeUnreferencedKeys,
 } from '../media/bucketCleanup.js'
 import { buildS3Client, MEDIA_BUCKET, presignGetUrl } from '../media/s3Client.js'
@@ -317,8 +319,9 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
       .where(eq(decks.folderId, id))
     const deckIds = containedDecks.map((d) => d.id)
 
-    // Storage keys of every contained deck's assets, the folder's own fonts
-    // AND its component masters' pictures and videos (A2.12b — they cascade
+    // Storage keys of every contained deck's assets, the folder's own media
+    // (fonts, and the pictures and videos of components deleted earlier) AND
+    // its component masters' pictures and videos (A2.12b — they cascade
     // away with the folder's components), collected BEFORE the cascade
     // removes the rows: tus originals and folder fonts use keys outside any
     // decks/<id>/ or components/<id>/ prefix.
@@ -333,6 +336,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
         : eq(mediaAssets.folderId, id)
     const assetRows = await db
       .select({
+        folderId: mediaAssets.folderId,
         storageKey: mediaAssets.storageKey,
         playbackKey: mediaAssets.playbackKey,
         posterKey: mediaAssets.posterKey,
@@ -340,11 +344,18 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
       })
       .from(mediaAssets)
       .where(deckIds.length > 0 ? or(inArray(mediaAssets.deckId, deckIds), ownMedia) : ownMedia)
-    const explicitKeys = assetRows.flatMap((r) =>
+    const keysOf = (r: (typeof assetRows)[number]) =>
       [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey].filter(
         (k): k is string => typeof k === 'string' && k !== '',
-      ),
-    )
+      )
+    const explicitKeys = assetRows.flatMap(keysOf)
+    // A component deleted earlier left its media to the folder (its rows are
+    // folder-owned now, their files still under components/<old id>/): its
+    // prefix — transcodes, leftovers — goes with the folder like a live
+    // component's. Only the rows' keys still name it.
+    const sweptComponents = new Set(componentIds)
+    for (const c of componentIdsInKeys(assetRows.filter((r) => r.folderId === id).flatMap(keysOf)))
+      sweptComponents.add(c)
 
     // Decks first (FK is ON DELETE RESTRICT); cascades remove their updates,
     // permissions, share links and media rows. One transaction, so a crash
@@ -361,12 +372,16 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
     for (const c of componentIds) closeConnectionsForDocument(`component:${c}`)
     closeConnectionsForDocument(`folder:${id}`)
 
-    // Best-effort MinIO cleanup, loss-tolerant.
-    await Promise.all([
-      ...containedDecks.map((d) => purgeDeckBucketPrefix(d.id, deps.log)),
-      ...componentIds.map((c) => purgeComponentBucketPrefix(c, deps.log)),
-      purgeUnreferencedKeys(db, explicitKeys, deps.log),
-    ])
+    // Best-effort MinIO cleanup, loss-tolerant; a file another media row
+    // still names is kept (media/bucketCleanup.ts).
+    const sweepPrefixes = () =>
+      Promise.all([
+        ...containedDecks.map((d) => purgeDeckBucketPrefix(db, d.id, deps.log)),
+        ...[...sweptComponents].map((c) => purgeComponentBucketPrefix(db, c, deps.log)),
+      ])
+    await Promise.all([sweepPrefixes(), purgeUnreferencedKeys(db, explicitKeys, deps.log)])
+    // What was too young to sweep (a transcode or a copy still writing).
+    sweepAgainAfterGrace(sweepPrefixes, deps.log, { folderId: id })
     return { deletedDeckCount: containedDecks.length }
   }
 
@@ -475,43 +490,35 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
       .from(decks)
       .where(eq(decks.folderId, folderId))
 
-    let promotedToDeckCount = 0
-    if (folderDecks.length > 0) {
-      await db.insert(mediaAssets).values(
-        folderDecks.map((d) => ({
-          id: nanoid(),
-          deckId: d.id,
-          folderId: null,
-          uploaderUserId: asset.uploaderUserId,
-          mimeType: asset.mimeType,
-          sizeBytes: asset.sizeBytes,
-          storageKey: asset.storageKey,
-          originalFilename: asset.originalFilename,
-          kind: 'font' as const,
-          fontFamily: asset.fontFamily,
-          fontWeight: asset.fontWeight,
-          fontStyle: asset.fontStyle,
-          fontPostscriptName: asset.fontPostscriptName,
-        })),
-      )
-      promotedToDeckCount = folderDecks.length
-    }
-
-    await db.delete(mediaAssets).where(eq(mediaAssets.id, assetId))
-
-    // The object is shared by the clones; delete it only when none were made.
-    if (promotedToDeckCount === 0) {
-      try {
-        await buildS3Client().send(
-          new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: asset.storageKey }),
-        )
-      } catch (err) {
-        deps.log.warn(
-          { err, key: asset.storageKey },
-          '[folderFonts] MinIO delete failed (orphaned)',
+    // The clones and the delete commit together: a deck never loses the
+    // font between the two.
+    await db.transaction(async (tx) => {
+      if (folderDecks.length > 0) {
+        await tx.insert(mediaAssets).values(
+          folderDecks.map((d) => ({
+            id: nanoid(),
+            deckId: d.id,
+            folderId: null,
+            uploaderUserId: asset.uploaderUserId,
+            mimeType: asset.mimeType,
+            sizeBytes: asset.sizeBytes,
+            storageKey: asset.storageKey,
+            originalFilename: asset.originalFilename,
+            kind: 'font' as const,
+            fontFamily: asset.fontFamily,
+            fontWeight: asset.fontWeight,
+            fontStyle: asset.fontStyle,
+            fontPostscriptName: asset.fontPostscriptName,
+          })),
         )
       }
-    }
+      await tx.delete(mediaAssets).where(eq(mediaAssets.id, assetId))
+    })
+    const promotedToDeckCount = folderDecks.length
+
+    // The file goes only when no row names it any more — not the clones,
+    // nor another row sharing the key (media/bucketCleanup.ts).
+    await purgeUnreferencedKeys(db, [asset.storageKey], deps.log)
     return { promotedToDeckCount }
   }
 

@@ -143,6 +143,14 @@ export interface RunManagerOptions {
   maxUndoRunsPerDocument?: number
   maxOpenRunsPerUser?: number
   undoMaxAgeMs?: number
+  /**
+   * After a revert of a run on a deck changed its document. A revert can
+   * bring back references to media of a folder the deck has left since; the
+   * server points them at the deck's copies here (services/localiseMedia.ts
+   * `repointMovedMedia`). Awaited before `revertRun` returns;
+   * its failure is logged, the revert stands.
+   */
+  afterDeckRevert?: (deckId: string) => Promise<void>
 }
 
 export interface OpToRecord {
@@ -181,6 +189,7 @@ export class RunManager implements AgentRunService {
   private readonly maxUndoRunsPerDocument: number
   private readonly maxOpenRunsPerUser: number
   private readonly undoMaxAgeMs: number
+  private readonly afterDeckRevert: ((deckId: string) => Promise<void>) | undefined
 
   /** Open runs of this process, by id. */
   private readonly open = new Map<string, ActiveRun>()
@@ -206,6 +215,7 @@ export class RunManager implements AgentRunService {
     this.maxUndoRunsPerDocument = opts.maxUndoRunsPerDocument ?? MAX_UNDO_RUNS_PER_DOCUMENT
     this.maxOpenRunsPerUser = opts.maxOpenRunsPerUser ?? MAX_OPEN_RUNS_PER_USER
     this.undoMaxAgeMs = opts.undoMaxAgeMs ?? UNDO_MAX_AGE_MS
+    this.afterDeckRevert = opts.afterDeckRevert
   }
 
   // -------------------------------------------------------------------------
@@ -725,6 +735,18 @@ export class RunManager implements AgentRunService {
       { runId: args.runId, by: args.userId, revertedChanges, remaining },
       'agent run reverted',
     )
+    // The revert may have brought back pictures of a folder the deck has
+    // left since the run: copied into the deck now, not only at the next store.
+    if (runTarget.kind === 'deck' && revertedChanges > 0 && this.afterDeckRevert !== undefined) {
+      try {
+        await this.afterDeckRevert(runTarget.deckId)
+      } catch (err) {
+        this.log.warn(
+          { runId: args.runId, deckId: runTarget.deckId, err },
+          'agent run: catching up old folder media after the revert failed',
+        )
+      }
+    }
     return { runId: args.runId, revertedChanges, remainingChanges: remaining, status: finalStatus }
   }
 

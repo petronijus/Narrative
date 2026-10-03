@@ -7,7 +7,9 @@
  * between a deck and a component master (`stageObjectInsert`) run the real
  * requireComponentRole on the scripted database: a master is read by any
  * member of its folder within the folder, copied out of it by an editor,
- * written by an editor, and answers "not found" to a non-member.
+ * written by an editor, and answers "not found" to a non-member. A folder's
+ * linked media leaves it as a copy for whoever may read it there (a member,
+ * a guest of one of its decks) and stays unresolved for anyone else.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -451,6 +453,142 @@ describe('stageObjectInsert / insertObjectsFrom', () => {
   })
 })
 
+describe('stageObjectInsert: linked media leaving its folder', () => {
+  // The source deck `src` (folder f1) shows a component's picture `a_src`
+  // linked from f1; the objects are pasted into `dst` in folder f2.
+  const linkedPicture = { ...mediaRow, deckId: null, componentId: 'cmpX' }
+  const pasted = (assetId: string): Record<string, unknown>[] => [
+    {
+      id: 'img',
+      type: 'image',
+      assetId,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      rotation: 0,
+      opacity: 1,
+    },
+  ]
+
+  async function paste(assetId: string, selects: unknown[][]) {
+    seedSource()
+    const sourceEditor = await hp.openDirectConnection('src')
+    const script = scriptedDb({ selects })
+    try {
+      const prepared = await stageObjectInsert(
+        { db: script.db, log: quietLog, hocuspocus: () => hp },
+        {
+          userId: 'u1',
+          source: { deckId: 'src' },
+          target: { deckId: 'dst' },
+          plan: planInsert(pasted(assetId), {}),
+        },
+      )
+      const target = createSlideDoc()
+      const objects = getSlideObjectsCtx(target, target.slides.get(0).get('id') as string)!
+      let result: ReturnType<typeof prepared.apply> | undefined
+      target.doc.transact(() => {
+        result = prepared.apply(objects)
+      })
+      return { script, result: result!, target }
+    } finally {
+      await sourceEditor.disconnect()
+    }
+  }
+
+  // Whoever may read the folder's media may carry it into another folder as
+  // a copy (Petr, 2026-10-03): members of any role, and guests of its decks.
+  it('copies it for a deck-only editor of the source, a reader of its folder', async () => {
+    const { script, result, target } = await paste('a_src', [
+      [{ folderId: 'f1' }], // the source deck's folder
+      [{ folderId: 'f2' }], // the target deck's: another one
+      [placed(linkedPicture, 'f1')],
+      [], // the caller's role in f1: none…
+      [{ deckId: 'src' }], // …but a grant on one of its decks: a content reader
+      [], // the two folders' token documents
+      [],
+    ])
+    expect(script.remaining().selects).toBe(0)
+    const [row] = script.writes.find((w) => w.table === 'media_assets')!.values as Array<
+      Record<string, unknown>
+    >
+    expect(row).toMatchObject({ deckId: 'dst', componentId: null, folderId: null })
+    expect(result).toMatchObject({ mediaRegistered: 1, skippedImages: 0 })
+    expect((listSlides(target)[0]!.objects[0] as ImageObject).assetId).toBe(row!['id'])
+  })
+
+  it('copies it for a member of its folder, a viewer included', async () => {
+    const { script, result } = await paste('a_src', [
+      [{ folderId: 'f1' }],
+      [{ folderId: 'f2' }],
+      [placed(linkedPicture, 'f1')],
+      [{ role: 'viewer' }],
+      [],
+      [],
+    ])
+    expect(script.remaining().selects).toBe(0)
+    expect(result).toMatchObject({ mediaRegistered: 1, skippedImages: 0 })
+  })
+
+  it('never copies it for someone who may not read its folder: unresolved, and reported', async () => {
+    const { script, result, target } = await paste('a_src', [
+      [{ folderId: 'f1' }],
+      [{ folderId: 'f2' }],
+      [placed(linkedPicture, 'f1')],
+      [], // no role in f1
+      [], // and no grant on any of its decks
+      [],
+      [],
+    ])
+    expect(script.remaining().selects).toBe(0)
+    expect(script.writes.filter((w) => w.table === 'media_assets')).toEqual([])
+    expect(send).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ mediaRegistered: 0, skippedImages: 1 })
+    expect((listSlides(target)[0]!.objects[0] as ImageObject).assetId).toBe('a_src')
+  })
+
+  it('copies linked media the live source no longer shows (a cut, then a paste elsewhere)', async () => {
+    // `a_elsewhere` is a picture of the folder the source deck does not
+    // reference (any more): the read check decides, not the source.
+    const { script, result } = await paste('a_elsewhere', [
+      [{ folderId: 'f1' }],
+      [{ folderId: 'f2' }],
+      [placed({ ...linkedPicture, id: 'a_elsewhere', componentId: null, folderId: 'f1' })],
+      [{ role: 'editor' }],
+      [],
+      [],
+    ])
+    expect(script.remaining().selects).toBe(0)
+    expect(result).toMatchObject({ mediaRegistered: 1, skippedImages: 0 })
+  })
+
+  it("never copies another folder's media the client names: unresolved, no read check asked", async () => {
+    const { script, result } = await paste('a_other', [
+      [{ folderId: 'f1' }],
+      [{ folderId: 'f2' }],
+      [placed({ ...linkedPicture, id: 'a_other', componentId: 'cmp_h' }, 'f9')],
+      [],
+      [],
+    ])
+    expect(script.remaining().selects).toBe(0)
+    expect(script.writes.filter((w) => w.table === 'media_assets')).toEqual([])
+    expect(result).toMatchObject({ mediaRegistered: 0, skippedImages: 1 })
+  })
+
+  it("still copies the source deck's own picture the source no longer shows (a cut)", async () => {
+    const { script, result } = await paste('a_cut', [
+      [{ folderId: 'f1' }],
+      [{ folderId: 'f2' }],
+      [placed({ ...mediaRow, id: 'a_cut' })],
+      [],
+      [],
+    ])
+    expect(script.remaining().selects).toBe(0)
+    expect(result).toMatchObject({ mediaRegistered: 1, skippedImages: 0 })
+  })
+})
+
 describe('stageObjectInsert between a deck and a component master', () => {
   const picture = (): Record<string, unknown>[] => [
     {
@@ -583,6 +721,7 @@ describe('stageObjectInsert between a deck and a component master', () => {
         [{ role: 'editor' }],
         [], // the master's stored rows: its slide ids
         [placed(masterPicture, 'f1')],
+        [{ role: 'editor' }], // the picture's read check: the caller reads f1 (copyMedia)
         [], // the two folders' token documents (no tokens to rebind)
         [],
       ],

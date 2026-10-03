@@ -241,6 +241,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/state/useCommand.ts", ["*"]),
     # ── web: pages ────────────────────────────────────────────────────────
     ("apps/web/src/pages/Folder*", ACCESS + TOKENS + ["folder-font-preview"]),
+    # The folder page's notice after a deck move (FolderDecks.tsx).
+    ("apps/web/src/pages/moveMediaNotice*", ACCESS),
     ("apps/web/src/pages/ComponentMasterEditor.tsx", COMPONENTS),
     ("apps/web/src/pages/AccessTokens.tsx", ["access-tokens"]),
     ("apps/web/src/pages/accessTokenList.ts", ["access-tokens"]),
@@ -273,6 +275,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/routes/pptx*", PPTX),
     ("apps/server/src/mcp/*", AGENT),
     ("apps/server/src/agent/*", AGENT),
+    # Agent runs and their revert (its after-revert hook copies old folder media).
+    ("apps/server/src/services/runs.ts", AGENT + COMPONENTS),
     ("apps/server/src/routes/commands.ts", AGENT),
     ("apps/video-worker/src/*", MEDIA),
     # ── packages ──────────────────────────────────────────────────────────

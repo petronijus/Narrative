@@ -43,8 +43,9 @@ vi.mock('./imgproxyUrl.js', () => ({
 
 // s3Client is only exercised by the folder-font routes; stub it so the
 // DELETE clone test doesn't reach a real MinIO.
+const s3Send = vi.hoisted(() => vi.fn())
 vi.mock('./s3Client.js', () => ({
-  buildS3Client: vi.fn(() => ({ send: vi.fn().mockResolvedValue({}) })),
+  buildS3Client: vi.fn(() => ({ send: s3Send })),
   presignGetUrl: vi.fn().mockResolvedValue('http://minio.test/signed'),
   MEDIA_BUCKET: 'narrative-media',
 }))
@@ -383,12 +384,25 @@ describe('DELETE /api/folders/:folderId/fonts/:assetId — a folder editor, clon
                   ]),
               }
             }
-            captured.whereCondition = cond
-            // The decks select is awaited directly (no .limit()).
-            return Promise.resolve(folderDecks)
+            if (selectCall === 2) {
+              captured.whereCondition = cond
+              // The decks select is awaited directly (no .limit()).
+              return Promise.resolve(folderDecks)
+            }
+            // 3rd = which of the deleted row's keys other rows still name:
+            // the clones share the file.
+            return Promise.resolve(
+              folderDecks.map(() => ({
+                storageKey: FONT_ASSET.storageKey,
+                playbackKey: null,
+                posterKey: null,
+                thumbnailKey: null,
+              })),
+            )
           }),
         })),
       })),
+      transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockDb)),
       insert: vi.fn(() => ({
         values: vi.fn((rows: unknown[]) => {
           captured.insertedRows = rows
@@ -418,6 +432,7 @@ describe('DELETE /api/folders/:folderId/fonts/:assetId — a folder editor, clon
 
   beforeEach(() => {
     vi.clearAllMocks()
+    s3Send.mockReset().mockResolvedValue({})
     vi.mocked(roleAtLeast).mockImplementation(realRoleAtLeast)
     vi.mocked(getFolderFontAsset).mockResolvedValue(FONT_ASSET as never)
   })
@@ -441,6 +456,8 @@ describe('DELETE /api/folders/:folderId/fonts/:assetId — a folder editor, clon
     const rows = (captured.insertedRows ?? []) as { deckId: string; folderId: unknown }[]
     expect(rows.map((r) => r.deckId)).toEqual(['deck-mine', 'deck-colleague'])
     expect(rows.every((r) => r.folderId === null)).toBe(true)
+    // The clones name the file: it stays.
+    expect(s3Send).not.toHaveBeenCalled()
   })
 
   it('promotes to zero decks when the folder holds none', async () => {
@@ -453,6 +470,13 @@ describe('DELETE /api/folders/:folderId/fonts/:assetId — a folder editor, clon
     expect(res.json()).toEqual({ promotedToDeckCount: 0 })
     // No insert issued when there are no decks to clone onto.
     expect(captured.insertedRows).toBeUndefined()
+    // No row names the file any more: it goes, through the purge that keeps named keys.
+    const deleted = s3Send.mock.calls.map(
+      (c) => (c[0] as { input: { Delete?: { Objects?: unknown[] } } }).input.Delete?.Objects,
+    )
+    expect(deleted).toEqual([
+      [{ Key: FONT_ASSET.storageKey }, { Key: `${FONT_ASSET.storageKey}.info` }],
+    ])
   })
 
   it('refuses a folder viewer, and anyone outside the folder, before touching the font', async () => {
@@ -581,9 +605,11 @@ describe('GET /api/media/:assetId/video-info', () => {
 // Tests: a component master's own media (A2.12b) under folder sharing
 // ---------------------------------------------------------------------------
 
-describe("a component master's media: read with the folder's content, deleted by its editors", () => {
+describe("a component master's media: read with the folder's content, handed to the folder by its editors", () => {
   let app: FastifyInstance
   const COMPONENT_FOLDER = 'folder-c'
+  /** What the service's own UPDATE set (a removed master picture handed to its folder). */
+  let handedOver: unknown[]
 
   const COMPONENT_IMAGE: MediaAsset = {
     ...FIXTURE_ASSET,
@@ -602,11 +628,23 @@ describe("a component master's media: read with the folder's content, deleted by
 
   beforeEach(async () => {
     vi.clearAllMocks()
-    // The only query the service makes itself: the component's folder.
+    handedOver = []
+    // The queries the service makes itself: the component's folder, and the
+    // UPDATE that hands a removed master picture to that folder.
     const db = {
       select: () => ({
         from: () => ({
           where: () => ({ limit: async () => [{ folderId: COMPONENT_FOLDER }] }),
+        }),
+      }),
+      update: () => ({
+        set: (values: unknown) => ({
+          where: () => ({
+            returning: async () => {
+              handedOver.push(values)
+              return [{ id: 'comp-img-01' }]
+            },
+          }),
         }),
       }),
     } as unknown as Database
@@ -689,27 +727,29 @@ describe("a component master's media: read with the folder's content, deleted by
     expect(resolveDeckAccess).not.toHaveBeenCalled()
   })
 
-  it('deleting it needs the editor role in its folder: a viewer and an outsider are refused', async () => {
+  it('removing it needs the editor role in its folder: a viewer and an outsider are refused', async () => {
     vi.mocked(getMediaAsset).mockResolvedValue(COMPONENT_IMAGE)
-    for (const access of [{ role: 'viewer', reason: 'folder' } as const, null]) {
-      vi.mocked(resolveComponentAccess).mockResolvedValueOnce(access)
+    for (const access of [{ role: 'viewer', reason: 'direct' } as const, null]) {
+      vi.mocked(resolveFolderAccess).mockResolvedValueOnce(access)
       const res = await app.inject({ method: 'DELETE', url: '/api/media/comp-img-01' })
       expect(res.statusCode).toBe(403)
     }
+    expect(handedOver).toEqual([])
     expect(deleteMediaAsset).not.toHaveBeenCalled()
   })
 
-  it('a folder editor deletes it', async () => {
+  it('a folder editor hands it to the folder: nothing is deleted, stamps keep showing it', async () => {
     vi.mocked(getMediaAsset).mockResolvedValue(COMPONENT_IMAGE)
-    vi.mocked(resolveComponentAccess).mockResolvedValueOnce({ role: 'editor', reason: 'folder' })
+    vi.mocked(resolveFolderAccess).mockResolvedValueOnce({ role: 'editor', reason: 'direct' })
 
     const res = await app.inject({ method: 'DELETE', url: '/api/media/comp-img-01' })
 
     expect(res.statusCode).toBe(204)
-    expect(resolveComponentAccess).toHaveBeenCalledWith(expect.anything(), {
-      componentId: 'comp-1',
-      userId: 'dev-user',
-    })
-    expect(deleteMediaAsset).toHaveBeenCalledWith(expect.anything(), 'comp-img-01')
+    expect(resolveFolderAccess).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ folderId: COMPONENT_FOLDER, userId: 'dev-user' }),
+    )
+    expect(handedOver).toEqual([{ componentId: null, folderId: COMPONENT_FOLDER }])
+    expect(deleteMediaAsset).not.toHaveBeenCalled()
   })
 })

@@ -21,6 +21,7 @@ import type {
   DeckWithRole,
   DuplicatedDeck,
   MoveDecksResult,
+  MovedDeckMedia,
   TokenRebindReport,
 } from '@narrative/commands'
 import {
@@ -38,7 +39,11 @@ import {
 } from '../auth/permissions.js'
 import { listUsersBySubs } from '../auth/users.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
-import { purgeDeckBucketPrefix, purgeUnreferencedKeys } from '../media/bucketCleanup.js'
+import {
+  purgeDeckBucketPrefix,
+  purgeUnreferencedKeys,
+  sweepAgainAfterGrace,
+} from '../media/bucketCleanup.js'
 import { listDeckFontAssets } from '../media/assets.js'
 import { activeEditorsByDeck } from '../hocuspocus/presence.js'
 import { closeConnectionsForDocument, closeDeckConnections } from '../hocuspocus/connections.js'
@@ -528,11 +533,15 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     )
     // Pass 1: sweep decks/<id>/ (thumbnail, worker video outputs, exports).
     // Pass 2: explicit keys (tus originals + their .info sidecars).
-    // Both loss-tolerant: errors are logged and swallowed.
+    // Neither deletes a file another media row still names (a pre-0009
+    // folder font stored under this deck's prefix, say). Both loss-tolerant:
+    // errors are logged and swallowed.
     await Promise.all([
-      purgeDeckBucketPrefix(id, deps.log),
+      purgeDeckBucketPrefix(db, id, deps.log),
       purgeUnreferencedKeys(db, explicitKeys, deps.log),
     ])
+    // What was too young to sweep (a transcode or a copy still writing).
+    sweepAgainAfterGrace(() => purgeDeckBucketPrefix(db, id, deps.log), deps.log, { deckId: id })
   }
 
   /**
@@ -662,8 +671,15 @@ export function createDecksService(deps: ServiceDeps): DeckService {
 
     // The pictures and videos the decks link from the source folder (its
     // components', its own) cannot be shown in the destination: copy them
-    // into the decks first, so no reader ever meets a reference it cannot
-    // load (services/localiseMedia.ts).
+    // into the decks first, point each deck at its copies and record the
+    // pairs, so no reader ever meets a reference it cannot load and a later
+    // undo is re-pointed rather than copied again (services/localiseMedia.ts).
+    // A copy that fails or is refused stops the move before any deck changes
+    // folders. Decks handled earlier in this loop may already show their own
+    // copies by then: that changes nothing a reader sees (same pictures),
+    // and a retry reuses the recorded copies — re-pointing is idempotent.
+    // References that were broken already (`unresolved`) do not stop it.
+    const crosses = sourceFolderId !== destFolderId
     const localise = (deckId: string) =>
       localiseLinkedMedia(deps, {
         userId,
@@ -671,8 +687,26 @@ export function createDecksService(deps: ServiceDeps): DeckService {
         fromFolderId: sourceFolderId,
         toFolderId: destFolderId,
       })
-    if (sourceFolderId !== destFolderId) {
-      for (const id of moved) await localise(id)
+    const takenBefore = new Map<string, number>()
+    if (crosses) {
+      for (const id of moved) {
+        const first = await localise(id)
+        if (first.refused > 0) {
+          throw forbidden(
+            `Moving deck '${id}': ${first.refused} of the pictures and videos it links from its folder ` +
+              'may not be copied by you, so no deck changed folders.',
+          )
+        }
+        if (first.copyFailed > 0) {
+          throw failed(
+            `Moving deck '${id}': ${first.copyFailed} of the pictures and videos it links from its folder ` +
+              'could not be copied into it, so no deck changed folders. Try again (copies already made are ' +
+              'reused); if it keeps failing, the media storage is unavailable.',
+            503,
+          )
+        }
+        takenBefore.set(id, first.copied + first.repointed)
+      }
     }
 
     // Only decks still in the source folder move, all or none: a deck moved
@@ -705,11 +739,35 @@ export function createDecksService(deps: ServiceDeps): DeckService {
 
     // A collaborator may have linked another picture of the source folder
     // while the decks moved: catch it up (usually there is nothing left).
-    if (sourceFolderId !== destFolderId) {
+    // The deck has moved by now; what this pass cannot copy is reported.
+    const media: MovedDeckMedia[] = []
+    if (crosses) {
       for (const r of result) {
-        await localise(r.id).catch((err: unknown) =>
-          deps.log.warn({ err, deckId: r.id }, 'move-decks: catching up linked media failed'),
-        )
+        const copied = takenBefore.get(r.id) ?? 0
+        try {
+          const after = await localise(r.id)
+          media.push({
+            deckId: r.id,
+            copied: copied + after.copied,
+            unresolved: after.unresolved,
+            copyFailed: after.copyFailed,
+          })
+          if (after.copyFailed > 0) {
+            deps.log.warn(
+              { deckId: r.id, copyFailed: after.copyFailed },
+              'move-decks: linked media a collaborator added during the move could not be copied',
+            )
+          }
+        } catch (err) {
+          deps.log.warn({ err, deckId: r.id }, 'move-decks: catching up linked media failed')
+          media.push({
+            deckId: r.id,
+            copied,
+            unresolved: 0,
+            copyFailed: 0,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
       }
     }
 
@@ -719,7 +777,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
       destFolderId,
       args.origin,
     )
-    return { movedCount: result.length, tokens }
+    return { movedCount: result.length, tokens, media }
   }
 
   async function moveDeck(args: {
@@ -735,7 +793,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
       .limit(1)
     if (!deck) throw notFound('Deck not found')
     if (deck.folderId === null) throw badRequest('The deck is not in a folder')
-    if (deck.folderId === args.destFolderId) return { movedCount: 0, tokens: [] }
+    if (deck.folderId === args.destFolderId) return { movedCount: 0, tokens: [], media: [] }
     return moveDecks({
       userId: args.userId,
       sourceFolderId: deck.folderId,

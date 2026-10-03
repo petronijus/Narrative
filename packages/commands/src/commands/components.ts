@@ -473,6 +473,10 @@ export const componentStamp = defineCommand({
     })
   },
   release: (prepared) => prepared.discard(),
+  // The deck may have moved to another folder while the stamp was staged:
+  // its linked pictures are then copied into it (server:
+  // services/localiseMedia.ts carryLinkedMedia).
+  settle: (prepared) => prepared.settle(),
   handler(ctx, input, prepared) {
     const wrote = { value: false }
     try {

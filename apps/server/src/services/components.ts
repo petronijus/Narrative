@@ -11,7 +11,12 @@ import { eq } from 'drizzle-orm'
 import type { ComponentMaster, ComponentRecord, ComponentService } from '@narrative/commands'
 import { components, decks, mediaAssets } from '../db/schema.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
-import { purgeExplicitKeys } from '../media/bucketCleanup.js'
+import {
+  purgeComponentBucketPrefix,
+  purgeUnreferencedKeys,
+  sweepAgainAfterGrace,
+} from '../media/bucketCleanup.js'
+import { isStorageSafeId, mediaOwnerPrefix } from '../media/mediaOwner.js'
 import { closeConnectionsForDocument } from '../hocuspocus/connections.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, notFound } from './errors.js'
@@ -108,9 +113,29 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
     // Nobody keeps the master open (a store that still runs finds its owner
     // gone and stores nothing — hocuspocus/persistence.ts).
     closeConnectionsForDocument(documentName('component', args.componentId))
-    // Of the component's own files only its thumbnail goes: its media's
-    // files stay under components/<id>/, named by the rows the folder now owns.
-    if (row.thumbnailKey !== null) await purgeExplicitKeys([row.thumbnailKey], deps.log)
+    // Its media's files stay under components/<id>/, named by the rows the
+    // folder now owns; everything else there goes — the thumbnail, outputs
+    // of media deleted earlier, leftovers of failed copies. The sweep keeps
+    // any key a media row names, a video's outputs its row does not name yet
+    // and anything younger than the grace window (media/bucketCleanup.ts);
+    // it runs once more after the window.
+    await purgeComponentBucketPrefix(db, args.componentId, deps.log)
+    sweepAgainAfterGrace(
+      () => purgeComponentBucketPrefix(db, args.componentId, deps.log),
+      deps.log,
+      { componentId: args.componentId },
+    )
+    // A thumbnail outside that prefix (an id that cannot name storage keys
+    // is not swept at all) goes by its key.
+    if (
+      row.thumbnailKey !== null &&
+      !(
+        isStorageSafeId(args.componentId) &&
+        row.thumbnailKey.startsWith(`${mediaOwnerPrefix({ componentId: args.componentId })}/`)
+      )
+    ) {
+      await purgeUnreferencedKeys(db, [row.thumbnailKey], deps.log)
+    }
   }
 
   async function readMaster(args: {

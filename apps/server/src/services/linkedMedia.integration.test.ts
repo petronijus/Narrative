@@ -161,7 +161,7 @@ describe('linked component media', () => {
       assetIds: new Set([picture.id]),
       families: new Set(),
     })
-    expect(intoFolder).toMatchObject({ rows: [], failed: 0 })
+    expect(intoFolder).toMatchObject({ rows: [], unresolved: 0, copyFailed: 0 })
     expect(intoFolder.idMap.size).toBe(0)
 
     const elsewhere = await copyMedia(deps, {
@@ -174,7 +174,7 @@ describe('linked component media', () => {
       families: new Set(),
       budgeted: false,
     })
-    expect(elsewhere.failed).toBe(0)
+    expect(elsewhere).toMatchObject({ unresolved: 0, copyFailed: 0 })
     expect(elsewhere.rows).toHaveLength(1)
     expect(elsewhere.rows[0]).toMatchObject({ deckId: deckG, componentId: null })
     expect(elsewhere.idMap.get(picture.id)).toBe(elsewhere.rows[0]!.id)
@@ -192,7 +192,7 @@ describe('linked component media', () => {
       fromFolderId: folderF,
       toFolderId: folderG,
     })
-    expect(out).toEqual({ copied: 1, unresolved: 0 })
+    expect(out).toMatchObject({ copied: 1, unresolved: 0, copyFailed: 0 })
     const [copy] = await db
       .select()
       .from(mediaAssets)
@@ -212,7 +212,7 @@ describe('linked component media', () => {
         fromFolderId: folderF,
         toFolderId: folderG,
       }),
-    ).toEqual({ copied: 0, unresolved: 0 })
+    ).toMatchObject({ copied: 0, unresolved: 0, copyFailed: 0 })
   })
 
   it("hands a deleted component's pictures to its folder, files and all", async () => {

@@ -196,6 +196,8 @@ export function createPptxService(deps: ServiceDeps): ServerPptxService {
         settled = true
         await discardDeckMedia({ db, deckId, media, log })
       },
+      // A .pptx brings only media of its own, registered for this deck: nothing linked to carry.
+      async settle() {},
     }
   }
 
@@ -252,8 +254,9 @@ export function createPptxService(deps: ServiceDeps): ServerPptxService {
       slideIds: args.slideIds,
     })
     const touched = { value: false }
+    let result: SlideInsertResult
     try {
-      return await writeLiveDoc(
+      result = await writeLiveDoc(
         deps,
         'deck',
         args.deckId,
@@ -267,6 +270,9 @@ export function createPptxService(deps: ServiceDeps): ServerPptxService {
       if (!touched.value) await prepared.discard()
       throw err
     }
+    // Written: what the slides link follows a deck that changed folders meanwhile.
+    await prepared.settle()
+    return result
   }
 
   async function exportBytes(args: { deckId: string }) {

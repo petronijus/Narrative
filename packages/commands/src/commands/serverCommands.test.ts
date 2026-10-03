@@ -118,12 +118,13 @@ describe('deck.*', () => {
     expect(callsTo(c, 'decks')).toEqual([])
   })
 
-  it('deck.moveToFolder moves the target deck under the invocation origin and reports the rebinding', async () => {
+  it('deck.moveToFolder moves the target deck under the invocation origin and reports the media and the rebinding', async () => {
     const origin = { run: 'r1' }
     const c = ctx({ origin })
     const out = await runCommand(registry, c, 'deck.moveToFolder', { folderId: 'folder_b' })
     expect(out).toEqual({
       moved: true,
+      media: { copied: 1, unresolved: 0, copyFailed: 0 },
       tokens: { rebound: 3, literalised: 1, detached: 0, unmatched: 0 },
     })
     expect(callsTo(c, 'decks')[0]).toEqual({
@@ -182,6 +183,44 @@ describe('media.* and share.*', () => {
       { componentId: 'cmp_headline' },
       { componentId: 'cmp_headline' },
     ])
+  })
+
+  it('media.delete says what happened, with the role each target needs', async () => {
+    const editor = { userId: 'u1', role: 'editor' as const, kind: 'agent' as const }
+    // A deck's own asset: its owner deletes it.
+    const onDeck = ctx()
+    expect(await runCommand(registry, onDeck, 'media.delete', { assetId: 'asset-fixture' })).toEqual(
+      { outcome: 'deleted' },
+    )
+    expect((callsTo(onDeck, 'media')[0]?.args as { owner: unknown }).owner).toEqual({
+      deckId: FIXTURE_DECK_ID,
+    })
+    const deckEditor = ctx({ actor: editor })
+    expect(
+      (await failure(runCommand(registry, deckEditor, 'media.delete', { assetId: 'asset-fixture' })))
+        .code,
+    ).toBe('forbidden')
+    // A master's picture: a folder editor hands it to the folder.
+    const onMaster = ctx({ actor: editor, target: { componentId: 'cmp_headline' } })
+    expect(
+      await runCommand(registry, onMaster, 'media.delete', { assetId: 'asset-fixture' }),
+    ).toEqual({ outcome: 'handedToFolder' })
+    // A folder's own picture: only its owner deletes it.
+    const { deck: _deck, ...folderCtx } = ctx({ target: { folderId: FIXTURE_FOLDER_ID } })
+    expect(
+      await runCommand(registry, folderCtx, 'media.delete', { assetId: 'asset-fixture' }),
+    ).toEqual({ outcome: 'deleted' })
+    expect((callsTo(folderCtx, 'media')[0]?.args as { owner: unknown }).owner).toEqual({
+      folderId: FIXTURE_FOLDER_ID,
+    })
+    const { deck: _d, ...folderEditor } = ctx({
+      actor: editor,
+      target: { folderId: FIXTURE_FOLDER_ID },
+    })
+    expect(
+      (await failure(runCommand(registry, folderEditor, 'media.delete', { assetId: 'asset-fixture' })))
+        .code,
+    ).toBe('forbidden')
   })
 
   it('media.upload turns a URL input into a url source', async () => {
@@ -399,6 +438,11 @@ describe('object.insertFromDeck', () => {
       source: { deckId: 'deck_other' },
       target: { deckId: FIXTURE_DECK_ID },
     })
+    // Settled once the write committed: linked media follows a deck that moved meanwhile.
+    expect(callsTo(c, 'decks').map((x) => x.method)).toEqual([
+      'prepareObjectInsert',
+      'settleObjectInsert',
+    ])
   })
 
   it("brings a deck's objects into a component master, and a master's into a deck", async () => {
@@ -474,6 +518,8 @@ describe('deck.insertFrom', () => {
     const ids = listSlides(c.deck!).map((s) => s.id)
     expect(out.insertedAt).toBe(1)
     expect(ids).toEqual(['s1', ...out.slideIds, 's2', 's3'])
+    // Settled after the write, never discarded.
+    expect(callsTo(c, 'pptx').map((x) => x.method)).toEqual(['prepareInsert', 'settle'])
   })
 
   it('passes a deck source and its range to the service', async () => {
