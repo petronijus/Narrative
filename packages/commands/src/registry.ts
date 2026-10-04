@@ -109,7 +109,9 @@ export function commandTargetProblems(
     def.acceptsFolder === true &&
     (def.effects.includes('doc') || def.readsDocument === true || !def.effects.includes('server'))
   )
-    problems.push('acceptsFolder is for server commands that do not use a document (a folder has none)')
+    problems.push(
+      'acceptsFolder is for server commands that do not use a document (a folder has none)',
+    )
   if (def.roleOn !== undefined && scope !== 'deck')
     problems.push(`roleOn is for deck-scoped commands, but its scope is '${scope}'`)
   if (def.roleOn?.component !== undefined && def.acceptsComponent !== true)

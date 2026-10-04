@@ -164,7 +164,10 @@ describe('purgeDeckBucketPrefix', () => {
   it('records per-object Errors but does not throw', async () => {
     sendMock
       .mockResolvedValueOnce({
-        Contents: [{ Key: 'decks/p/a', LastModified: OLD }, { Key: 'decks/p/b', LastModified: OLD }],
+        Contents: [
+          { Key: 'decks/p/a', LastModified: OLD },
+          { Key: 'decks/p/b', LastModified: OLD },
+        ],
         IsTruncated: false,
       })
       .mockResolvedValueOnce({
@@ -211,7 +214,11 @@ describe('purgeDeckBucketPrefix', () => {
     const font = 'decks/d1/fonts/f1/original.ttf'
     sendMock
       .mockResolvedValueOnce({
-        Contents: [{ Key: 'decks/d1/thumb.jpg', LastModified: OLD }, { Key: font, LastModified: OLD }, { Key: `${font}.info`, LastModified: OLD }],
+        Contents: [
+          { Key: 'decks/d1/thumb.jpg', LastModified: OLD },
+          { Key: font, LastModified: OLD },
+          { Key: `${font}.info`, LastModified: OLD },
+        ],
         IsTruncated: false,
       })
       .mockResolvedValueOnce({ Errors: [] })

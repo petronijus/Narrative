@@ -189,16 +189,19 @@ describe('media.* and share.*', () => {
     const editor = { userId: 'u1', role: 'editor' as const, kind: 'agent' as const }
     // A deck's own asset: its owner deletes it.
     const onDeck = ctx()
-    expect(await runCommand(registry, onDeck, 'media.delete', { assetId: 'asset-fixture' })).toEqual(
-      { outcome: 'deleted' },
-    )
+    expect(
+      await runCommand(registry, onDeck, 'media.delete', { assetId: 'asset-fixture' }),
+    ).toEqual({ outcome: 'deleted' })
     expect((callsTo(onDeck, 'media')[0]?.args as { owner: unknown }).owner).toEqual({
       deckId: FIXTURE_DECK_ID,
     })
     const deckEditor = ctx({ actor: editor })
     expect(
-      (await failure(runCommand(registry, deckEditor, 'media.delete', { assetId: 'asset-fixture' })))
-        .code,
+      (
+        await failure(
+          runCommand(registry, deckEditor, 'media.delete', { assetId: 'asset-fixture' }),
+        )
+      ).code,
     ).toBe('forbidden')
     // A master's picture: a folder editor hands it to the folder.
     const onMaster = ctx({ actor: editor, target: { componentId: 'cmp_headline' } })
@@ -218,8 +221,11 @@ describe('media.* and share.*', () => {
       target: { folderId: FIXTURE_FOLDER_ID },
     })
     expect(
-      (await failure(runCommand(registry, folderEditor, 'media.delete', { assetId: 'asset-fixture' })))
-        .code,
+      (
+        await failure(
+          runCommand(registry, folderEditor, 'media.delete', { assetId: 'asset-fixture' }),
+        )
+      ).code,
     ).toBe('forbidden')
   })
 

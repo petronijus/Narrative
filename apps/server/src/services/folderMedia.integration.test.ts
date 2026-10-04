@@ -399,7 +399,10 @@ describe('component and folder deletes sweep the component prefixes (item 8)', (
       .set({ kind: 'video', mimeType: 'video/mp4', transcodeStatus: 'processing' })
       .where(eq(mediaAssets.id, clip.id))
     // The worker uploaded its outputs; the row does not name them yet.
-    const outputs = [`components/${racer}/videos/${clip.id}/playback.mp4`, `components/${racer}/videos/${clip.id}/poster.jpg`]
+    const outputs = [
+      `components/${racer}/videos/${clip.id}/playback.mp4`,
+      `components/${racer}/videos/${clip.id}/poster.jpg`,
+    ]
     for (const key of outputs) await put(key)
     await put(`components/${racer}/videos/no-such-row/poster.jpg`)
 
@@ -569,9 +572,10 @@ describe('moving a deck takes its linked media along (items 5, 11)', () => {
         assetId: pictureCopy,
         owner: { deckId: moving },
       })
-      expect((await movedPairs(moving)).find((p) => p.sourceAssetId === picture.id)).toMatchObject(
-        { copyAssetId: null, recopiedAt: null },
-      )
+      expect((await movedPairs(moving)).find((p) => p.sourceAssetId === picture.id)).toMatchObject({
+        copyAssetId: null,
+        recopiedAt: null,
+      })
       await show(moving, picture.id)
       const again = await repointMovedMedia(deps, moving)
       expect(again).toMatchObject({ copied: 1, unresolved: 0 })
@@ -664,7 +668,8 @@ describe('moving a deck takes its linked media along (items 5, 11)', () => {
 
     async function loseCopyAndUndo(assetId: string, type: 'image' | 'video' = 'image') {
       const pair = (await movedPairs(spent)).find((p) => p.sourceAssetId === assetId)!
-      if (pair.copyAssetId !== null) await db.delete(mediaAssets).where(eq(mediaAssets.id, pair.copyAssetId))
+      if (pair.copyAssetId !== null)
+        await db.delete(mediaAssets).where(eq(mediaAssets.id, pair.copyAssetId))
       await show(spent, assetId, type)
     }
 
@@ -716,7 +721,9 @@ describe('moving a deck takes its linked media along (items 5, 11)', () => {
         expect(await rowsOf(spent)).toHaveLength(before)
         // Given back: a mover who regains access may still copy it.
         expect(
-          (await movedPairs(spent)).filter((p) => p.recopiedAt !== null).map((p) => p.sourceAssetId),
+          (await movedPairs(spent))
+            .filter((p) => p.recopiedAt !== null)
+            .map((p) => p.sourceAssetId),
         ).toEqual([])
       } finally {
         await db.insert(folderPermissions).values({ folderId: F, userId: spender, role: 'editor' })

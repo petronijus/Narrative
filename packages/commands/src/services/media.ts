@@ -150,4 +150,3 @@ export type MediaOwnerRef = DocumentRef | { folderId: string }
 
 /** What removing an asset did: `deleted` (row and files gone) or `handedToFolder` (a master's, now its folder's). */
 export type MediaDeleteOutcome = 'deleted' | 'handedToFolder'
-

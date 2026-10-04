@@ -361,7 +361,11 @@ describe('decks.moveDecks', () => {
     // The move itself is the folder change alone: the copies and their
     // record are the localisation's (deck_moved_media, its own tests).
     expect(script.writes).toEqual([
-      expect.objectContaining({ kind: 'update', table: 'decks', values: expect.objectContaining({ folderId: 'f_dst' }) }),
+      expect.objectContaining({
+        kind: 'update',
+        table: 'decks',
+        values: expect.objectContaining({ folderId: 'f_dst' }),
+      }),
     ])
     // The linked media of the source folder: localised before the move, and
     // once more after it for anything linked meanwhile.
