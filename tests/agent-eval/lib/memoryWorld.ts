@@ -84,6 +84,7 @@ import {
   UnsupportedInWorld,
   type EvalTarget,
   type OpenEditorOptions,
+  type Person,
   type World,
 } from './types.js'
 
@@ -771,6 +772,22 @@ export class MemoryWorld implements World {
 
   async fetchBinary(): Promise<Uint8Array> {
     throw new UnsupportedInWorld('the memory world has no file storage to download from')
+  }
+
+  async person(): Promise<Person> {
+    throw new UnsupportedInWorld('the memory world has one user; sharing is live only')
+  }
+
+  async userEmail(): Promise<string> {
+    throw new UnsupportedInWorld('the memory world has one user; sharing is live only')
+  }
+
+  async runAs<T>(): Promise<T> {
+    throw new UnsupportedInWorld('the memory world has one user; sharing is live only')
+  }
+
+  async createFolderAs(): Promise<string> {
+    throw new UnsupportedInWorld('the memory world has one user; sharing is live only')
   }
 
   async approveConfirmation(): Promise<void> {

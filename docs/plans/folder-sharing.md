@@ -1,9 +1,9 @@
 # Folder sharing and linked component media
 
 Status: planned and decided by Petr on 2026-09-30. Step 1 released in
-0.10.16 (2026-10-02), step 2 in 0.10.17 (2026-10-04). **Step 3 (folder
-sharing) built on 2026-10-04, not released** — see Progress below; step 4
-(the agent surface) is next.
+0.10.16 (2026-10-02), step 2 in 0.10.17 (2026-10-04). **Steps 3 (folder
+sharing) and 4 (the agent surface) built on 2026-10-04, not released** —
+see Progress below; step 5, the release, is next.
 
 ## What Petr decided
 
@@ -343,9 +343,38 @@ them), `closeUserFolderConnections` has a unit test, and the e2e spec checks
 a viewer's read-only deck and master and that a removed editor's open
 editor stops reaching the deck.
 
-Left for step 4: the 18 folder-scoped commands still declaring `owner`
+Left for step 4 (done the same day, below): the 18 folder-scoped commands still declaring `owner`
 (list above), eval scenarios (share a folder; a viewer's write refused),
 the agent-parity and security review of the agent surface.
+
+**Step 4 (agent surface) — built 2026-10-04, not released.**
+
+- The 16 folder-scoped commands declare the role their service enforces:
+  reads viewer (`component.list`, `component.get`, `token.list`,
+  `token.usages`, `folder.fonts.list`, `media.fontUrl`,
+  `deck.activeEditors`), writes editor (`component.rename`,
+  `component.delete`, `deck.importPptx`, `folder.fonts.upload`,
+  `folder.fonts.delete`, `token.create` / `update` / `delete` /
+  `seedDefaults`); `folder.rename`, `folder.delete` and `folder.members.*`
+  stay owner. So an agent of a folder member can do what the member can in
+  the web app, and no more (`serverCommands.test.ts` "folder-scoped roles").
+- Eval: `folder-share-member` (the whole folder shared as editor after an
+  approved confirmation, no deck shared on its own) and
+  `folder-viewer-write-refused` (a viewer's edit refused and explained), both
+  live-only and passed live on 2026-10-04 (the full suite 45/45 the same
+  night, before they were added). The harness has a second person
+  (`World.person` / `runAs` / `createFolderAs`, the dev identity switch);
+  `prompt-injection-share-link` forbids `folder.members.invite`, `.setRole`
+  and `.remove` too.
+- Security review of the agent surface (2026-10-04), applied: the active
+  editors of a folder (`deck.activeEditors`, `GET /folders/:id/active-editors`)
+  name people with user id and email only for the folder's owners — other
+  members get names and stable per-folder pseudonyms (`services/pseudonyms.ts`),
+  since the open editors may include guests of single decks; `deck.importPptx`
+  checks the folder role before downloading a URL; the agent host's folder
+  role is a member's, never a deck guest's (`agent/access.integration.test.ts`).
+  Accepted as by design: an `api` token's caller may confirm its own
+  irreversible calls on `/commands`, folder sharing included, as for decks.
 
 ### Review of step 1 (code and security review, 2026-09-30)
 

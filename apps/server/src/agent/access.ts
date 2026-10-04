@@ -25,7 +25,12 @@ export interface AgentAccess {
   deckRole(deckId: string, userId: string): Promise<Role | null>
   /** The user's role on a component master (their role in its folder), or null. */
   componentRole(componentId: string, userId: string): Promise<Role | null>
-  /** The user's role in a folder (folder_permissions), or null. */
+  /**
+   * The user's role in a folder — a MEMBER's (folder_permissions), or null.
+   * Deliberately not "content reader": a guest of one of the folder's decks
+   * reads its tokens and fonts through that deck, never as a folder-scoped
+   * agent command (agent/access.integration.test.ts).
+   */
   folderRole(folderId: string, userId: string): Promise<Role | null>
 }
 

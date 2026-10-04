@@ -53,7 +53,7 @@ export const deckImportPptx = defineCommand({
     embeddedFontCount: z.number(),
     referencedFontFamilies: z.array(z.string()),
   }),
-  role: 'owner',
+  role: 'editor',
   scope: 'folder',
   effects: ['server'],
   undo: 'undoable',

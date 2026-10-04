@@ -101,6 +101,33 @@ export interface World {
    * where a request without credentials is the dev user's browser session.
    */
   approveConfirmation(confirmationId: string): Promise<void>
+
+  /**
+   * Folder and deck sharing need a second person. On the BYPASS_AUTH dev
+   * stack that is a synthetic identity (`dev-eval-<name>`, the server's
+   * `narrative_dev_as` cookie, apps/server/src/auth/devIdentity.ts), given a
+   * directory entry so it can be invited by email. Fixed per name, so runs
+   * leave one directory row per name behind. Live only.
+   */
+  person(name: string): Promise<Person>
+  /** The address the agent's own user is invited by (`dev-user@dev.narrative.test` on the dev stack). Live only. */
+  userEmail(): Promise<string>
+  /** Run one command as `person` (irreversible ones confirmed in `confirm`). Live only. */
+  runAs<T = Record<string, unknown>>(
+    person: Person,
+    target: EvalTarget,
+    command: string,
+    input?: unknown,
+    options?: { confirm?: string[] },
+  ): Promise<T>
+  /** A folder `person` creates, deleted as them when the run cleans up. Live only. */
+  createFolderAs(person: Person, name: string): Promise<string>
+}
+
+/** A second person in a live run (`World.person`). */
+export interface Person {
+  userId: string
+  email: string
 }
 
 /** One tool call the agent made, parsed from the transcript. */

@@ -65,6 +65,7 @@ import { applyTokenRebinding, planTokenRebinding } from './tokenRebind.js'
 import { copyStoredObject, stageDeckCopy, stageObjectInsert } from './deckInsert.js'
 import { localiseLinkedMedia } from './localiseMedia.js'
 import { DEV_USER_SUB } from '../auth/devIdentity.js'
+import { folderPeerPseudonym } from './pseudonyms.js'
 import { discardDeckMedia, registerDeckMedia } from '../pptx/importDeck.js'
 
 /** Longest deck title the API accepts. */
@@ -830,11 +831,17 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     const uniqueSubs = Array.from(new Set(snapshot.flatMap((s) => s.userIds)))
     const usersList = await listUsersBySubs(db, uniqueSubs)
     const usersBySub = new Map(usersList.map((u) => [u.sub, u]))
+    // Who exactly (user id, email) is for the folder's owners, who manage its
+    // people; other members see a name and a stable pseudonym — the active
+    // editors may include guests of single decks they cannot otherwise see.
+    const identifies = member.role === 'owner'
     return snapshot.map((s) => ({
       deckId: s.deckId,
       users: s.userIds.map((sub) => {
         const u = usersBySub.get(sub)
-        return { userId: sub, email: u?.email ?? null, name: u?.name ?? null }
+        return identifies
+          ? { userId: sub, email: u?.email ?? null, name: u?.name ?? null }
+          : { userId: folderPeerPseudonym(args.folderId, sub), email: null, name: u?.name ?? null }
       }),
     }))
   }

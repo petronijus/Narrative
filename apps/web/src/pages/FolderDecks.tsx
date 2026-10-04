@@ -483,6 +483,8 @@ function DeckCard({
   // The deck's own role (deck grant or folder role): editors rename, owners delete.
   const canRename = deck.viewerRole !== undefined && deck.viewerRole !== 'viewer'
   const canDelete = deck.viewerRole === 'owner'
+  // Copying a deck out needs the editor role on it (POST /decks/:id/duplicate).
+  const canDuplicate = canRename
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(deck.title)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -631,18 +633,20 @@ function DeckCard({
                       Rename
                     </button>
                   )}
-                  <button
-                    role="menuitem"
-                    data-action="deck.duplicate"
-                    onClick={() => {
-                      setMenuOpen(false)
-                      onDuplicate()
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-accent"
-                  >
-                    <Copy className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                    Duplicate
-                  </button>
+                  {canDuplicate && (
+                    <button
+                      role="menuitem"
+                      data-action="deck.duplicate"
+                      onClick={() => {
+                        setMenuOpen(false)
+                        onDuplicate()
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-accent"
+                    >
+                      <Copy className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                      Duplicate
+                    </button>
+                  )}
                   {canMove && (
                     <button
                       role="menuitem"

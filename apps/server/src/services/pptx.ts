@@ -52,6 +52,7 @@ import { MAX_PPTX_UPLOAD_SIZE } from '../media/uploadPolicy.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, failed, forbidden, notFound, tooLarge, type ServiceError } from './errors.js'
 import { LARGE_DOWNLOAD_TIMEOUT_MS, resolveBinarySource } from './binarySource.js'
+import { requireFolderRole } from './shared.js'
 import { stageDeckInsert } from './deckInsert.js'
 import { SERVER_EDIT_ORIGIN, writeLiveDoc } from './liveDocs.js'
 
@@ -121,6 +122,9 @@ export function createPptxService(deps: ServiceDeps): ServerPptxService {
     source: BinarySource
     title?: string | undefined
   }): Promise<ImportPptxResult> {
+    // The folder role first: nothing is downloaded for someone who may not
+    // add decks there (importDeckFromPptxBytes checks it again with the bytes).
+    await requireFolderRole(db, args.folderId, args.userId, 'editor', { bypass: deps.bypass })
     const file = await resolveBinarySource(args.source, {
       userId: args.userId,
       maxBytes: MAX_PPTX_BYTES,

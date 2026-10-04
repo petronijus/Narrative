@@ -29,25 +29,25 @@ Commands: **135**. Known missing: **7**. Deliberately excluded: **20**.
 
 | Command             | What it does                | Role   | Undo         | Confirm | Hints      |
 | ------------------- | --------------------------- | ------ | ------------ | ------- | ---------- |
-| `component.delete`  | Delete component            | owner  | irreversible | always  |            |
-| `component.get`     | Read component              | owner  | n/a          | never   | read-only  |
-| `component.list`    | List components             | owner  | n/a          | never   | read-only  |
+| `component.delete`  | Delete component            | editor | irreversible | always  |            |
+| `component.get`     | Read component              | viewer | n/a          | never   | read-only  |
+| `component.list`    | List components             | viewer | n/a          | never   | read-only  |
 | `component.promote` | Make component from objects | editor | undoable     | never   |            |
-| `component.rename`  | Rename component            | owner  | undoable     | never   | idempotent |
+| `component.rename`  | Rename component            | editor | undoable     | never   | idempotent |
 | `component.stamp`   | Stamp component             | editor | undoable     | never   |            |
 
 ## deck
 
 | Command              | What it does                      | Role   | Undo         | Confirm                    | Hints      |
 | -------------------- | --------------------------------- | ------ | ------------ | -------------------------- | ---------- |
-| `deck.activeEditors` | Who is editing                    | owner  | n/a          | never                      | read-only  |
+| `deck.activeEditors` | Who is editing                    | viewer | n/a          | never                      | read-only  |
 | `deck.create`        | Create deck                       | owner  | undoable     | never                      |            |
 | `deck.delete`        | Delete deck                       | owner  | irreversible | always                     |            |
 | `deck.duplicate`     | Duplicate deck                    | editor | undoable     | never                      |            |
 | `deck.exportPptx`    | Export PowerPoint                 | editor | n/a          | never                      |            |
 | `deck.fonts.list`    | Deck fonts                        | viewer | n/a          | never                      | read-only  |
 | `deck.get`           | Deck details                      | viewer | n/a          | never                      | read-only  |
-| `deck.importPptx`    | Import PowerPoint                 | owner  | undoable     | never (asks for URL files) |            |
+| `deck.importPptx`    | Import PowerPoint                 | editor | undoable     | never (asks for URL files) |            |
 | `deck.insertFrom`    | Insert slides from a file or deck | editor | undoable     | never (asks for URL files) |            |
 | `deck.list`          | List decks                        | viewer | n/a          | never                      | read-only  |
 | `deck.moveToFolder`  | Move deck to folder               | owner  | irreversible | always                     | idempotent |
@@ -67,9 +67,9 @@ Commands: **135**. Known missing: **7**. Deliberately excluded: **20**.
 | ------------------------ | ---------------------------- | ------ | ------------ | -------------------------- | ---------- |
 | `folder.create`          | Create folder                | owner  | undoable     | never                      |            |
 | `folder.delete`          | Delete folder                | owner  | irreversible | always                     |            |
-| `folder.fonts.delete`    | Delete folder font           | owner  | irreversible | always                     |            |
-| `folder.fonts.list`      | Folder fonts                 | owner  | n/a          | never                      | read-only  |
-| `folder.fonts.upload`    | Upload folder font           | owner  | undoable     | never (asks for URL files) |            |
+| `folder.fonts.delete`    | Delete folder font           | editor | irreversible | always                     |            |
+| `folder.fonts.list`      | Folder fonts                 | viewer | n/a          | never                      | read-only  |
+| `folder.fonts.upload`    | Upload folder font           | editor | undoable     | never (asks for URL files) |            |
 | `folder.invites.cancel`  | Cancel a folder invite       | owner  | irreversible | always                     |            |
 | `folder.invites.list`    | List pending folder invites  | owner  | n/a          | never                      | read-only  |
 | `folder.list`            | List folders                 | viewer | n/a          | never                      | read-only  |
@@ -92,7 +92,7 @@ Commands: **135**. Known missing: **7**. Deliberately excluded: **20**.
 | Command               | What it does                | Role                  | Undo         | Confirm                    | Hints     |
 | --------------------- | --------------------------- | --------------------- | ------------ | -------------------------- | --------- |
 | `media.delete`        | Delete media                | owner; master: editor | irreversible | always                     |           |
-| `media.fontUrl`       | Font file URL               | owner                 | n/a          | never                      | read-only |
+| `media.fontUrl`       | Font file URL               | viewer                | n/a          | never                      | read-only |
 | `media.status`        | Video status                | viewer                | n/a          | never                      | read-only |
 | `media.upload`        | Upload media                | editor                | undoable     | never (asks for URL files) |           |
 | `media.uploadSession` | Upload a local file (shell) | editor                | n/a          | never                      |           |
@@ -212,14 +212,14 @@ Commands: **135**. Known missing: **7**. Deliberately excluded: **20**.
 
 ## token
 
-| Command              | What it does           | Role  | Undo         | Confirm | Hints      |
-| -------------------- | ---------------------- | ----- | ------------ | ------- | ---------- |
-| `token.create`       | Add a design token     | owner | undoable     | never   |            |
-| `token.delete`       | Delete a design token  | owner | irreversible | always  |            |
-| `token.list`         | List a folder's tokens | owner | n/a          | never   | read-only  |
-| `token.seedDefaults` | Add the default tokens | owner | irreversible | always  | idempotent |
-| `token.update`       | Change a design token  | owner | undoable     | never   | idempotent |
-| `token.usages`       | Where a token is used  | owner | n/a          | never   | read-only  |
+| Command              | What it does           | Role   | Undo         | Confirm | Hints      |
+| -------------------- | ---------------------- | ------ | ------------ | ------- | ---------- |
+| `token.create`       | Add a design token     | editor | undoable     | never   |            |
+| `token.delete`       | Delete a design token  | editor | irreversible | always  |            |
+| `token.list`         | List a folder's tokens | viewer | n/a          | never   | read-only  |
+| `token.seedDefaults` | Add the default tokens | editor | irreversible | always  | idempotent |
+| `token.update`       | Change a design token  | editor | undoable     | never   | idempotent |
+| `token.usages`       | Where a token is used  | viewer | n/a          | never   | read-only  |
 
 ## Known missing
 

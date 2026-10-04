@@ -7,8 +7,9 @@
  * may name another synthetic identity in the `narrative_dev_as` cookie:
  * `dev-<lowercase letters, digits, dashes>`. The prefix keeps it from ever
  * naming a real Google `sub` in a database copied from somewhere else. Such
- * an identity gets a `users` row (`<sub>@dev.narrative.test`) the first time
- * it is seen, so it can be invited by email like a person who signed in.
+ * an identity gets a `users` row (`<sub>@dev.narrative.test`; `dev-user`'s
+ * is `dev-user@dev.narrative.test`) the first time it is seen, so it can be invited by
+ * email like a person who signed in.
  *
  * Read by every place bypass mode synthesises its principal: request
  * identity (auth/identity.ts), the sync server's WebSocket authentication
@@ -37,9 +38,8 @@ export function devSubFromCookieHeader(cookieHeader: string | string[] | undefin
 
 /** The claims of a synthetic identity. */
 export function devUserClaims(sub: string): { sub: string; email: string; name: string } {
-  return sub === DEV_USER_SUB
-    ? { sub, email: 'dev@localhost', name: 'Dev User' }
-    : { sub, email: `${sub}@dev.narrative.test`, name: sub }
+  // An address the invite schemas accept (a TLD); `dev-user`'s follows the same form.
+  return { sub, email: `${sub}@dev.narrative.test`, name: sub === DEV_USER_SUB ? 'Dev User' : sub }
 }
 
 /** Identities whose `users` row this process has already written. */
@@ -48,7 +48,8 @@ const known = new Set<string>()
 /**
  * Give a switched identity its `users` row, once per process: sharing looks
  * people up by email, and member lists show names from the directory.
- * `dev-user` keeps the behaviour it always had (no row).
+ * `dev-user`'s row is written once at boot (`ensureDevUserAtBoot`), not on
+ * its requests.
  */
 export async function ensureDevUser(db: Database, sub: string): Promise<void> {
   if (sub === DEV_USER_SUB || known.has(sub)) return
@@ -60,4 +61,18 @@ export async function ensureDevUser(db: Database, sub: string): Promise<void> {
     name: claims.name,
   })
   known.add(sub)
+}
+
+/**
+ * Under BYPASS_AUTH, at server start: `dev-user`'s directory row, so it too
+ * can be invited to someone else's folder or deck (`dev-user@dev.narrative.test`).
+ */
+export async function ensureDevUserAtBoot(db: Database): Promise<void> {
+  const claims = devUserClaims(DEV_USER_SUB)
+  await upsertUser(db, {
+    sub: DEV_USER_SUB,
+    email: claims.email,
+    emailVerified: true,
+    name: claims.name,
+  })
 }

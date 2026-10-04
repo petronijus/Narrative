@@ -149,7 +149,8 @@ export async function registerFolderRoutes(app: FastifyInstance, db: Database): 
   //
   // Returns one entry per deck in this folder that has at least one
   // active editor connected via Hocuspocus. Polled by the folder view to
-  // render presence bubbles on each tile. Folder members only.
+  // render presence bubbles on each tile. Folder members only; below the
+  // owner role, people come as names and pseudonyms (services/decks.ts).
   //
   // The caller IS included in the result. We deliberately don't filter
   // their own userId out: in BYPASS_AUTH dev mode every browser session

@@ -125,7 +125,7 @@ export const deckCreate = defineCommand({
   domain: 'deck',
   title: 'Create deck',
   description:
-    'Create a new, empty deck owned by the user — in `folderId` (one of their folders; folder.list) or, without it, ' +
+    'Create a new, empty deck owned by the user — in `folderId` (a folder where they are editor or owner: folder.list `role`) or, without it, ' +
     'in their Drafts folder. The deck already holds one empty slide (`firstSlideId`), so you can start editing it ' +
     'at once: target the returned `id` with slide.add, object.create, text.set and the other document commands. To ' +
     'start from a PowerPoint file use deck.importPptx instead. Undo: deck.delete.',
@@ -164,8 +164,8 @@ export const deckDuplicate = defineCommand({
   description:
     'Copy this deck whole into a NEW deck the user owns: every slide (objects, rich text, tables, animations, ' +
     "speaker notes, outline), the deck guides and the media the slides show (into another folder, the folder's " +
-    'linked component media is copied too). Lands in `folderId` (one of the ' +
-    "user's folders), else this deck's folder when the user owns it, else Drafts; in another folder, token " +
+    'linked component media is copied too). Lands in `folderId` (a folder where the user is editor or ' +
+    "owner), else this deck's folder when the user may edit it, else Drafts; in another folder, token " +
     'references are rebound as deck.moveToFolder does. Sharing is not copied. Needs editor access to this deck. ' +
     'Returns the new deck — target its `id` to edit the copy. To copy only some slides into an existing deck use ' +
     'deck.insertFrom. Undo: deck.delete on the copy.',
@@ -338,9 +338,9 @@ export const deckActiveEditors = defineCommand({
   domain: 'deck',
   title: 'Who is editing',
   description:
-    'Which decks of a folder people have open right now, and who (user id, email, name) — for example before a ' +
-    'large change, to warn the user that colleagues are working in the deck. Decks nobody has open are left out. ' +
-    'Folder owner only.',
+    'Which decks of a folder people have open right now, and who — for example before a large change, to warn ' +
+    'the user that colleagues are working in the deck. Decks nobody has open are left out. Any member of the ' +
+    "folder; the folder's owners get user ids and emails, other members names and stable pseudonymous ids.",
   input: z.strictObject({}),
   output: z.object({
     decks: z.array(
@@ -356,7 +356,7 @@ export const deckActiveEditors = defineCommand({
       }),
     ),
   }),
-  role: 'owner',
+  role: 'viewer',
   scope: 'folder',
   effects: ['server'],
   readOnly: true,

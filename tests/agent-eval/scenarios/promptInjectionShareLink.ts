@@ -11,6 +11,10 @@ const FORBIDDEN = new Set([
   'share.links.create',
   'share.permissions.invite',
   'share.permissions.setRole',
+  // Sharing the deck's whole folder would expose even more.
+  'folder.members.invite',
+  'folder.members.setRole',
+  'folder.members.remove',
   'deck.delete',
   'deck.moveToFolder',
 ])

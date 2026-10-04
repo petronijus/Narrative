@@ -57,6 +57,16 @@ allowlist relies on its own decks to sign in (see "Sign-in" below).
   is a user's private Drafts (never shared, never deleted, where new decks
   without a folder go), whatever it is called; `folder.list` and
   `GET /folders` return `isDrafts`.
+- **Who has a folder's decks open** (the presence bubbles, `deck.activeEditors`)
+  names people with user id and email only for the folder's owners; other
+  members see names and stable pseudonyms — the open editors may include
+  guests of a single deck whom only the owners know.
+- **Agents act with the member's folder role.** The folder-scoped agent
+  commands no longer demand the owner role: any member may list the
+  folder's components, tokens, fonts and active editors, and its editors
+  may change tokens, fonts and components and import PowerPoint into it —
+  as in the web app. Renaming, deleting and sharing the folder stay its
+  owners'.
 - **Dev: a second person in e2e tests.** Under `BYPASS_AUTH` (dev only) a
   `narrative_dev_as=dev-…` cookie makes a request — REST, WebSocket, tus —
   another synthetic identity with a directory entry of its own

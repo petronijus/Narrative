@@ -137,7 +137,7 @@ describe('authPreHandler (browser routes)', () => {
     const app = await buildApp({ bypass: true })
     const res = await app.inject({ method: 'GET', url: '/legacy' })
     expect(res.statusCode).toBe(200)
-    expect(res.json().user).toEqual({ sub: 'dev-user', email: 'dev@localhost', name: 'Dev User' })
+    expect(res.json().user).toEqual({ sub: 'dev-user', email: 'dev-user@dev.narrative.test', name: 'Dev User' })
     expect(lookupSession).not.toHaveBeenCalled()
   })
 

@@ -71,7 +71,7 @@ function isBypassEnabled(): boolean {
 const BYPASS_USER: AuthUser = {
   sub: 'dev-user',
   name: 'Dev User',
-  email: 'dev@local',
+  email: 'dev-user@dev.narrative.test',
 }
 
 /**

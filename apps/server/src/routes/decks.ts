@@ -152,9 +152,9 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
   // POST /decks/:id/duplicate — copy the deck whole into a new deck of the caller
   //
   // Optional body: { title?, folderId? }. Needs editor access to the source
-  // (copying out of a deck is exporting it); the copy lands in folderId (owned),
-  // else the source's folder when the caller owns it, else Drafts. 201 with the
-  // new deck.
+  // (copying out of a deck is exporting it); the copy lands in folderId (editor
+  // there), else the source's folder when the caller may edit it, else Drafts.
+  // 201 with the new deck.
   // ---------------------------------------------------------------------------
   app.post<{ Params: { id: string }; Body: { title?: unknown; folderId?: unknown } | undefined }>(
     '/decks/:id/duplicate',

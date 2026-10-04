@@ -68,7 +68,9 @@ export const folderList = defineCommand({
           .object({ name: z.string().nullable(), email: z.string().nullable() })
           .nullable()
           .describe('Who shared the folder with the user; null for their own folders'),
-        isDrafts: z.boolean().describe('The user\'s private Drafts folder (never shared or deleted)'),
+        isDrafts: z
+          .boolean()
+          .describe("The user's private Drafts folder (never shared or deleted)"),
       }),
     ),
     nextCursor: z
@@ -191,10 +193,10 @@ export const folderFontsList = defineCommand({
   title: 'Folder fonts',
   description:
     "The folder's uploaded fonts: family, weight, style, postscript name and a download URL. Every deck in the " +
-    'folder can use these families as fontFamily in text (text.set, text.format, text.setBoxTypography). Folder owner only.',
+    'folder can use these families as fontFamily in text (text.set, text.format, text.setBoxTypography). Any member of the folder.',
   input: z.strictObject({}),
   output: z.object({ fonts: z.array(FontFaceOutput) }),
-  role: 'owner',
+  role: 'viewer',
   scope: 'folder',
   effects: ['server'],
   readOnly: true,
@@ -233,7 +235,7 @@ export const folderFontsUpload = defineCommand({
       .describe('Family name to register the face under, instead of the one in the file'),
   }),
   output: FontFaceOutput,
-  role: 'owner',
+  role: 'editor',
   scope: 'folder',
   effects: ['server'],
   undo: 'undoable',
@@ -276,7 +278,7 @@ export const folderFontsDelete = defineCommand({
   output: z.object({
     promotedToDeckCount: z.number().describe('Decks that received a private copy of the font'),
   }),
-  role: 'owner',
+  role: 'editor',
   scope: 'folder',
   effects: ['server'],
   undo: 'irreversible',

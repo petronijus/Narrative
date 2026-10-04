@@ -276,6 +276,46 @@ describe('media.* and share.*', () => {
   })
 })
 
+describe('folder-scoped roles (folder sharing, step 4)', () => {
+  const as = (role: 'viewer' | 'editor' | 'owner') =>
+    ctx({
+      target: { folderId: FIXTURE_FOLDER_ID },
+      actor: { userId: 'u1', role, kind: 'agent' },
+    })
+
+  it("lets every member read the folder's components, tokens and fonts", async () => {
+    for (const id of ['component.list', 'token.list', 'folder.fonts.list', 'deck.activeEditors']) {
+      await expect(runCommand(registry, as('viewer'), id, {}), id).resolves.toBeDefined()
+    }
+  })
+
+  it('lets editors change them, and keeps renaming, deleting and sharing the folder for owners', async () => {
+    const viewerWrite = await failure(
+      runCommand(registry, as('viewer'), 'token.create', {
+        category: 'colors',
+        name: 'Accent',
+        value: '#ff0000',
+      }),
+    )
+    expect(viewerWrite.code).toBe('forbidden')
+    await expect(
+      runCommand(registry, as('editor'), 'token.create', {
+        category: 'colors',
+        name: 'Accent',
+        value: '#ff0000',
+      }),
+    ).resolves.toBeDefined()
+    for (const [id, input] of [
+      ['folder.rename', { name: 'Renamed' }],
+      ['folder.delete', {}],
+      ['folder.members.list', {}],
+    ] as const) {
+      const err = await failure(runCommand(registry, as('editor'), id, input))
+      expect(err.code, id).toBe('forbidden')
+    }
+  })
+})
+
 describe('folder.members.* / folder.invites.*', () => {
   const inFolder = (over: Partial<CommandContext> = {}) =>
     ctx({ target: { folderId: FIXTURE_FOLDER_ID }, ...over })

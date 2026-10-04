@@ -45,6 +45,7 @@ import { metricsRegistrationDecision } from './metrics/index.js'
 import { initSentry } from './observability/sentry.js'
 import { createJwtVerifier } from './auth/jwt.js'
 import { registerAuthPlugin, assertAuthBootSafety } from './auth/fastifyAuth.js'
+import { ensureDevUserAtBoot } from './auth/devIdentity.js'
 import {
   createDrizzlePatStore,
   createPatOwnerPolicy,
@@ -213,6 +214,8 @@ await initSentry(app)
 // Auth plugin — must be registered before routes that use authPreHandler
 if (bypassAuth) {
   app.log.warn('BYPASS_AUTH=true — all requests run as dev-user. DO NOT USE IN PRODUCTION.')
+  // dev-user's directory row, so it can be invited like a person (auth/devIdentity.ts).
+  await ensureDevUserAtBoot(db)
 }
 // One personal access token service for HTTP routes and tus uploads, so they
 // share its `last_used_at` write throttle. (The Hocuspocus WebSocket does not

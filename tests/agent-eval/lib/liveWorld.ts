@@ -24,6 +24,7 @@ import {
   SkipScenario,
   type EvalTarget,
   type OpenEditorOptions,
+  type Person,
   type World,
 } from './types.js'
 
@@ -139,6 +140,8 @@ export class LiveWorld implements World {
   evalFolderId = ''
   /** Folders this run created (the eval folder first). */
   readonly createdFolders: string[] = []
+  /** Folders a second person created for a scenario (deleted as them). */
+  private readonly foreignFolders: Array<{ person: Person; folderId: string }> = []
   private readonly browser: EditorBrowser
 
   constructor(private readonly opts: LiveWorldOptions) {
@@ -151,12 +154,19 @@ export class LiveWorld implements World {
     this.evalFolderId = await this.createFolder(`Agent eval ${this.tag}`)
   }
 
-  private async post(body: Record<string, unknown>, what: string): Promise<unknown> {
+  /**
+   * POST /commands as the harness (its `api` token) or, on the dev stack, as
+   * a second person (their `narrative_dev_as` cookie; the session path of
+   * the command API, which wants a same-origin request).
+   */
+  private async post(body: Record<string, unknown>, what: string, as?: Person): Promise<unknown> {
     const res = await request(`${this.opts.apiUrl}/commands`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        authorization: `Bearer ${this.opts.apiToken}`,
+        ...(as === undefined
+          ? { authorization: `Bearer ${this.opts.apiToken}` }
+          : { cookie: `narrative_dev_as=${as.userId}`, origin: this.opts.webUrl }),
       },
       body: JSON.stringify({ ...body, client: CLIENT_NAME }),
     })
@@ -186,6 +196,49 @@ export class LiveWorld implements World {
       { target, command, input, ...(options.confirm ? { confirm: options.confirm } : {}) },
       command,
     )) as T
+  }
+
+  async person(name: string): Promise<Person> {
+    const userId = `dev-eval-${name}`
+    if (!this.opts.bypass || !/^dev-[a-z0-9-]{1,60}$/.test(userId)) {
+      throw new SkipScenario(
+        'a second person needs the BYPASS_AUTH dev stack (a synthetic identity, auth/devIdentity.ts)',
+      )
+    }
+    // Their first request writes their directory entry, as a first sign-in would.
+    const res = await request(`${this.opts.apiUrl}/folders`, {
+      headers: { cookie: `narrative_dev_as=${userId}` },
+    })
+    if (!res.ok) throw new Error(`GET /folders as ${userId}: HTTP ${res.status}`)
+    return { userId, email: `${userId}@dev.narrative.test` }
+  }
+
+  async userEmail(): Promise<string> {
+    if (!this.opts.bypass) {
+      throw new SkipScenario("the agent's user address is known only on the BYPASS_AUTH dev stack")
+    }
+    // The harness mints its tokens as BYPASS_AUTH's dev-user (see "What a run does").
+    return 'dev-user@dev.narrative.test'
+  }
+
+  async runAs<T = Record<string, unknown>>(
+    person: Person,
+    target: EvalTarget,
+    command: string,
+    input: unknown = {},
+    options: { confirm?: string[] } = {},
+  ): Promise<T> {
+    return (await this.post(
+      { target, command, input, ...(options.confirm ? { confirm: options.confirm } : {}) },
+      `${command} as ${person.userId}`,
+      person,
+    )) as T
+  }
+
+  async createFolderAs(person: Person, name: string): Promise<string> {
+    const folder = await this.runAs<{ id: string }>(person, {}, 'folder.create', { name })
+    this.foreignFolders.push({ person, folderId: folder.id })
+    return folder.id
   }
 
   async batch(
@@ -316,6 +369,14 @@ export class LiveWorld implements World {
   async cleanup(): Promise<string[]> {
     await this.browser.close()
     const left: string[] = []
+    for (const { person, folderId } of this.foreignFolders) {
+      try {
+        await this.runAs(person, { folderId }, 'folder.delete', {}, { confirm: ['folder.delete'] })
+      } catch (err) {
+        if (err instanceof EvalCommandError && err.code === 'not_found') continue
+        left.push(`folder ${folderId} of ${person.userId}: ${(err as Error).message}`)
+      }
+    }
     for (const folderId of [...this.createdFolders].reverse()) {
       try {
         await this.run({ folderId }, 'folder.delete', {}, { confirm: ['folder.delete'] })

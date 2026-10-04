@@ -164,16 +164,17 @@ const BoundsOutput = z.object({
 // Commands backed by the service
 // ---------------------------------------------------------------------------
 
+/** A folder's components: members read them, editors change them (folder sharing). */
 const folderComponent = {
   ...serverCommand,
   domain: 'component',
-  role: 'owner',
   scope: 'folder',
   effects: ['server'],
 } as const
 
 export const componentList = defineCommand({
   ...folderComponent,
+  role: 'viewer',
   id: 'component.list',
   title: 'List components',
   description:
@@ -200,6 +201,7 @@ export const componentList = defineCommand({
 
 export const componentGet = defineCommand({
   ...folderComponent,
+  role: 'viewer',
   id: 'component.get',
   title: 'Read component',
   description:
@@ -244,6 +246,7 @@ export const componentGet = defineCommand({
 
 export const componentRename = defineCommand({
   ...folderComponent,
+  role: 'editor',
   id: 'component.rename',
   title: 'Rename component',
   description:
@@ -276,6 +279,7 @@ export const componentRename = defineCommand({
 
 export const componentDelete = defineCommand({
   ...folderComponent,
+  role: 'editor',
   id: 'component.delete',
   title: 'Delete component',
   description:
@@ -501,7 +505,7 @@ export const componentPromote = defineCommand({
     'the master as they are: a group brings its members, rich text, tables and their animations come along; the ' +
     'slide is not changed. Pictures and videos are copied into the component; links to slides are removed. ' +
     "Named objects are the component's slots (component.stamp fills text slots by name), so name the text boxes " +
-    "(object.update name) first. Needs ownership of the deck's folder. Undo: component.delete.",
+    "(object.update name) first. Needs the editor role in the deck's folder. Undo: component.delete.",
   input: z.strictObject({
     slide: SlideRefSchema,
     objects: ObjectIdsSchema.describe('The objects to promote (a group id brings its members)'),

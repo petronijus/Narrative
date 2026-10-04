@@ -33,14 +33,16 @@ import {
   targetFolderId,
 } from './serverShared.js'
 
-const folderOwner = {
+/** A folder's tokens: members read them, editors change them (folder sharing). */
+const folderToken = {
   ...serverCommand,
   domain: 'token',
-  role: 'owner',
   scope: 'folder',
   effects: ['server'],
   confirm: 'never',
 } as const
+const tokenEditor = { ...folderToken, role: 'editor' } as const
+const tokenReader = { ...folderToken, role: 'viewer' } as const
 
 const CategorySchema = z.enum(['colors', 'textStyles', 'effectStyles']).describe('Token category')
 const TokenNameSchema = z.string().trim().min(1).max(80)
@@ -173,7 +175,7 @@ export const tokenUsages = defineCommand({
     "Every place that uses one of the folder's design tokens: objects and text runs on each deck slide (deck, " +
     'slide index, object, field), component masters, and — for a colour — the text styles whose colour is that ' +
     'token. Check it before changing or deleting a token to know what will change. Reads the saved documents, so ' +
-    'edits from the last few seconds may be missing. Folder owner only.',
+    'edits from the last few seconds may be missing. Any member of the folder.',
   input: z.strictObject({
     category: z.enum(['colors', 'textStyles', 'effectStyles']).describe('Token category'),
     tokenId: IdSchema.describe('Token id within the category'),
@@ -205,7 +207,7 @@ export const tokenUsages = defineCommand({
       ]),
     ),
   }),
-  role: 'owner',
+  role: 'viewer',
   scope: 'folder',
   effects: ['server'],
   readOnly: true,
@@ -233,7 +235,7 @@ export const tokenUsages = defineCommand({
 // ---------------------------------------------------------------------------
 
 export const tokenCreate = defineCommand({
-  ...folderOwner,
+  ...tokenEditor,
   id: 'token.create',
   title: 'Add a design token',
   description:
@@ -241,7 +243,7 @@ export const tokenCreate = defineCommand({
     `at most ${MAX_COLORS} colours. A text style names what linked text takes — family, weight, size, lineHeight ` +
     '(multiple of the size), letterSpacing, paragraph spacing, colour (a hex or a folder colour), textTransform; ' +
     'apply it with text.style.apply; its name must be new in the folder (token.list). Returns the new id. Undo: ' +
-    'token.delete. Folder owner only.',
+    'token.delete. Needs the editor role in the folder.',
   input: z.discriminatedUnion('category', [
     NewColor.extend({ category: z.literal('colors') }),
     NewTextStyle.extend({ category: z.literal('textStyles') }),
@@ -281,7 +283,7 @@ export const tokenCreate = defineCommand({
 })
 
 export const tokenUpdate = defineCommand({
-  ...folderOwner,
+  ...tokenEditor,
   id: 'token.update',
   idempotent: true,
   title: 'Change a design token',
@@ -331,7 +333,7 @@ export const tokenUpdate = defineCommand({
 })
 
 export const tokenDelete = defineCommand({
-  ...folderOwner,
+  ...tokenEditor,
   id: 'token.delete',
   title: 'Delete a design token',
   description:
@@ -361,7 +363,7 @@ export const tokenDelete = defineCommand({
 })
 
 export const tokenSeedDefaults = defineCommand({
-  ...folderOwner,
+  ...tokenEditor,
   id: 'token.seedDefaults',
   idempotent: true,
   title: 'Add the default tokens',
@@ -407,14 +409,14 @@ const EffectStyleOutput = z.object({
 })
 
 export const tokenList = defineCommand({
-  ...folderOwner,
+  ...tokenReader,
   id: 'token.list',
   title: "List a folder's tokens",
   description:
     "The folder's design tokens with their ids: colours, text styles (`builtin` ones cannot be deleted; a " +
     'colour is a hex or { $token: "colors.<id>" }) and effect styles (stored, not applied to anything yet). A ' +
     "deck's folder is its `folderId` (deck.get). Link text to a style with text.style.apply (by name works too). " +
-    'Folder owner only.',
+    'Any member of the folder.',
   input: z.strictObject({}),
   output: z.object({
     colors: z.array(ColorTokenOutput),

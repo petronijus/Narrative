@@ -28,7 +28,7 @@ describe('devSubFromCookieHeader', () => {
   it('gives a switched identity an address of its own', () => {
     expect(devUserClaims(DEV_USER_SUB)).toEqual({
       sub: 'dev-user',
-      email: 'dev@localhost',
+      email: 'dev-user@dev.narrative.test',
       name: 'Dev User',
     })
     expect(devUserClaims('dev-viewer')).toEqual({
@@ -40,10 +40,13 @@ describe('devSubFromCookieHeader', () => {
 })
 
 describe('resolveIdentityFromHeaders under BYPASS_AUTH', () => {
-  it('is dev-user without the cookie, and writes no directory row', async () => {
+  it('is dev-user without the cookie (its directory row is written at boot, not here)', async () => {
     const db = scriptedDb()
     const result = await resolveIdentityFromHeaders({}, { db: db.db, bypass: true, pats: noPats })
-    expect(result).toMatchObject({ status: 'ok', identity: { user: { sub: 'dev-user' } } })
+    expect(result).toMatchObject({
+      status: 'ok',
+      identity: { user: { sub: 'dev-user', email: 'dev-user@dev.narrative.test' } },
+    })
     expect(db.writes).toEqual([])
   })
 

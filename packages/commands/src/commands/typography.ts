@@ -416,7 +416,7 @@ export const textStyleCreateFromObject = defineCommand({
     "Add a text style to the deck's folder that reproduces a text box's (or a table's) typography — family, " +
     'weight, size, line height, spacing, colour (a folder colour stays linked), case — and link the box to it, so ' +
     'other text can take it with text.style.apply. The name must be new in the folder (the defaults include ' +
-    'Title, Body, Quote, Caption…; token.list). Needs the folder owner. Returns the new style id. Undo unlinks ' +
+    'Title, Body, Quote, Caption…; token.list). Needs the editor role in the folder. Returns the new style id. Undo unlinks ' +
     'the box; the style stays in the folder until token.delete.',
   input: z.strictObject({
     slide: SlideRefSchema,
@@ -455,7 +455,7 @@ export const textStyleUpdateFromObject = defineCommand({
   description:
     'Make the text style a text box (or table) is linked to match the box: its typography becomes the style, and ' +
     'every other text linked to the style in the folder follows (except fields set by hand there). The box then ' +
-    'matches its style exactly. Only when the user asked for the style to change. Needs the folder owner. Returns ' +
+    'matches its style exactly. Only when the user asked for the style to change. Needs the editor role in the folder. Returns ' +
     'the style and its previous values (token.update with them undoes the style change).',
   input: z.strictObject({ slide: SlideRefSchema, object: ObjectIdSchema }),
   output: z.object({
