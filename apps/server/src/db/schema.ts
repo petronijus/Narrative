@@ -90,8 +90,8 @@ export const transcodeStatusEnum = pgEnum('media_transcode_status', [
  * Single-level folder that groups decks under an owner.
  * No parent_id — the hierarchy is intentionally flat.
  *
- * Every user has at least one "Drafts" folder; new decks land there by default.
- * Deleting a folder is only permitted when it contains no decks.
+ * Every user has one Drafts folder (`isDrafts`); new decks land there by
+ * default. Deleting a folder deletes its decks; Drafts cannot be deleted.
  */
 export const folders = pgTable(
   'folders',
@@ -100,6 +100,13 @@ export const folders = pgTable(
     ownerUserId: text('owner_user_id').notNull(),
     name: text('name').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
+    /**
+     * The creator's private Drafts folder — never shared, never deleted;
+     * new decks without a folder land there. A flag, not the name: folders
+     * have several owners, any of whom may rename one (migration 0034, with
+     * the partial unique index "one Drafts per owner").
+     */
+    isDrafts: boolean('is_drafts').notNull().default(false),
   },
   (t) => [index('folders_owner_user_id_idx').on(t.ownerUserId)],
 )
@@ -526,6 +533,33 @@ export const deckInvites = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// folder_invites — pending invites to a folder by email (folder sharing,
+// step 3). Converted to folder_permissions rows on the invitee's
+// /auth/callback, as deck_invites are. Migration 0033 (the partial unique
+// index on (folder_id, LOWER(email)) WHERE accepted_at IS NULL lives there).
+// ---------------------------------------------------------------------------
+
+export const folderInvites = pgTable(
+  'folder_invites',
+  {
+    /** nanoid(12). */
+    id: text('id').primaryKey(),
+    folderId: text('folder_id')
+      .notNull()
+      .references(() => folders.id, { onDelete: 'cascade' }),
+    /** Stored lower-case on insert. */
+    email: text('email').notNull(),
+    role: deckRoleEnum('role').notNull(),
+    invitedBySub: text('invited_by_sub').notNull(),
+    invitedAt: timestamp('invited_at', { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    acceptedBySub: text('accepted_by_sub'),
+  },
+  (t) => [index('folder_invites_folder_id_idx').on(t.folderId)],
+)
+
+// ---------------------------------------------------------------------------
 // sessions — server-side opaque session rows (replaces browser-PKCE flow).
 // ---------------------------------------------------------------------------
 
@@ -871,6 +905,7 @@ export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type DeckInvite = typeof deckInvites.$inferSelect
 export type NewDeckInvite = typeof deckInvites.$inferInsert
+export type FolderInvite = typeof folderInvites.$inferSelect
 export type PersonalAccessToken = typeof personalAccessTokens.$inferSelect
 export type NewPersonalAccessToken = typeof personalAccessTokens.$inferInsert
 export type AgentRun = typeof agentRuns.$inferSelect

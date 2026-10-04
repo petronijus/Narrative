@@ -163,6 +163,30 @@ export function closeUserConnectionsOnDocument(documentName: string, userId: str
 }
 
 /**
+ * Close one user's live connections on everything a folder membership opens:
+ * the folder's token document, its components' documents and its decks
+ * (folder sharing — a member's role changed or they were removed). They
+ * reconnect and re-authenticate with whatever access they still have — a
+ * deck grant of their own, a lower folder role, or none.
+ */
+export function closeUserFolderConnections(
+  userId: string,
+  folder: { folderId: string; deckIds: readonly string[]; componentIds: readonly string[] },
+): number {
+  const deckIds = new Set(folder.deckIds)
+  const names = new Set([
+    `folder:${folder.folderId}`,
+    ...folder.componentIds.map((id) => `component:${id}`),
+  ])
+  return closeConnectionsWhere((ctx, name) => {
+    if (ctx.userId !== userId) return false
+    if (names.has(name)) return true
+    const deckId = deckIdOf(name)
+    return deckId !== null && deckIds.has(deckId)
+  })
+}
+
+/**
  * Close every live connection belonging to a user across ALL documents (decks,
  * folders, components). Used on session revocation / allowlist removal, where
  * the principal must lose access everywhere at once.

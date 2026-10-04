@@ -86,9 +86,12 @@ describe('requireComponentRole', () => {
 })
 
 describe('bypassAliases', () => {
-  it('counts the legacy demo user as the caller under BYPASS_AUTH only', () => {
-    expect(bypassAliases(true)).toEqual(['demo-user'])
-    expect(bypassAliases(false)).toEqual([])
-    expect(bypassAliases(undefined)).toEqual([])
+  it("counts the legacy demo user as BYPASS_AUTH's dev-user only", () => {
+    expect(bypassAliases('dev-user', true)).toEqual(['demo-user'])
+    expect(bypassAliases('dev-user', false)).toEqual([])
+    expect(bypassAliases('dev-user', undefined)).toEqual([])
+    // The other synthetic identities (auth/devIdentity.ts) are people of their own.
+    expect(bypassAliases('dev-viewer', true)).toEqual([])
+    expect(bypassAliases(null, true)).toEqual([])
   })
 })

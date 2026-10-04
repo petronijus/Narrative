@@ -452,7 +452,7 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     const access = await resolveFolderAccess(db, {
       folderId,
       userId,
-      alsoAs: bypassAliases(deps.bypass),
+      alsoAs: bypassAliases(userId, deps.bypass),
     })
     return access?.role ?? null
   }
@@ -523,7 +523,7 @@ export function createMediaService(deps: ServiceDeps): MediaService {
         folderId,
         userId: args.userId === '' ? null : args.userId,
         shareToken: null,
-        alsoAs: bypassAliases(deps.bypass),
+        alsoAs: bypassAliases(args.userId, deps.bypass),
       })
       if (reader === null) throw forbidden('Forbidden')
       if (asset.kind === 'font') {

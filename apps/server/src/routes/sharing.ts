@@ -32,6 +32,7 @@ import type { DeckRole } from '../auth/permissions.js'
 import { createSharingService } from '../services/sharing.js'
 import { routeDeps } from '../services/http.js'
 import { sendServiceError } from '../services/errors.js'
+import { inviteRouteRateLimit } from '../http/rateLimit.js'
 
 // ---------------------------------------------------------------------------
 // JSON schema helpers
@@ -112,7 +113,7 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
     Body: { email: string; role: DeckRole }
   }>(
     '/decks/:id/permissions',
-    { schema: invitePermissionSchema, preHandler: ownerGuard },
+    { schema: invitePermissionSchema, preHandler: ownerGuard, config: inviteRouteRateLimit },
     async (request, reply) => {
       try {
         const result = await createSharingService(routeDeps(app, db, request.log)).invite({

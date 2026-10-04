@@ -14,6 +14,7 @@ import {
   type FolderContentAccess,
 } from '../auth/permissions.js'
 import { presignGetUrl } from '../media/s3Client.js'
+import { DEV_USER_SUB } from '../auth/devIdentity.js'
 import type { FontAssetRow } from '../media/assets.js'
 import { badRequest, forbidden, notFound } from './errors.js'
 
@@ -26,14 +27,18 @@ export function isoOrNull(value: Date | string | null | undefined): string | nul
   return value === null || value === undefined ? null : iso(value)
 }
 
-/** The user ids whose folders / decks a user sees (BYPASS_AUTH dev mode adds the legacy demo user). */
+/**
+ * The user ids whose folders / decks a user sees: BYPASS_AUTH dev mode adds
+ * the legacy demo user for `dev-user` (not for the other synthetic
+ * identities of auth/devIdentity.ts, which are people of their own).
+ */
 export function ownerIdsFor(userId: string, bypass: boolean | undefined): string[] {
-  return bypass === true ? [userId, 'demo-user'] : [userId]
+  return [userId, ...bypassAliases(userId, bypass)]
 }
 
-/** The other ids that count as the user (a resolver's `alsoAs`): BYPASS_AUTH's legacy demo user, else none. */
-export function bypassAliases(bypass: boolean | undefined): string[] {
-  return bypass === true ? ['demo-user'] : []
+/** The other ids that count as the user (a resolver's `alsoAs`): the legacy demo user for BYPASS_AUTH's `dev-user`, else none. */
+export function bypassAliases(userId: string | null, bypass: boolean | undefined): string[] {
+  return bypass === true && userId === DEV_USER_SUB ? ['demo-user'] : []
 }
 
 /** A folder the caller may act on, and their role in it. */
@@ -41,6 +46,8 @@ export interface FolderInRole {
   id: string
   ownerUserId: string
   name: string
+  /** The creator's private Drafts folder (never shared, never deleted). */
+  isDrafts: boolean
   role: DeckRole
 }
 
@@ -59,7 +66,12 @@ export async function requireFolderRole(
   opts: { bypass?: boolean | undefined; notFoundMessage?: string } = {},
 ): Promise<FolderInRole> {
   const [folder] = await db
-    .select({ id: folders.id, ownerUserId: folders.ownerUserId, name: folders.name })
+    .select({
+      id: folders.id,
+      ownerUserId: folders.ownerUserId,
+      name: folders.name,
+      isDrafts: folders.isDrafts,
+    })
     .from(folders)
     .where(eq(folders.id, folderId))
     .limit(1)
@@ -67,7 +79,7 @@ export async function requireFolderRole(
   const access = await resolveFolderAccess(db, {
     folderId,
     userId,
-    alsoAs: bypassAliases(opts.bypass),
+    alsoAs: bypassAliases(userId, opts.bypass),
   })
   if (!access) throw forbidden()
   if (!roleAtLeast(access.role, required)) throw forbidden(folderRoleRefusal(required))
@@ -114,7 +126,7 @@ export async function requireComponentRole(
   const access = await resolveFolderAccess(db, {
     folderId: row.folderId,
     userId,
-    alsoAs: bypassAliases(opts.bypass),
+    alsoAs: bypassAliases(userId, opts.bypass),
   })
   if (!access) throw opts.unseen === 'not_found' ? notFound('Component not found') : forbidden()
   if (!roleAtLeast(access.role, required)) throw forbidden(folderRoleRefusal(required))
@@ -143,7 +155,7 @@ export async function requireFolderContentReader(
   const access = await resolveFolderContentAccess(db, {
     folderId,
     userId,
-    alsoAs: bypassAliases(opts.bypass),
+    alsoAs: bypassAliases(userId, opts.bypass),
   })
   if (!access) throw forbidden()
   return access

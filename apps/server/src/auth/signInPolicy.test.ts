@@ -1,7 +1,10 @@
 /**
  * auth/signInPolicy.test.ts — the one allowlist rule shared by Google sign-in
  * and personal access token verification: env allowlist first (no database
- * work), then a pending invite, then an existing deck permission.
+ * work), then — for a verified email only — a pending deck or folder
+ * invite, then a deck or a folder somebody else shared. The SQL of the last
+ * two (a user's own decks and folders never count) is exercised against
+ * Postgres in services/folderSharing.integration.test.ts.
  */
 
 import { describe, it, expect } from 'vitest'
@@ -24,32 +27,46 @@ describe('signInGrant', () => {
     await expect(
       signInGrant(scriptedDb().db, byDomain, { email: 'a@example.com', emailVerified: true }),
     ).resolves.toBe('env')
-    // Unverified → falls through to the database, which has nothing.
-    const db = scriptedDb({ selects: [[], []] })
+    // Unverified → not the domain rule, and the database admits no
+    // unverified email at all: not even asked.
+    const db = scriptedDb()
     await expect(
       signInGrant(db.db, byDomain, { email: 'a@example.com', emailVerified: false }),
     ).resolves.toBeNull()
     expect(db.remaining().selects).toBe(0)
   })
 
-  it('admits a pending invite, then an existing deck permission', async () => {
+  const bela = { email: 'bela@example.org', emailVerified: true }
+
+  it('admits a pending deck invite, then a pending folder invite', async () => {
     await expect(
-      signInGrant(scriptedDb({ selects: [[{ id: 'inv' }]] }).db, byEmail, {
-        email: 'bela@example.org',
-        emailVerified: true,
-      }),
+      signInGrant(scriptedDb({ selects: [[{ id: 'inv' }]] }).db, byEmail, bela),
     ).resolves.toBe('invite')
+    const db = scriptedDb({ selects: [[], [{ id: 'finv' }]] })
+    await expect(signInGrant(db.db, byEmail, bela)).resolves.toBe('invite')
+    expect(db.remaining().selects).toBe(0)
+  })
+
+  it('admits an existing deck permission, then a membership in a shared folder', async () => {
     await expect(
-      signInGrant(scriptedDb({ selects: [[], [{ deckId: 'd1' }]] }).db, byEmail, {
-        email: 'bela@example.org',
-        emailVerified: true,
-      }),
+      signInGrant(scriptedDb({ selects: [[], [], [{ deckId: 'd1' }]] }).db, byEmail, bela),
     ).resolves.toBe('permission')
+    const db = scriptedDb({ selects: [[], [], [], [{ folderId: 'f1' }]] })
+    await expect(signInGrant(db.db, byEmail, bela)).resolves.toBe('permission')
+    expect(db.remaining().selects).toBe(0)
+  })
+
+  it('admits no unverified email through the database', async () => {
+    const db = scriptedDb({ selects: [[{ id: 'inv' }]] })
+    await expect(
+      signInGrant(db.db, byEmail, { email: 'bela@example.org', emailVerified: false }),
+    ).resolves.toBeNull()
+    expect(db.remaining().selects).toBe(1)
   })
 
   it('refuses everyone else', async () => {
     await expect(
-      isAllowedToSignIn(scriptedDb({ selects: [[], []] }).db, byEmail, {
+      isAllowedToSignIn(scriptedDb({ selects: [[], [], [], []] }).db, byEmail, {
         email: 'removed@example.org',
         emailVerified: true,
       }),

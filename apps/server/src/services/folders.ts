@@ -17,7 +17,7 @@ import type {
   FolderSummary,
   FontFaceInfo,
 } from '@narrative/commands'
-import { components, decks, folderPermissions, folders, mediaAssets } from '../db/schema.js'
+import { components, decks, folderPermissions, folders, mediaAssets, users } from '../db/schema.js'
 import type { DeckRole } from '../auth/permissions.js'
 import {
   componentIdsInKeys,
@@ -116,33 +116,44 @@ function fontExtFromMime(mime: string, originalName?: string): string {
 }
 
 /**
- * Find or create the "Drafts" folder for a user. On first deck creation for
- * a brand-new user (no existing folders), this auto-provisions it — with the
- * default tokens, like every new folder.
+ * Find or create the user's Drafts folder (`folders.is_drafts`, migration
+ * 0034 — not the name: a folder's owners may rename it). On first deck
+ * creation for a brand-new user this auto-provisions it — with the default
+ * tokens, like every new folder. Two requests provisioning at once meet the
+ * "one Drafts per owner" index; the loser takes the winner's folder.
  */
 export async function getOrProvisionDrafts(
   deps: Pick<ServiceDeps, 'db' | 'log' | 'hocuspocus'>,
   userId: string,
 ): Promise<string> {
   const { db } = deps
-  const [existing] = await db
-    .select({ id: folders.id })
-    .from(folders)
-    .where(and(eq(folders.ownerUserId, userId), eq(folders.name, 'Drafts')))
-    .limit(1)
-  if (existing) return existing.id
+  const findDrafts = async () => {
+    const [row] = await db
+      .select({ id: folders.id })
+      .from(folders)
+      .where(and(eq(folders.ownerUserId, userId), eq(folders.isDrafts, true)))
+      .limit(1)
+    return row?.id ?? null
+  }
+  const existing = await findDrafts()
+  if (existing !== null) return existing
 
   const id = nanoid(12)
   const created = await db.transaction(async (tx) => {
     const [row] = await tx
       .insert(folders)
-      .values({ id, ownerUserId: userId, name: 'Drafts', createdAt: new Date() })
+      .values({ id, ownerUserId: userId, name: 'Drafts', isDrafts: true, createdAt: new Date() })
+      .onConflictDoNothing()
       .returning({ id: folders.id })
     // The creator is the folder's first member (folder sharing, migration 0030).
     if (row) await tx.insert(folderPermissions).values({ folderId: id, userId, role: 'owner' })
     return row
   })
-  if (!created) throw new Error('Failed to provision Drafts folder')
+  if (!created) {
+    const winner = await findDrafts()
+    if (winner === null) throw new Error('Failed to provision Drafts folder')
+    return winner
+  }
   await seedNewFolder(deps, created.id)
   return created.id
 }
@@ -189,18 +200,31 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
    * subquery to join. `min` of the `deck_role` enum is the HIGHEST role: the
    * enum is declared owner, editor, viewer, and Postgres orders an enum by
    * declaration. More than one row per folder only in BYPASS_AUTH dev mode
-   * (the dev user and the legacy demo user).
+   * (the dev user and the legacy demo user). `grantedBy` names who shared
+   * the folder with the caller: null for the folders they created.
    */
   function memberships(userId: string) {
     return db
       .select({
         folderId: folderPermissions.folderId,
         role: sql<DeckRole>`min(${folderPermissions.role})`.as('role'),
+        // Who granted the membership (one row per folder outside dev mode).
+        grantedBy: sql<string | null>`max(${folderPermissions.grantedBy})`.as('granted_by'),
       })
       .from(folderPermissions)
       .where(inArray(folderPermissions.userId, ownerIdsFor(userId, deps.bypass)))
       .groupBy(folderPermissions.folderId)
       .as('my_folders')
+  }
+
+  /** Who shared the folder with the caller: the granter's directory entry, or null for their own. */
+  function sharedBy(
+    userId: string,
+    row: { grantedBy: string | null; sharerName: string | null; sharerEmail: string | null },
+  ): FolderSummary['sharedBy'] {
+    if (row.grantedBy === null || ownerIdsFor(userId, deps.bypass).includes(row.grantedBy))
+      return null
+    return { name: row.sharerName, email: row.sharerEmail }
   }
 
   async function list(args: { userId: string }): Promise<FolderSummary[]> {
@@ -213,10 +237,15 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
         createdAt: folders.createdAt,
         deckCount: sql<number>`coalesce(${deckCountSub.count}, 0)`,
         role: mine.role,
+        grantedBy: mine.grantedBy,
+        sharerName: users.name,
+        sharerEmail: users.email,
+        isDrafts: folders.isDrafts,
       })
       .from(folders)
       .innerJoin(mine, eq(mine.folderId, folders.id))
       .leftJoin(deckCountSub, eq(folders.id, deckCountSub.folderId))
+      .leftJoin(users, eq(users.sub, mine.grantedBy))
       .orderBy(folders.createdAt)
     return rows.map((r) => ({
       id: r.id,
@@ -224,6 +253,8 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
       createdAt: iso(r.createdAt),
       deckCount: r.deckCount,
       role: r.role,
+      sharedBy: sharedBy(args.userId, r),
+      isDrafts: r.isDrafts,
     }))
   }
 
@@ -251,11 +282,16 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
         createdAt: folders.createdAt,
         deckCount: sql<number>`coalesce(${deckCountSub.count}, 0)`,
         role: mine.role,
+        grantedBy: mine.grantedBy,
+        sharerName: users.name,
+        sharerEmail: users.email,
+        isDrafts: folders.isDrafts,
         key: folderNameKey,
       })
       .from(folders)
       .innerJoin(mine, eq(mine.folderId, folders.id))
       .leftJoin(deckCountSub, eq(folders.id, deckCountSub.folderId))
+      .leftJoin(users, eq(users.sub, mine.grantedBy))
       .where(and(...filters))
       .orderBy(asc(folderNameKey), asc(folders.id))
       .limit(limit + 1)
@@ -269,6 +305,8 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
         createdAt: iso(r.createdAt),
         deckCount: r.deckCount,
         role: r.role,
+        sharedBy: sharedBy(args.userId, r),
+        isDrafts: r.isDrafts,
       })),
       next: rows.length > limit && last !== undefined ? { key: last.key, id: last.id } : null,
     }
@@ -292,7 +330,13 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
     })
     if (!created) throw failed('Failed to create folder')
     await seedNewFolder(deps, id)
-    return { ...folderRecord(created), deckCount: 0, role: 'owner' as const }
+    return {
+      ...folderRecord(created),
+      deckCount: 0,
+      role: 'owner' as const,
+      sharedBy: null,
+      isDrafts: false as const,
+    }
   }
 
   async function rename(args: { userId: string; folderId: string; name: string }) {
@@ -310,7 +354,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
   async function remove(args: { userId: string; folderId: string }) {
     const id = args.folderId
     const existing = await requireFolderRole(db, id, args.userId, 'owner', { bypass: deps.bypass })
-    if (existing.name === 'Drafts') throw conflict('cannot_delete_drafts')
+    if (existing.isDrafts) throw conflict('cannot_delete_drafts')
 
     // Capture deck ids so MinIO blobs can be swept after the cascade.
     const containedDecks = await db

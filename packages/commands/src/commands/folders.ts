@@ -64,6 +64,11 @@ export const folderList = defineCommand({
       FolderOutput.extend({
         deckCount: z.number(),
         role: RoleSchema.describe("The user's role in the folder"),
+        sharedBy: z
+          .object({ name: z.string().nullable(), email: z.string().nullable() })
+          .nullable()
+          .describe('Who shared the folder with the user; null for their own folders'),
+        isDrafts: z.boolean().describe('The user\'s private Drafts folder (never shared or deleted)'),
       }),
     ),
     nextCursor: z

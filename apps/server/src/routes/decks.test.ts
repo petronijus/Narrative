@@ -104,9 +104,13 @@ function makeMockDb(initialDecks: MockDeck[] = []) {
 
     insert: vi.fn().mockImplementation((_table: unknown) => ({
       values: vi.fn().mockImplementation((vals: MockDeck) => {
-        const result: Promise<unknown[]> & { returning: () => Promise<MockDeck[]> } =
-          Promise.resolve([]) as never
+        const result: Promise<unknown[]> & {
+          returning: () => Promise<MockDeck[]>
+          onConflictDoNothing: () => { returning: () => Promise<MockDeck[]> }
+        } = Promise.resolve([]) as never
         result.returning = vi.fn().mockResolvedValue([{ ...vals }])
+        // Drafts provisioning inserts with ON CONFLICT DO NOTHING (one Drafts per owner).
+        result.onConflictDoNothing = () => ({ returning: result.returning })
         return result
       }),
     })),

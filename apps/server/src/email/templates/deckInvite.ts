@@ -1,7 +1,8 @@
 /**
  * email/templates/deckInvite.ts
  *
- * "You've been invited to a deck" email.
+ * "You've been invited to a deck" email, and its twin for a folder (folder
+ * sharing, step 3): one layout, the wording per kind.
  *
  * Design notes
  * ------------
@@ -43,10 +44,33 @@ export interface DeckInviteEmailInput {
   signInUrl: string
 }
 
+export interface FolderInviteEmailInput {
+  /** Lower-cased invitee email. */
+  recipientEmail: string
+  folderName: string
+  inviterName: string
+  inviterEmail: string
+  role: DeckRole
+  /** `${SPA_ORIGIN}/api/auth/start?returnTo=/folder/<id>`. */
+  signInUrl: string
+}
+
 export interface RenderedEmail {
   subject: string
   html: string
   text: string
+}
+
+/** What differs between a deck and a folder invitation. */
+interface InviteWording {
+  /** `deck` or `folder` — in "shared a Narrative deck with you". */
+  noun: string
+  /** The deck title or folder name. */
+  title: string
+  /** The preview card's label for it in the plaintext ("Deck", "Folder"). */
+  label: string
+  /** What the role covers, a sentence for the plaintext and the HTML; empty for none. */
+  scope: string
 }
 
 // ---------------------------------------------------------------------------
@@ -101,7 +125,25 @@ function deckPreviewGradient(seed: string): { from: string; to: string } {
 // ---------------------------------------------------------------------------
 
 export function renderDeckInviteEmail(input: DeckInviteEmailInput): RenderedEmail {
-  const safeDeck = escapeHtml(input.deckTitle)
+  return renderInvite(input, { noun: 'deck', title: input.deckTitle, label: 'Deck', scope: '' })
+}
+
+export function renderFolderInviteEmail(input: FolderInviteEmailInput): RenderedEmail {
+  return renderInvite(input, {
+    noun: 'folder',
+    title: input.folderName,
+    label: 'Folder',
+    scope: 'You see everything in it: its decks, components, fonts and design tokens.',
+  })
+}
+
+function renderInvite(
+  input: Omit<DeckInviteEmailInput, 'deckTitle'>,
+  wording: InviteWording,
+): RenderedEmail {
+  const safeDeck = escapeHtml(wording.title)
+  const safeScope = escapeHtml(wording.scope)
+  const noun = wording.noun
   const safeInviter = escapeHtml(input.inviterName)
   const safeInviterEmail = escapeHtml(input.inviterEmail)
   const safeRecipient = escapeHtml(input.recipientEmail)
@@ -109,20 +151,21 @@ export function renderDeckInviteEmail(input: DeckInviteEmailInput): RenderedEmai
   const safeUrl = escapeHtml(input.signInUrl)
   const initials = escapeHtml(inviterInitials(input.inviterName, input.inviterEmail))
   const inviterColour = avatarColour(input.inviterEmail)
-  const gradient = deckPreviewGradient(input.deckTitle)
+  const gradient = deckPreviewGradient(wording.title)
 
-  const subject = `${input.inviterName} shared "${input.deckTitle}" with you on Narrative`
+  const subject = `${input.inviterName} shared "${wording.title}" with you on Narrative`
 
   // -------------------------------------------------------------------------
   // Plaintext
   // -------------------------------------------------------------------------
   const text = [
-    `${input.inviterName} (${input.inviterEmail}) shared a Narrative deck with you.`,
+    `${input.inviterName} (${input.inviterEmail}) shared a Narrative ${noun} with you.`,
     '',
-    `  Deck:  ${input.deckTitle}`,
+    `  ${wording.label}:  ${wording.title}`,
     `  Role:  ${roleLabel(input.role)}`,
+    ...(wording.scope === '' ? [] : ['', wording.scope]),
     '',
-    `Open the deck:`,
+    `Open the ${noun}:`,
     `  ${input.signInUrl}`,
     '',
     `Sign in with ${input.recipientEmail} — your access is bound to that Google account.`,
@@ -189,7 +232,7 @@ export function renderDeckInviteEmail(input: DeckInviteEmailInput): RenderedEmai
               <td style="vertical-align:middle;">
                 <div style="font-size:14px;color:#475569;line-height:1.4;">
                   <strong style="color:#0f172a;font-weight:600;">${safeInviter}</strong>
-                  invited you to a deck
+                  invited you to a ${noun}
                 </div>
                 <div style="font-size:12px;color:#94a3b8;line-height:1.4;margin-top:2px;">
                   ${safeInviterEmail}
@@ -226,11 +269,16 @@ export function renderDeckInviteEmail(input: DeckInviteEmailInput): RenderedEmai
             <tr><td align="center" style="border-radius:10px;background:#2563eb;">
               <a href="${safeUrl}"
                  style="display:inline-block;padding:13px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;letter-spacing:-0.005em;">
-                Open the deck &rarr;
+                Open the ${noun} &rarr;
               </a>
             </td></tr>
           </table>
 
+          ${
+            safeScope === ''
+              ? ''
+              : `<p style="margin:0 0 12px 0;font-size:13px;line-height:1.6;color:#475569;text-align:center;">${safeScope}</p>`
+          }
           <p style="margin:0 0 12px 0;font-size:13px;line-height:1.6;color:#475569;text-align:center;">
             Sign in with <strong style="color:#0f172a;">${safeRecipient}</strong> —
             your access is bound to that Google account.

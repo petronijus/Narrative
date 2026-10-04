@@ -29,6 +29,7 @@ import type { Database } from '../db/client.js'
 import type { BearerCache } from '../http/bearerCache.js'
 import type { JwtPayload } from './jwt.js'
 import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from './session.js'
+import { devSubFromCookieHeader, devUserClaims, ensureDevUser } from './devIdentity.js'
 import {
   looksLikePersonalAccessToken,
   type PatScope,
@@ -89,10 +90,14 @@ export interface IdentityDeps {
   bearers?: BearerCache
 }
 
-/** The synthetic BYPASS_AUTH principal; a fresh object per request. */
-function devIdentity(): Identity {
+/**
+ * The synthetic BYPASS_AUTH principal — `dev-user`, or the identity the
+ * `narrative_dev_as` cookie names (auth/devIdentity.ts); a fresh object per
+ * request.
+ */
+function devIdentity(sub: string): Identity {
   return {
-    user: { sub: 'dev-user', email: 'dev@localhost', name: 'Dev User' },
+    user: devUserClaims(sub),
     auth: { kind: 'session', scopes: [], tokenId: null, sessionKey: null, bypass: true },
   }
 }
@@ -162,7 +167,11 @@ export async function resolveIdentityFromHeaders(
   const pat = readBearerPat(headers['authorization'])
   if (pat) return resolvePatIdentity(pat, deps.pats, deps.bearers)
 
-  if (deps.bypass) return { status: 'ok', identity: devIdentity() }
+  if (deps.bypass) {
+    const sub = devSubFromCookieHeader(headers['cookie'])
+    await ensureDevUser(deps.db, sub)
+    return { status: 'ok', identity: devIdentity(sub) }
+  }
 
   const rawId = readCookieFromHeader(headers['cookie'], SESSION_COOKIE_NAME)
   if (!rawId) return { status: 'none' }

@@ -10,20 +10,36 @@
  *   (1) the env allowlist admits it (`OIDC_ALLOWED_EMAILS` /
  *       `OIDC_ALLOWED_DOMAIN`, `isAllowedByEnv` — the domain rule requires a
  *       verified email), OR
- *   (2) the database implicitly admits it (`isAllowedByDb`):
- *       (a) a non-expired, non-accepted invite in `deck_invites`, or
- *       (b) an existing `deck_permissions` row (via `users.email`).
+ *   (2) the database implicitly admits it (`allowedByDb`), for a VERIFIED
+ *       email only (an invite is addressed to an inbox; an unverified claim
+ *       to that address proves nothing):
+ *       (a) a non-expired, non-accepted invite in `deck_invites` or
+ *           `folder_invites`, or
+ *       (b) a `deck_permissions` row on a deck somebody else created, or a
+ *           `folder_permissions` row in a folder somebody else created (via
+ *           `users.email`).
  *
  * Case (2a) is the new-collaborator flow — owner sends invite, invitee signs
  * in, /auth/callback consumes the invite into a permission. Case (2b) is the
  * returning-collaborator flow — already accepted, has ongoing access. Without
  * it they'd be locked out the first time their session cookie expired if
- * they aren't on the env allowlist.
+ * they aren't on the env allowlist. Only what someone else shared counts:
+ * every deck gets its creator's owner row and everyone owns their Drafts,
+ * and those must not keep an account removed from the allowlist signing in
+ * (security review H2, M3; Petr 2026-10-04).
  */
 
-import { and, eq, gt, isNull, sql } from 'drizzle-orm'
+import { and, eq, gt, isNull, ne, sql } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { deckInvites, deckPermissions, users } from '../db/schema.js'
+import {
+  deckInvites,
+  deckPermissions,
+  decks,
+  folderInvites,
+  folderPermissions,
+  folders,
+  users,
+} from '../db/schema.js'
 import { isAllowedByEnv, type AllowlistConfig } from './jwt.js'
 
 /** What the policy needs to know about an account. */
@@ -36,12 +52,16 @@ export interface SignInSubject {
 /** Why an account is allowed, or `null` when it is not. */
 export type SignInGrant = 'env' | 'invite' | 'permission'
 
-/** Is `email` implicitly allowed by a pending invite or a deck permission? */
+/**
+ * Is the account implicitly allowed by a pending invite, or by a deck or a
+ * folder someone else shared with it? Never for an unverified email.
+ */
 export async function allowedByDb(
   db: Database,
-  email: string,
+  subject: SignInSubject,
 ): Promise<Exclude<SignInGrant, 'env'> | null> {
-  const lower = email.toLowerCase()
+  if (!subject.emailVerified) return null
+  const lower = subject.email.toLowerCase()
 
   const [pending] = await db
     .select({ id: deckInvites.id })
@@ -56,19 +76,42 @@ export async function allowedByDb(
     .limit(1)
   if (pending) return 'invite'
 
+  const [pendingFolder] = await db
+    .select({ id: folderInvites.id })
+    .from(folderInvites)
+    .where(
+      and(
+        sql`LOWER(${folderInvites.email}) = ${lower}`,
+        isNull(folderInvites.acceptedAt),
+        gt(folderInvites.expiresAt, new Date()),
+      ),
+    )
+    .limit(1)
+  if (pendingFolder) return 'invite'
+
   const [perm] = await db
     .select({ deckId: deckPermissions.deckId })
     .from(deckPermissions)
     .innerJoin(users, eq(users.sub, deckPermissions.userId))
-    .where(sql`LOWER(${users.email}) = ${lower}`)
+    .innerJoin(decks, eq(decks.id, deckPermissions.deckId))
+    .where(and(sql`LOWER(${users.email}) = ${lower}`, ne(decks.ownerUserId, users.sub)))
     .limit(1)
   if (perm) return 'permission'
+
+  const [member] = await db
+    .select({ folderId: folderPermissions.folderId })
+    .from(folderPermissions)
+    .innerJoin(users, eq(users.sub, folderPermissions.userId))
+    .innerJoin(folders, eq(folders.id, folderPermissions.folderId))
+    .where(and(sql`LOWER(${users.email}) = ${lower}`, ne(folders.ownerUserId, users.sub)))
+    .limit(1)
+  if (member) return 'permission'
 
   return null
 }
 
-export async function isAllowedByDb(db: Database, email: string): Promise<boolean> {
-  return (await allowedByDb(db, email)) !== null
+export async function isAllowedByDb(db: Database, subject: SignInSubject): Promise<boolean> {
+  return (await allowedByDb(db, subject)) !== null
 }
 
 /**
@@ -85,7 +128,7 @@ export async function signInGrant(
     allowlist,
   )
   if (envOk) return 'env'
-  return allowedByDb(db, subject.email)
+  return allowedByDb(db, subject)
 }
 
 export async function isAllowedToSignIn(

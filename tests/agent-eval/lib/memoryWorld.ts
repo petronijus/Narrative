@@ -173,7 +173,7 @@ export class MemoryWorld implements World {
   constructor(opts: MemoryWorldOptions) {
     this.tag = opts.tag
     this.services = this.buildServices()
-    this.draftsId = this.addFolder('Drafts')
+    this.draftsId = this.addFolder('Drafts', true)
     this.evalFolderId = this.addFolder(`Agent eval ${opts.tag}`)
   }
 
@@ -187,9 +187,17 @@ export class MemoryWorld implements World {
     return new Date(T0 + this.clock * 1000).toISOString()
   }
 
-  private addFolder(name: string): string {
+  private addFolder(name: string, isDrafts = false): string {
     const id = this.nextId('folder')
-    this.folders.set(id, { id, name, createdAt: this.now(), deckCount: 0, role: 'owner' })
+    this.folders.set(id, {
+      id,
+      name,
+      createdAt: this.now(),
+      deckCount: 0,
+      role: 'owner',
+      sharedBy: null,
+      isDrafts,
+    })
     // A new folder comes with the default tokens (services/folders.ts create).
     const doc = new Y.Doc()
     seedDefaultTokens(doc, () => this.newTokenId())
@@ -396,6 +404,8 @@ export class MemoryWorld implements World {
         createdAt: f.createdAt,
         deckCount: 0,
         role: 'owner',
+        sharedBy: null,
+        isDrafts: false,
       }
     }
 

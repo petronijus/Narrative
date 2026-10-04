@@ -9,6 +9,10 @@
  *                       so one runaway agent cannot starve its owner's
  *                       browser or their other tokens);
  *   - `user:<sub>`      a browser session;
+ *   - `dev:<sub>`       BYPASS_AUTH's synthetic identities (dev only,
+ *                       auth/devIdentity.ts), with a budget of their own:
+ *                       the e2e suite runs as one identity in several
+ *                       parallel browsers, far above what one person does;
  *   - `ip:<address>`    everything else — anonymous requests, share-link
  *                       viewers, and requests whose credential did NOT verify.
  *                       Falling back to the IP for a bad credential matters:
@@ -60,7 +64,10 @@
  * Limits (fixed one-minute / one-hour windows, in-process store — the API
  * runs as a single instance; a second instance would need the Redis store):
  *   - global, identified caller ...... 1200 / minute   (GLOBAL_RATE_LIMIT)
+ *   - global, BYPASS_AUTH identity .. 12 000 / minute   (dev only; a bound for
+ *       runaway loops, not a shape for a suite of parallel browsers)
  *   - global, anonymous (per IP) ....... 600 / minute
+ *   - share by email (decks, folders) .... 60 / hour     (INVITE_RATE_LIMIT)
  *   - POST /access-tokens ................ 10 / hour     (TOKEN_CREATE_RATE_LIMIT;
  *       none under BYPASS_AUTH, tokenCreateRouteConfig)
  *   - agent endpoints ................... 240 / minute   (AGENT_RATE_LIMIT) —
@@ -120,8 +127,20 @@ export const GLOBAL_RATE_LIMIT = {
   identifiedMax: 1200,
   /** Requests per window per client IP for everyone else. */
   anonymousMax: 600,
+  /** Requests per window for a BYPASS_AUTH identity (dev only: parallel e2e browsers share one). */
+  devMax: 12_000,
   timeWindowMs: MINUTE_MS,
 } as const
+
+/**
+ * Sharing by email (per user): POST /decks/:id/permissions and POST
+ * /folders/:id/members — each can send an invitation email, so a loop must
+ * not turn Narrative's sender into a spam relay (security review M2,
+ * 2026-10-04; a repeated invitation to one address is not emailed again,
+ * auth/invites.ts). Agents share through commands, each confirmed by the
+ * user.
+ */
+export const INVITE_RATE_LIMIT = { max: 60, timeWindowMs: HOUR_MS } as const
 
 /** Creating personal access tokens (per user). */
 export const TOKEN_CREATE_RATE_LIMIT = { max: 10, timeWindowMs: HOUR_MS } as const
@@ -167,6 +186,11 @@ export const TOKEN_WRITE_RATE_LIMIT = { max: 120, timeWindowMs: MINUTE_MS } as c
 /** Route `config` for POST / PATCH / DELETE /folders/:folderId/tokens/…. */
 export const tokenWriteRouteRateLimit: { rateLimit: RateLimitOptions } = {
   rateLimit: { max: TOKEN_WRITE_RATE_LIMIT.max, timeWindow: TOKEN_WRITE_RATE_LIMIT.timeWindowMs },
+}
+
+/** Route `config` for the share-by-email routes (INVITE_RATE_LIMIT). */
+export const inviteRouteRateLimit: { rateLimit: RateLimitOptions } = {
+  rateLimit: { max: INVITE_RATE_LIMIT.max, timeWindow: INVITE_RATE_LIMIT.timeWindowMs },
 }
 
 /** Route `config` for POST /access-tokens. */
@@ -231,6 +255,7 @@ export async function rateLimitKey(
     if (result.status === 'ok') {
       const { user, auth } = result.identity
       if (auth.kind === 'token' && auth.tokenId) return `pat:${auth.tokenId}`
+      if (auth.bypass) return `dev:${user.sub}`
       return `user:${user.sub}`
     }
   } catch {
@@ -248,7 +273,11 @@ export function rateLimitPluginOptions(settings: RateLimitSettings = {}) {
     global: true,
     timeWindow: GLOBAL_RATE_LIMIT.timeWindowMs,
     max: (_req: FastifyRequest, key: string): number =>
-      key.startsWith('ip:') ? GLOBAL_RATE_LIMIT.anonymousMax : GLOBAL_RATE_LIMIT.identifiedMax,
+      key.startsWith('ip:')
+        ? GLOBAL_RATE_LIMIT.anonymousMax
+        : key.startsWith('dev:')
+          ? GLOBAL_RATE_LIMIT.devMax
+          : GLOBAL_RATE_LIMIT.identifiedMax,
     keyGenerator: (req: FastifyRequest) => rateLimitKey(req, settings),
     allowList: (req: FastifyRequest): boolean =>
       RATE_LIMIT_EXEMPT_ROUTES.includes(req.routeOptions.url ?? ''),

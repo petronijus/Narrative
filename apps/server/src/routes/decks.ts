@@ -36,6 +36,7 @@ import type { Database } from '../db/client.js'
 import { decks } from '../db/schema.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
 import { lookupSession, SESSION_COOKIE_NAME } from '../auth/session.js'
+import { devSubFromCookieHeader } from '../auth/devIdentity.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { parseDataUrl } from '../media/dataUrl.js'
 import { createDecksService, deckRecord } from '../services/decks.js'
@@ -100,7 +101,8 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
     let userId: string | null = null
     const opts = (app as FastifyInstance & { _authOpts?: { bypass?: boolean } })._authOpts
     if (opts?.bypass) {
-      userId = 'dev-user'
+      // `dev-user`, or the synthetic identity `narrative_dev_as` names (dev only).
+      userId = devSubFromCookieHeader(request.headers.cookie)
     } else {
       const rawSessionId = request.cookies?.[SESSION_COOKIE_NAME]
       if (rawSessionId) {

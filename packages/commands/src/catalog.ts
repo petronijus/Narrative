@@ -27,6 +27,7 @@ import { editorCommands } from './commands/editor.js'
 import { deckCommands } from './commands/decks.js'
 import { folderCommands } from './commands/folders.js'
 import { shareCommands } from './commands/sharing.js'
+import { folderSharingCommands } from './commands/folderSharing.js'
 import { mediaCommands } from './commands/media.js'
 import { componentCommands } from './commands/components.js'
 import { pptxCommands } from './commands/pptx.js'
@@ -54,6 +55,7 @@ export function createDefaultRegistry(): CommandRegistry {
   registry.registerAll(deckCommands)
   registry.registerAll(folderCommands)
   registry.registerAll(shareCommands)
+  registry.registerAll(folderSharingCommands)
   registry.registerAll(mediaCommands)
   registry.registerAll(componentCommands)
   registry.registerAll(pptxCommands)

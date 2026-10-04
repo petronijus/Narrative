@@ -557,6 +557,41 @@
       ]
     },
     {
+      "id": "folder.invites.cancel",
+      "domain": "folder",
+      "title": "Cancel a folder invite",
+      "description": "Withdraw a pending email invite to the folder (id from folder.invites.list): signing in with that address no longer makes the person a member. Confirm with the user first.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/folders/:id/invites/:inviteId"
+        }
+      ]
+    },
+    {
+      "id": "folder.invites.list",
+      "domain": "folder",
+      "title": "List pending folder invites",
+      "description": "Email invites to the folder that have not been accepted yet (id, email, role, sent and expiry time). An invite turns into a member when the person signs in.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/folders/:id/invites"
+        }
+      ]
+    },
+    {
       "id": "folder.list",
       "domain": "folder",
       "title": "List folders",
@@ -571,6 +606,76 @@
         {
           "method": "GET",
           "path": "/folders"
+        }
+      ]
+    },
+    {
+      "id": "folder.members.invite",
+      "domain": "folder",
+      "title": "Share a folder with a person",
+      "description": "Share the whole folder by email: the person sees EVERY deck, component, picture, font and token in it with the role. Someone who already uses Narrative becomes a member at once (`kind: \"granted\"`); anyone else gets a pending invite and an invitation EMAIL (`kind: \"pending\"`), accepted by signing in. Inviting a member changes their role. Drafts cannot be shared. Confirm the address and role with the user first — this reaches a real person. One deck only: share.permissions.invite.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/folders/:id/members"
+        }
+      ]
+    },
+    {
+      "id": "folder.members.list",
+      "domain": "folder",
+      "title": "List folder members",
+      "description": "Who the folder is shared with: every member with user id, email, name, role and when it was granted; a member sees everything in the folder with that role. Pending email invites: folder.invites.list. Someone given a single deck (share.permissions.list) is not a member.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/folders/:id/members"
+        }
+      ]
+    },
+    {
+      "id": "folder.members.remove",
+      "domain": "folder",
+      "title": "Remove a folder member",
+      "description": "Remove a member (user id from folder.members.list): they lose everything in the folder except a deck shared with them on its own, and their open editors are disconnected. Not yourself, not the last owner. Confirm with the user first.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/folders/:id/members/:userId"
+        }
+      ]
+    },
+    {
+      "id": "folder.members.setRole",
+      "domain": "folder",
+      "title": "Change a folder member role",
+      "description": "Change a member's role (user id from folder.members.list) on everything in the folder; their open editors reconnect with it at once (viewer = read-only). Not your own role; the last owner stays one. No email. Confirm with the user first.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "idempotent": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "PATCH",
+          "path": "/folders/:id/members/:userId"
         }
       ]
     },

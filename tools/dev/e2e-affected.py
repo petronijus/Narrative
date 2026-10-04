@@ -86,6 +86,7 @@ ACCESS = [
     "share-link-folder-tokens",
     "access-tokens",
     "move-deck-share-link",
+    "folder-sharing",
 ]
 TOKENS = ["folder-tokens", "share-link-folder-tokens", "folder-font-preview"]
 COMPONENTS = [
@@ -163,6 +164,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/ui/EditorVideoPreview.tsx", MEDIA),
     ("apps/web/src/ui/*Pptx*", PPTX),
     ("apps/web/src/ui/ShareDialog.tsx", ACCESS),
+    ("apps/web/src/ui/FolderShareDialog.tsx", ACCESS),
+    ("apps/web/src/ui/sharing/*", ACCESS),
     ("apps/web/src/ui/MoveDeckModal.tsx", ACCESS),
     ("apps/web/src/ui/NewDeckDialog.tsx", ACCESS),
     ("apps/web/src/ui/AgentActivityPopover.tsx", AGENT),
@@ -204,6 +207,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/state/SlideDocProvider.tsx", SYNC),
     ("apps/web/src/state/hocuspocusAuth.ts", SYNC + TOKENS),
     ("apps/web/src/state/DeckRoleContext.tsx", ACCESS + TOKENS),
+    ("apps/web/src/state/folderAccess.ts", ACCESS + COMPONENTS),
     ("apps/web/src/state/AuthContext.tsx", ACCESS),
     ("apps/web/src/state/useAwareness*", SYNC),
     ("apps/web/src/state/localAwarenessState.ts", SYNC),
@@ -254,6 +258,9 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/hocuspocus/*", SYNC + ACCESS),
     ("apps/server/src/auth/*", ACCESS),
     ("apps/server/src/services/sharing.ts", ACCESS),
+    ("apps/server/src/services/folderSharing.ts", ACCESS),
+    ("apps/server/src/routes/folderSharing.ts", ACCESS),
+    ("apps/server/src/email/*", ACCESS),
     ("apps/server/src/services/shared.ts", ACCESS + TOKENS + COMPONENTS),
     ("apps/server/src/services/folders.ts", ACCESS + ["folder-font-preview"]),
     ("apps/server/src/services/decks.ts", ACCESS + ["slide-duplicate"]),
@@ -278,6 +285,8 @@ AREAS: list[tuple[str, list[str]]] = [
     # Agent runs and their revert (its after-revert hook copies old folder media).
     ("apps/server/src/services/runs.ts", AGENT + COMPONENTS),
     ("apps/server/src/routes/commands.ts", AGENT),
+    # The service set every command and route is built from.
+    ("apps/server/src/services/index.ts", AGENT + ACCESS),
     ("apps/video-worker/src/*", MEDIA),
     # ── packages ──────────────────────────────────────────────────────────
     ("packages/animation/src/*", PRESENT),
@@ -290,6 +299,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("packages/shared/src/*", ["*"]),
     ("apps/server/src/db/*", ["*"]),
     ("apps/server/src/index.ts", ["*"]),
+    ("apps/server/src/http/registerRoutes.ts", ["*"]),
     ("apps/web/src/main.tsx", ["*"]),
     ("apps/web/src/App.tsx", ["*"]),
 ]

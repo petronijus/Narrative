@@ -65,8 +65,12 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * instructions (sharedShapes.ts), the way vocabulary.ts already did for
  * field descriptions: 188,697 → 173,650 bytes in url mode, 129 tools, the
  * descriptions and example calls untouched (the full eval stayed 44/44).
+ * Folder sharing step 3 (2026-10-04): 175,000 → 181,000 for the six
+ * folder.members.* / folder.invites.* tools — invite 1.4 KB, setRole 1.0,
+ * remove 0.7, cancel 0.7, list 0.6, invites.list 0.5 (descriptions trimmed
+ * once before measuring): 179,645 bytes in url mode, 135 tools.
  */
-export const TOOL_LIST_BUDGET_BYTES = 175_000
+export const TOOL_LIST_BUDGET_BYTES = 181_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

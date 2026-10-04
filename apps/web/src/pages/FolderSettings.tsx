@@ -11,11 +11,15 @@
  * Wraps with FolderDocProvider for the folder's tokens. Changes go to the
  * server (useFolderTokenWriter, state/folderTokenWriter.ts), which carries
  * them into every deck and component master of the folder.
+ *
+ * Folder sharing: a viewer of the folder sees every tab read-only; editors
+ * change tokens, fonts and components; the owners also rename and share the
+ * folder (the server enforces it — the page only hides what would fail).
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { createContext, use, useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ChevronLeft, Plus, Settings, Trash2, Upload, X } from 'lucide-react'
+import { ChevronLeft, Plus, Settings, Trash2, Upload, Users, X } from 'lucide-react'
 import { useApi } from '../api/client.js'
 import type { FolderFontSummary, ComponentSummary } from '../api/client.js'
 import { invalidateFolderComponentsCache } from '../state/useFolderComponents.js'
@@ -33,6 +37,8 @@ import { FolderFontsProvider, useFolderFonts } from '../state/useFolderFonts.js'
 import { SYSTEM_FONTS } from '@narrative/commands'
 import { FolderFontLoader } from '../state/FolderFontLoader.js'
 import type { FolderSummary } from '../api/client.js'
+import { FolderShareDialog } from '../ui/FolderShareDialog.js'
+import { canEditFolder, isOwnDrafts } from '../state/folderAccess.js'
 import {
   MAX_COLORS,
   type ColorTokenSnapshot,
@@ -44,6 +50,10 @@ import {
 // ---------------------------------------------------------------------------
 
 type SettingsTab = 'colors' | 'textStyles' | 'fonts' | 'components'
+
+/** Whether the user may change the folder's tokens, fonts and components (editor or owner). */
+const FolderEditableContext = createContext(false)
+const useFolderEditable = () => use(FolderEditableContext)
 
 // ---------------------------------------------------------------------------
 // FolderSettingsInner — rendered inside FolderDocProvider
@@ -81,6 +91,9 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
     [setSearchParams],
   )
   const [error, setError] = useState<string | null>(null)
+  const [sharing, setSharing] = useState(false)
+  const isOwner = folder?.role === 'owner'
+  const editable = folder !== null && canEditFolder(folder)
 
   // Load folder info for the breadcrumb + name
   useEffect(() => {
@@ -167,17 +180,39 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
           ) : (
             <button
               onClick={() => {
+                if (!isOwner) return
                 setNameDraft(folder?.name ?? '')
                 setEditingName(true)
               }}
-              className="min-w-0 max-w-[240px] truncate rounded-xs px-1.5 py-0.5 text-sm font-semibold text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-              title="Click to rename folder"
+              className={[
+                'min-w-0 max-w-[240px] truncate rounded-xs px-1.5 py-0.5 text-sm font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                isOwner ? 'hover:bg-accent' : 'cursor-default',
+              ].join(' ')}
+              title={isOwner ? 'Click to rename folder' : undefined}
             >
               {folder?.name ?? '…'}
             </button>
           )}
           <Settings className="h-4 w-4 shrink-0 text-muted-foreground/50" aria-hidden="true" />
           <span className="text-sm text-muted-foreground">Settings</span>
+          {folder !== null && !editable && (
+            <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-muted-foreground">
+              View only
+            </span>
+          )}
+          {/* Share — the folder's owners; Drafts stays private */}
+          {isOwner && folder !== null && !isOwnDrafts(folder) && (
+            <Button
+              onClick={() => setSharing(true)}
+              size="sm"
+              variant="ghost"
+              className="ml-auto gap-1.5"
+              data-action="folder.share"
+            >
+              <Users className="h-4 w-4" aria-hidden="true" />
+              Share
+            </Button>
+          )}
         </div>
       </header>
 
@@ -209,16 +244,26 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
           </div>
         )}
 
-        {activeTab === 'colors' && <ColorsTab folderId={folderId} />}
-        {activeTab === 'fonts' && <FontsTab folderId={folderId} />}
-        {activeTab === 'textStyles' && (
-          <FolderFontsProvider folderId={folderId}>
-            <FolderFontLoader />
-            <TextStylesTab folderId={folderId} />
-          </FolderFontsProvider>
-        )}
-        {activeTab === 'components' && <ComponentsTab folderId={folderId} />}
+        <FolderEditableContext value={editable}>
+          {activeTab === 'colors' && <ColorsTab folderId={folderId} />}
+          {activeTab === 'fonts' && <FontsTab folderId={folderId} />}
+          {activeTab === 'textStyles' && (
+            <FolderFontsProvider folderId={folderId}>
+              <FolderFontLoader />
+              <TextStylesTab folderId={folderId} />
+            </FolderFontsProvider>
+          )}
+          {activeTab === 'components' && <ComponentsTab folderId={folderId} />}
+        </FolderEditableContext>
       </main>
+
+      {sharing && folder !== null && (
+        <FolderShareDialog
+          folderId={folder.id}
+          folderName={folder.name}
+          onClose={() => setSharing(false)}
+        />
+      )}
     </div>
   )
 }
@@ -250,6 +295,7 @@ function FontsTab({ folderId }: FontsTabProps) {
 
 function FontsTabInner({ folderId }: FontsTabProps) {
   const api = useApi()
+  const editable = useFolderEditable()
   const { fonts, loading, error, refresh } = useFolderFonts()
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -327,47 +373,52 @@ function FontsTabInner({ folderId }: FontsTabProps) {
         <h2 className="text-sm font-semibold text-foreground">Folder fonts</h2>
       </div>
 
-      {/* Hidden file input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".ttf,.otf,.woff2"
-        multiple
-        className="hidden"
-        aria-hidden="true"
-        onChange={(e) => void handleFiles(e.target.files)}
-      />
+      {/* Uploading — editors only */}
+      {editable && (
+        <>
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".ttf,.otf,.woff2"
+            multiple
+            className="hidden"
+            aria-hidden="true"
+            onChange={(e) => void handleFiles(e.target.files)}
+          />
 
-      {/* Drop zone — also clickable to open the file picker */}
-      <button
-        type="button"
-        onClick={() => fileInputRef.current?.click()}
-        disabled={uploading}
-        aria-label="Upload font — drop or click to choose"
-        className={[
-          'mb-4 flex w-full cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors',
-          isDragOver
-            ? 'border-primary bg-primary/5 text-foreground'
-            : 'border-border text-muted-foreground hover:border-border-strong hover:text-foreground',
-          uploading ? 'pointer-events-none opacity-60' : '',
-        ].join(' ')}
-        onDragOver={(e) => {
-          e.preventDefault()
-          setIsDragOver(true)
-        }}
-        onDragLeave={() => setIsDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault()
-          setIsDragOver(false)
-          void handleFiles(e.dataTransfer.files)
-        }}
-      >
-        <Upload className="mb-2 h-6 w-6 opacity-60" aria-hidden="true" />
-        <p className="text-sm font-medium">
-          {uploading ? 'Uploading…' : 'Drop .ttf, .otf, or .woff2 here'}
-        </p>
-        <p className="mt-0.5 text-xs opacity-60">or click to choose a file</p>
-      </button>
+          {/* Drop zone — also clickable to open the file picker */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            aria-label="Upload font — drop or click to choose"
+            className={[
+              'mb-4 flex w-full cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors',
+              isDragOver
+                ? 'border-primary bg-primary/5 text-foreground'
+                : 'border-border text-muted-foreground hover:border-border-strong hover:text-foreground',
+              uploading ? 'pointer-events-none opacity-60' : '',
+            ].join(' ')}
+            onDragOver={(e) => {
+              e.preventDefault()
+              setIsDragOver(true)
+            }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault()
+              setIsDragOver(false)
+              void handleFiles(e.dataTransfer.files)
+            }}
+          >
+            <Upload className="mb-2 h-6 w-6 opacity-60" aria-hidden="true" />
+            <p className="text-sm font-medium">
+              {uploading ? 'Uploading…' : 'Drop .ttf, .otf, or .woff2 here'}
+            </p>
+            <p className="mt-0.5 text-xs opacity-60">or click to choose a file</p>
+          </button>
+        </>
+      )}
 
       {/* Error messages */}
       {(error !== null || uploadError !== null) && (
@@ -384,7 +435,11 @@ function FontsTabInner({ folderId }: FontsTabProps) {
       ) : (
         <ul role="list" aria-label="Folder fonts" className="flex flex-col gap-2">
           {groupFontsByFamily(fonts).map((group) => (
-            <FontFamilyRow key={group.family} group={group} onDelete={handleDelete} />
+            <FontFamilyRow
+              key={group.family}
+              group={group}
+              {...(editable ? { onDelete: handleDelete } : {})}
+            />
           ))}
         </ul>
       )}
@@ -414,7 +469,8 @@ function groupFontsByFamily(fonts: FolderFontSummary[]): FontFamilyGroup[] {
 
 interface FontFamilyRowProps {
   group: FontFamilyGroup
-  onDelete: (assetId: string) => void
+  /** Absent for a viewer of the folder: no delete buttons. */
+  onDelete?: (assetId: string) => void
 }
 
 function FontFamilyRow({ group, onDelete }: FontFamilyRowProps) {
@@ -429,7 +485,11 @@ function FontFamilyRow({ group, onDelete }: FontFamilyRowProps) {
         <p className="truncate text-sm font-medium text-foreground">{family}</p>
         <div className="mt-1 flex flex-wrap items-center gap-1">
           {faces.map((f) => (
-            <FaceChip key={f.assetId} face={f} onDelete={() => onDelete(f.assetId)} />
+            <FaceChip
+              key={f.assetId}
+              face={f}
+              {...(onDelete !== undefined ? { onDelete: () => onDelete(f.assetId) } : {})}
+            />
           ))}
         </div>
         <p className="mt-1.5 text-[10px] text-muted-foreground/50">
@@ -457,7 +517,7 @@ function FontFamilyRow({ group, onDelete }: FontFamilyRowProps) {
 
 interface FaceChipProps {
   face: FolderFontSummary
-  onDelete: () => void
+  onDelete?: () => void
 }
 
 function FaceChip({ face, onDelete }: FaceChipProps) {
@@ -466,7 +526,7 @@ function FaceChip({ face, onDelete }: FaceChipProps) {
   return (
     <span className="inline-flex items-center gap-1 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
       {label}
-      {confirming ? (
+      {onDelete === undefined ? null : confirming ? (
         <>
           <button
             type="button"
@@ -601,6 +661,7 @@ interface ComponentsTabProps {
 
 function ComponentsTab({ folderId }: ComponentsTabProps) {
   const api = useApi()
+  const editable = useFolderEditable()
   const navigate = useNavigate()
   const [components, setComponents] = useState<ComponentSummary[]>([])
   const [loading, setLoading] = useState(true)
@@ -638,9 +699,11 @@ function ComponentsTab({ folderId }: ComponentsTabProps) {
       ) : components.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <p className="text-sm text-muted-foreground">No components yet.</p>
-          <p className="mt-1 text-xs text-muted-foreground/60">
-            Promote any selection in the editor to create a shared component.
-          </p>
+          {editable && (
+            <p className="mt-1 text-xs text-muted-foreground/60">
+              Promote any selection in the editor to create a shared component.
+            </p>
+          )}
         </div>
       ) : (
         <div
@@ -653,6 +716,7 @@ function ComponentsTab({ folderId }: ComponentsTabProps) {
             <ComponentCard
               key={component.id}
               component={component}
+              editable={editable}
               onOpen={() => navigate(`/folder/${folderId}/component/${component.id}`)}
               onRename={async (name) => {
                 await api.renameComponent(component.id, name)
@@ -675,12 +739,14 @@ function ComponentsTab({ folderId }: ComponentsTabProps) {
 
 interface ComponentCardProps {
   component: ComponentSummary
+  /** A viewer of the folder opens the master read-only and cannot rename or delete it. */
+  editable: boolean
   onOpen: () => void
   onRename: (name: string) => Promise<void>
   onDelete: () => Promise<void>
 }
 
-function ComponentCard({ component, onOpen, onRename, onDelete }: ComponentCardProps) {
+function ComponentCard({ component, editable, onOpen, onRename, onDelete }: ComponentCardProps) {
   const [editing, setEditing] = useState(false)
   const [nameDraft, setNameDraft] = useState(component.name)
   const [confirming, setConfirming] = useState(false)
@@ -769,8 +835,10 @@ function ComponentCard({ component, onOpen, onRename, onDelete }: ComponentCardP
       ) : (
         <button
           type="button"
-          onDoubleClick={() => setEditing(true)}
-          title="Double-click to rename"
+          onDoubleClick={() => {
+            if (editable) setEditing(true)
+          }}
+          title={editable ? 'Double-click to rename' : undefined}
           className="w-full truncate rounded-xs px-1 py-0.5 text-center text-xs font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
         >
           {component.name}
@@ -779,8 +847,8 @@ function ComponentCard({ component, onOpen, onRename, onDelete }: ComponentCardP
 
       {renameError !== null && <p className="text-[10px] text-destructive">{renameError}</p>}
 
-      {/* Delete confirmation */}
-      {confirming ? (
+      {/* Delete confirmation — editors only */}
+      {!editable ? null : confirming ? (
         <div className="flex flex-col gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 p-2">
           <p
             className="text-[10px] leading-tight text-foreground"
@@ -835,6 +903,7 @@ interface ColorsTabProps {
 }
 
 function ColorsTab({ folderId }: ColorsTabProps) {
+  const editable = useFolderEditable()
   const snapshot = useFolderTokens()
   const writer = useFolderTokenWriter()
   const [error, setError] = useState<string | null>(null)
@@ -879,17 +948,19 @@ function ColorsTab({ folderId }: ColorsTabProps) {
               Maximum {MAX_COLORS} colors per folder — delete one to add another.
             </span>
           )}
-          <Button
-            size="sm"
-            variant="ghost"
-            className="gap-1.5"
-            onClick={handleAddColor}
-            disabled={atCap || writer === null}
-            aria-label="Add new color token"
-          >
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            Add color
-          </Button>
+          {editable && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="gap-1.5"
+              onClick={handleAddColor}
+              disabled={atCap || writer === null}
+              aria-label="Add new color token"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Add color
+            </Button>
+          )}
         </div>
       </div>
 
@@ -898,10 +969,12 @@ function ColorsTab({ folderId }: ColorsTabProps) {
       {colorsList.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <p className="text-sm text-muted-foreground">No colors defined yet.</p>
-          <p className="mt-1 text-xs text-muted-foreground/60">
-            Click <span className="text-foreground/70">+ New color</span> to add your first color
-            token.
-          </p>
+          {editable && (
+            <p className="mt-1 text-xs text-muted-foreground/60">
+              Click <span className="text-foreground/70">+ New color</span> to add your first color
+              token.
+            </p>
+          )}
         </div>
       ) : (
         <div
@@ -914,6 +987,7 @@ function ColorsTab({ folderId }: ColorsTabProps) {
             <ColorSwatch
               key={color.id}
               color={color}
+              editable={editable}
               onUpdate={(patch) => {
                 if (writer === null) return
                 setError(null)
@@ -944,11 +1018,13 @@ function ColorsTab({ folderId }: ColorsTabProps) {
 
 interface ColorSwatchProps {
   color: ColorTokenSnapshot
+  /** A viewer of the folder sees the swatch only. */
+  editable: boolean
   onUpdate: (patch: Partial<Omit<ColorTokenSnapshot, 'id'>>) => void
   onDeleteRequest: () => void
 }
 
-function ColorSwatch({ color, onUpdate, onDeleteRequest }: ColorSwatchProps) {
+function ColorSwatch({ color, editable, onUpdate, onDeleteRequest }: ColorSwatchProps) {
   const [editing, setEditing] = useState(false)
   const [nameDraft, setNameDraft] = useState(color.name)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -982,7 +1058,12 @@ function ColorSwatch({ color, onUpdate, onDeleteRequest }: ColorSwatchProps) {
         <PopoverTrigger asChild>
           <button
             type="button"
-            aria-label={`Color: ${color.name} (${color.value}). Click to edit.`}
+            disabled={!editable}
+            aria-label={
+              editable
+                ? `Color: ${color.name} (${color.value}). Click to edit.`
+                : `Color: ${color.name} (${color.value})`
+            }
             title={`${color.name}\n${color.value.toUpperCase()}`}
             className="h-20 w-full rounded-lg border-2 border-transparent transition hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
             style={{ background: color.value }}
@@ -1012,15 +1093,17 @@ function ColorSwatch({ color, onUpdate, onDeleteRequest }: ColorSwatchProps) {
         </PopoverContent>
       </Popover>
 
-      {/* Delete button — appears on hover */}
-      <button
-        type="button"
-        onClick={onDeleteRequest}
-        aria-label={`Delete color ${color.name}`}
-        className="absolute right-1 top-1 hidden rounded-md p-0.5 text-white/80 opacity-0 transition group-hover:opacity-100 group-hover:block hover:bg-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-      >
-        <X className="h-3 w-3" aria-hidden="true" />
-      </button>
+      {/* Delete button — appears on hover, editors only */}
+      {editable && (
+        <button
+          type="button"
+          onClick={onDeleteRequest}
+          aria-label={`Delete color ${color.name}`}
+          className="absolute right-1 top-1 hidden rounded-md p-0.5 text-white/80 opacity-0 transition group-hover:opacity-100 group-hover:block hover:bg-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        >
+          <X className="h-3 w-3" aria-hidden="true" />
+        </button>
+      )}
 
       {/* Hex label */}
       <p className="text-[10px] tabular-nums text-muted-foreground/70">
@@ -1051,8 +1134,10 @@ function ColorSwatch({ color, onUpdate, onDeleteRequest }: ColorSwatchProps) {
       ) : (
         <button
           type="button"
-          onDoubleClick={() => setEditing(true)}
-          title="Double-click to rename"
+          onDoubleClick={() => {
+            if (editable) setEditing(true)
+          }}
+          title={editable ? 'Double-click to rename' : undefined}
           className="max-w-full truncate rounded-xs px-1 py-0.5 text-center text-[11px] text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
         >
           {color.name}
@@ -1071,6 +1156,7 @@ interface TextStylesTabProps {
 }
 
 function TextStylesTab({ folderId }: TextStylesTabProps) {
+  const editable = useFolderEditable()
   const snapshot = useFolderTokens()
   const writer = useFolderTokenWriter()
   const [error, setError] = useState<string | null>(null)
@@ -1129,20 +1215,22 @@ function TextStylesTab({ folderId }: TextStylesTabProps) {
       <div className="w-64 shrink-0 border-r border-border overflow-y-auto">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <h2 className="text-sm font-semibold text-foreground">Text styles</h2>
-          <button
-            type="button"
-            onClick={handleAdd}
-            disabled={writer === null}
-            aria-label="Add text style"
-            className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          >
-            <Plus className="h-4 w-4" aria-hidden="true" />
-          </button>
+          {editable && (
+            <button
+              type="button"
+              onClick={handleAdd}
+              disabled={writer === null}
+              aria-label="Add text style"
+              className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+            </button>
+          )}
         </div>
 
         {stylesList.length === 0 ? (
           <p className="px-4 py-6 text-xs text-muted-foreground/70">
-            No text styles yet. Click + to add one.
+            {editable ? 'No text styles yet. Click + to add one.' : 'No text styles yet.'}
           </p>
         ) : (
           <ul role="listbox" aria-label="Text styles" className="py-1">
@@ -1181,7 +1269,7 @@ function TextStylesTab({ folderId }: TextStylesTabProps) {
                   Aa
                 </span>
                 <span className="min-w-0 flex-1 truncate text-[13px]">{style.name}</span>
-                {style.builtin === true ? (
+                {!editable ? null : style.builtin === true ? (
                   // Builtin styles can't be deleted — show a subdued
                   // lock-style hint in the slot the trash would occupy
                   // so the row height stays consistent.
@@ -1215,10 +1303,15 @@ function TextStylesTab({ folderId }: TextStylesTabProps) {
       <div className="flex-1 overflow-y-auto px-8 py-6">
         <TokenErrorBanner error={error} onDismiss={() => setError(null)} />
         {selected !== null ? (
-          <TextStyleEditor style={selected} colors={colorsList} onUpdate={handleUpdate} />
+          // A viewer sees the style's settings, every field disabled.
+          <fieldset disabled={!editable} className="contents">
+            <TextStyleEditor style={selected} colors={colorsList} onUpdate={handleUpdate} />
+          </fieldset>
         ) : (
           <div className="flex h-full items-center justify-center">
-            <p className="text-sm text-muted-foreground">Select a style to edit</p>
+            <p className="text-sm text-muted-foreground">
+              {editable ? 'Select a style to edit' : 'Select a style to see it'}
+            </p>
           </div>
         )}
       </div>

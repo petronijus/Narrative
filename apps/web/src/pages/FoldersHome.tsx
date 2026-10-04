@@ -5,7 +5,9 @@
  *
  * Shows all user folders as cards with a cover composite of up to 4
  * latest deck thumbnails.  Drafts folder is pinned first and cannot be
- * deleted.
+ * deleted. Folders shared with the user (folder sharing) say who shared
+ * them and with what role; only a folder's owners rename, share and delete
+ * it, and new decks and imports go only into folders the user may edit.
  *
  * Navigation: click a folder card → /folder/:folderId (FolderDecks).
  */
@@ -21,6 +23,7 @@ import {
   Plus,
   Settings,
   Trash2,
+  Users,
 } from 'lucide-react'
 import { useApi } from '../api/client.js'
 import { UserMenu } from '../ui/UserMenu.js'
@@ -28,6 +31,8 @@ import { Button } from '@/components/ui/button'
 import type { FolderSummary } from '../api/client.js'
 import { NewDeckDialog } from '../ui/NewDeckDialog.js'
 import { usePptxImport } from '../ui/usePptxImport.js'
+import { FolderShareDialog } from '../ui/FolderShareDialog.js'
+import { canEditFolder, isOwnDrafts, sharedByLabel } from '../state/folderAccess.js'
 
 // ---------------------------------------------------------------------------
 // FoldersHome
@@ -46,6 +51,8 @@ export function FoldersHome() {
   const [deleteBlockedId, setDeleteBlockedId] = useState<string | null>(null)
   // New deck dialog (folder picker)
   const [newDeckOpen, setNewDeckOpen] = useState(false)
+  // The folder whose sharing dialog is open
+  const [sharingId, setSharingId] = useState<string | null>(null)
 
   const fetchFolders = useCallback(async () => {
     try {
@@ -116,13 +123,16 @@ export function FoldersHome() {
   )
 
   const blockedFolder = folders.find((f) => f.id === deleteBlockedId)
+  const sharingFolder = folders.find((f) => f.id === sharingId)
+  // New decks and imports go only where the user may add decks.
+  const editableFolders = folders.filter(canEditFolder)
 
   // ---------------------------------------------------------------------------
   // PPTX import — file picker + page-level drag-drop, shared with FolderDecks
   // ---------------------------------------------------------------------------
 
   const pptxImport = usePptxImport({
-    folders,
+    folders: editableFolders,
     onCreateFolder: async (name) => {
       const created = await api.createFolder(name)
       setFolders((prev) => [...prev, created])
@@ -211,7 +221,7 @@ export function FoldersHome() {
               <FolderCard
                 key={folder.id}
                 folder={folder}
-                isDrafts={folder.name === 'Drafts'}
+                isDrafts={isOwnDrafts(folder)}
                 editingInline={inlineEditId === folder.id}
                 onOpen={() => void navigate(`/folder/${folder.id}`)}
                 onRename={(name) => {
@@ -219,6 +229,7 @@ export function FoldersHome() {
                   void handleRenameFolder(folder.id, name)
                 }}
                 onDelete={() => void handleDeleteFolder(folder.id)}
+                onShare={() => setSharingId(folder.id)}
                 onInlineEditStart={() => setInlineEditId(folder.id)}
                 onInlineEditEnd={() => setInlineEditId(null)}
               />
@@ -230,7 +241,7 @@ export function FoldersHome() {
       {/* New deck dialog */}
       {newDeckOpen && (
         <NewDeckDialog
-          folders={folders}
+          folders={editableFolders}
           onClose={() => setNewDeckOpen(false)}
           onCreateFolder={async (name) => {
             const folder = await api.createFolder(name)
@@ -246,6 +257,14 @@ export function FoldersHome() {
 
       {/* Import PowerPoint dialog */}
       {pptxImport.dialog}
+
+      {sharingFolder !== undefined && (
+        <FolderShareDialog
+          folderId={sharingFolder.id}
+          folderName={sharingFolder.name}
+          onClose={() => setSharingId(null)}
+        />
+      )}
 
       {/* Non-empty folder delete blocker modal */}
       {deleteBlockedId !== null && (
@@ -293,6 +312,7 @@ interface FolderCardProps {
   onOpen: () => void
   onRename: (name: string) => void
   onDelete: () => void
+  onShare: () => void
   onInlineEditStart: () => void
   onInlineEditEnd: () => void
 }
@@ -304,6 +324,7 @@ function FolderCard({
   onOpen,
   onRename,
   onDelete,
+  onShare,
   onInlineEditStart,
   onInlineEditEnd,
 }: FolderCardProps) {
@@ -313,6 +334,9 @@ function FolderCard({
   const [confirmDelete, setConfirmDelete] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  // Renaming, sharing and deleting a folder are its owners' (folder sharing).
+  const isOwner = folder.role === 'owner'
+  const sharedBy = sharedByLabel(folder)
 
   // Keep draft in sync when folder name changes from outside (e.g. rename from
   // another device, though unlikely in P1).
@@ -394,10 +418,11 @@ function FolderCard({
             <p
               className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
               onDoubleClick={(e) => {
+                if (!isOwner) return
                 e.stopPropagation()
                 onInlineEditStart()
               }}
-              title="Double-click to rename"
+              title={isOwner ? 'Double-click to rename' : undefined}
             >
               {folder.name}
             </p>
@@ -425,18 +450,36 @@ function FolderCard({
                   className="absolute right-0 top-full z-20 mt-1 w-36 rounded-md border border-border bg-popover py-1 shadow-lg"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <button
-                    role="menuitem"
-                    data-action="folder.rename"
-                    onClick={() => {
-                      setMenuOpen(false)
-                      onInlineEditStart()
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-accent"
-                  >
-                    <Pencil className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                    Rename
-                  </button>
+                  {isOwner && (
+                    <button
+                      role="menuitem"
+                      data-action="folder.rename"
+                      onClick={() => {
+                        setMenuOpen(false)
+                        onInlineEditStart()
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-accent"
+                    >
+                      <Pencil className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                      Rename
+                    </button>
+                  )}
+
+                  {/* Share — the folder's owners; Drafts stays private */}
+                  {isOwner && !isDrafts && (
+                    <button
+                      role="menuitem"
+                      data-action="folder.share"
+                      onClick={() => {
+                        setMenuOpen(false)
+                        onShare()
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-accent"
+                    >
+                      <Users className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                      Share…
+                    </button>
+                  )}
 
                   <button
                     role="menuitem"
@@ -451,8 +494,9 @@ function FolderCard({
                     Settings
                   </button>
 
-                  {/* Delete — hidden for Drafts; cascades decks otherwise */}
-                  {!isDrafts &&
+                  {/* Delete — the owners'; hidden for Drafts; cascades decks otherwise */}
+                  {isOwner &&
+                    !isDrafts &&
                     (confirmDelete ? (
                       <button
                         role="menuitem"
@@ -490,6 +534,16 @@ function FolderCard({
       <p className="mt-0.5 text-xs text-muted-foreground/80">
         {folder.deckCount} {folder.deckCount === 1 ? 'deck' : 'decks'}
       </p>
+      {sharedBy !== null && (
+        <p
+          className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground/80"
+          title={folder.sharedBy?.email ?? undefined}
+        >
+          <Users className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span className="truncate">{sharedBy}</span>
+          <span className="shrink-0 capitalize text-muted-foreground/60">· {folder.role}</span>
+        </p>
+      )}
     </div>
   )
 }

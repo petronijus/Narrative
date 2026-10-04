@@ -991,7 +991,7 @@ export async function copyMedia(
         folderId,
         userId: args.userId,
         shareToken: null,
-        alsoAs: bypassAliases(deps.bypass),
+        alsoAs: bypassAliases(args.userId, deps.bypass),
       })
       allowed = access !== null
       readsFolder.set(folderId, allowed)

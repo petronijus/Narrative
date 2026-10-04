@@ -30,6 +30,8 @@ import { createPatService, type PatService } from '../auth/personalAccessTokens.
 import {
   AGENT_RATE_LIMIT,
   agentRouteRateLimit,
+  INVITE_RATE_LIMIT,
+  inviteRouteRateLimit,
   clientIp,
   GLOBAL_RATE_LIMIT,
   IP_PRE_LIMIT,
@@ -48,13 +50,17 @@ import type { Database } from '../db/client.js'
 let pats: PatService
 let patStore: MemoryPatStore
 
-async function buildApp(settings: RateLimitSettings = {}): Promise<FastifyInstance> {
+async function buildApp(
+  settings: RateLimitSettings = {},
+  opts: { bypass?: boolean } = {},
+): Promise<FastifyInstance> {
   const app = Fastify({ logger: false })
-  registerAuthPlugin(app, { bypass: false, db: {} as Database, pats })
+  registerAuthPlugin(app, { bypass: opts.bypass === true, db: {} as Database, pats })
   await registerRateLimit(app, settings)
   const { keyGenerator } = rateLimitPluginOptions(settings)
   app.get('/key', async (req) => ({ key: await keyGenerator(req) }))
   app.get('/health', async () => ({ status: 'ok' }))
+  app.post('/invite', { config: inviteRouteRateLimit }, async () => ({ ok: true }))
   app.post(
     '/api/commands',
     { config: agentRouteRateLimit, preHandler: [requireTokenScope('api')] },
@@ -86,6 +92,13 @@ describe('bucket keys', () => {
     expect(await key(app, { authorization: `Bearer ${token}` })).toBe(`pat:${summary.id}`)
     expect(await key(app, { cookie: 'narrative_session=good-session' })).toBe('user:user-1')
     expect(await key(app)).toBe('ip:203.0.113.9')
+  })
+
+  it("keys BYPASS_AUTH's identities apart, as dev buckets (dev only)", async () => {
+    const app = await buildApp({}, { bypass: true })
+    expect(await key(app)).toBe('dev:dev-user')
+    // A switched identity (auth/devIdentity.ts) — already known, so no directory write.
+    expect(await key(app, { cookie: 'narrative_dev_as=dev-user' })).toBe('dev:dev-user')
   })
 
   it('gives each token of one user its own bucket', async () => {
@@ -136,6 +149,9 @@ describe('global limit', () => {
     expect(max(req, 'user:u')).toBe(GLOBAL_RATE_LIMIT.identifiedMax)
     expect(max(req, 'pat:t')).toBe(GLOBAL_RATE_LIMIT.identifiedMax)
     expect(GLOBAL_RATE_LIMIT.identifiedMax).toBeGreaterThan(GLOBAL_RATE_LIMIT.anonymousMax)
+    // BYPASS_AUTH identities (dev only): the parallel e2e browsers share one.
+    expect(max(req, 'dev:dev-user')).toBe(GLOBAL_RATE_LIMIT.devMax)
+    expect(GLOBAL_RATE_LIMIT.devMax).toBeGreaterThan(GLOBAL_RATE_LIMIT.identifiedMax)
   })
 
   it('stops an anonymous flood at the anonymous limit', async () => {
@@ -183,6 +199,19 @@ describe('agent route limit', () => {
     expect(limited.statusCode).toBe(429)
     expect(limited.headers['x-ratelimit-limit']).toBe(String(AGENT_RATE_LIMIT.max))
     expect((await call(b.token)).statusCode).toBe(200)
+  })
+})
+
+describe('share-by-email limit', () => {
+  it(`caps each person at ${INVITE_RATE_LIMIT.max} invitations per hour`, async () => {
+    const app = await buildApp()
+    const invite = (cookie: string) =>
+      app.inject({ method: 'POST', url: '/invite', headers: { cookie } })
+    for (let i = 0; i < INVITE_RATE_LIMIT.max; i++)
+      expect((await invite('narrative_session=good-session')).statusCode).toBe(200)
+    const limited = await invite('narrative_session=good-session')
+    expect(limited.statusCode).toBe(429)
+    expect(limited.headers['x-ratelimit-limit']).toBe(String(INVITE_RATE_LIMIT.max))
   })
 })
 

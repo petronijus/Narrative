@@ -64,6 +64,7 @@ import { readDocCopy, writeLiveDoc } from './liveDocs.js'
 import { applyTokenRebinding, planTokenRebinding } from './tokenRebind.js'
 import { copyStoredObject, stageDeckCopy, stageObjectInsert } from './deckInsert.js'
 import { localiseLinkedMedia } from './localiseMedia.js'
+import { DEV_USER_SUB } from '../auth/devIdentity.js'
 import { discardDeckMedia, registerDeckMedia } from '../pptx/importDeck.js'
 
 /** Longest deck title the API accepts. */
@@ -163,8 +164,9 @@ export function createDecksService(deps: ServiceDeps): DeckService {
 
     if (filterFolderId !== null) await requireFilterFolder(userId, filterFolderId)
 
-    if (deps.bypass === true) {
+    if (deps.bypass === true && userId === DEV_USER_SUB) {
       // BYPASS_AUTH=true dev fallback: both 'dev-user' and legacy 'demo-user' owned decks.
+      // The other synthetic identities (auth/devIdentity.ts) see what their roles allow.
       // TODO(post-M10): remove when production migration script has run.
       const ownerCondition = inArray(decks.ownerUserId, ['dev-user', 'demo-user'])
       const whereClause =
@@ -276,7 +278,10 @@ export function createDecksService(deps: ServiceDeps): DeckService {
       return found.map((r) => ({ ...r, role: listedRole(r) }))
     }
 
-    const rows = deps.bypass === true ? await bypassPage() : await accessiblePage(args.userId)
+    const rows =
+      deps.bypass === true && args.userId === DEV_USER_SUB
+        ? await bypassPage()
+        : await accessiblePage(args.userId)
 
     const page = rows.slice(0, limit)
     const last = page[page.length - 1]
@@ -401,7 +406,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
           : await resolveFolderAccess(db, {
               folderId: source.folderId,
               userId: args.userId,
-              alsoAs: bypassAliases(deps.bypass),
+              alsoAs: bypassAliases(args.userId, deps.bypass),
             })
       targetFolderId =
         source.folderId !== null && sourceRole !== null && roleAtLeast(sourceRole.role, 'editor')
@@ -811,7 +816,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     const member = await resolveFolderAccess(db, {
       folderId: args.folderId,
       userId: args.userId,
-      alsoAs: bypassAliases(deps.bypass),
+      alsoAs: bypassAliases(args.userId, deps.bypass),
     })
     if (!member) throw notFound('Folder not found')
 

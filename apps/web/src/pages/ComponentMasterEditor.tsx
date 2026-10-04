@@ -15,6 +15,10 @@
  * sync, and releases on unmount. No second Y.Doc is ever created
  * here — the renderer's componentInstance nodes share the same
  * cache so single-source-of-truth holds.
+ *
+ * The editing role is the user's role in the component's folder (folder
+ * sharing): a viewer sees the master read-only, as the sync server serves
+ * `component:<id>` to them.
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react'
@@ -46,12 +50,14 @@ import { DeckRoleStaticProvider } from '../state/DeckRoleContext.js'
 import { MediaUploadProvider } from '../state/useMediaUpload.js'
 import { FolderDocProvider, useFolderTokensSettled } from '../state/FolderDocProvider.js'
 import { FolderTokensBridge } from '../components/FolderTokensBridge.js'
+import { useFolderSummary } from '../state/folderAccess.js'
 
 export function ComponentMasterEditor() {
   const { folderId, componentId } = useParams<{ folderId: string; componentId: string }>()
   const [synced, setSynced] = useState(false)
   const [doc, setDoc] = useState<Y.Doc | null>(null)
   const [canvasInstance, setCanvasInstance] = useState<CanvasInstance | null>(null)
+  const folder = useFolderSummary(folderId)
 
   const handleCanvasReady = useCallback((instance: CanvasInstance | null) => {
     setCanvasInstance(instance)
@@ -92,13 +98,15 @@ export function ComponentMasterEditor() {
     return <div className="p-8 text-sm text-destructive">Invalid route.</div>
   }
 
-  if (!synced || doc === null) {
+  if (!synced || doc === null || folder === undefined) {
     return <LoadingState />
   }
+  // Not a member: the sync server would not have served the master either.
+  const role = folder?.role ?? 'viewer'
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
-      <DeckRoleStaticProvider role="owner" folderId={folderId}>
+      <DeckRoleStaticProvider role={role} folderId={folderId}>
         <FolderDocProvider folderId={folderId}>
           {/* The folder's tokens, for the canvas too: without the bridge the
               renderer has no colour resolver and token colours paint black. */}
@@ -118,7 +126,10 @@ export function ComponentMasterEditor() {
                                 <SnappingProvider>
                                   <CanvasInstanceContext value={canvasInstance}>
                                     <EditorLayout masterMode onCanvasReady={handleCanvasReady} />
-                                    <ComponentThumbnailUploader componentId={componentId} />
+                                    {/* A viewer cannot store the master's thumbnail. */}
+                                    {role !== 'viewer' && (
+                                      <ComponentThumbnailUploader componentId={componentId} />
+                                    )}
                                   </CanvasInstanceContext>
                                 </SnappingProvider>
                               </RulersProvider>

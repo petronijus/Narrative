@@ -30,6 +30,8 @@ const mockListFolders = vi.fn().mockResolvedValue([
     deckCount: 2,
     createdAt: '2026-01-01T00:00:00Z',
     role: 'owner',
+    sharedBy: null,
+    isDrafts: false,
   },
 ])
 const mockRenameFolder = vi.fn().mockResolvedValue({})
@@ -205,6 +207,8 @@ describe('FolderSettings page', () => {
         deckCount: 2,
         createdAt: '2026-01-01T00:00:00Z',
         role: 'owner',
+        sharedBy: null,
+        isDrafts: false,
       },
     ])
   })
@@ -228,7 +232,8 @@ describe('FolderSettings page', () => {
 
   it('creates a new color token when + New color is clicked', async () => {
     renderFolderSettings()
-    fireEvent.click(screen.getByRole('button', { name: /new color/i }))
+    // Editing controls appear once the folder (and the user's role in it) has loaded.
+    fireEvent.click(await screen.findByRole('button', { name: /new color/i }))
     await waitFor(() => {
       expect(screen.getByRole('listitem')).toBeInTheDocument()
     })
@@ -236,7 +241,8 @@ describe('FolderSettings page', () => {
 
   it('shows the color swatch after creating a color', async () => {
     renderFolderSettings()
-    fireEvent.click(screen.getByRole('button', { name: /new color/i }))
+    // Editing controls appear once the folder (and the user's role in it) has loaded.
+    fireEvent.click(await screen.findByRole('button', { name: /new color/i }))
     await waitFor(() => {
       // The swatch button should have an aria-label containing the color name
       expect(screen.getByLabelText(/color: new color/i)).toBeInTheDocument()
@@ -250,8 +256,9 @@ describe('FolderSettings page', () => {
     renderFolderSettings()
 
     // The delete button uses hidden/group-hover classes — query with { hidden: true }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const deleteBtn = screen.getByLabelText(/delete color brand blue/i, { hidden: true } as any)
+    const deleteBtn = await screen.findByLabelText(/delete color brand blue/i, {
+      hidden: true,
+    } as Parameters<typeof screen.findByLabelText>[1])
     fireEvent.click(deleteBtn)
 
     await waitFor(() => {
@@ -266,8 +273,9 @@ describe('FolderSettings page', () => {
 
     renderFolderSettings()
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const deleteBtn = screen.getByLabelText(/delete color brand blue/i, { hidden: true } as any)
+    const deleteBtn = await screen.findByLabelText(/delete color brand blue/i, {
+      hidden: true,
+    } as Parameters<typeof screen.findByLabelText>[1])
     fireEvent.click(deleteBtn)
     await waitFor(() => screen.getByRole('dialog'))
 
@@ -286,8 +294,9 @@ describe('FolderSettings page', () => {
 
     renderFolderSettings()
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const deleteBtn = screen.getByLabelText(/delete color brand blue/i, { hidden: true } as any)
+    const deleteBtn = await screen.findByLabelText(/delete color brand blue/i, {
+      hidden: true,
+    } as Parameters<typeof screen.findByLabelText>[1])
     fireEvent.click(deleteBtn)
     await waitFor(() => screen.getByRole('dialog'))
 
@@ -308,7 +317,7 @@ describe('FolderSettings page', () => {
   it('creates a text style', async () => {
     renderFolderSettings()
     fireEvent.click(screen.getByRole('tab', { name: 'Text styles' }))
-    fireEvent.click(screen.getByRole('button', { name: /add text style/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /add text style/i }))
 
     await waitFor(() => {
       // After adding a style, the list should have the "New style" entry

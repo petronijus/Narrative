@@ -129,6 +129,23 @@ export async function listPermissions(db: Database, deckId: string): Promise<Per
   }))
 }
 
+/** Lists a folder's members (its `folder_permissions` rows). */
+export async function listFolderPermissions(
+  db: Database,
+  folderId: string,
+): Promise<PermissionRow[]> {
+  const rows = await db
+    .select()
+    .from(folderPermissions)
+    .where(eq(folderPermissions.folderId, folderId))
+  return rows.map((r) => ({
+    userId: r.userId,
+    role: r.role as DeckRole,
+    grantedAt: r.grantedAt,
+    grantedBy: r.grantedBy,
+  }))
+}
+
 // ---------------------------------------------------------------------------
 // Access resolution
 // ---------------------------------------------------------------------------

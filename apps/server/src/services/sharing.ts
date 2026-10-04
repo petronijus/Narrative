@@ -22,6 +22,7 @@ import {
   listPermissions,
   resolveFolderContentAccess,
   revokePermission,
+  type PermissionRow,
 } from '../auth/permissions.js'
 import { createShareLink, listShareLinks, revokeShareLink } from '../auth/shareLinks.js'
 import { closeDeckConnections, closeUserConnectionsOnDocument } from '../hocuspocus/connections.js'
@@ -33,11 +34,52 @@ import type { ServiceDeps } from './deps.js'
 import { badRequest, conflict, notFound } from './errors.js'
 import { iso, isoOrNull } from './shared.js'
 
-const SELF_ROLE_CHANGE = 'You cannot change your own role. Ask another owner to change it for you.'
+export const SELF_ROLE_CHANGE =
+  'You cannot change your own role. Ask another owner to change it for you.'
 
 // RFC-5322-lite — good enough for an invite. Real validation happens when
 // the invitee signs in with Google.
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+
+/** 400 unless `email` looks like an address an invitation can go to. */
+export function requireInviteEmail(email: string): void {
+  if (!EMAIL_PATTERN.test(email) || email.length > 320) throw badRequest('invalid email')
+}
+
+/**
+ * The link an invitation email carries: Google sign-in that lands on
+ * `returnTo` (a path of the web app) afterwards.
+ */
+export function inviteSignInUrl(returnTo: string): string {
+  const spaOrigin =
+    process.env['SPA_ORIGIN'] ??
+    process.env['PUBLIC_URL'] ??
+    `https://${process.env['DOMAIN'] ?? 'localhost'}`
+  return `${spaOrigin}/api/auth/start?returnTo=${encodeURIComponent(returnTo)}`
+}
+
+/** Permission rows with the email and name of each user, in one directory query. */
+export async function withUserDetails(
+  db: ServiceDeps['db'],
+  rows: readonly PermissionRow[],
+): Promise<PermissionEntry[]> {
+  const usersList = await listUsersBySubs(
+    db,
+    rows.map((p) => p.userId),
+  )
+  const usersBySub = new Map(usersList.map((u) => [u.sub, u]))
+  return rows.map((p) => {
+    const u = usersBySub.get(p.userId)
+    return {
+      userId: p.userId,
+      role: p.role,
+      grantedAt: iso(p.grantedAt),
+      grantedBy: p.grantedBy,
+      email: u?.email ?? null,
+      name: u?.name ?? null,
+    }
+  })
+}
 
 export function createSharingService(deps: ServiceDeps): SharingService {
   const { db } = deps
@@ -70,12 +112,7 @@ export function createSharingService(deps: ServiceDeps): SharingService {
           .limit(1)
         const inviter = await getUserBySub(db, inviterSub)
         if (!deckRow || !inviter) return
-        const spaOrigin =
-          process.env['SPA_ORIGIN'] ??
-          process.env['PUBLIC_URL'] ??
-          `https://${process.env['DOMAIN'] ?? 'localhost'}`
-        const returnTo = encodeURIComponent(`/deck/${deckId}`)
-        const signInUrl = `${spaOrigin}/api/auth/start?returnTo=${returnTo}`
+        const signInUrl = inviteSignInUrl(`/deck/${deckId}`)
         const { subject, html, text } = renderDeckInviteEmail({
           recipientEmail: email.toLowerCase(),
           deckTitle: deckRow.title,
@@ -99,24 +136,7 @@ export function createSharingService(deps: ServiceDeps): SharingService {
   }
 
   async function listPermissionsWithUsers(args: { deckId: string }): Promise<PermissionEntry[]> {
-    const permissions = await listPermissions(db, args.deckId)
-    // One round-trip for display fields via an IN list.
-    const usersList = await listUsersBySubs(
-      db,
-      permissions.map((p) => p.userId),
-    )
-    const usersBySub = new Map(usersList.map((u) => [u.sub, u]))
-    return permissions.map((p) => {
-      const u = usersBySub.get(p.userId)
-      return {
-        userId: p.userId,
-        role: p.role,
-        grantedAt: iso(p.grantedAt),
-        grantedBy: p.grantedBy,
-        email: u?.email ?? null,
-        name: u?.name ?? null,
-      }
-    })
+    return withUserDetails(db, await listPermissions(db, args.deckId))
   }
 
   async function invite(args: {
@@ -126,7 +146,7 @@ export function createSharingService(deps: ServiceDeps): SharingService {
     role: DeckRole
   }): Promise<InviteResult> {
     const { deckId, email, role, inviterUserId } = args
-    if (!EMAIL_PATTERN.test(email) || email.length > 320) throw badRequest('invalid email')
+    requireInviteEmail(email)
 
     const existingUser = await getUserByEmail(db, email)
     if (existingUser) {
@@ -138,7 +158,8 @@ export function createSharingService(deps: ServiceDeps): SharingService {
 
     // Re-inviting the same email replaces the pending invite's role.
     const created = await createInvite(db, { deckId, email, role, invitedBySub: inviterUserId })
-    sendInviteEmail(deckId, email, role, inviterUserId)
+    // Inviting the same address again re-sends only on a new role, or after a day.
+    if (created.emailDue) sendInviteEmail(deckId, email, role, inviterUserId)
     return {
       kind: 'pending',
       invite: {

@@ -48,7 +48,8 @@ describe('revokeUserAccess', () => {
     const db = scriptedDb({
       updates: [[{ idHash: 's' }], [{ id: 't1' }, { id: 't2' }], [{ id: 'g1' }]],
       deletes: [[{ id: 'us1' }]],
-      selects: [[], []],
+      // The sign-in check: no deck or folder invite, no deck permission, no shared folder.
+      selects: [[], [], [], []],
     })
     const report = await revokeUserAccess(
       db.db,
@@ -83,9 +84,10 @@ describe('revokeUserAccess', () => {
 
   it('only counts on a dry run', async () => {
     // Selects: live sessions, live tokens, live OAuth grants, upload
-    // sessions, then the sign-in check (no invite, one deck permission).
+    // sessions, then the sign-in check (no deck or folder invite, one deck
+    // permission).
     const db = scriptedDb({
-      selects: [[{ n: 3 }], [{ n: 1 }], [{ n: 2 }], [{ n: 4 }], [], [{ deckId: 'd' }]],
+      selects: [[{ n: 3 }], [{ n: 1 }], [{ n: 2 }], [{ n: 4 }], [], [], [{ deckId: 'd' }]],
     })
     const report = await revokeUserAccess(
       db.db,

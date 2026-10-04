@@ -161,6 +161,15 @@ export const USER_ACTIONS = {
   // --- Folders ------------------------------------------------------------
   'folder.rename': { label: 'Rename folder', commands: ['folder.rename'] },
   'folder.settings': { label: 'Folder settings', editorOnly: NAVIGATION },
+  'folder.share': {
+    label: 'Share folder',
+    commands: [
+      'folder.members.invite',
+      'folder.members.setRole',
+      'folder.members.remove',
+      'folder.invites.cancel',
+    ],
+  },
   'folder.delete': { label: 'Delete folder', commands: ['folder.delete'] },
 
   // --- Presenting ---------------------------------------------------------

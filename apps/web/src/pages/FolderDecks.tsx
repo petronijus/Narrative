@@ -11,11 +11,15 @@
  *   from deckThumbnailCache + server, rename, delete) with an added
  *   "Move to…" option in the card kebab menu.
  * - Invalid folderId → redirect to /.
+ * - Folder sharing: the controls follow the user's role. The folder's owners
+ *   rename and share it; editors add decks; each deck's own role decides its
+ *   rename (editor), move and delete (owner). A shared folder says who
+ *   shared it.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, Copy, MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react'
+import { ChevronLeft, Copy, MoreVertical, Pencil, Plus, Trash2, Users } from 'lucide-react'
 import { useApi } from '../api/client.js'
 import { UserMenu } from '../ui/UserMenu.js'
 import { Button } from '@/components/ui/button'
@@ -29,6 +33,8 @@ import { FolderFontLoader } from '../state/FolderFontLoader.js'
 import { useFolderComponents } from '../state/useFolderComponents.js'
 import { usePptxImport } from '../ui/usePptxImport.js'
 import { moveMediaNotice } from './moveMediaNotice.js'
+import { FolderShareDialog } from '../ui/FolderShareDialog.js'
+import { canEditFolder, isOwnDrafts, sharedByLabel } from '../state/folderAccess.js'
 
 // ---------------------------------------------------------------------------
 // FolderDecks
@@ -75,16 +81,26 @@ function FolderDecksInner() {
   const [thumbnails] = useState<Record<string, string>>(() => getAllDeckThumbnails())
   // id of deck for which the Move modal is open
   const [moveDeckId, setMoveDeckId] = useState<string | null>(null)
+  const [sharing, setSharing] = useState(false)
+  // What the user may do here (folder sharing); nothing until the folder loads.
+  const isOwner = folder?.role === 'owner'
+  const canEdit = folder !== null && canEditFolder(folder)
+  const editableFolders = allFolders.filter(canEditFolder)
+  const sharedBy = folder === null ? null : sharedByLabel(folder)
 
   // Drop a .pptx anywhere on this page (or pick one with Import) to import it
   // as a new deck in THIS folder — the page is the choice, so there is no
   // folder picker and no confirm click; the dialog opens already uploading.
   // Until the folder has loaded there is no target yet, and the picker (with
   // this folder first) covers that brief window.
+  // A viewer cannot add decks here: their import goes through the picker,
+  // into a folder they may edit.
   const pptxImport = usePptxImport({
     folders:
-      folder === null ? allFolders : [folder, ...allFolders.filter((f) => f.id !== folder.id)],
-    ...(folder !== null ? { targetFolder: folder } : {}),
+      folder === null || !canEdit
+        ? editableFolders
+        : [folder, ...editableFolders.filter((f) => f.id !== folder.id)],
+    ...(folder !== null && canEdit ? { targetFolder: folder } : {}),
     onCreateFolder: (name) => api.createFolder(name),
     onImported: (result) => {
       void navigate(`/deck/${result.deckId}`)
@@ -101,16 +117,16 @@ function FolderDecksInner() {
   const fetchData = useCallback(async () => {
     if (folderId === undefined) return
     try {
-      const [fetchedFolders, fetchedDecks] = await Promise.all([
-        api.listFolders(),
-        api.listDecks({ folderId }),
-      ])
+      // The folder list first: a folder the user is not (or no longer) a
+      // member of sends them home, before its deck list would answer 403.
+      const fetchedFolders = await api.listFolders()
       const current = fetchedFolders.find((f) => f.id === folderId)
       if (current === undefined) {
-        // Unknown folder id → back to home
+        // Unknown folder id, or one shared with them no more → back to home
         void navigate('/')
         return
       }
+      const fetchedDecks = await api.listDecks({ folderId })
       setFolder(current)
       setFolderNameDraft(current.name)
       setAllFolders(fetchedFolders)
@@ -299,29 +315,58 @@ function FolderDecksInner() {
             ) : (
               <button
                 onClick={() => {
+                  if (!isOwner) return
                   setFolderNameDraft(folder?.name ?? '')
                   setEditingFolderName(true)
                 }}
-                className="min-w-0 max-w-[240px] truncate rounded-xs px-1.5 py-0.5 text-sm font-semibold text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                aria-label="Rename folder (click to edit)"
-                title="Click to rename"
+                className={[
+                  'min-w-0 max-w-[240px] truncate rounded-xs px-1.5 py-0.5 text-sm font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                  isOwner ? 'hover:bg-accent' : 'cursor-default',
+                ].join(' ')}
+                aria-label={isOwner ? 'Rename folder (click to edit)' : undefined}
+                title={isOwner ? 'Click to rename' : undefined}
               >
                 {folder?.name ?? '…'}
               </button>
+            )}
+            {sharedBy !== null && (
+              <span
+                className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"
+                title={folder?.sharedBy?.email ?? undefined}
+              >
+                <Users className="h-3.5 w-3.5" aria-hidden="true" />
+                {sharedBy}
+                <span className="capitalize text-muted-foreground/60">· {folder?.role}</span>
+              </span>
             )}
           </div>
 
           <div className="flex items-center gap-3">
             <UserMenu />
-            <Button
-              onClick={() => void handleCreateDeck()}
-              disabled={creating}
-              size="sm"
-              className="btn-brand gap-1.5"
-            >
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              {creating ? 'Creating…' : 'New deck'}
-            </Button>
+            {/* Share — the folder's owners; Drafts stays private */}
+            {isOwner && folder !== null && !isOwnDrafts(folder) && (
+              <Button
+                onClick={() => setSharing(true)}
+                size="sm"
+                variant="ghost"
+                className="gap-1.5"
+                data-action="folder.share"
+              >
+                <Users className="h-4 w-4" aria-hidden="true" />
+                Share
+              </Button>
+            )}
+            {canEdit && (
+              <Button
+                onClick={() => void handleCreateDeck()}
+                disabled={creating}
+                size="sm"
+                className="btn-brand gap-1.5"
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                {creating ? 'Creating…' : 'New deck'}
+              </Button>
+            )}
           </div>
         </div>
       </header>
@@ -351,9 +396,11 @@ function FolderDecksInner() {
         ) : decks.length === 0 ? (
           <div className="flex flex-col items-center justify-center pt-24 text-center">
             <p className="text-muted-foreground">No decks in this folder yet.</p>
-            <p className="mt-1 text-sm text-muted-foreground/60">
-              Click <span className="text-foreground/80">+ New deck</span> to get started.
-            </p>
+            {canEdit && (
+              <p className="mt-1 text-sm text-muted-foreground/60">
+                Click <span className="text-foreground/80">+ New deck</span> to get started.
+              </p>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
@@ -368,6 +415,7 @@ function FolderDecksInner() {
                 onRename={(title) => void handleRenameDeck(deck.id, title)}
                 onDuplicate={() => void handleDuplicateDeck(deck.id)}
                 onMoveRequest={() => setMoveDeckId(deck.id)}
+                canMove={canEdit && deck.viewerRole === 'owner'}
               />
             ))}
           </div>
@@ -382,9 +430,17 @@ function FolderDecksInner() {
         <MoveDeckModal
           deckIds={[moveDeckId]}
           currentFolderId={folderId}
-          folders={allFolders}
+          folders={editableFolders}
           onConfirm={(destId) => void handleMoveConfirm(destId)}
           onClose={() => setMoveDeckId(null)}
+        />
+      )}
+
+      {sharing && folder !== null && (
+        <FolderShareDialog
+          folderId={folder.id}
+          folderName={folder.name}
+          onClose={() => setSharing(false)}
         />
       )}
     </div>
@@ -405,6 +461,8 @@ interface DeckCardProps {
   onRename: (title: string) => void
   onDuplicate: () => void
   onMoveRequest: () => void
+  /** Owner of the deck and an editor of this folder (moving needs editor in the destination too). */
+  canMove: boolean
 }
 
 // Stable empty-array reference so DeckCard's prop identity doesn't flip
@@ -420,7 +478,11 @@ function DeckCard({
   onRename,
   onDuplicate,
   onMoveRequest,
+  canMove,
 }: DeckCardProps) {
+  // The deck's own role (deck grant or folder role): editors rename, owners delete.
+  const canRename = deck.viewerRole !== undefined && deck.viewerRole !== 'viewer'
+  const canDelete = deck.viewerRole === 'owner'
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(deck.title)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -516,10 +578,11 @@ function DeckCard({
             <p
               className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
               onDoubleClick={(e) => {
+                if (!canRename) return
                 e.stopPropagation()
                 setEditing(true)
               }}
-              title="Double-click to rename"
+              title={canRename ? 'Double-click to rename' : undefined}
             >
               {deck.title}
             </p>
@@ -554,18 +617,20 @@ function DeckCard({
                   className="absolute right-0 top-full z-20 mt-1 w-40 rounded-md border border-border bg-popover py-1 shadow-lg"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <button
-                    role="menuitem"
-                    data-action="deck.rename"
-                    onClick={() => {
-                      setMenuOpen(false)
-                      setEditing(true)
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-accent"
-                  >
-                    <Pencil className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                    Rename
-                  </button>
+                  {canRename && (
+                    <button
+                      role="menuitem"
+                      data-action="deck.rename"
+                      onClick={() => {
+                        setMenuOpen(false)
+                        setEditing(true)
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-accent"
+                    >
+                      <Pencil className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                      Rename
+                    </button>
+                  )}
                   <button
                     role="menuitem"
                     data-action="deck.duplicate"
@@ -578,60 +643,66 @@ function DeckCard({
                     <Copy className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
                     Duplicate
                   </button>
-                  <button
-                    role="menuitem"
-                    data-action="deck.moveToFolder"
-                    onClick={() => {
-                      setMenuOpen(false)
-                      onMoveRequest()
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-accent"
-                  >
-                    {/* Using Folder icon as Move-to indicator */}
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="text-muted-foreground"
-                      aria-hidden="true"
-                    >
-                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                      <line x1="12" y1="11" x2="12" y2="17" />
-                      <line x1="9" y1="14" x2="15" y2="14" />
-                    </svg>
-                    Move to&hellip;
-                  </button>
-                  <div className="my-1 border-t border-border" />
-                  {confirmDelete ? (
+                  {canMove && (
                     <button
                       role="menuitem"
-                      data-action="deck.delete"
+                      data-action="deck.moveToFolder"
                       onClick={() => {
                         setMenuOpen(false)
-                        setConfirmDelete(false)
-                        onDelete()
+                        onMoveRequest()
                       }}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-destructive hover:bg-accent"
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-accent"
                     >
-                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                      Confirm delete
+                      {/* Using Folder icon as Move-to indicator */}
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="text-muted-foreground"
+                        aria-hidden="true"
+                      >
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                        <line x1="12" y1="11" x2="12" y2="17" />
+                        <line x1="9" y1="14" x2="15" y2="14" />
+                      </svg>
+                      Move to&hellip;
                     </button>
-                  ) : (
-                    <button
-                      role="menuitem"
-                      data-action="deck.delete"
-                      onClick={() => setConfirmDelete(true)}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-destructive"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                      Delete
-                    </button>
+                  )}
+                  {canDelete && (
+                    <>
+                      <div className="my-1 border-t border-border" />
+                      {confirmDelete ? (
+                        <button
+                          role="menuitem"
+                          data-action="deck.delete"
+                          onClick={() => {
+                            setMenuOpen(false)
+                            setConfirmDelete(false)
+                            onDelete()
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-destructive hover:bg-accent"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                          Confirm delete
+                        </button>
+                      ) : (
+                        <button
+                          role="menuitem"
+                          data-action="deck.delete"
+                          onClick={() => setConfirmDelete(true)}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-destructive"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                          Delete
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
               )}

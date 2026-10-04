@@ -16,6 +16,10 @@ export interface FolderSummary {
   deckCount: number
   /** The caller's role in the folder: viewer reads it, editor changes it, owner also shares and deletes it. */
   role: Role
+  /** Who shared the folder with the caller (folder sharing); null for a folder they created. */
+  sharedBy: { name: string | null; email: string | null } | null
+  /** The caller's private Drafts folder: never shared, never deleted. */
+  isDrafts: boolean
 }
 
 export interface FolderListPageArgs {
@@ -55,7 +59,7 @@ export interface FolderService {
   create(args: {
     userId: string
     name: string
-  }): Promise<FolderRecord & { deckCount: number; role: Role }>
+  }): Promise<FolderRecord & { deckCount: number; role: Role; sharedBy: null; isDrafts: false }>
   rename(args: { userId: string; folderId: string; name: string }): Promise<FolderRecord>
   /** Delete the folder and every deck in it. The Drafts folder cannot be deleted. */
   delete(args: { userId: string; folderId: string }): Promise<{ deletedDeckCount: number }>

@@ -340,6 +340,7 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
       await consumePendingInvitesForEmail(db, {
         email: userPayload.email,
         sub: userPayload.sub,
+        emailVerified: userPayload.emailVerified === true,
       })
     } catch (err) {
       request.log.warn({ err }, '[auth] invite consumption failed')

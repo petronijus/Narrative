@@ -24,6 +24,7 @@ import type { CommandContext } from './types.js'
 import type { DeckService } from './services/decks.js'
 import type { FolderService } from './services/folders.js'
 import type { SharingService } from './services/sharing.js'
+import type { FolderSharingService } from './services/folderSharing.js'
 import type { MediaService } from './services/media.js'
 import type { ComponentService } from './services/components.js'
 import type { PptxService } from './services/pptx.js'
@@ -35,6 +36,7 @@ export type {
   DeckService,
   FolderService,
   SharingService,
+  FolderSharingService,
   MediaService,
   ComponentService,
   PptxService,
@@ -47,6 +49,7 @@ export interface ServerServices {
   decks: DeckService
   folders: FolderService
   sharing: SharingService
+  folderSharing: FolderSharingService
   media: MediaService
   components: ComponentService
   pptx: PptxService

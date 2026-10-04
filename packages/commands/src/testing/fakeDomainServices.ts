@@ -70,6 +70,8 @@ export interface FakeWorld {
 }
 
 const T0 = '2026-09-26T10:00:00.000Z'
+/** The actor's Drafts folder (`folders.is_drafts` on the server). */
+const DRAFTS_ID = 'folder_drafts'
 
 function notFound(what: string, id: string): CommandError {
   return new CommandError('not_found', `${what} '${id}' does not exist`)
@@ -140,7 +142,7 @@ export function fixtureComponentState(): Uint8Array {
 
 export type DomainFakes = Pick<
   ServerServices,
-  'decks' | 'folders' | 'sharing' | 'media' | 'components' | 'pptx' | 'tokens'
+  'decks' | 'folders' | 'sharing' | 'folderSharing' | 'media' | 'components' | 'pptx' | 'tokens'
 > & {
   /**
    * A deep copy of everything the fakes hold (and the id counter, so a
@@ -201,6 +203,11 @@ export function createDomainFakes(
     [world.folderId, { id: world.folderId, ownerUserId: u1, name: 'Client A', createdAt: T0 }],
     ['folder_b', { id: 'folder_b', ownerUserId: u1, name: 'Client B', createdAt: T0 }],
     ['folder_drafts', { id: 'folder_drafts', ownerUserId: u1, name: 'Drafts', createdAt: T0 }],
+    // Shared with the actor by Jana, who created it (folder sharing).
+    [
+      'folder_shared',
+      { id: 'folder_shared', ownerUserId: 'user_jana', name: 'Partner', createdAt: T0 },
+    ],
   ])
   const deckRecord = (id: string, title: string, folderId: string): DeckRecord => ({
     id,
@@ -274,6 +281,32 @@ export function createDomainFakes(
       revoked: false,
     },
   ]
+  // Folder sharing: the fixture folder's members and pending invites.
+  const folderMembers = new Map<string, PermissionEntry[]>(
+    [...folders.keys()].map((id) => [
+      id,
+      id === 'folder_shared'
+        ? [
+            { ...permissions[1]!, role: 'owner' as const, grantedBy: null },
+            { ...permissions[0]!, role: 'editor' as const, grantedBy: 'user_jana' },
+          ]
+        : [{ ...permissions[0]! }, ...(id === world.folderId ? [{ ...permissions[1]! }] : [])],
+    ]),
+  )
+  const folderInvites = new Map<string, PendingInvite[]>([
+    [
+      world.folderId,
+      [
+        {
+          id: 'folder_invite_fixture',
+          email: 'eva@example.com',
+          role: 'viewer',
+          invitedAt: T0,
+          expiresAt: T0,
+        },
+      ],
+    ],
+  ])
   let nextId = 1
   const fresh = (prefix: string) => `${prefix}_${nextId++}`
 
@@ -295,9 +328,53 @@ export function createDomainFakes(
     return c
   }
 
+  /** The folder's members, the caller being one of its owners (the real service's `requireFolderRole`). */
+  const requireFolderOwner = (folderId: string, userId: string) => {
+    const folder = requireFolder(folderId)
+    const members = folderMembers.get(folderId) ?? []
+    const me = members.find((m) => m.userId === userId)
+    if (me === undefined) throw new CommandError('forbidden', 'Forbidden')
+    if (me.role !== 'owner') {
+      throw new CommandError('forbidden', "Forbidden: only the folder's owner may do this")
+    }
+    return { folder, members }
+  }
+  const requireFolderMember = (members: PermissionEntry[], memberId: string) => {
+    const m = members.find((x) => x.userId === memberId)
+    if (m === undefined) {
+      throw new CommandError(
+        'not_found',
+        'That user is not a member of this folder; invite them with their email instead.',
+      )
+    }
+    return m
+  }
+  const requireAnotherOwner = (members: PermissionEntry[], memberId: string) => {
+    if (!members.some((m) => m.role === 'owner' && m.userId !== memberId)) {
+      throw new CommandError(
+        'conflict',
+        'A folder keeps at least one owner — make someone else an owner first.',
+      )
+    }
+  }
+
+  /**
+   * The actor's role in a folder and who shared it: they own every folder
+   * but `folder_shared`, which Jana shared with them as an editor.
+   */
+  const listedAccess = (f: FolderRecord) =>
+    f.id === 'folder_shared'
+      ? {
+          role: 'editor' as const,
+          sharedBy: { name: 'Jana', email: 'jana@example.com' },
+          isDrafts: false,
+        }
+      : { role: 'owner' as const, sharedBy: null, isDrafts: f.id === DRAFTS_ID }
+
   const rDecks = recorder('decks')
   const rFolders = recorder('folders')
   const rSharing = recorder('sharing')
+  const rFolderSharing = recorder('folderSharing')
   const rMedia = recorder('media')
   const rComponents = recorder('components')
   const rPptx = recorder('pptx')
@@ -314,6 +391,8 @@ export function createDomainFakes(
         permissions,
         invites,
         links,
+        folderMembers: [...folderMembers],
+        folderInvites: [...folderInvites],
         nextId,
       }),
     decks: {
@@ -477,8 +556,7 @@ export function createDomainFakes(
           name: f.name,
           createdAt: f.createdAt,
           deckCount: [...decks.values()].filter((d) => d.folderId === f.id).length,
-          // The fake's actor owns every folder.
-          role: 'owner' as const,
+          ...listedAccess(f),
         }))
       },
       async listPage(args) {
@@ -504,8 +582,7 @@ export function createDomainFakes(
             name: f.name,
             createdAt: f.createdAt,
             deckCount: [...decks.values()].filter((d) => d.folderId === f.id).length,
-            // The fake's actor owns every folder.
-            role: 'owner' as const,
+            ...listedAccess(f),
           })),
           next:
             matching.length > args.limit && last !== undefined
@@ -522,7 +599,17 @@ export function createDomainFakes(
           createdAt: T0,
         }
         folders.set(folder.id, folder)
-        return { ...folder, deckCount: 0, role: 'owner' as const }
+        // The creator is the folder's first member, as on the server.
+        folderMembers.set(folder.id, [
+          { ...permissions[0]!, userId: args.userId, grantedAt: T0, grantedBy: null },
+        ])
+        return {
+          ...folder,
+          deckCount: 0,
+          role: 'owner' as const,
+          sharedBy: null,
+          isDrafts: false as const,
+        }
       },
       async rename(args) {
         rFolders('rename', args)
@@ -533,10 +620,13 @@ export function createDomainFakes(
       async delete(args) {
         rFolders('delete', args)
         const folder = requireFolder(args.folderId)
-        if (folder.name === 'Drafts') throw new CommandError('conflict', 'cannot_delete_drafts')
+        if (folder.id === DRAFTS_ID) throw new CommandError('conflict', 'cannot_delete_drafts')
         const contained = [...decks.values()].filter((d) => d.folderId === folder.id)
         for (const d of contained) decks.delete(d.id)
         folders.delete(folder.id)
+        // Members and pending invites go with the folder (ON DELETE CASCADE).
+        folderMembers.delete(folder.id)
+        folderInvites.delete(folder.id)
         return { deletedDeckCount: contained.length }
       },
       async listFonts(args) {
@@ -641,6 +731,111 @@ export function createDomainFakes(
         rSharing('revokeLink', args)
         const link = links.find((l) => l.id === args.linkId)
         if (link !== undefined) link.revoked = true
+      },
+    },
+
+    folderSharing: {
+      async listMembers(args) {
+        rFolderSharing('listMembers', args)
+        return requireFolderOwner(args.folderId, args.userId).members
+      },
+      async invite(args) {
+        rFolderSharing('invite', args)
+        const { folder, members } = requireFolderOwner(args.folderId, args.userId)
+        if (folder.id === DRAFTS_ID) {
+          throw new CommandError(
+            'conflict',
+            'The Drafts folder is private and cannot be shared. Move the decks to share into another folder.',
+          )
+        }
+        const email = args.email.toLowerCase()
+        // Known users: everyone in the fixture's directory (deck collaborators
+        // and folder members), as the server looks the address up in `users`.
+        const known = [...permissions, ...[...folderMembers.values()].flat()].find(
+          (m) => m.email === email,
+        )
+        if (known !== undefined) {
+          if (known.userId === args.userId) {
+            throw new CommandError(
+              'conflict',
+              'You cannot change your own role. Ask another owner to change it for you.',
+            )
+          }
+          const member = members.find((m) => m.userId === known.userId)
+          if (member !== undefined) member.role = args.role
+          else members.push({ ...known, role: args.role, grantedAt: T0, grantedBy: args.userId })
+          return {
+            kind: 'granted',
+            user: { userId: known.userId, email, name: known.name, role: args.role },
+          }
+        }
+        const pending = folderInvites.get(args.folderId) ?? []
+        folderInvites.set(args.folderId, pending)
+        const existing = pending.find((i) => i.email === email)
+        if (existing !== undefined) existing.role = args.role
+        const invite = existing ?? {
+          id: fresh('folder_invite'),
+          email,
+          role: args.role,
+          invitedAt: T0,
+          expiresAt: T0,
+        }
+        if (existing === undefined) pending.push(invite)
+        return {
+          kind: 'pending',
+          invite: {
+            id: invite.id,
+            email,
+            role: args.role,
+            expiresAt: T0,
+            replaced: existing !== undefined,
+          },
+        }
+      },
+      async setRole(args) {
+        rFolderSharing('setRole', args)
+        const { members } = requireFolderOwner(args.folderId, args.userId)
+        if (args.memberId === args.userId) {
+          throw new CommandError(
+            'conflict',
+            'You cannot change your own role. Ask another owner to change it for you.',
+          )
+        }
+        const m = requireFolderMember(members, args.memberId)
+        if (m.role === 'owner' && args.role !== 'owner') requireAnotherOwner(members, m.userId)
+        m.role = args.role
+        return { userId: m.userId, email: m.email ?? '', name: m.name, role: args.role }
+      },
+      async removeMember(args) {
+        rFolderSharing('removeMember', args)
+        const { members } = requireFolderOwner(args.folderId, args.userId)
+        if (args.memberId === args.userId) {
+          throw new CommandError(
+            'conflict',
+            'You cannot remove yourself from a folder. Ask another owner to remove you.',
+          )
+        }
+        const m = requireFolderMember(members, args.memberId)
+        if (m.role === 'owner') requireAnotherOwner(members, m.userId)
+        members.splice(members.indexOf(m), 1)
+      },
+      async listInvites(args) {
+        rFolderSharing('listInvites', args)
+        requireFolderOwner(args.folderId, args.userId)
+        return folderInvites.get(args.folderId) ?? []
+      },
+      async cancelInvite(args) {
+        rFolderSharing('cancelInvite', args)
+        requireFolderOwner(args.folderId, args.userId)
+        const pending = folderInvites.get(args.folderId) ?? []
+        const i = pending.findIndex((x) => x.id === args.inviteId)
+        if (i === -1) {
+          throw new CommandError(
+            'not_found',
+            'Invite not found (it may have been accepted or cancelled)',
+          )
+        }
+        pending.splice(i, 1)
       },
     },
 

@@ -129,6 +129,18 @@ export interface ApiClient {
    * Throws with status 409 if folder is the user's Drafts ({ error: 'cannot_delete_drafts' }).
    */
   deleteFolder(id: string): Promise<void>
+  // Folder sharing (folder owner): members see everything in the folder.
+  listFolderMembers(folderId: string): Promise<DeckPermission[]>
+  /** A known address becomes a member at once; anyone else gets a pending invite and an email. */
+  inviteToFolder(folderId: string, body: InviteByEmailBody): Promise<InviteByEmailResult>
+  setFolderMemberRole(
+    folderId: string,
+    userId: string,
+    role: 'owner' | 'editor' | 'viewer',
+  ): Promise<void>
+  removeFolderMember(folderId: string, userId: string): Promise<void>
+  listFolderInvites(folderId: string): Promise<DeckInvite[]>
+  cancelFolderInvite(folderId: string, inviteId: string): Promise<void>
   /**
    * Bulk-move decks from srcFolderId to destFolderId: the caller owns every
    * deck and is an editor of both folders; the decks must live in
@@ -452,6 +464,10 @@ export interface FolderSummary {
   createdAt: string
   /** The caller's role in the folder: viewer reads it, editor changes it, owner also shares and deletes it. */
   role: 'owner' | 'editor' | 'viewer'
+  /** Who shared the folder with the caller (folder sharing); null for a folder they created. */
+  sharedBy: { name: string | null; email: string | null } | null
+  /** The user's private Drafts folder: never shared, never deleted. */
+  isDrafts: boolean
 }
 
 /** A user actively editing a deck. `email`/`name` are best-effort display
@@ -886,6 +902,46 @@ export function createApiClient(): ApiClient {
         }
         throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status, body })
       }
+    },
+
+    listFolderMembers: (folderId) =>
+      requestJson<DeckPermission[]>(`/folders/${folderId}/members`),
+
+    // The folder sharing calls surface the server's message (apiError): it
+    // says why a share was refused — the Drafts folder, your own role, the
+    // last owner.
+    inviteToFolder: async (folderId, body) => {
+      const res = await request(`/folders/${folderId}/members`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw await apiError(res)
+      return (await res.json()) as InviteByEmailResult
+    },
+
+    setFolderMemberRole: async (folderId, userId, role) => {
+      const res = await request(`/folders/${folderId}/members/${encodeURIComponent(userId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
+      })
+      if (!res.ok) throw await apiError(res)
+    },
+
+    removeFolderMember: async (folderId, userId) => {
+      const res = await request(`/folders/${folderId}/members/${encodeURIComponent(userId)}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) throw await apiError(res)
+    },
+
+    listFolderInvites: (folderId) => requestJson<DeckInvite[]>(`/folders/${folderId}/invites`),
+
+    cancelFolderInvite: async (folderId, inviteId) => {
+      const res = await request(`/folders/${folderId}/invites/${inviteId}`, { method: 'DELETE' })
+      // Already accepted or cancelled: nothing left to cancel.
+      if (!res.ok && res.status !== 404) throw await apiError(res)
     },
 
     moveDecks: (srcFolderId, deckIds, destFolderId) =>

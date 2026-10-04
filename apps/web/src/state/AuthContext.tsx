@@ -74,9 +74,22 @@ const BYPASS_USER: AuthUser = {
   email: 'dev@local',
 }
 
+/**
+ * The synthetic identity a bypass-mode browser is: `dev-user`, or the one the
+ * `narrative_dev_as` cookie names — the server reads the same cookie
+ * (apps/server/src/auth/devIdentity.ts, same `dev-` pattern), so a test can
+ * be a second person. Dev only, like the bypass itself.
+ */
+function bypassUser(): AuthUser {
+  const named = /(?:^|;\s*)narrative_dev_as=([^;]*)/.exec(document.cookie)?.[1]
+  const sub = named === undefined ? undefined : decodeURIComponent(named)
+  if (sub === undefined || !/^dev-[a-z0-9-]{1,60}$/.test(sub)) return BYPASS_USER
+  return { sub, name: sub, email: `${sub}@dev.narrative.test` }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }): ReactElement {
   const bypass = isBypassEnabled()
-  const [user, setUser] = useState<AuthUser | null>(bypass ? BYPASS_USER : null)
+  const [user, setUser] = useState<AuthUser | null>(() => (bypass ? bypassUser() : null))
   const [isLoading, setIsLoading] = useState(!bypass)
 
   // -------------------------------------------------------------------------

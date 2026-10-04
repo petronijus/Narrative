@@ -47,6 +47,7 @@ import {
   resolveComponentAccess,
 } from '../auth/permissions.js'
 import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../auth/session.js'
+import { devSubFromCookieHeader } from '../auth/devIdentity.js'
 import { looksLikeNarrativeCredential } from '../auth/credentialPatterns.js'
 import { clientIpFromHeaders } from '../http/clientIp.js'
 import { createFixedWindowLimiter, type FixedWindowLimiter } from '../http/fixedWindowLimiter.js'
@@ -126,7 +127,11 @@ async function resolvePrincipal(data: WsAuthPayload, deps: WsAuthDeps): Promise<
     return { userId: null, shareToken }
   }
 
-  if (deps.bypass) return { userId: 'dev-user', shareToken: null }
+  // BYPASS_AUTH (dev only): `dev-user`, or the synthetic identity the
+  // `narrative_dev_as` cookie names (auth/devIdentity.ts).
+  if (deps.bypass) {
+    return { userId: devSubFromCookieHeader(data.requestHeaders['cookie']), shareToken: null }
+  }
 
   // Authenticated path. The actual identity comes from the
   // `narrative_session` HttpOnly cookie carried on the WS upgrade, which is

@@ -218,6 +218,8 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     componentName: byTitle,
     collaborator: async () => null,
     invite: async () => null,
+    folderMember: async () => null,
+    folderInvite: async () => null,
     shareLink: async () => null,
     asset: async () => null,
     componentInFolder: async () => null,

@@ -139,16 +139,29 @@ describe('folder.list', () => {
   it('sorts by name and pages with a cursor', async () => {
     const c = ctx()
     const names: string[] = []
+    const shared: unknown[] = []
     let cursor: string | null = null
     do {
       const page = (await runCommand(registry, c, 'folder.list', {
         limit: 2,
         ...(cursor === null ? {} : { cursor }),
-      })) as { folders: Array<{ name: string; deckCount: number }>; nextCursor: string | null }
+      })) as {
+        folders: Array<{ name: string; role: string; sharedBy: { name: string | null } | null }>
+        nextCursor: string | null
+      }
       names.push(...page.folders.map((f) => f.name))
+      shared.push(...page.folders.filter((f) => f.sharedBy !== null))
       cursor = page.nextCursor
     } while (cursor !== null)
-    expect(names).toEqual(['Client A', 'Client B', 'Drafts'])
+    expect(names).toEqual(['Client A', 'Client B', 'Drafts', 'Partner'])
+    // A folder shared with the user says by whom, with the user's role in it.
+    expect(shared).toEqual([
+      expect.objectContaining({
+        name: 'Partner',
+        role: 'editor',
+        sharedBy: { name: 'Jana', email: 'jana@example.com' },
+      }),
+    ])
   })
 
   it('filters by name', async () => {

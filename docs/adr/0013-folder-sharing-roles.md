@@ -117,6 +117,23 @@ the rest of the folder.
   folder-owned media is the folder owner's.
 - Until step 4 the folder-scoped commands still declare the owner role, so an
   agent of a folder editor is refused writes the web app allows.
-- Removing someone from a folder (step 3) leaves their deck grants in
-  place — including the owner row of a deck they created there — unless
-  step 3 decides otherwise; those rows can now be revoked like any other.
+- Removing someone from a folder (step 3, decided by Petr 2026-10-04 after
+  the security review) also takes away the deck grants they gave
+  themselves there — the creator's owner row of each deck they made in the
+  folder (granted by themselves, or with no granter by migration 0031) — so
+  they keep no owner role, share links or folder reading through decks they
+  made as a member. A grant someone else gave them on a deck stays. An owner
+  removed or demoted loses the pending folder invites they sent.
+- Sign-in (step 3, Petr 2026-10-04): only what somebody else shared admits
+  an account the env allowlist does not — a pending deck or folder invite,
+  a grant on someone else's deck, a membership in someone else's folder —
+  and only for a verified email; invites are taken only by a verified
+  sign-in. Every deck's creator row and every user's own folders (Drafts
+  included) would otherwise keep an account removed from the allowlist,
+  and its access tokens, working.
+- Drafts is a flag (`folders.is_drafts`, migration 0034), not the name:
+  folders have several owners, any of whom may rename one.
+- Membership changes lock the folder row, so concurrent changes cannot
+  leave a folder without an owner. Pending access granted earlier through
+  signed media URLs and imgproxy URLs lasts until those URLs expire; live
+  documents are closed at once.

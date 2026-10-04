@@ -262,7 +262,8 @@ describe('deleting a folder', () => {
   })
 
   it('refuses the Drafts folder and sweeps nothing', async () => {
-    const db = scriptedDb({ selects: [[{ ...FOLDER, name: 'Drafts' }], [{ role: 'owner' }]] })
+    // Drafts by its flag, whatever its name.
+    const db = scriptedDb({ selects: [[{ ...FOLDER, isDrafts: true }], [{ role: 'owner' }]] })
     const err = await serviceErrorOf(service(db).delete({ userId: 'u1', folderId: 'fold_1' }))
 
     expect(err.status).toBe(409)

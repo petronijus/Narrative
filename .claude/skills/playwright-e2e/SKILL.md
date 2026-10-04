@@ -48,6 +48,26 @@ test at a time, after the parallel project (alone:
 as its dependency). The server limits POST /access-tokens to 10 per hour per
 user; the suite creates 2 per run.
 
+## Two people in one test
+
+Under `BYPASS_AUTH` a browser context becomes another synthetic identity
+with the `narrative_dev_as` cookie (`dev-` + lowercase letters, digits,
+dashes; `apps/server/src/auth/devIdentity.ts`). The server honours it on
+REST, the WebSocket and tus; the web app shows that user. The identity
+gets a directory entry (`<sub>@dev.narrative.test`) on its first request,
+so make one request as it before inviting its address. Use fresh,
+unique identities per test. Example: `e2e/folder-sharing.spec.ts`.
+
+```ts
+async function personPage(browser: Browser, sub: string): Promise<Page> {
+  const context = await browser.newContext()
+  await context.addCookies([
+    { name: 'narrative_dev_as', value: sub, domain: 'localhost', path: '/' },
+  ])
+  return context.newPage()
+}
+```
+
 ## Canonical setup: deterministic deck creation
 
 Don't rely on dashboard UI.

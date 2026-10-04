@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **129**. Known missing: **7**. Deliberately excluded: **20**.
+Commands: **135**. Known missing: **7**. Deliberately excluded: **20**.
 
 ## agent
 
@@ -63,15 +63,21 @@ Commands: **129**. Known missing: **7**. Deliberately excluded: **20**.
 
 ## folder
 
-| Command               | What it does       | Role   | Undo         | Confirm                    | Hints      |
-| --------------------- | ------------------ | ------ | ------------ | -------------------------- | ---------- |
-| `folder.create`       | Create folder      | owner  | undoable     | never                      |            |
-| `folder.delete`       | Delete folder      | owner  | irreversible | always                     |            |
-| `folder.fonts.delete` | Delete folder font | owner  | irreversible | always                     |            |
-| `folder.fonts.list`   | Folder fonts       | owner  | n/a          | never                      | read-only  |
-| `folder.fonts.upload` | Upload folder font | owner  | undoable     | never (asks for URL files) |            |
-| `folder.list`         | List folders       | viewer | n/a          | never                      | read-only  |
-| `folder.rename`       | Rename folder      | owner  | undoable     | never                      | idempotent |
+| Command                  | What it does                 | Role   | Undo         | Confirm                    | Hints      |
+| ------------------------ | ---------------------------- | ------ | ------------ | -------------------------- | ---------- |
+| `folder.create`          | Create folder                | owner  | undoable     | never                      |            |
+| `folder.delete`          | Delete folder                | owner  | irreversible | always                     |            |
+| `folder.fonts.delete`    | Delete folder font           | owner  | irreversible | always                     |            |
+| `folder.fonts.list`      | Folder fonts                 | owner  | n/a          | never                      | read-only  |
+| `folder.fonts.upload`    | Upload folder font           | owner  | undoable     | never (asks for URL files) |            |
+| `folder.invites.cancel`  | Cancel a folder invite       | owner  | irreversible | always                     |            |
+| `folder.invites.list`    | List pending folder invites  | owner  | n/a          | never                      | read-only  |
+| `folder.list`            | List folders                 | viewer | n/a          | never                      | read-only  |
+| `folder.members.invite`  | Share a folder with a person | owner  | irreversible | always                     |            |
+| `folder.members.list`    | List folder members          | owner  | n/a          | never                      | read-only  |
+| `folder.members.remove`  | Remove a folder member       | owner  | irreversible | always                     |            |
+| `folder.members.setRole` | Change a folder member role  | owner  | irreversible | always                     | idempotent |
+| `folder.rename`          | Rename folder                | owner  | undoable     | never                      | idempotent |
 
 ## guide
 

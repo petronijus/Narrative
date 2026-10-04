@@ -1,10 +1,9 @@
 # Folder sharing and linked component media
 
 Status: planned and decided by Petr on 2026-09-30. Step 1 released in
-0.10.16 (2026-10-02). **Step 2 built and committed on 2026-10-02, not yet
-reviewed or released** — what is left is in `HANDOVER.md` → "Spillover". The
-e2e suite was green (175 passed) on the committed tree; the test-loop
-speed-up to do first is in [`dev-speed.md`](dev-speed.md).
+0.10.16 (2026-10-02), step 2 in 0.10.17 (2026-10-04). **Step 3 (folder
+sharing) built on 2026-10-04, not released** — see Progress below; step 4
+(the agent surface) is next.
 
 ## What Petr decided
 
@@ -288,6 +287,65 @@ Left for the later steps, on purpose:
   passing it), for Petr to schedule.
 - Revoking folder membership (step 3) must close the user's connections on
   the folder's decks, components and `folder:<id>`.
+
+**Step 3 (folder sharing) — built 2026-10-04, not released.**
+
+- Migration 0033 (`folder_invites`, the shape of `deck_invites`: one
+  pending invite per folder and address, 30 days).
+- `services/folderSharing.ts` (owner only, `requireFolderRole`): list
+  members, invite by email (a known address becomes a member at once, an
+  unknown one gets a pending invite and an email —
+  `email/templates/deckInvite.ts` renders both kinds), change a role, remove
+  a member, list and cancel pending invites. Refused: the Drafts folder
+  (by name, as `folder.delete`), your own membership, and leaving a folder
+  without an owner (unreachable through the service while the caller is an
+  owner other than the member; kept as a second line). Every change closes
+  the member's live connections on `folder:<id>`, the folder's components
+  and its decks (`hocuspocus/connections.ts` `closeUserFolderConnections`).
+- `auth/invites.ts`: folder invites, and the sign-in pick-up turns them
+  into `folder_permissions` rows. `auth/signInPolicy.ts`: a pending folder
+  invite admits sign-in; a membership does only in a folder somebody else
+  created (`folders.owner_user_id <> users.sub`), so nobody's own Drafts
+  keeps an account removed from the allowlist signing in.
+- Routes `/folders/:id/members` (GET, POST, PATCH and DELETE
+  `/:userId`) and `/folders/:id/invites` (GET, DELETE `/:inviteId`);
+  commands `folder.members.*` / `folder.invites.*` (owner, `confirm:
+always` for changes; the confirmation names the member or invite within
+  the folder and a role over the whole folder).
+- `folder.list` / `GET /folders` return `sharedBy` (the granter of the
+  caller's membership, from `granted_by`; null for their own folders).
+- Web: the Share dialog (`ui/FolderShareDialog.tsx`, on the people section
+  it now shares with the deck's dialog, `ui/sharing/`) from the folder page,
+  its settings and the folder card; the pages follow the role
+  (`state/folderAccess.ts`): owners rename, share and delete; editors add
+  decks and import; viewers see the settings read-only; a master opens
+  read-only for a viewer.
+- Tests: `services/folderSharing.integration.test.ts` (12, Postgres),
+  `auth/signInPolicy.test.ts`, `agent/confirmationSummary.test.ts`,
+  `e2e/folder-sharing.spec.ts` (two people — the dev identity switch below).
+- Dev: `auth/devIdentity.ts` — under BYPASS_AUTH the `narrative_dev_as`
+  cookie (`dev-…`) makes a browser another synthetic identity, so e2e can
+  have two people; the bypass rate-limit bucket is `dev:<sub>` (12 000 /
+  minute).
+
+Reviews (code, security, agent parity — 2026-10-04) and Petr's decisions
+the same day, all applied: removing a member drops the deck grants they gave
+themselves in the folder (H1); sign-in admits only what somebody else shared,
+for a verified email (H2, M3); Drafts is the flag `folders.is_drafts`,
+migration 0034 (M1, the old security L3); a repeated invitation is emailed
+again only for a new role or after a day, and sharing by email is limited
+to 60 an hour per person (M2); a removed or demoted owner's pending invites
+are withdrawn (L1); membership changes lock the folder row (L2); a role
+change keeps who shared the folder (L3); signed media URLs handed out
+before a removal stay valid until they expire (L4, accepted). Tests: the
+integration test grew to 13 cases (concurrent removals and invites among
+them), `closeUserFolderConnections` has a unit test, and the e2e spec checks
+a viewer's read-only deck and master and that a removed editor's open
+editor stops reaching the deck.
+
+Left for step 4: the 18 folder-scoped commands still declaring `owner`
+(list above), eval scenarios (share a folder; a viewer's write refused),
+the agent-parity and security review of the agent surface.
 
 ### Review of step 1 (code and security review, 2026-09-30)
 

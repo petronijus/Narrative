@@ -6,6 +6,66 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+Migrations 0033 (`folder_invites`, created empty) and 0034
+(`folders.is_drafts`, backfilled: each user's oldest folder named "Drafts").
+No new env vars. Before deploying, check that no account outside the env
+allowlist relies on its own decks to sign in (see "Sign-in" below).
+
+### Added
+
+- **Share a folder** (folder sharing, step 3 —
+  [ADR 0013](docs/adr/0013-folder-sharing-roles.md)). A folder's owner opens
+  **Share** on the folder page, in its settings or in the folder card's menu
+  and invites people by email with a role on everything in the folder:
+  viewer (looks and presents), editor (also changes its decks, components,
+  tokens and fonts) or owner (also shares, renames and deletes it). Someone
+  who already uses Narrative becomes a member at once; anyone else gets a
+  pending invite and an invitation email, and becomes a member when they
+  first sign in — a pending folder invite lets them sign in. The owner
+  changes roles and removes members in the same dialog; a change or a
+  removal disconnects the member's open editors on the folder, its
+  components and its decks, so they reconnect with what they have left.
+  A removed member also loses the owner role of the decks they created in
+  the folder (a deck someone else gave them stays theirs), and a removed or
+  demoted owner's pending invites are withdrawn. Nobody changes or removes
+  their own membership, a folder keeps an owner (also when two owners act
+  at once), and the Drafts folder cannot be shared. Inviting the same
+  address again emails it only for a new role or after a day, and sharing
+  by email is limited to 60 invitations an hour per person (decks too). Routes `/folders/:id/members` and
+  `/folders/:id/invites`; agent commands `folder.members.list` / `.invite` /
+  `.setRole` / `.remove` and `folder.invites.list` / `.cancel` (owner, and
+  every change asks the user first).
+- **Shared folders on the home page** say who shared them and with what
+  role (`folder.list` returns `sharedBy` too), and the folder pages follow
+  the role: a viewer sees no controls that would change the folder, its
+  settings or its component masters (a master opens read-only), only
+  editors add decks or import into the folder, and each deck's own role
+  decides its rename (editor), move and delete (owner). A member removed
+  from a folder whose page they open is sent home instead of seeing "HTTP
+  403".
+
+### Changed
+
+- **Sign-in: only what someone else shared admits.** An account the env
+  allowlist does not admit signs in (and keeps its personal access tokens
+  working) through a pending deck or folder invite, a grant on someone
+  else's deck or a membership in someone else's folder — and only with a
+  verified email; an invite is taken only by a verified sign-in. A user's
+  own decks and folders no longer count: before, the owner row every deck
+  gives its creator kept an account removed from the allowlist signing in.
+- **Drafts is marked, not named.** `folders.is_drafts` decides which folder
+  is a user's private Drafts (never shared, never deleted, where new decks
+  without a folder go), whatever it is called; `folder.list` and
+  `GET /folders` return `isDrafts`.
+- **Dev: a second person in e2e tests.** Under `BYPASS_AUTH` (dev only) a
+  `narrative_dev_as=dev-…` cookie makes a request — REST, WebSocket, tus —
+  another synthetic identity with a directory entry of its own
+  (`apps/server/src/auth/devIdentity.ts`); the web app follows the same
+  cookie. The legacy `demo-user` alias and the bypass deck list stay
+  `dev-user`'s. Bypass identities get a rate-limit bucket of their own
+  (12 000 / minute): the parallel e2e suite runs as one identity and had
+  started to cross the 1 200 / minute of a person.
+
 ## 0.10.17 — Linked component media; a canvas that keeps painting (2026-10-04)
 
 Migration 0032 (`deck_moved_media`: the media copies a deck move made,

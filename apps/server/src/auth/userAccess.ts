@@ -10,10 +10,12 @@
  *      tokens, MCP OAuth grants, and whatever else auth/agentCredentials.ts
  *      covers) through `revokeAllSessionsForUser`;
  *   2. reports whether the user could simply sign in again — the env
- *      allowlist, a pending invite or a deck permission still admitting them
- *      (auth/signInPolicy.ts) — because revoking credentials does not remove
- *      that access, and the operator has to act on it (edit
- *      OIDC_ALLOWED_EMAILS / OIDC_ALLOWED_DOMAIN, remove the permissions).
+ *      allowlist, a pending deck or folder invite, or a deck or folder
+ *      somebody else shared with them still admitting them
+ *      (auth/signInPolicy.ts; their own decks and folders never do) —
+ *      because revoking credentials does not remove that access, and the
+ *      operator has to act on it (edit OIDC_ALLOWED_EMAILS /
+ *      OIDC_ALLOWED_DOMAIN, remove the shares).
  */
 
 import { and, count, eq, gt, isNull } from 'drizzle-orm'

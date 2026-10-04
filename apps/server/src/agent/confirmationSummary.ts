@@ -11,8 +11,9 @@
  * Only facts the user may see are looked up: the host has already
  * authorised the user for the target, and every id in the input is resolved
  * WITHIN that target (a collaborator of this deck, an invite or link of this
- * deck, an asset of this deck, master or folder, a component of this folder, a
- * destination folder the user is a member of). Anything else is shown as the raw id,
+ * deck, a member or invite of this folder, an asset of this deck, master or
+ * folder, a component of this folder, a destination folder the user is a
+ * member of). Anything else is shown as the raw id,
  * so a model cannot use the page to look up a stranger's email.
  */
 
@@ -30,6 +31,7 @@ import {
   deckInvites,
   deckPermissions,
   decks,
+  folderInvites,
   folderPermissions,
   folders,
   mediaAssets,
@@ -52,6 +54,10 @@ export interface ConfirmationLookups {
   collaborator(deckId: string, userId: string): Promise<string | null>
   /** A pending invite of `deckId` ("jana@example.com as editor"). */
   invite(deckId: string, inviteId: string): Promise<string | null>
+  /** A member of `folderId` ("Jana Nováková (jana@example.com)"). */
+  folderMember(folderId: string, userId: string): Promise<string | null>
+  /** A pending invite to `folderId` ("jana@example.com as editor"). */
+  folderInvite(folderId: string, inviteId: string): Promise<string | null>
   /** A share link of `deckId` ("viewer link, created 27 Sep 2026"). */
   shareLink(deckId: string, linkId: string): Promise<string | null>
   /** A media asset of the deck, the component master or the folder (file name or kind). */
@@ -73,6 +79,13 @@ const ROLE_WORDS: Readonly<Record<string, string>> = {
   viewer: 'viewer — can look and present',
   editor: 'editor — can change the deck',
   owner: 'owner — can also share and delete it',
+}
+
+/** A folder role covers everything in the folder (folder sharing). */
+const FOLDER_ROLE_WORDS: Readonly<Record<string, string>> = {
+  viewer: 'viewer — can look at and present every deck in the folder',
+  editor: "editor — can change the folder's decks, components, tokens and fonts",
+  owner: 'owner — can also share, rename and delete the folder',
 }
 
 /** Labels for input fields that commonly need confirming. */
@@ -151,11 +164,22 @@ export async function buildConfirmationSummary(args: {
     const value = scalar(raw)
     if (value === null) continue
     let shown: string | null = null
-    if (key === 'role') shown = ROLE_WORDS[value] ?? value
+    let label = FIELD_LABELS[key] ?? humanise(key)
+    // A folder-scoped command (no deck, no master): its member and invite ids
+    // are the folder's, and a role covers the whole folder.
+    const folderScoped =
+      target.deckId === undefined && target.componentId === undefined ? target.folderId : undefined
+    if (key === 'role')
+      shown = (folderScoped !== undefined ? FOLDER_ROLE_WORDS : ROLE_WORDS)[value] ?? value
     else if (key === 'userId' && target.deckId !== undefined)
       shown = await lookups.collaborator(target.deckId, value)
-    else if (key === 'inviteId' && target.deckId !== undefined)
+    else if (key === 'userId' && folderScoped !== undefined) {
+      label = 'Member'
+      shown = await lookups.folderMember(folderScoped, value)
+    } else if (key === 'inviteId' && target.deckId !== undefined)
       shown = await lookups.invite(target.deckId, value)
+    else if (key === 'inviteId' && folderScoped !== undefined)
+      shown = await lookups.folderInvite(folderScoped, value)
     else if (key === 'linkId' && target.deckId !== undefined)
       shown = await lookups.shareLink(target.deckId, value)
     else if (key === 'assetId')
@@ -172,10 +196,7 @@ export async function buildConfirmationSummary(args: {
     else if (key === 'componentId' && target.folderId !== undefined)
       shown = await lookups.componentInFolder(target.folderId, value)
     else if (key === 'folderId') shown = await lookups.memberFolder(args.userId, value)
-    details.push({
-      label: FIELD_LABELS[key] ?? humanise(key),
-      value: clip(shown ?? value),
-    })
+    details.push({ label, value: clip(shown ?? value) })
   }
   if (def.id === 'share.links.create' && input['expiresAt'] === undefined)
     details.push({ label: 'Expires', value: 'never' })
@@ -325,6 +346,24 @@ export function createDbConfirmationLookups(db: Database): ConfirmationLookups {
         .select({ email: deckInvites.email, role: deckInvites.role })
         .from(deckInvites)
         .where(and(eq(deckInvites.deckId, deckId), eq(deckInvites.id, inviteId)))
+        .limit(1)
+      return row === undefined ? null : `${row.email} as ${row.role}`
+    },
+    async folderMember(folderId, userId) {
+      const [row] = await db
+        .select({ name: users.name, email: users.email })
+        .from(folderPermissions)
+        .leftJoin(users, eq(users.sub, folderPermissions.userId))
+        .where(and(eq(folderPermissions.folderId, folderId), eq(folderPermissions.userId, userId)))
+        .limit(1)
+      if (row === undefined) return null
+      return person(row.name ?? null, row.email ?? null, userId)
+    },
+    async folderInvite(folderId, inviteId) {
+      const [row] = await db
+        .select({ email: folderInvites.email, role: folderInvites.role })
+        .from(folderInvites)
+        .where(and(eq(folderInvites.folderId, folderId), eq(folderInvites.id, inviteId)))
         .limit(1)
       return row === undefined ? null : `${row.email} as ${row.role}`
     },

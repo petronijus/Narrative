@@ -27,6 +27,8 @@ const FOLDERS: FolderSummary[] = [
     deckCount: 3,
     createdAt: '2026-01-01T00:00:00Z',
     role: 'owner',
+    sharedBy: null,
+    isDrafts: true,
   },
   {
     id: 'folder-work',
@@ -34,6 +36,8 @@ const FOLDERS: FolderSummary[] = [
     deckCount: 5,
     createdAt: '2026-01-02T00:00:00Z',
     role: 'owner',
+    sharedBy: null,
+    isDrafts: false,
   },
   {
     id: 'folder-personal',
@@ -41,6 +45,8 @@ const FOLDERS: FolderSummary[] = [
     deckCount: 1,
     createdAt: '2026-01-03T00:00:00Z',
     role: 'owner',
+    sharedBy: null,
+    isDrafts: false,
   },
 ]
 

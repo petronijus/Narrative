@@ -63,6 +63,7 @@ interface MockFolder {
   ownerUserId: string
   name: string
   createdAt: Date
+  isDrafts?: boolean
 }
 
 interface MockDeck {
@@ -210,13 +211,31 @@ describe('GET /folders', () => {
     expect(JSON.parse(res.body)).toEqual([])
   })
 
-  it("returns folders with deckCount and the caller's role in each", async () => {
+  it("returns folders with deckCount, the caller's role in each and who shared it", async () => {
     const now = new Date()
     const { db } = scriptedDb({
       selects: [
         [
-          { id: 'f-1', name: 'Drafts', createdAt: now, deckCount: 2, role: 'owner' },
-          { id: 'f-2', name: 'Shared with me', createdAt: now, deckCount: 5, role: 'viewer' },
+          {
+            id: 'f-1',
+            name: 'Drafts',
+            createdAt: now,
+            deckCount: 2,
+            role: 'owner',
+            grantedBy: null,
+            sharerName: null,
+            sharerEmail: null,
+          },
+          {
+            id: 'f-2',
+            name: 'Shared with me',
+            createdAt: now,
+            deckCount: 5,
+            role: 'viewer',
+            grantedBy: 'jana-sub',
+            sharerName: 'Jana',
+            sharerEmail: 'jana@example.com',
+          },
         ],
       ],
     })
@@ -225,13 +244,21 @@ describe('GET /folders', () => {
     const res = await app.inject({ method: 'GET', url: '/folders' })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual([
-      { id: 'f-1', name: 'Drafts', createdAt: now.toISOString(), deckCount: 2, role: 'owner' },
+      {
+        id: 'f-1',
+        name: 'Drafts',
+        createdAt: now.toISOString(),
+        deckCount: 2,
+        role: 'owner',
+        sharedBy: null,
+      },
       {
         id: 'f-2',
         name: 'Shared with me',
         createdAt: now.toISOString(),
         deckCount: 5,
         role: 'viewer',
+        sharedBy: { name: 'Jana', email: 'jana@example.com' },
       },
     ])
   })
@@ -476,6 +503,7 @@ describe('DELETE /folders/:id', () => {
       ownerUserId: 'dev-user',
       name: 'Drafts',
       createdAt: new Date(),
+      isDrafts: true,
     }
     const scripted = scriptedDb({ selects: [[drafts], [{ role: 'owner' }]] })
 
@@ -730,10 +758,13 @@ describe('POST /decks — folder integration', () => {
           thumbnailKey: null,
           thumbnailUpdatedAt: null,
         }
+        const returning = vi.fn().mockResolvedValue([insertedDeck])
         const tx = {
           insert: vi.fn().mockImplementation(() => ({
             values: vi.fn().mockImplementation(() => ({
-              returning: vi.fn().mockResolvedValue([insertedDeck]),
+              returning,
+              // Drafts provisioning: ON CONFLICT DO NOTHING (one Drafts per owner).
+              onConflictDoNothing: () => ({ returning }),
             })),
           })),
         }

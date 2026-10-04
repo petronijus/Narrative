@@ -117,6 +117,7 @@ export {
   type DeckService,
   type FolderService,
   type SharingService,
+  type FolderSharingService,
   type MediaService,
   type ComponentService,
   type PptxService,

@@ -4,7 +4,9 @@
  * component master or the folder an agent names), and what removing it does
  * there — a deck's asset is deleted, a master's picture is handed to its
  * folder, a folder's own is deleted; and for `deck.moveToFolder`, that the
- * deck's active share links will show the destination folder's media.
+ * deck's active share links will show the destination folder's media; and
+ * for the folder sharing commands, the member or invite looked up within the
+ * folder and a role that names the whole folder.
  */
 
 import { describe, expect, it, vi } from 'vitest'
@@ -24,6 +26,10 @@ function lookups(): ConfirmationLookups & { asset: ReturnType<typeof vi.fn> } {
     componentName: async () => 'Logo block',
     collaborator: async () => null,
     invite: async () => null,
+    folderMember: async (folderId, userId) =>
+      folderId === 'f1' && userId === 'user_jana' ? 'Jana (jana@example.com)' : null,
+    folderInvite: async (folderId, inviteId) =>
+      folderId === 'f1' && inviteId === 'inv1' ? 'eva@example.com as viewer' : null,
     shareLink: async () => null,
     asset: vi.fn(async () => 'logo.png (image)'),
     componentInFolder: async () => null,
@@ -110,5 +116,55 @@ describe('deck.moveToFolder confirmation', () => {
   it('says nothing about links when the deck has no active one', async () => {
     const { summary } = await moveSummary(0)
     expect(summary.details.map((d) => d.label)).not.toContain('Share links')
+  })
+})
+
+describe('folder sharing confirmations', () => {
+  async function folderSummary(commandId: string, input: Record<string, unknown>) {
+    return buildConfirmationSummary({
+      def: registry.get(commandId)!,
+      target: { folderId: 'f1' },
+      input,
+      userId: 'u1',
+      reasons: ['irreversible'],
+      conditional: null,
+      clientName: null,
+      lookups: lookups(),
+    })
+  }
+
+  it('an invitation names the recipient and a role over the whole folder', async () => {
+    const summary = await folderSummary('folder.members.invite', {
+      email: 'jana@example.com',
+      role: 'editor',
+    })
+    expect(summary.target).toEqual({ kind: 'folder', label: 'Client' })
+    expect(summary.details).toEqual([
+      { label: 'Recipient', value: 'jana@example.com' },
+      {
+        label: 'Role',
+        value: "editor — can change the folder's decks, components, tokens and fonts",
+      },
+    ])
+  })
+
+  it('a role change and a removal name the member within the folder', async () => {
+    expect(
+      (await folderSummary('folder.members.setRole', { userId: 'user_jana', role: 'viewer' }))
+        .details,
+    ).toEqual([
+      { label: 'Member', value: 'Jana (jana@example.com)' },
+      { label: 'Role', value: 'viewer — can look at and present every deck in the folder' },
+    ])
+    // Someone who is not a member of this folder is shown by id only.
+    expect((await folderSummary('folder.members.remove', { userId: 'stranger' })).details).toEqual([
+      { label: 'Member', value: 'stranger' },
+    ])
+  })
+
+  it('a cancelled invite is looked up within the folder', async () => {
+    expect((await folderSummary('folder.invites.cancel', { inviteId: 'inv1' })).details).toEqual([
+      { label: 'Invite', value: 'eva@example.com as viewer' },
+    ])
   })
 })

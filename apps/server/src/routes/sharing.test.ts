@@ -208,7 +208,12 @@ describe('POST /decks/:id/permissions (invite by email)', () => {
   it('creates a pending invite with kind=pending when the email is unknown', async () => {
     mockGetUserByEmail.mockResolvedValue(null)
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-    mockCreateInvite.mockResolvedValue({ id: 'inv-xyz', expiresAt, replaced: false })
+    mockCreateInvite.mockResolvedValue({
+      id: 'inv-xyz',
+      expiresAt,
+      replaced: false,
+      emailDue: true,
+    })
     const app = await buildApp()
 
     const res = await app.inject({
@@ -240,10 +245,36 @@ describe('POST /decks/:id/permissions (invite by email)', () => {
     expect(mockGrantPermission).not.toHaveBeenCalled()
   })
 
+  it('sends no email again when the same invitation is repeated', async () => {
+    mockGetUserByEmail.mockResolvedValue(null)
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    mockCreateInvite.mockResolvedValue({
+      id: 'inv-xyz',
+      expiresAt,
+      replaced: true,
+      emailDue: false,
+    })
+    const app = await buildApp()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/decks/deck-1/permissions',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'again@example.com', role: 'viewer' }),
+    })
+    expect(res.statusCode).toBe(201)
+    await new Promise((r) => setImmediate(r))
+    expect(mockSendEmail).not.toHaveBeenCalled()
+  })
+
   it('fires invite email after creating a pending invite', async () => {
     mockGetUserByEmail.mockResolvedValue(null)
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-    mockCreateInvite.mockResolvedValue({ id: 'inv-mail', expiresAt, replaced: false })
+    mockCreateInvite.mockResolvedValue({
+      id: 'inv-mail',
+      expiresAt,
+      replaced: false,
+      emailDue: true,
+    })
 
     const now = new Date()
     mockGetUserBySub.mockResolvedValue({

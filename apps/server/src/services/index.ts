@@ -12,6 +12,7 @@ import type { ServiceDeps } from './deps.js'
 import { createDecksService } from './decks.js'
 import { createFoldersService } from './folders.js'
 import { createSharingService } from './sharing.js'
+import { createFolderSharingService } from './folderSharing.js'
 import { createMediaService } from './media.js'
 import { createComponentsService } from './components.js'
 import { createPptxService } from './pptx.js'
@@ -26,6 +27,7 @@ export function createServerServices(deps: ServiceDeps): ServerServices {
     decks: createDecksService(deps),
     folders: createFoldersService(deps),
     sharing: createSharingService(deps),
+    folderSharing: createFolderSharingService(deps),
     media: createMediaService(deps),
     components: createComponentsService(deps),
     pptx: createPptxService(deps),

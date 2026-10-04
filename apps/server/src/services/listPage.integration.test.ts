@@ -262,31 +262,46 @@ describe('FolderService.listPage', () => {
         createdAt: expect.any(String),
         deckCount: 2,
         role: 'editor',
+        // Who shared it with me (the granter of my membership), and not my Drafts.
+        sharedBy: { name: 'Other', email: `${other}@example.test` },
+        isDrafts: false,
       },
     ])
+    // My own folder names nobody.
+    expect(
+      (await folderService.list({ userId: me })).find((x) => x.id === f('one'))?.sharedBy,
+    ).toBeNull()
   })
 
   it('takes the highest role when one person holds several rows (BYPASS_AUTH’s demo user)', async () => {
     // The enum is declared owner, editor, viewer: `min(role)` must mean the
-    // highest role, not the alphabetically first.
-    await db
-      .insert(folderPermissions)
-      .values({ folderId: f('shared'), userId: 'demo-user', role: 'owner' })
+    // highest role, not the alphabetically first. BYPASS_AUTH counts the
+    // legacy demo user as `dev-user` (only as dev-user: services/shared.ts).
+    await db.insert(folderPermissions).values([
+      { folderId: f('shared'), userId: 'dev-user', role: 'viewer' },
+      { folderId: f('shared'), userId: 'demo-user', role: 'owner' },
+    ])
     try {
       const bypass = createFoldersService({ db, log, hocuspocus: () => null, bypass: true })
-      const listed = await bypass.list({ userId: me })
+      const listed = await bypass.list({ userId: 'dev-user' })
       expect(listed.filter((x) => x.id === f('shared'))).toEqual([
         expect.objectContaining({ role: 'owner' }),
       ])
-      const paged = await bypass.listPage({ userId: me, limit: 50, query: 'shared with' })
-      expect(paged.folders.map((x) => [x.id, x.role])).toEqual([[f('shared'), 'owner']])
+      const paged = await bypass.listPage({ userId: 'dev-user', limit: 50, query: 'shared with' })
+      expect(paged.folders.filter((x) => x.id === f('shared')).map((x) => x.role)).toEqual([
+        'owner',
+      ])
+      // Another synthetic identity is a person of its own: no alias.
+      expect((await bypass.list({ userId: me })).find((x) => x.id === f('shared'))?.role).toBe(
+        'editor',
+      )
     } finally {
       await db
         .delete(folderPermissions)
         .where(
           and(
             eq(folderPermissions.folderId, f('shared')),
-            eq(folderPermissions.userId, 'demo-user'),
+            inArray(folderPermissions.userId, ['dev-user', 'demo-user']),
           ),
         )
     }

@@ -15,6 +15,7 @@ import {
   closeConnectionsForDocument,
   closeShareTokenConnections,
   closeUserConnectionsOnDocument,
+  closeUserFolderConnections,
 } from './connections.js'
 import { setHocuspocusInstance } from './presence.js'
 
@@ -209,5 +210,37 @@ describe('CONN-1 connection teardown helpers', () => {
     expect(ok.close).toHaveBeenCalledOnce()
     // The close event passed is the 4403 "Access revoked" frame.
     expect(ok.close).toHaveBeenCalledWith({ code: 4403, reason: 'Access revoked' })
+  })
+
+  it("closeUserFolderConnections closes one user's connections on the folder, its components and decks", () => {
+    const onFolder = conn({ userId: 'u1' })
+    const onMaster = conn({ userId: 'u1' })
+    const onDeck = conn({ userId: 'u1' })
+    const onLegacyDeck = conn({ userId: 'u1' })
+    const coMember = conn({ userId: 'u2' })
+    const otherFolder = conn({ userId: 'u1' })
+    const otherDeck = conn({ userId: 'u1' })
+    setHocuspocusInstance(
+      fakeServer({
+        'folder:f1': [onFolder, coMember],
+        'component:c1': [onMaster],
+        'deck:d1': [onDeck],
+        // Bare deck ids are legacy document names of decks too.
+        d2: [onLegacyDeck],
+        'folder:f2': [otherFolder],
+        'deck:d9': [otherDeck],
+      }),
+    )
+
+    const closed = closeUserFolderConnections('u1', {
+      folderId: 'f1',
+      deckIds: ['d1', 'd2'],
+      componentIds: ['c1'],
+    })
+
+    expect(closed).toBe(4)
+    for (const c of [onFolder, onMaster, onDeck, onLegacyDeck])
+      expect(c.close).toHaveBeenCalledOnce()
+    for (const c of [coMember, otherFolder, otherDeck]) expect(c.close).not.toHaveBeenCalled()
   })
 })

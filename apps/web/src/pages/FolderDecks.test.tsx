@@ -91,8 +91,18 @@ const MOCK_FOLDERS: FolderSummary[] = [
     deckCount: 2,
     createdAt: '2026-01-01T00:00:00Z',
     role: 'owner',
+    sharedBy: null,
+    isDrafts: true,
   },
-  { id: FOLDER_ID, name: 'Work', deckCount: 2, createdAt: '2026-01-02T00:00:00Z', role: 'owner' },
+  {
+    id: FOLDER_ID,
+    name: 'Work',
+    deckCount: 2,
+    createdAt: '2026-01-02T00:00:00Z',
+    role: 'owner',
+    sharedBy: null,
+    isDrafts: false,
+  },
 ]
 
 const MOCK_DECKS: DeckSummary[] = [
@@ -103,6 +113,7 @@ const MOCK_DECKS: DeckSummary[] = [
     folderId: FOLDER_ID,
     createdAt: '2026-01-10T00:00:00Z',
     updatedAt: '2026-01-15T00:00:00Z',
+    viewerRole: 'owner',
   },
   {
     id: 'deck-2',
@@ -111,6 +122,7 @@ const MOCK_DECKS: DeckSummary[] = [
     folderId: FOLDER_ID,
     createdAt: '2026-01-11T00:00:00Z',
     updatedAt: '2026-01-16T00:00:00Z',
+    viewerRole: 'owner',
   },
 ]
 

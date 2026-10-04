@@ -76,6 +76,10 @@ describe('server command metadata', () => {
       'share.invites.cancel',
       'share.links.create',
       'share.links.revoke',
+      'folder.members.invite',
+      'folder.members.setRole',
+      'folder.members.remove',
+      'folder.invites.cancel',
     ]
     for (const id of mustConfirm) {
       const def = registry.get(id)!
@@ -268,6 +272,86 @@ describe('media.* and share.*', () => {
   it('needs the owner role for sharing', async () => {
     const c = ctx({ actor: { userId: 'u1', role: 'editor', kind: 'agent' } })
     const err = await failure(runCommand(registry, c, 'share.links.list', {}))
+    expect(err.code).toBe('forbidden')
+  })
+})
+
+describe('folder.members.* / folder.invites.*', () => {
+  const inFolder = (over: Partial<CommandContext> = {}) =>
+    ctx({ target: { folderId: FIXTURE_FOLDER_ID }, ...over })
+
+  it('invites as the calling user, into the target folder', async () => {
+    const c = inFolder()
+    const out = await runCommand(registry, c, 'folder.members.invite', {
+      email: 'New.Client@example.com',
+      role: 'viewer',
+    })
+    expect(out).toMatchObject({
+      kind: 'pending',
+      invite: { email: 'new.client@example.com', role: 'viewer', replaced: false },
+    })
+    expect(callsTo(c, 'folderSharing')[0]?.args).toEqual({
+      userId: 'u1',
+      folderId: FIXTURE_FOLDER_ID,
+      email: 'New.Client@example.com',
+      role: 'viewer',
+    })
+  })
+
+  it('refuses the Drafts folder, your own role and the last owner', async () => {
+    const drafts = await failure(
+      runCommand(
+        registry,
+        ctx({ target: { folderId: 'folder_drafts' } }),
+        'folder.members.invite',
+        {
+          email: 'jana@example.com',
+          role: 'viewer',
+        },
+      ),
+    )
+    expect(drafts.code).toBe('conflict')
+    expect(drafts.message).toMatch(/Drafts/)
+
+    const self = await failure(
+      runCommand(registry, inFolder(), 'folder.members.setRole', { userId: 'u1', role: 'viewer' }),
+    )
+    expect(self.code).toBe('conflict')
+
+    const removeSelf = await failure(
+      runCommand(registry, inFolder(), 'folder.members.remove', { userId: 'u1' }),
+    )
+    expect(removeSelf.code).toBe('conflict')
+  })
+
+  it('changes and removes another member', async () => {
+    const c = inFolder()
+    await expect(
+      runCommand(registry, c, 'folder.members.setRole', { userId: 'user_jana', role: 'viewer' }),
+    ).resolves.toMatchObject({ userId: 'user_jana', role: 'viewer' })
+    await expect(
+      runCommand(registry, c, 'folder.members.remove', { userId: 'user_jana' }),
+    ).resolves.toEqual({ removed: true })
+    const err = await failure(
+      runCommand(registry, c, 'folder.members.remove', { userId: 'user_jana' }),
+    )
+    expect(err.code).toBe('not_found')
+  })
+
+  it('cancels a pending invite once', async () => {
+    const c = inFolder()
+    await expect(
+      runCommand(registry, c, 'folder.invites.cancel', { inviteId: 'folder_invite_fixture' }),
+    ).resolves.toEqual({ cancelled: true })
+    const err = await failure(
+      runCommand(registry, c, 'folder.invites.cancel', { inviteId: 'folder_invite_fixture' }),
+    )
+    expect(err.code).toBe('not_found')
+  })
+
+  it('needs the owner role in the folder', async () => {
+    const c = inFolder({ actor: { userId: 'u1', role: 'editor', kind: 'agent' } })
+    const err = await failure(runCommand(registry, c, 'folder.members.list', {}))
     expect(err.code).toBe('forbidden')
   })
 })

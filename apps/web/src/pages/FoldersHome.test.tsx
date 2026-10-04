@@ -56,6 +56,8 @@ const MOCK_FOLDERS: FolderSummary[] = [
     deckCount: 2,
     createdAt: '2026-01-01T00:00:00Z',
     role: 'owner',
+    sharedBy: null,
+    isDrafts: true,
   },
   {
     id: 'folder-work',
@@ -63,6 +65,8 @@ const MOCK_FOLDERS: FolderSummary[] = [
     deckCount: 5,
     createdAt: '2026-01-02T00:00:00Z',
     role: 'owner',
+    sharedBy: null,
+    isDrafts: false,
   },
 ]
 
@@ -102,6 +106,8 @@ beforeEach(() => {
     deckCount: 0,
     createdAt: '2026-01-03T00:00:00Z',
     role: 'owner',
+    sharedBy: null,
+    isDrafts: false,
   } satisfies FolderSummary)
   mockRenameFolder.mockResolvedValue(MOCK_FOLDERS[0])
   mockDeleteFolder.mockResolvedValue(undefined)
