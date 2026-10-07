@@ -67,11 +67,20 @@ lint-docs:
 test *filters:
     #!/usr/bin/env bash
     set -euo pipefail
+    # Worker budget: pnpm runs up to four packages at once and each vitest
+    # would start a worker per core, so the tests asked for four times the
+    # machine; beside tsc and ESLint in `just check` that timed out tests on
+    # the 12-thread MacBook (load 85, 2026-10-07). Each vitest gets its share
+    # of the cores instead; an explicit VITEST_MAX_WORKERS wins.
+    concurrency=4
+    if (($# > 0 && $# < concurrency)); then concurrency=$#; fi
+    cores=$(node -p 'require("os").availableParallelism()')
+    export VITEST_MAX_WORKERS="${VITEST_MAX_WORKERS:-$((cores / concurrency > 1 ? cores / concurrency : 1))}"
     # --no-sort: the packages' tests read each other's sources, not builds, so none waits for another
-    if (($# == 0)); then exec pnpm -r --no-sort test; fi
+    if (($# == 0)); then exec pnpm -r --no-sort --workspace-concurrency="$concurrency" test; fi
     args=()
     for f in "$@"; do args+=(--filter "$f"); done
-    exec pnpm "${args[@]}" test
+    exec pnpm "${args[@]}" --workspace-concurrency="$concurrency" test
 
 # Fail if the capability manifest or the plugin is stale (fix: `just capabilities`)
 capabilities-check:

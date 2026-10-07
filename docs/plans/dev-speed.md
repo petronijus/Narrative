@@ -24,6 +24,12 @@ Measured on the Linux desktop (24 threads) on 2026-09-30:
   logged separately; a failure prints that step's full log. `pnpm -r
 --no-sort` lets the packages run concurrently. ~39 s, measured with an
   e2e run loading the machine.
+- **A worker budget for the unit tests** (2026-10-07): `just test` gives
+  each vitest a quarter of the cores (`VITEST_MAX_WORKERS`, four packages
+  at once). Unbudgeted, four vitests started a worker per core each, and on
+  the 12-thread MacBook `just check` took 117–177 s at a load of 85 and
+  timed out property and web tests (0.2 s alone, over 5 s there). Budgeted,
+  the MacBook's `just check` is green in ~70 s.
 - **`just e2e-affected`** (`tools/dev/e2e-affected.py`): the specs the
   working tree (or `--base REF`) needs, from an `AREAS` table — AGENTS.md
   "When to run what" as code. A shared package, the schema or an app entry
