@@ -1,3 +1,4 @@
+import os from 'node:os'
 import { defineConfig, devices } from '@playwright/test'
 
 /**
@@ -18,11 +19,17 @@ import { defineConfig, devices } from '@playwright/test'
  * { tag: '@serial' }, …)`) and runs in the `serial` project, one test at a
  * time, after the parallel project has finished. `PW_WORKERS` (or
  * `--workers`) overrides the worker count.
+ *
+ * The default is a worker per four hardware threads: each worker is a
+ * Chromium with a WebGL canvas, and the dev server and Postgres share the
+ * machine. 6 on the 24-thread Linux desktop (the measured optimum,
+ * docs/plans/dev-speed.md); 3 on the 12-thread MacBook, where 6 workers ran
+ * the suite at a load of 60 and timed out half of it (2026-10-07).
  */
 const PW_WORKERS = process.env['PW_WORKERS']
 const WORKERS =
   PW_WORKERS === undefined || PW_WORKERS === ''
-    ? 6
+    ? Math.max(1, Math.floor(os.availableParallelism() / 4))
     : /%$/.test(PW_WORKERS)
       ? PW_WORKERS
       : Number(PW_WORKERS)

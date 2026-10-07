@@ -13,7 +13,7 @@ paths:
   `window.__narrative_test_api`.
 - Do not edit `apps/` or `packages/` source during a run — an HMR reload
   shows up as a blank page or an `.artboard` timeout.
-- Specs run in parallel (`fullyParallel`, `PW_WORKERS` workers, default 6)
+- Specs run in parallel (`fullyParallel`, `PW_WORKERS` workers, default one per four hardware threads: 6 on the Linux desktop, 3 on the MacBook)
   as the same `dev-user` against one server and database: seed your own
   folders, decks, components and tokens, find them by the ids you got back —
   never by position in, or the count of, a user-wide list (folders, decks,

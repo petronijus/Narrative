@@ -38,12 +38,18 @@ Measured on the Linux desktop (24 threads) on 2026-09-30:
   names a spec that does not exist.
 
 - **Parallel Playwright** (2026-10-02): `fullyParallel`, `PW_WORKERS`
-  workers (default 6), and a `serial` project that runs the `@serial` specs
+  workers (default 6 here; see below), and a `serial` project that runs the `@serial` specs
   alone after the parallel ones (`apps/web/playwright.config.ts`; the rule
   for new specs is in `.claude/rules/e2e.md`). The full suite takes
   **2.8 min instead of 12.9** — two green runs in a row, 175 tests, no
   retries. Measured: 4 workers 3.7 min, 6 workers 2.8–3.0 min, 8 workers
   2.6 min but not reliably green on this desktop.
+  Since 2026-10-07 the default is a worker per four hardware threads (still
+  6 there): on the 12-thread MacBook 6 workers ran the suite at a load of 60
+  in 27 min with 83 tests failing, mostly timeouts; 3 workers took 12.6 min
+  with 171 passing. Most of the 14 that still fail there failed in every
+  run on the MacBook, so they look like macOS differences (Cmd vs Ctrl,
+  word selection, the local `.env`), not load — not yet investigated.
 
 ## What running in parallel found
 
