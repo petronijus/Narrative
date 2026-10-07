@@ -904,8 +904,7 @@ export function createApiClient(): ApiClient {
       }
     },
 
-    listFolderMembers: (folderId) =>
-      requestJson<DeckPermission[]>(`/folders/${folderId}/members`),
+    listFolderMembers: (folderId) => requestJson<DeckPermission[]>(`/folders/${folderId}/members`),
 
     // The folder sharing calls surface the server's message (apiError): it
     // says why a share was refused — the Drafts folder, your own role, the
