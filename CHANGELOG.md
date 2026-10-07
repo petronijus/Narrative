@@ -6,10 +6,14 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+## 0.10.18 — Share a folder (2026-10-07)
+
 Migrations 0033 (`folder_invites`, created empty) and 0034
 (`folders.is_drafts`, backfilled: each user's oldest folder named "Drafts").
 No new env vars. Before deploying, check that no account outside the env
-allowlist relies on its own decks to sign in (see "Sign-in" below).
+allowlist relies on its own decks to sign in (see "Sign-in" below and
+`docs/deploy.md`, "Releasing folder sharing — 0.10.18"; on production on
+2026-10-07 the only such account is on the allowlist).
 
 ### Added
 
@@ -75,6 +79,11 @@ allowlist relies on its own decks to sign in (see "Sign-in" below).
   `dev-user`'s. Bypass identities get a rate-limit bucket of their own
   (12 000 / minute): the parallel e2e suite runs as one identity and had
   started to cross the 1 200 / minute of a person.
+- **Dev: `just test` budgets vitest's workers.** Four packages at once,
+  each with a worker per core, overloaded the 12-thread MacBook inside the
+  parallel `just check` (load 85, timed-out tests, 117–177 s); each vitest
+  now gets a quarter of the cores (`VITEST_MAX_WORKERS`, an explicit value
+  wins) and the check is green there in ~60–70 s.
 
 ## 0.10.17 — Linked component media; a canvas that keeps painting (2026-10-04)
 

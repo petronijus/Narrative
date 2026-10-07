@@ -227,6 +227,41 @@ A deck whose creator is not its folder's owner would give the folder's
 owner the owner role on it after 0030 — decide before deploying if the
 first query ever returns more than 0.
 
+## Releasing folder sharing — 0.10.18
+
+Folder sharing steps 3 and 4 ([ADR 0013](./adr/0013-folder-sharing-roles.md))
+add migrations **0033** (`folder_invites`, created empty) and **0034**
+(`folders.is_drafts`, backfilled with each owner's oldest folder named
+"Drafts", one per owner by a unique index the backfill cannot break). Both
+are safe on any data. What needs a look is the new sign-in rule
+(`auth/signInPolicy.ts`): outside the env allowlist, only a pending invite,
+a grant on someone else's deck or a membership in someone else's folder
+admits an account, and only with a verified email. Before, any
+`deck_permissions` row did — including the owner row every deck gives its
+creator. List the accounts the database will no longer admit:
+
+```bash
+docker exec narrative-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT u.email, coalesce(u.email_verified::text, '\''null'\''),
+          EXISTS (SELECT 1 FROM deck_permissions p WHERE p.user_id = u.sub) AS admitted_before
+   FROM users u
+   WHERE NOT (coalesce(u.email_verified, false) AND (
+     EXISTS (SELECT 1 FROM deck_invites i WHERE lower(i.email) = lower(u.email)
+             AND i.accepted_at IS NULL AND i.expires_at > now())
+     OR EXISTS (SELECT 1 FROM deck_permissions p JOIN decks d ON d.id = p.deck_id
+                WHERE p.user_id = u.sub AND d.owner_user_id <> u.sub)
+     OR EXISTS (SELECT 1 FROM folder_permissions m JOIN folders f ON f.id = m.folder_id
+                WHERE m.user_id = u.sub AND f.owner_user_id <> u.sub)))
+   ORDER BY 1;"'
+```
+
+Every row whose address `OIDC_ALLOWED_EMAILS` does not list (or, with a
+verified email, `OIDC_ALLOWED_DOMAIN` does not cover) is turned away after
+the deploy, its personal access tokens included. With neither variable set,
+the env allowlist admits everyone and the list does not matter. For each
+such account: add it to the allowlist, share a deck or a folder with it
+after the deploy, or let it go — decide before deploying.
+
 ## Access
 
 The VM is reachable only through the Proxmox host (`pve`), which is the jump
