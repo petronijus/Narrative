@@ -138,7 +138,7 @@ export const folderRename = defineCommand({
   domain: 'folder',
   title: 'Rename folder',
   description:
-    'Rename the folder. Its decks, tokens, fonts and components are unaffected. Undo: rename it back.',
+    "Rename the folder. Its decks, tokens, fonts and components are unaffected. Undo: rename it back. Only the folder's owners.",
   input: z.strictObject({ name: NameSchema }),
   output: FolderOutput,
   role: 'owner',
@@ -168,7 +168,7 @@ export const folderDelete = defineCommand({
     "Permanently delete the folder AND every deck in it, with their media, plus the folder's tokens, fonts and " +
     'components. Cannot be undone; always confirm with the user first, saying how many decks go with it ' +
     '(folder.list shows deckCount). The Drafts folder cannot be deleted. To keep the decks, move them out first ' +
-    'with deck.moveToFolder.',
+    "with deck.moveToFolder. Only the folder's owners.",
   input: z.strictObject({}),
   output: z.object({ deletedDeckCount: z.number() }),
   role: 'owner',
@@ -193,11 +193,12 @@ export const folderFontsList = defineCommand({
   title: 'Folder fonts',
   description:
     "The folder's uploaded fonts: family, weight, style, postscript name and a download URL. Every deck in the " +
-    'folder can use these families as fontFamily in text (text.set, text.format, text.setBoxTypography). Any member of the folder.',
+    'folder can use these families as fontFamily in text (text.set, text.format, text.setBoxTypography). Any member of the folder, and anyone with access to one of its decks.',
   input: z.strictObject({}),
   output: z.object({ fonts: z.array(FontFaceOutput) }),
   role: 'viewer',
   scope: 'folder',
+  folderReaders: 'content',
   effects: ['server'],
   readOnly: true,
   undo: 'n/a',
@@ -224,7 +225,7 @@ export const folderFontsUpload = defineCommand({
     'base64, so every deck in the folder can use it. Upload each weight / style as its own file. The file is ' +
     'parsed to read its family, weight and style; `fontFamily` binds it to another family name instead (e.g. the ' +
     'name an imported PowerPoint uses). A face whose postscript name the folder already has is refused. Only ' +
-    'upload fonts the user has the right to use. Undo: folder.fonts.delete.',
+    'upload fonts the user has the right to use. Undo: folder.fonts.delete. Needs the editor role in the folder.',
   input: z.strictObject({
     file: FileSourceSchema,
     fontFamily: z
@@ -273,7 +274,7 @@ export const folderFontsDelete = defineCommand({
   title: 'Delete folder font',
   description:
     'Remove a font face from the folder (asset id from folder.fonts.list). Every deck in the folder keeps a ' +
-    'private copy so it still renders. Confirm with the user first.',
+    'private copy so it still renders. Confirm with the user first. Needs the editor role in the folder.',
   input: z.strictObject({ assetId: IdSchema.describe('Font asset id (folder.fonts.list)') }),
   output: z.object({
     promotedToDeckCount: z.number().describe('Decks that received a private copy of the font'),

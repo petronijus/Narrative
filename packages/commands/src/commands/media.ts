@@ -187,7 +187,7 @@ export const mediaFontUrl = defineCommand({
   title: 'Font file URL',
   description:
     "A short-lived download URL of one of the folder's font files, with its family, weight and style (asset id " +
-    'from folder.fonts.list). Any member of the folder.',
+    'from folder.fonts.list). Any member of the folder, and anyone with access to one of its decks.',
   input: z.strictObject({ assetId: IdSchema.describe('Font asset id (folder.fonts.list)') }),
   output: z.object({
     assetId: z.string(),
@@ -200,6 +200,7 @@ export const mediaFontUrl = defineCommand({
   }),
   role: 'viewer',
   scope: 'folder',
+  folderReaders: 'content',
   readOnly: true,
   undo: 'n/a',
   confirm: 'never',

@@ -634,3 +634,72 @@ describe('a deck command that also takes a folder', () => {
     expect(shareOnFolder).toMatchObject({ ok: false, error: { code: 'no_target' } })
   })
 })
+
+describe("a folder read its decks' guests may run too", () => {
+  // token.list, folder.fonts.list and media.fontUrl declare
+  // `folderReaders: 'content'`: a guest of one of the folder's decks reads its
+  // tokens and fonts in the editor, so their agent may too. Everything else
+  // folder-scoped stays with the folder's members.
+  const run = (userId: string, command: string, input: Record<string, unknown> = {}) =>
+    exec({ actor: { userId }, target: { folderId: 'f1' }, invocation: { command, input } })
+
+  it("lets a deck's guest read the folder's tokens and fonts, and nothing else of it", async () => {
+    const tokens = vi
+      .spyOn(world.runtime.services.tokens, 'list')
+      .mockResolvedValue({ colors: {}, textStyles: {}, effectStyles: {} })
+    const fonts = vi.spyOn(world.runtime.services.folders, 'listFonts').mockResolvedValue([])
+    world.grant('folderContent:f1', 'guest', 'viewer')
+
+    expect(await run('guest', 'token.list')).toMatchObject({ ok: true })
+    expect(tokens).toHaveBeenCalledWith({ userId: 'guest', folderId: 'f1' })
+    expect(await run('guest', 'folder.fonts.list')).toMatchObject({ ok: true })
+    expect(fonts).toHaveBeenCalledWith({ userId: 'guest', folderId: 'f1' })
+    // A font file too — the service gets the target folder, so a font of
+    // another folder is refused there (services/mediaSharing.test.ts).
+    const fontUrl = vi.spyOn(world.runtime.services.media, 'fontUrl').mockResolvedValue({
+      assetId: 'font-1',
+      url: 'https://storage.test/signed',
+      family: 'Brand Sans',
+      weight: 400,
+      style: 'normal',
+      postscriptName: null,
+      mimeType: 'font/otf',
+    })
+    expect(await run('guest', 'media.fontUrl', { assetId: 'font-1' })).toMatchObject({ ok: true })
+    expect(fontUrl).toHaveBeenCalledWith({ userId: 'guest', assetId: 'font-1', folderId: 'f1' })
+
+    // Member-only reads, and every write, refuse the guest before anything runs.
+    for (const [command, input] of [
+      ['token.usages', { category: 'colors', tokenId: 'c1' }],
+      ['component.list', {}],
+      ['deck.activeEditors', {}],
+      ['token.create', { category: 'colors', name: 'Accent', value: '#ff0000' }],
+    ] as const) {
+      expect(await run('guest', command, input), command).toMatchObject({
+        ok: false,
+        error: { code: 'forbidden' },
+      })
+    }
+  })
+
+  it('refuses a stranger, and gives a member their folder role', async () => {
+    vi.spyOn(world.runtime.services.tokens, 'list').mockResolvedValue({
+      colors: {},
+      textStyles: {},
+      effectStyles: {},
+    })
+    expect(await run('nobody', 'token.list')).toMatchObject({
+      ok: false,
+      error: { code: 'forbidden' },
+    })
+    const usages = vi
+      .spyOn(world.runtime.services.tokens, 'usages')
+      .mockResolvedValue({ usages: [] })
+    world.grant('folder:f1', 'member', 'viewer')
+    expect(await run('member', 'token.list')).toMatchObject({ ok: true })
+    expect(
+      await run('member', 'token.usages', { category: 'colors', tokenId: 'c1' }),
+    ).toMatchObject({ ok: true, result: { usages: [] } })
+    expect(usages).toHaveBeenCalledOnce()
+  })
+})

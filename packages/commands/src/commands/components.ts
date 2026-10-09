@@ -181,7 +181,7 @@ export const componentList = defineCommand({
     "The folder's components (id, name, thumbnail URL), oldest first. A folder keeps only a few — the blocks that " +
     'recur on many slides, such as the headline block, the pagination or a card grid. Prefer them for those roles: ' +
     'component.get shows one with its slots, component.stamp places it. Do not expect a component for every ' +
-    'layout; build one-off content from plain objects styled with the folder tokens.',
+    'layout; build one-off content from plain objects styled with the folder tokens. Any member of the folder.',
   input: z.strictObject({}),
   output: z.object({ components: z.array(ComponentOutput) }),
   readOnly: true,
@@ -208,7 +208,7 @@ export const componentGet = defineCommand({
     "One component's master: its objects with every property (the shapes query.slide returns), its animations, " +
     'its bounding box, and its slot map — every NAMED object is a slot; text slots show their placeholder text. ' +
     'Read it before component.stamp to know which slot names to fill. To change the master itself, target the ' +
-    'component (componentId) with the ordinary document commands.',
+    'component (componentId) with the ordinary document commands. Any member of the folder.',
   input: z.strictObject({ componentId: ComponentIdSchema }),
   output: z.object({
     component: ComponentOutput,
@@ -250,7 +250,7 @@ export const componentRename = defineCommand({
   id: 'component.rename',
   title: 'Rename component',
   description:
-    'Rename a component of the folder. Stamps already on slides are unaffected. Undo: rename it back.',
+    'Rename a component of the folder. Stamps already on slides are unaffected. Undo: rename it back. Needs the editor role in the folder.',
   input: z.strictObject({
     componentId: ComponentIdSchema,
     name: z
@@ -285,7 +285,7 @@ export const componentDelete = defineCommand({
   description:
     'Delete a component master from the folder. Objects already stamped from it stay on their slides with their ' +
     "pictures and videos (the folder keeps the master's); it just cannot be stamped any more. Cannot be undone; " +
-    'confirm with the user first.',
+    'confirm with the user first. Needs the editor role in the folder.',
   input: z.strictObject({ componentId: ComponentIdSchema }),
   output: z.object({ deleted: z.literal(true) }),
   undo: 'irreversible',

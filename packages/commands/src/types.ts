@@ -307,6 +307,21 @@ export interface CommandDef<
    * folder editor. See `requiredRole`.
    */
   roleOn?: { component?: Role; folder?: Role }
+  /**
+   * `folder`-scoped reads only: who may run the command besides a folder
+   * MEMBER (folder_permissions, the default). `'content'`: also a guest of
+   * one of the folder's decks, as a viewer — for what a folder shares with
+   * every deck in it (its tokens, its fonts), which the editor already shows
+   * such a guest (auth/permissions.ts `resolveFolderContentAccess`), so their
+   * agent reads what they see. The service the command calls must check the
+   * same reader itself (`requireFolderContentReader`) and write nothing — the
+   * host trusts `readOnly`, and the role table in
+   * commands/serverCommands.test.ts pins which commands set this. A share
+   * link never counts: an agent always acts as a
+   * signed-in user. The registry allows it only on read-only commands with
+   * the viewer role (registry.ts `commandTargetProblems`).
+   */
+  folderReaders?: 'content'
   effects: readonly Effect[]
   /**
    * The handler reads the target document (to resolve slide/object refs)

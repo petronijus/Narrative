@@ -110,6 +110,25 @@ describe('commandTargetProblems', () => {
     expect(commandTargetProblems(def({ scope: 'user', acceptsComponent: true }))).toHaveLength(1)
   })
 
+  it("lets a deck's guest in only on a read-only viewer command of folder scope", () => {
+    const reader = {
+      scope: 'folder',
+      readOnly: true,
+      role: 'viewer',
+      folderReaders: 'content',
+    } as const
+    expect(commandTargetProblems(def(reader))).toEqual([])
+    expect(commandTargetProblems(def({ ...reader, scope: 'deck' }))).toEqual([
+      "folderReaders is for folder-scoped commands, but its scope is 'deck'",
+    ])
+    expect(commandTargetProblems(def({ ...reader, role: 'editor' }))).toEqual([
+      "folderReaders lets a deck's guest in, so only a read-only command with the viewer role may set it",
+    ])
+    expect(
+      commandTargetProblems(def({ scope: 'folder', role: 'viewer', folderReaders: 'content' })),
+    ).toHaveLength(1)
+  })
+
   it('lets only deck-scoped server commands without a document accept a folder', () => {
     expect(commandTargetProblems(def({ scope: 'deck', acceptsFolder: true }))).toEqual([])
     expect(commandTargetProblems(def({ scope: 'folder', acceptsFolder: true }))).toHaveLength(1)

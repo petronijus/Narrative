@@ -55,7 +55,7 @@ export const folderMembersList = defineCommand({
   description:
     'Who the folder is shared with: every member with user id, email, name, role and when it was granted; a ' +
     'member sees everything in the folder with that role. Pending email invites: folder.invites.list. Someone ' +
-    'given a single deck (share.permissions.list) is not a member.',
+    "given a single deck (share.permissions.list) is not a member. Only the folder's owners.",
   input: z.strictObject({}),
   output: z.object({
     members: z.array(
@@ -90,7 +90,7 @@ export const folderMembersInvite = defineCommand({
     'the role. Someone who already uses Narrative becomes a member at once (`kind: "granted"`); anyone else gets ' +
     'a pending invite and an invitation EMAIL (`kind: "pending"`), accepted by signing in. Inviting a member ' +
     'changes their role. Drafts cannot be shared. Confirm the address and role with the user first — this ' +
-    'reaches a real person. One deck only: share.permissions.invite.',
+    "reaches a real person. One deck only: share.permissions.invite. Only the folder's owners.",
   input: z.strictObject({
     email: z.email().max(320).describe('Their email address'),
     role: RoleInput,
@@ -137,7 +137,7 @@ export const folderMembersSetRole = defineCommand({
   description:
     "Change a member's role (user id from folder.members.list) on everything in the folder; their open " +
     'editors reconnect with it at once (viewer = read-only). Not your own role; the last owner stays one. No ' +
-    'email. Confirm with the user first.',
+    "email. Confirm with the user first. Only the folder's owners.",
   input: z.strictObject({
     userId: UserIdSchema.describe('The member (folder.members.list)'),
     role: RoleInput,
@@ -162,7 +162,7 @@ export const folderMembersRemove = defineCommand({
   description:
     'Remove a member (user id from folder.members.list): they lose everything in the folder except a deck ' +
     'shared with them on its own, and their open editors are disconnected. Not yourself, not the last owner. ' +
-    'Confirm with the user first.',
+    "Confirm with the user first. Only the folder's owners.",
   input: z.strictObject({ userId: UserIdSchema.describe('The member to remove') }),
   output: z.object({ removed: z.literal(true) }),
   routes: [DELETE('/folders/:id/members/:userId')],
@@ -183,7 +183,7 @@ export const folderInvitesList = defineCommand({
   title: 'List pending folder invites',
   description:
     'Email invites to the folder that have not been accepted yet (id, email, role, sent and expiry time). An ' +
-    'invite turns into a member when the person signs in.',
+    "invite turns into a member when the person signs in. Only the folder's owners.",
   input: z.strictObject({}),
   output: z.object({
     invites: z.array(
@@ -214,7 +214,7 @@ export const folderInvitesCancel = defineCommand({
   title: 'Cancel a folder invite',
   description:
     'Withdraw a pending email invite to the folder (id from folder.invites.list): signing in with that address ' +
-    'no longer makes the person a member. Confirm with the user first.',
+    "no longer makes the person a member. Confirm with the user first. Only the folder's owners.",
   input: z.strictObject({ inviteId: IdSchema.describe('Invite id (folder.invites.list)') }),
   output: z.object({ cancelled: z.literal(true) }),
   routes: [DELETE('/folders/:id/invites/:inviteId')],

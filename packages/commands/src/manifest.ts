@@ -28,6 +28,8 @@ export interface CapabilityEntry {
   roleOn?: { component?: string; folder?: string }
   /** A deck command that also takes a folder in place of a deck (only present when true). */
   acceptsFolder?: true
+  /** A folder read a guest of one of the folder's decks may run too (only present when set). */
+  folderReaders?: 'content'
   effects: string[]
   undo: string
   confirm: string
@@ -61,6 +63,7 @@ export function buildManifest(registry: CommandRegistry): CapabilityManifest {
       role: def.role,
       ...(def.roleOn !== undefined ? { roleOn: { ...def.roleOn } } : {}),
       ...(def.acceptsFolder === true ? { acceptsFolder: true as const } : {}),
+      ...(def.folderReaders !== undefined ? { folderReaders: def.folderReaders } : {}),
       effects: [...def.effects],
       undo: def.undo,
       confirm: def.confirm,
@@ -111,6 +114,7 @@ export function renderManifestMarkdown(manifest: CapabilityManifest): string {
         c.role,
         ...(c.roleOn?.component !== undefined ? [`master: ${c.roleOn.component}`] : []),
         ...(c.roleOn?.folder !== undefined ? [`folder: ${c.roleOn.folder}`] : []),
+        ...(c.folderReaders === 'content' ? ["also a guest of the folder's decks"] : []),
       ].join('; ')
       lines.push(
         `| \`${c.id}\` | ${cell(c.title)} | ${role} | ${c.undo} | ${c.confirm}${c.confirmWhen ? ' (asks for URL files)' : ''} | ${hints} |`,

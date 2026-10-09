@@ -6,6 +6,18 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+### Added
+
+- **A guest of one deck reads its folder's tokens and fonts through their
+  agent too**, as the editor already lets them: `token.list`,
+  `folder.fonts.list` and `media.fontUrl` declare `folderReaders: 'content'`
+  and the agent host resolves them like the editor's reads
+  (`resolveFolderContentAccess`, never through a share link). Everything else
+  in a folder stays its members'. `media.fontUrl` refuses a font of another
+  folder than its target (404).
+- **Agent eval scenarios** `folder-role-change`, `folder-invite-cancel`,
+  `folder-member-change` and `folder-guest-reads-tokens` (live-only).
+
 ### Changed
 
 - **Node 24.** The server and video-worker images run on `node:24-alpine`
@@ -26,6 +38,11 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
   checks it), and `just services` no longer falls back to a cached
   `minio/mc`. Production switches with the next deploy (`docs/deploy.md`,
   "Releasing the MinIO image switch"; HANDOVER.md).
+- **Every folder command says who may run it**, in one of three sentences
+  ("Any member of the folder." / "Needs the editor role in the folder." /
+  "Only the folder's owners.") — a test over every folder-scoped command pins
+  each one's role and its sentence, so a new folder command fails until its
+  role is decided.
 
 ## 0.10.18 — Share a folder (2026-10-07)
 

@@ -83,12 +83,14 @@ export function commandMetadataProblems(
 }
 
 /**
- * Target rules (see `acceptsComponent`, `acceptsFolder` and `roleOn` in
- * types.ts). Empty when `def` is consistent; `register` refuses a command
+ * Target rules (see `acceptsComponent`, `acceptsFolder`, `roleOn` and
+ * `folderReaders` in types.ts). Empty when `def` is consistent; `register` refuses a command
  * with any problem.
  *   - Only a deck-scoped command can work on a component master or a
  *     folder instead, and only a server command that uses no document on a
  *     folder; a per-target role names a target the command accepts.
+ *   - Only a read-only viewer command of folder scope may let a guest of
+ *     one of the folder's decks in (`folderReaders`).
  *   - A pure document edit (effects exactly `['doc']`) must: a master is a
  *     document like a deck, and an edit command that could not reach one
  *     would be a silent gap in what an agent can do to a master.
@@ -96,7 +98,15 @@ export function commandMetadataProblems(
 export function commandTargetProblems(
   def: Pick<
     AnyCommandDef,
-    'scope' | 'effects' | 'acceptsComponent' | 'acceptsFolder' | 'roleOn' | 'readsDocument'
+    | 'scope'
+    | 'effects'
+    | 'acceptsComponent'
+    | 'acceptsFolder'
+    | 'roleOn'
+    | 'readsDocument'
+    | 'folderReaders'
+    | 'readOnly'
+    | 'role'
   >,
 ): string[] {
   const problems: string[] = []
@@ -118,6 +128,12 @@ export function commandTargetProblems(
     problems.push('roleOn.component needs acceptsComponent')
   if (def.roleOn?.folder !== undefined && def.acceptsFolder !== true)
     problems.push('roleOn.folder needs acceptsFolder')
+  if (def.folderReaders !== undefined && scope !== 'folder')
+    problems.push(`folderReaders is for folder-scoped commands, but its scope is '${scope}'`)
+  if (def.folderReaders !== undefined && (def.readOnly !== true || def.role !== 'viewer'))
+    problems.push(
+      "folderReaders lets a deck's guest in, so only a read-only command with the viewer role may set it",
+    )
   if (
     scope === 'deck' &&
     def.effects.length > 0 &&

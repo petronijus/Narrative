@@ -34,7 +34,7 @@ export const deckImportPptx = defineCommand({
     'Returns the new deck id and what could not be carried over (skipped shapes, unsupported images, ignored ' +
     'elements) plus the font families the slides use — upload missing ones with folder.fonts.upload. To add a ' +
     "file's slides to an existing deck use deck.insertFrom. A .pptx by URL or base64 is limited to 200 MB; " +
-    'larger decks import through the browser. Undo: deck.delete.',
+    'larger decks import through the browser. Undo: deck.delete. Needs the editor role in the folder.',
   input: z.strictObject({
     file: FileSourceSchema,
     title: z

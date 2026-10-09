@@ -63,21 +63,21 @@ Commands: **135**. Known missing: **7**. Deliberately excluded: **20**.
 
 ## folder
 
-| Command                  | What it does                 | Role   | Undo         | Confirm                    | Hints      |
-| ------------------------ | ---------------------------- | ------ | ------------ | -------------------------- | ---------- |
-| `folder.create`          | Create folder                | owner  | undoable     | never                      |            |
-| `folder.delete`          | Delete folder                | owner  | irreversible | always                     |            |
-| `folder.fonts.delete`    | Delete folder font           | editor | irreversible | always                     |            |
-| `folder.fonts.list`      | Folder fonts                 | viewer | n/a          | never                      | read-only  |
-| `folder.fonts.upload`    | Upload folder font           | editor | undoable     | never (asks for URL files) |            |
-| `folder.invites.cancel`  | Cancel a folder invite       | owner  | irreversible | always                     |            |
-| `folder.invites.list`    | List pending folder invites  | owner  | n/a          | never                      | read-only  |
-| `folder.list`            | List folders                 | viewer | n/a          | never                      | read-only  |
-| `folder.members.invite`  | Share a folder with a person | owner  | irreversible | always                     |            |
-| `folder.members.list`    | List folder members          | owner  | n/a          | never                      | read-only  |
-| `folder.members.remove`  | Remove a folder member       | owner  | irreversible | always                     |            |
-| `folder.members.setRole` | Change a folder member role  | owner  | irreversible | always                     | idempotent |
-| `folder.rename`          | Rename folder                | owner  | undoable     | never                      | idempotent |
+| Command                  | What it does                 | Role                                       | Undo         | Confirm                    | Hints      |
+| ------------------------ | ---------------------------- | ------------------------------------------ | ------------ | -------------------------- | ---------- |
+| `folder.create`          | Create folder                | owner                                      | undoable     | never                      |            |
+| `folder.delete`          | Delete folder                | owner                                      | irreversible | always                     |            |
+| `folder.fonts.delete`    | Delete folder font           | editor                                     | irreversible | always                     |            |
+| `folder.fonts.list`      | Folder fonts                 | viewer; also a guest of the folder's decks | n/a          | never                      | read-only  |
+| `folder.fonts.upload`    | Upload folder font           | editor                                     | undoable     | never (asks for URL files) |            |
+| `folder.invites.cancel`  | Cancel a folder invite       | owner                                      | irreversible | always                     |            |
+| `folder.invites.list`    | List pending folder invites  | owner                                      | n/a          | never                      | read-only  |
+| `folder.list`            | List folders                 | viewer                                     | n/a          | never                      | read-only  |
+| `folder.members.invite`  | Share a folder with a person | owner                                      | irreversible | always                     |            |
+| `folder.members.list`    | List folder members          | owner                                      | n/a          | never                      | read-only  |
+| `folder.members.remove`  | Remove a folder member       | owner                                      | irreversible | always                     |            |
+| `folder.members.setRole` | Change a folder member role  | owner                                      | irreversible | always                     | idempotent |
+| `folder.rename`          | Rename folder                | owner                                      | undoable     | never                      | idempotent |
 
 ## guide
 
@@ -89,14 +89,14 @@ Commands: **135**. Known missing: **7**. Deliberately excluded: **20**.
 
 ## media
 
-| Command               | What it does                | Role                  | Undo         | Confirm                    | Hints     |
-| --------------------- | --------------------------- | --------------------- | ------------ | -------------------------- | --------- |
-| `media.delete`        | Delete media                | owner; master: editor | irreversible | always                     |           |
-| `media.fontUrl`       | Font file URL               | viewer                | n/a          | never                      | read-only |
-| `media.status`        | Video status                | viewer                | n/a          | never                      | read-only |
-| `media.upload`        | Upload media                | editor                | undoable     | never (asks for URL files) |           |
-| `media.uploadSession` | Upload a local file (shell) | editor                | n/a          | never                      |           |
-| `media.url`           | Image URL                   | viewer                | n/a          | never                      | read-only |
+| Command               | What it does                | Role                                       | Undo         | Confirm                    | Hints     |
+| --------------------- | --------------------------- | ------------------------------------------ | ------------ | -------------------------- | --------- |
+| `media.delete`        | Delete media                | owner; master: editor                      | irreversible | always                     |           |
+| `media.fontUrl`       | Font file URL               | viewer; also a guest of the folder's decks | n/a          | never                      | read-only |
+| `media.status`        | Video status                | viewer                                     | n/a          | never                      | read-only |
+| `media.upload`        | Upload media                | editor                                     | undoable     | never (asks for URL files) |           |
+| `media.uploadSession` | Upload a local file (shell) | editor                                     | n/a          | never                      |           |
+| `media.url`           | Image URL                   | viewer                                     | n/a          | never                      | read-only |
 
 ## object
 
@@ -212,14 +212,14 @@ Commands: **135**. Known missing: **7**. Deliberately excluded: **20**.
 
 ## token
 
-| Command              | What it does           | Role   | Undo         | Confirm | Hints      |
-| -------------------- | ---------------------- | ------ | ------------ | ------- | ---------- |
-| `token.create`       | Add a design token     | editor | undoable     | never   |            |
-| `token.delete`       | Delete a design token  | editor | irreversible | always  |            |
-| `token.list`         | List a folder's tokens | viewer | n/a          | never   | read-only  |
-| `token.seedDefaults` | Add the default tokens | editor | irreversible | always  | idempotent |
-| `token.update`       | Change a design token  | editor | undoable     | never   | idempotent |
-| `token.usages`       | Where a token is used  | viewer | n/a          | never   | read-only  |
+| Command              | What it does           | Role                                       | Undo         | Confirm | Hints      |
+| -------------------- | ---------------------- | ------------------------------------------ | ------------ | ------- | ---------- |
+| `token.create`       | Add a design token     | editor                                     | undoable     | never   |            |
+| `token.delete`       | Delete a design token  | editor                                     | irreversible | always  |            |
+| `token.list`         | List a folder's tokens | viewer; also a guest of the folder's decks | n/a          | never   | read-only  |
+| `token.seedDefaults` | Add the default tokens | editor                                     | irreversible | always  | idempotent |
+| `token.update`       | Change a design token  | editor                                     | undoable     | never   | idempotent |
+| `token.usages`       | Where a token is used  | viewer                                     | n/a          | never   | read-only  |
 
 ## Known missing
 

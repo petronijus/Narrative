@@ -390,14 +390,21 @@ function writesDocument(def: AnyCommandDef): boolean {
 export class ServerHost {
   constructor(private readonly deps: ServerHostDeps) {}
 
-  /** The role the user has on the target, per scope; null = no access. */
+  /**
+   * The role the user has on the target, per scope; null = no access. A
+   * folder needs a member, except for the reads that let the folder's
+   * content readers in too (`folderReaders: 'content'`).
+   */
   private async authorise(
-    scope: CommandScope,
+    def: AnyCommandDef,
     target: CommandTarget,
     userId: string,
   ): Promise<Role | null> {
     const { access } = this.deps
+    const scope = def.scope ?? 'deck'
     if (scope === 'user') return 'owner'
+    if (scope === 'folder' && def.folderReaders === 'content')
+      return access.folderContentRole(target.folderId!, userId)
     if (scope === 'folder' || target.folderId !== undefined)
       return access.folderRole(target.folderId!, userId)
     if (target.componentId !== undefined) return access.componentRole(target.componentId, userId)
@@ -417,9 +424,8 @@ export class ServerHost {
     if (def === undefined) {
       throw new CommandError('unknown_command', `unknown command '${commandId}'`)
     }
-    const scope = def.scope ?? 'deck'
     const target = targetFor(def, rawTarget)
-    const role = await this.authorise(scope, target, userId)
+    const role = await this.authorise(def, target, userId)
     if (role === null) {
       throw new CommandError(
         'forbidden',

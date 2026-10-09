@@ -18,6 +18,7 @@ import {
   resolveComponentAccess,
   resolveDeckAccess,
   resolveFolderAccess,
+  resolveFolderContentAccess,
 } from '../auth/permissions.js'
 
 export interface AgentAccess {
@@ -27,11 +28,18 @@ export interface AgentAccess {
   componentRole(componentId: string, userId: string): Promise<Role | null>
   /**
    * The user's role in a folder — a MEMBER's (folder_permissions), or null.
-   * Deliberately not "content reader": a guest of one of the folder's decks
-   * reads its tokens and fonts through that deck, never as a folder-scoped
-   * agent command (agent/access.integration.test.ts).
+   * What every folder-scoped command needs, unless it lets the folder's
+   * content readers in (`folderReaders`, below).
    */
   folderRole(folderId: string, userId: string): Promise<Role | null>
+  /**
+   * The user's role as a reader of what a folder shares with its decks
+   * (tokens, fonts): a member's folder role, or `viewer` for a guest of one
+   * of its decks — the rule the editor applies to the same reads. Only for
+   * the folder-scoped commands that declare `folderReaders: 'content'`.
+   * Never through a share link (agent/access.integration.test.ts).
+   */
+  folderContentRole(folderId: string, userId: string): Promise<Role | null>
 }
 
 export function createDbAccess(db: Database): AgentAccess {
@@ -46,6 +54,10 @@ export function createDbAccess(db: Database): AgentAccess {
     },
     async folderRole(folderId, userId) {
       const access = await resolveFolderAccess(db, { folderId, userId })
+      return access?.role ?? null
+    },
+    async folderContentRole(folderId, userId) {
+      const access = await resolveFolderContentAccess(db, { folderId, userId, shareToken: null })
       return access?.role ?? null
     },
   }

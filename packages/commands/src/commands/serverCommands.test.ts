@@ -23,7 +23,7 @@ import {
   createFakeServices,
   type FakeServices,
 } from '../testing/fakeServices.js'
-import type { CommandContext } from '../types.js'
+import type { CommandContext, Role } from '../types.js'
 
 const registry = createDefaultRegistry()
 
@@ -313,6 +313,100 @@ describe('folder-scoped roles (folder sharing, step 4)', () => {
       const err = await failure(runCommand(registry, as('editor'), id, input))
       expect(err.code, id).toBe('forbidden')
     }
+  })
+})
+
+describe('every folder-scoped command', () => {
+  // Each one's role (and whether a guest of one of the folder's decks may read
+  // it, `folderReaders`) is decided here, on purpose: a new folder-scoped
+  // command fails this table until someone decides who may run it. Reads are
+  // for any member, writes for editors, the folder itself for its owners.
+  const ROLES: Record<string, { role: Role; folderReaders?: 'content' }> = {
+    'component.list': { role: 'viewer' },
+    'component.get': { role: 'viewer' },
+    'component.rename': { role: 'editor' },
+    'component.delete': { role: 'editor' },
+    'deck.activeEditors': { role: 'viewer' },
+    'deck.importPptx': { role: 'editor' },
+    'folder.rename': { role: 'owner' },
+    'folder.delete': { role: 'owner' },
+    'folder.fonts.list': { role: 'viewer', folderReaders: 'content' },
+    'folder.fonts.upload': { role: 'editor' },
+    'folder.fonts.delete': { role: 'editor' },
+    'folder.members.list': { role: 'owner' },
+    'folder.members.invite': { role: 'owner' },
+    'folder.members.setRole': { role: 'owner' },
+    'folder.members.remove': { role: 'owner' },
+    'folder.invites.list': { role: 'owner' },
+    'folder.invites.cancel': { role: 'owner' },
+    'media.fontUrl': { role: 'viewer', folderReaders: 'content' },
+    'token.list': { role: 'viewer', folderReaders: 'content' },
+    'token.usages': { role: 'viewer' },
+    'token.create': { role: 'editor' },
+    'token.update': { role: 'editor' },
+    'token.delete': { role: 'editor' },
+    'token.seedDefaults': { role: 'editor' },
+  }
+  const folderScoped = registry.list().filter((def) => def.scope === 'folder')
+
+  it('has the role decided for it', () => {
+    expect(
+      Object.fromEntries(
+        folderScoped.map((def) => [
+          def.id,
+          { role: def.role, ...(def.folderReaders ? { folderReaders: def.folderReaders } : {}) },
+        ]),
+      ),
+    ).toEqual(ROLES)
+  })
+
+  it('refuses the role below the one it needs, before it runs', async () => {
+    const below: Record<Role, Role | null> = { viewer: null, editor: 'viewer', owner: 'editor' }
+    for (const def of folderScoped) {
+      const lower = below[def.role]
+      if (lower === null) continue
+      const err = await failure(
+        runCommand(
+          registry,
+          ctx({
+            target: { folderId: FIXTURE_FOLDER_ID },
+            actor: { userId: 'u1', role: lower, kind: 'agent' },
+          }),
+          def.id,
+          def.examples[0]!.input,
+        ),
+      )
+      expect(err.code, def.id).toBe('forbidden')
+    }
+  })
+
+  it('says in its description who may run it — and nothing it does not do', () => {
+    const says: Record<Role, RegExp> = {
+      viewer: /Any member of the folder/,
+      editor: /Needs the editor role in the folder/,
+      owner: /Only the folder's owners/,
+    }
+    for (const def of folderScoped) {
+      for (const [role, sentence] of Object.entries(says))
+        expect(sentence.test(def.description), `${def.id}: ${sentence}`).toBe(role === def.role)
+      expect(
+        /anyone with access to one of its decks/.test(def.description),
+        `${def.id}: deck guests`,
+      ).toBe(def.folderReaders === 'content')
+    }
+  })
+
+  it('pins the folder role of the deck commands that also take a folder', () => {
+    // Deck-scoped, but `acceptsFolder` reaches a folder through the same
+    // member check: media.delete removes a folder's own picture for its owner.
+    expect(
+      Object.fromEntries(
+        registry
+          .list()
+          .filter((def) => def.acceptsFolder === true)
+          .map((def) => [def.id, def.roleOn?.folder ?? def.role]),
+      ),
+    ).toEqual({ 'media.delete': 'owner' })
   })
 })
 

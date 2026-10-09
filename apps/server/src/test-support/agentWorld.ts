@@ -116,7 +116,11 @@ export interface AgentWorld {
    * (the fake of the database lookups, agent/confirmationSummary.ts).
    */
   titles: Map<string, string>
-  /** Give `userId` a role on a deck / component / folder id. */
+  /**
+   * Give `userId` a role on a deck / component / folder id (`component:<id>`,
+   * `folder:<id>` — a member; `folderContent:<id>` — a guest of one of the
+   * folder's decks, a reader of its tokens and fonts).
+   */
   grant(id: string, userId: string, role: Role): void
   /** Store a seeded deck so it loads with content. */
   createDeck(deckId: string, build?: (doc: Y.Doc) => void): void
@@ -208,6 +212,12 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     componentRole: async (componentId, userId) =>
       roles.get(`component:${componentId}|${userId}`) ?? null,
     folderRole: async (folderId, userId) => roles.get(`folder:${folderId}|${userId}`) ?? null,
+    // A member's role, else a guest of one of the folder's decks:
+    // grant('folderContent:<id>', user, 'viewer').
+    folderContentRole: async (folderId, userId) =>
+      roles.get(`folder:${folderId}|${userId}`) ??
+      roles.get(`folderContent:${folderId}|${userId}`) ??
+      null,
   }
   const store = createMemoryRunStore()
   const titles = new Map<string, string>()

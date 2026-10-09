@@ -25,6 +25,10 @@ import slideNotesTalkingPoints from './slideNotesTalkingPoints.js'
 import slidesCopyBlock from './slidesCopyBlock.js'
 import deckDuplicateNamed from './deckDuplicateNamed.js'
 import deckMoveFolderMedia from './deckMoveFolderMedia.js'
+import folderGuestReadsTokens from './folderGuestReadsTokens.js'
+import folderInviteCancel from './folderInviteCancel.js'
+import folderMemberChange from './folderMemberChange.js'
+import folderRoleChange from './folderRoleChange.js'
 import folderShareMember from './folderShareMember.js'
 import folderViewerWriteRefused from './folderViewerWriteRefused.js'
 import slidesOutlineNest from './slidesOutlineNest.js'
@@ -75,6 +79,10 @@ export const SCENARIOS: readonly AnyScenario[] = [
   deckDuplicateNamed,
   deckMoveFolderMedia,
   folderShareMember,
+  folderRoleChange,
+  folderInviteCancel,
+  folderMemberChange,
+  folderGuestReadsTokens,
   folderViewerWriteRefused,
   slidesOutlineNest,
   photoResizeCentered,

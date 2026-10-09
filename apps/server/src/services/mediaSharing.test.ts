@@ -669,6 +669,18 @@ describe('MediaService.fontUrl', () => {
 
     expect(await status(fonts().fontUrl({ userId: 'stranger', assetId: 'font-1' }))).toBe(403)
   })
+
+  it('refuses a font of another folder than the target, before asking who may read it (404)', async () => {
+    // An agent's media.fontUrl names its folder: a guest of folder f2's decks
+    // gets nothing of f1's, nor learns whether the asset exists.
+    vi.mocked(getFontAsset).mockResolvedValue(FONT as never)
+    vi.mocked(resolveFolderContentAccess).mockResolvedValue({ role: 'viewer', via: 'deck' })
+
+    expect(
+      await status(fonts().fontUrl({ userId: 'guest', assetId: 'font-1', folderId: 'f2' })),
+    ).toBe(404)
+    expect(resolveFolderContentAccess).not.toHaveBeenCalled()
+  })
 })
 
 describe('SharingService.revoke', () => {

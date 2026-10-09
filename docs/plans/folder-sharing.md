@@ -3,7 +3,8 @@
 Status: planned and decided by Petr on 2026-09-30. Step 1 released in
 0.10.16 (2026-10-02), step 2 in 0.10.17 (2026-10-04), steps 3 (folder
 sharing) and 4 (the agent surface) in 0.10.18 (deployed 2026-10-09) — step
-5, the release, is done. Open follow-ups: HANDOVER.md.
+5, the release, is done; the follow-ups of the step-4 review are done too
+(2026-10-09, unreleased — see Progress).
 
 ## What Petr decided
 
@@ -372,9 +373,41 @@ the agent-parity and security review of the agent surface.
   members get names and stable per-folder pseudonyms (`services/pseudonyms.ts`),
   since the open editors may include guests of single decks; `deck.importPptx`
   checks the folder role before downloading a URL; the agent host's folder
-  role is a member's, never a deck guest's (`agent/access.integration.test.ts`).
+  role is a member's, never a deck guest's (`agent/access.integration.test.ts`)
+  — except, since the follow-ups below, for the three content reads.
   Accepted as by design: an `api` token's caller may confirm its own
   irreversible calls on `/commands`, folder sharing included, as for decks.
+
+**Follow-ups of the step 4 parity review — done 2026-10-09, not released.**
+
+- A guest of one of a folder's decks reads the folder's tokens and fonts
+  through their agent too, as in the editor: `token.list`,
+  `folder.fonts.list` and `media.fontUrl` declare `folderReaders: 'content'`
+  (packages/commands types.ts; the registry allows it only on read-only
+  viewer commands of folder scope), and the agent host resolves them with
+  `resolveFolderContentAccess` — never through a share link
+  (`agent/access.ts` `folderContentRole`). `token.usages`, `component.*`,
+  `deck.activeEditors` and every write stay member-only. `media.fontUrl`
+  refuses a font of another folder than its target before any access check
+  (404). Note for ADR 0013: a guest of one deck sees every token and font of
+  its folder, not only those the deck uses — Drafts included, if a deck there
+  is shared — which the editor already allowed; the only exposure is font
+  licensing.
+- A role table over every `scope: 'folder'` command (and the deck commands
+  that also take a folder) in `commands/serverCommands.test.ts`: a new one
+  fails until its role is decided; each refuses the role below its own; each
+  description ends with exactly its role sentence ("Any member of the
+  folder." / "Needs the editor role in the folder." / "Only the folder's
+  owners."), and only the three content reads add "and anyone with access to
+  one of its decks".
+- Eval scenarios `folder-role-change`, `folder-invite-cancel`,
+  `folder-member-change` and `folder-guest-reads-tokens`, live-only, passed
+  live on 2026-10-09. The whole eval ran too, since the descriptions of 24
+  folder commands changed: 43 of 51 passed in one run, the eight others failed
+  together right after the dev server restarted under it (a config edited
+  mid-run) and passed when run again — 51/51, $6.17.
+- Reviewed by the security, code and agent-parity reviewers (2026-10-09); no
+  finding above low, all applied.
 
 **Step 5 (release) — 0.10.18, deployed 2026-10-09.**
 

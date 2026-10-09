@@ -292,7 +292,7 @@ export const tokenUpdate = defineCommand({
     'master of the folder, open or not: text boxes and tables linked to a text style take its new values (except ' +
     'fields set by hand on them), and a colour reaches the text of styles that use it. Only when the user asked ' +
     'for the folder-wide change; to restyle one box use text.setBoxTypography. `null` removes an optional ' +
-    'text-style field. Returns the previous values (token.update with them undoes it) and what was re-styled.',
+    'text-style field. Returns the previous values (token.update with them undoes it) and what was re-styled. Needs the editor role in the folder.',
   input: z.discriminatedUnion('category', [
     ColorPatch.extend({ category: z.literal('colors'), tokenId: TokenIdSchema }),
     TextStylePatch.extend({ category: z.literal('textStyles'), tokenId: TokenIdSchema }),
@@ -339,7 +339,7 @@ export const tokenDelete = defineCommand({
   description:
     'Remove a colour, text style or effect style from the folder. Anything still using it keeps its current look ' +
     "but no longer follows the token (check token.usages first). The folder's built-in text styles cannot be " +
-    'deleted. Cannot be undone (it returns the token, so it can be made again); confirm with the user first.',
+    'deleted. Cannot be undone (it returns the token, so it can be made again); confirm with the user first. Needs the editor role in the folder.',
   input: z.strictObject({ category: CategorySchema, tokenId: TokenIdSchema }),
   output: z.object({
     deleted: z.literal(true),
@@ -371,7 +371,7 @@ export const tokenSeedDefaults = defineCommand({
     'Give a folder that has no colours and no text styles the default palette and text styles (Title, Heading 1–3, ' +
     'Body, …, "Footnotes and pages"), and bring an older folder\'s default styles up to date. New folders get them ' +
     'when created; a folder that already has colours or text styles is not refilled. Cannot be undone — the ' +
-    'default text styles are built in (token.delete refuses them); confirm with the user first.',
+    'default text styles are built in (token.delete refuses them); confirm with the user first. Needs the editor role in the folder.',
   input: z.strictObject({}),
   output: z.object({ seeded: z.boolean(), migrated: z.boolean() }),
   undo: 'irreversible',
@@ -416,13 +416,14 @@ export const tokenList = defineCommand({
     "The folder's design tokens with their ids: colours, text styles (`builtin` ones cannot be deleted; a " +
     'colour is a hex or { $token: "colors.<id>" }) and effect styles (stored, not applied to anything yet). A ' +
     "deck's folder is its `folderId` (deck.get). Link text to a style with text.style.apply (by name works too). " +
-    'Any member of the folder.',
+    'Any member of the folder, and anyone with access to one of its decks.',
   input: z.strictObject({}),
   output: z.object({
     colors: z.array(ColorTokenOutput),
     textStyles: z.array(TextStyleOutput),
     effectStyles: z.array(EffectStyleOutput),
   }),
+  folderReaders: 'content',
   readOnly: true,
   undo: 'n/a',
   implementedWith: ['readFolderTokens'],
