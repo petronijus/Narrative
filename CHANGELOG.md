@@ -6,6 +6,14 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+## 0.10.19 — Node 24, MinIO from the GHCR mirror (2026-10-09)
+
+No migrations, no new env vars. Production's MinIO switches to the GHCR
+mirror with this deploy: before it, the VM must be able to pull the mirror
+and the bucket's object count is noted (`docs/deploy.md`, "Releasing the
+MinIO image switch"); keep the cached `minio/minio` on the VM, it is the only
+rollback.
+
 ### Added
 
 - **A guest of one deck reads its folder's tokens and fonts through their
@@ -43,6 +51,18 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
   "Only the folder's owners.") — a test over every folder-scoped command pins
   each one's role and its sentence, so a new folder command fails until its
   role is decided.
+- **`just deploy` builds on an always-on build host** (VM 105,
+  `infra/release.env`), not on the machine it runs on: `infra/scripts/ship.sh`
+  runs a preflight that fails in seconds with its fix, then
+  `remote-release.sh` builds from fresh worktrees of the tag, pushes, syncs
+  the VM over the LAN and verifies `/version.json`. `build-push.sh` needs no
+  secrets any more, refuses a tag built from another commit or a dirty tree,
+  and retries each push. (0.10.18 already shipped this way.)
+- **Test loops**: one 30 s time limit for every unit test
+  (`vitest.timeouts.ts`), one Playwright worker per four hardware threads by
+  default (`PW_WORKERS` overrides), and e2e specs that pass on macOS too
+  (per-platform caret chords, a real loopback listener for the OAuth
+  consent callback).
 
 ## 0.10.18 — Share a folder (2026-10-07)
 
