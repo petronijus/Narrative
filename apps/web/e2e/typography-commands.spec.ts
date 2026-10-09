@@ -13,6 +13,7 @@
  */
 
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { caret } from './fixtures/keys.js'
 import { PNG } from 'pngjs'
 
 const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'
@@ -132,7 +133,7 @@ async function settleSelection(page: Page) {
 async function editFromStart(page: Page, centre: { x: number; y: number }) {
   await page.mouse.dblclick(centre.x, centre.y)
   await expect(editor(page)).toBeFocused()
-  await page.keyboard.press('Control+Home')
+  await page.keyboard.press(caret.textStart)
   await settleSelection(page)
 }
 

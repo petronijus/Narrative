@@ -7,6 +7,7 @@
  */
 
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { caret } from './fixtures/keys.js'
 
 const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'
 const WEB_ORIGIN = process.env['NARRATIVE_WEB_URL'] ?? 'http://localhost:5173'
@@ -94,7 +95,7 @@ async function editBox(page: Page, title: string, body: unknown) {
   )
   const editor = page.locator('[contenteditable="true"]').first()
   await expect(editor).toBeFocused()
-  await page.keyboard.press('Control+End')
+  await page.keyboard.press(caret.textEnd)
   await settleSelection(page)
   return { deckId, objectId, editor }
 }
@@ -117,7 +118,7 @@ test('Enter continues a list, Tab nests, Backspace outdents and then joins', asy
     .poll(async () => (await paragraphs(page.request, deckId, objectId))[1])
     .toEqual(['Two', 'bullet', 1])
 
-  await page.keyboard.press('Home')
+  await page.keyboard.press(caret.lineStart)
   await settleSelection(page)
   await page.keyboard.press('Backspace')
   await expect

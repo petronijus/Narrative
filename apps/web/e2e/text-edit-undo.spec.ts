@@ -14,6 +14,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test'
+import { caret } from './fixtures/keys.js'
 
 const OBJ_ID = 'undo-text-1'
 const INITIAL = 'Hello'
@@ -71,7 +72,7 @@ test('typed text can be undone', async ({ page }) => {
   await expect(editable).toBeVisible({ timeout: 5_000 })
   await editable.click()
 
-  await page.keyboard.press('End')
+  await page.keyboard.press(caret.lineEnd)
   await page.keyboard.type(' world', { delay: 40 })
   await expect.poll(() => bodyText(page, OBJ_ID), { timeout: 5_000 }).toBe(`${INITIAL} world`)
 

@@ -17,6 +17,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test'
+import { caret } from './fixtures/keys.js'
 import { PNG } from 'pngjs'
 
 const PARA_SEP = ' '
@@ -349,7 +350,7 @@ test.describe('Multi-level lists — feature smoke', () => {
       .nth(1)
     await pb2.click()
     // Move caret to end of "Beta" deterministically.
-    await page.keyboard.press('End')
+    await page.keyboard.press(caret.lineEnd)
     await page.keyboard.press('Tab')
     await page.waitForTimeout(200)
     {
@@ -396,7 +397,7 @@ test.describe('Multi-level lists — feature smoke', () => {
       .locator('[data-shortcut-scope="canvas"] [contenteditable="true"] [data-pb="1"]')
       .last()
     await pbLast.click()
-    await page.keyboard.press('End')
+    await page.keyboard.press(caret.lineEnd)
     await page.keyboard.press('Enter')
     await page.keyboard.type('Xi')
     await expect
@@ -423,7 +424,7 @@ test.describe('Multi-level lists — feature smoke', () => {
         .locator('[data-shortcut-scope="canvas"] [contenteditable="true"] [data-pb="1"]')
         .nth(1)
       await pbBeta.click()
-      await page.keyboard.press('End')
+      await page.keyboard.press(caret.lineEnd)
       await page.keyboard.press('Shift+Tab')
       await page.waitForTimeout(200)
       const markers = await overlayMarkers(page)
@@ -459,7 +460,7 @@ test.describe('Multi-level lists — feature smoke', () => {
         .locator('[data-shortcut-scope="canvas"] [contenteditable="true"] [data-pb="1"]')
         .nth(1)
       await pbBeta.click()
-      await page.keyboard.press('End')
+      await page.keyboard.press(caret.lineEnd)
       await page.keyboard.press('Tab')
       await page.waitForTimeout(200)
       expect(await overlayMarkers(page)).toEqual(['•', '◦', '•'])
@@ -502,7 +503,7 @@ test.describe('Multi-level lists — feature smoke', () => {
         .locator('[data-shortcut-scope="canvas"] [contenteditable="true"] [data-pb="1"]')
         .nth(1)
       await pbBeta.click()
-      await page.keyboard.press('End')
+      await page.keyboard.press(caret.lineEnd)
       await page.keyboard.press('Backspace') // delete the 'a' in "Beta"
       await expect
         .poll(async () => splitParas(await bodyText(page, ID)))

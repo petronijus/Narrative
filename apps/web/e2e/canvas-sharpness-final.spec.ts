@@ -142,6 +142,9 @@ test.describe('Canvas Sharpness — zoom-adaptive resolution', () => {
   })
 
   test('total buffer never exceeds pixel budget', async ({ browser }) => {
+    // Four zoom levels, each a load and a reload of the editor painting a
+    // buffer of up to 25M pixels: ~25 s a level on the MacBook (2026-10-07).
+    test.setTimeout(180_000)
     const ctx = await browser.newContext({
       viewport: { width: 1280, height: 720 },
       deviceScaleFactor: 2,

@@ -12,6 +12,7 @@
  */
 
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { caret } from './fixtures/keys.js'
 import { PNG } from 'pngjs'
 
 const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'
@@ -131,7 +132,7 @@ test('dragging a column boundary moves width between the two columns, as one und
     .toBe(true)
   expect((await tableOf(page.request, deckId, tableId)).width).toBeCloseTo(900, 6)
 
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   await expect
     .poll(async () =>
       near((await tableOf(page.request, deckId, tableId)).colWidths, [300, 300, 300]),
@@ -251,7 +252,7 @@ test('Typography with a column selected styles those cells, not the table', asyn
   expect(t.rows.map((row) => row[1]!['align'])).toEqual([undefined, undefined, undefined])
 
   // One Inspector change, one undo step.
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   await expect
     .poll(async () =>
       (await tableOf(page.request, deckId, tableId)).rows.map((row) => row[0]!['align']),
@@ -325,7 +326,7 @@ test('Tab into the next cell edits that cell, showing its own text', async ({ pa
   // cell's, and the next keystroke wrote that into the new cell).
   await expect(editor(page)).toHaveText('xyz')
   await expect(editor(page)).toBeFocused()
-  await page.keyboard.press('End')
+  await page.keyboard.press(caret.lineEnd)
   await page.keyboard.type('1')
   await expect
     .poll(async () => (await cellTexts(page.request, deckId, tableId))[0])
