@@ -224,7 +224,11 @@ function stripDocPointers(slide: ReturnType<typeof listSlides>[number]): unknown
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('CRDT convergence — slide-model mutations', () => {
+// Each property runs 100–200 random op sequences: ~0.2 s alone, but its time
+// grows with the run count, so it gets its own budget rather than the 5 s of
+// a unit test — on a busy MacBook it crossed that inside `just check`
+// (2026-10-07/08).
+describe('CRDT convergence — slide-model mutations', { timeout: 60_000 }, () => {
   it('two clients converge after applying disjoint op sequences with periodic sync', () => {
     fc.assert(
       fc.property(

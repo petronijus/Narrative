@@ -26,6 +26,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setDefaultImageUrlResolver, _resetDefaultImageUrlResolver } from '../imageUrl'
 import { setDefaultResourceManager, _resetDefaultResourceManager } from '../ResourceManager'
+import { imageRenderer } from './imageRenderer'
 
 // ---------------------------------------------------------------------------
 // Pixi.js mock
@@ -149,11 +150,7 @@ describe('imageRenderer', () => {
   let rm: ReturnType<typeof makeResourceManager>
   let resolver: ReturnType<typeof makeResolver>
 
-  beforeEach(async () => {
-    // Dynamic import after mock is set up
-    const { imageRenderer: _ir } = await import('./imageRenderer')
-    void _ir // just ensure module is loaded
-
+  beforeEach(() => {
     rm = makeResourceManager()
     resolver = makeResolver()
 
@@ -167,14 +164,8 @@ describe('imageRenderer', () => {
     vi.clearAllMocks()
   })
 
-  // Re-import after mocks are configured.
-  async function getRenderer() {
-    const { imageRenderer } = await import('./imageRenderer')
-    return imageRenderer
-  }
-
   it('mount: returns Container with placeholder Graphics before load', async () => {
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.mount({ ...baseImage, assetId: '' }) // empty assetId stays in placeholder
 
     expect(node).toBeTruthy()
@@ -183,7 +174,7 @@ describe('imageRenderer', () => {
   })
 
   it('mount: sprite added after resolver and texture resolve', async () => {
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.mount(baseImage)
 
     // Wait for microtasks — resolver + acquireTexture are async.
@@ -202,7 +193,7 @@ describe('imageRenderer', () => {
     resolver.mockRejectedValueOnce(new Error('Network error'))
     setDefaultImageUrlResolver(resolver)
 
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.mount(baseImage)
 
     await new Promise((r) => setTimeout(r, 10))
@@ -217,7 +208,7 @@ describe('imageRenderer', () => {
     rm.acquireTexture.mockRejectedValueOnce(new Error('GPU out of memory'))
     setDefaultResourceManager(rm as never)
 
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.mount(baseImage)
 
     await new Promise((r) => setTimeout(r, 10))
@@ -236,7 +227,7 @@ describe('imageRenderer', () => {
     const slowResolver = vi.fn().mockReturnValue(deferred)
     setDefaultImageUrlResolver(slowResolver)
 
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.mount(baseImage)
 
     // Destroy immediately before resolver resolves.
@@ -253,7 +244,7 @@ describe('imageRenderer', () => {
   })
 
   it('destroy: releaseTexture called for acquired URL', async () => {
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.mount(baseImage)
 
     await new Promise((r) => setTimeout(r, 10))
@@ -264,14 +255,14 @@ describe('imageRenderer', () => {
   })
 
   it('destroy: container.destroy called', async () => {
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.mount(baseImage)
     ir.destroy(node)
     expect(node.destroyed).toBe(true)
   })
 
   it('applyPatch: x/y updates container position', async () => {
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.mount(baseImage)
     applyObjectTransformSetup(node)
 
@@ -284,7 +275,7 @@ describe('imageRenderer', () => {
   })
 
   it('applyPatch: rotation and opacity', async () => {
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.mount(baseImage)
 
     ir.applyPatch!(node, { rotation: Math.PI / 2 })
@@ -295,7 +286,7 @@ describe('imageRenderer', () => {
   })
 
   it('applyPatch: width/height recalculates pivot', async () => {
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.mount(baseImage)
     // Simulate mount transform: pivot = (width/2, height/2)
     node.pivot.set(100, 75)
@@ -312,7 +303,7 @@ describe('imageRenderer', () => {
   })
 
   it('applyPatch: assetId change triggers re-load', async () => {
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.mount(baseImage)
 
     // Wait for first load.
@@ -330,7 +321,7 @@ describe('imageRenderer', () => {
   })
 
   it('fit: cover — mask applied to sprite wrap', async () => {
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.mount({ ...baseImage, fit: 'cover' })
     await new Promise((r) => setTimeout(r, 10))
 
@@ -343,7 +334,7 @@ describe('imageRenderer', () => {
   })
 
   it('fit: contain — no mask on sprite wrap', async () => {
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.mount({ ...baseImage, fit: 'contain' })
     await new Promise((r) => setTimeout(r, 10))
 
@@ -362,7 +353,7 @@ describe('imageRenderer', () => {
     const decodeFn = vi.fn().mockResolvedValue(undefined)
     proto.decode = decodeFn
 
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.thumbnailMount!(baseImage)
 
     expect(node.children.length).toBeGreaterThanOrEqual(1)
@@ -381,7 +372,7 @@ describe('imageRenderer', () => {
   })
 
   it('empty assetId stays in placeholder state (broken object)', async () => {
-    const ir = await getRenderer()
+    const ir = imageRenderer
     const node = ir.mount({ ...baseImage, assetId: '' })
     await new Promise((r) => setTimeout(r, 10))
 

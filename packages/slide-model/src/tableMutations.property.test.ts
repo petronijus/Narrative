@@ -134,7 +134,10 @@ function apply(ctx: { doc: Y.Doc; objects: Y.Array<Y.Map<unknown>> }, id: string
   }
 }
 
-describe('table structure mutations — property', () => {
+// 300 random sequences: ~0.3 s alone, but its time grows with the run count,
+// so it gets its own budget rather than the 5 s of a unit test — on a busy
+// MacBook it crossed that inside `just check` (2026-10-07/08).
+describe('table structure mutations — property', { timeout: 60_000 }, () => {
   it('random insert / delete / merge / split sequences keep every invariant and undo cleanly', () => {
     fc.assert(
       fc.property(

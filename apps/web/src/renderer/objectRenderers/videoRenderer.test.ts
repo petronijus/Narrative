@@ -26,6 +26,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setDefaultVideoInfoResolver, _resetDefaultVideoInfoResolver } from '../videoInfo'
 import { setDefaultResourceManager, _resetDefaultResourceManager } from '../ResourceManager'
+import { videoRenderer } from './videoRenderer'
 
 // ---------------------------------------------------------------------------
 // Pixi.js mock
@@ -222,11 +223,7 @@ const baseVideo: VideoObject = {
 describe('videoRenderer', () => {
   let rm: ReturnType<typeof makeResourceManager>
 
-  beforeEach(async () => {
-    // Dynamic import to ensure Pixi mock is in place.
-    const { videoRenderer: _vr } = await import('./videoRenderer')
-    void _vr
-
+  beforeEach(() => {
     rm = makeResourceManager()
     setDefaultResourceManager(rm as never)
   })
@@ -237,17 +234,12 @@ describe('videoRenderer', () => {
     vi.clearAllMocks()
   })
 
-  async function getRenderer() {
-    const { videoRenderer } = await import('./videoRenderer')
-    return videoRenderer
-  }
-
   // -------------------------------------------------------------------------
   it('mount: returns Container with placeholder Graphics before load', async () => {
     const resolver = makeResolver(makePendingResult())
     setDefaultVideoInfoResolver(resolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     const node = vr.mount({ ...baseVideo, assetId: '' }) // empty assetId
 
     expect(node).toBeTruthy()
@@ -258,7 +250,7 @@ describe('videoRenderer', () => {
     const resolver = makeResolver(makeDoneResult())
     setDefaultVideoInfoResolver(resolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     vr.mount({ ...baseVideo, assetId: '' })
 
     await new Promise((r) => setTimeout(r, 10))
@@ -271,7 +263,7 @@ describe('videoRenderer', () => {
     const resolver = makeResolver(makePendingResult())
     setDefaultVideoInfoResolver(resolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     const node = vr.mount(baseVideo)
 
     await new Promise((r) => setTimeout(r, 10))
@@ -288,7 +280,7 @@ describe('videoRenderer', () => {
     const resolver = makeResolver(makeDoneResult())
     setDefaultVideoInfoResolver(resolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     const node = vr.mount(baseVideo)
 
     await new Promise((r) => setTimeout(r, 10))
@@ -303,7 +295,7 @@ describe('videoRenderer', () => {
     const resolver = makeResolver(makeDoneResult(null as unknown as string))
     setDefaultVideoInfoResolver(resolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     const node = vr.mount(baseVideo)
 
     await new Promise((r) => setTimeout(r, 10))
@@ -317,7 +309,7 @@ describe('videoRenderer', () => {
     const resolver = makeResolver(makeFailedResult())
     setDefaultVideoInfoResolver(resolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     const node = vr.mount(baseVideo)
 
     await new Promise((r) => setTimeout(r, 10))
@@ -331,7 +323,7 @@ describe('videoRenderer', () => {
     const resolver = vi.fn().mockRejectedValue(new Error('Network error'))
     setDefaultVideoInfoResolver(resolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     const node = vr.mount(baseVideo)
 
     await new Promise((r) => setTimeout(r, 10))
@@ -348,7 +340,7 @@ describe('videoRenderer', () => {
     const slowResolver = vi.fn().mockReturnValue(deferred)
     setDefaultVideoInfoResolver(slowResolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     const node = vr.mount(baseVideo)
 
     vr.destroy(node)
@@ -365,7 +357,7 @@ describe('videoRenderer', () => {
     const resolver = makeResolver(makeDoneResult())
     setDefaultVideoInfoResolver(resolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     const node = vr.mount(baseVideo)
 
     await new Promise((r) => setTimeout(r, 10))
@@ -379,7 +371,7 @@ describe('videoRenderer', () => {
     const resolver = makeResolver(makeDoneResult())
     setDefaultVideoInfoResolver(resolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     const node = vr.mount(baseVideo)
     vr.destroy(node)
 
@@ -390,7 +382,7 @@ describe('videoRenderer', () => {
     const resolver = makeResolver(makePendingResult())
     setDefaultVideoInfoResolver(resolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     const node = vr.mount(baseVideo)
     // Simulate mount transform: pivot = (width/2, height/2)
     node.pivot.x = baseVideo.width / 2
@@ -411,7 +403,7 @@ describe('videoRenderer', () => {
     const resolver = makeResolver(makePendingResult())
     setDefaultVideoInfoResolver(resolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     const node = vr.mount(baseVideo)
 
     vr.applyPatch(node, { rotation: Math.PI / 4 })
@@ -427,7 +419,7 @@ describe('videoRenderer', () => {
     const resolver = makeResolver(makePendingResult())
     setDefaultVideoInfoResolver(resolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     const node = vr.mount(baseVideo)
     node.pivot.x = baseVideo.width / 2
     node.pivot.y = baseVideo.height / 2
@@ -448,7 +440,7 @@ describe('videoRenderer', () => {
     const resolver = makeResolver(makeDoneResult())
     setDefaultVideoInfoResolver(resolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     const node = vr.mount(baseVideo)
 
     await new Promise((r) => setTimeout(r, 10))
@@ -475,7 +467,7 @@ describe('videoRenderer', () => {
     const resolver = makeResolver(makeDoneResult())
     setDefaultVideoInfoResolver(resolver)
 
-    const vr = await getRenderer()
+    const vr = videoRenderer
     const node = vr.thumbnailMount!(baseVideo)
 
     expect(node.children.length).toBeGreaterThanOrEqual(1)
