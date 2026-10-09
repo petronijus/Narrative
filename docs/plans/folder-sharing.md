@@ -1,9 +1,9 @@
 # Folder sharing and linked component media
 
 Status: planned and decided by Petr on 2026-09-30. Step 1 released in
-0.10.16 (2026-10-02), step 2 in 0.10.17 (2026-10-04). **Steps 3 (folder
-sharing) and 4 (the agent surface) built on 2026-10-04, not released** —
-see Progress below; step 5, the release, is next.
+0.10.16 (2026-10-02), step 2 in 0.10.17 (2026-10-04), steps 3 (folder
+sharing) and 4 (the agent surface) in 0.10.18 (deployed 2026-10-09) — step
+5, the release, is done. Open follow-ups: HANDOVER.md.
 
 ## What Petr decided
 
@@ -288,7 +288,7 @@ Left for the later steps, on purpose:
 - Revoking folder membership (step 3) must close the user's connections on
   the folder's decks, components and `folder:<id>`.
 
-**Step 3 (folder sharing) — built 2026-10-04, not released.**
+**Step 3 (folder sharing) — built 2026-10-04, released in 0.10.18.**
 
 - Migration 0033 (`folder_invites`, the shape of `deck_invites`: one
   pending invite per folder and address, 30 days).
@@ -347,7 +347,7 @@ Left for step 4 (done the same day, below): the 18 folder-scoped commands still 
 (list above), eval scenarios (share a folder; a viewer's write refused),
 the agent-parity and security review of the agent surface.
 
-**Step 4 (agent surface) — built 2026-10-04, not released.**
+**Step 4 (agent surface) — built 2026-10-04, released in 0.10.18.**
 
 - The 16 folder-scoped commands declare the role their service enforces:
   reads viewer (`component.list`, `component.get`, `token.list`,
@@ -375,6 +375,21 @@ the agent-parity and security review of the agent surface.
   role is a member's, never a deck guest's (`agent/access.integration.test.ts`).
   Accepted as by design: an `api` token's caller may confirm its own
   irreversible calls on `/commands`, folder sharing included, as for decks.
+
+**Step 5 (release) — 0.10.18, deployed 2026-10-09.**
+
+- Before the deploy (2026-10-07), production's accounts were checked
+  against the new sign-in rule (`docs/deploy.md`, "Releasing folder sharing
+  — 0.10.18"): of two, the database no longer admits only Petr's, which the
+  env allowlist does. Nobody lost access.
+- Migrations 0033 and 0034 applied. Production had no folder named exactly
+  "Drafts" (its oldest folder is a user's "draft"), so 0034's backfill
+  marked none — as 0.10.17, which looked Drafts up by that exact name, had
+  none either; the first deck created without a folder provisions a flagged
+  Drafts.
+- Shipped through the new build host (`just deploy` → VM 105 builds,
+  pushes and deploys; `docs/deploy.md` → Quick deploy) after three failed
+  attempts from a MacBook on 2026-10-07/09.
 
 ### Review of step 1 (code and security review, 2026-09-30)
 
