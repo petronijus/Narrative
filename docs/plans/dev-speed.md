@@ -47,9 +47,14 @@ Measured on the Linux desktop (24 threads) on 2026-09-30:
   Since 2026-10-07 the default is a worker per four hardware threads (still
   6 there): on the 12-thread MacBook 6 workers ran the suite at a load of 60
   in 27 min with 83 tests failing, mostly timeouts; 3 workers took 12.6 min
-  with 171 passing. Most of the 14 that still fail there failed in every
-  run on the MacBook, so they look like macOS differences (Cmd vs Ctrl,
-  word selection, the local `.env`), not load — not yet investigated.
+  with 171 passing. Of the 14 that failed there: the specs pressed Linux
+  caret keys (`Control+Home`, `End`, `Control+z` — now `e2e/fixtures/keys.ts`
+  and `ControlOrMeta`); the OAuth consent spec's `page.route` missed the
+  callback redirect on Playwright's own Chromium (now a real loopback
+  listener); the pixel-budget spec needs ~25 s a zoom level there (its own
+  timeout); `slide-clipboard` needs an absolute `IMGPROXY_ENDPOINT`, which
+  the overlay's dev env lacks (HANDOVER); the other seven passed alone, i.e.
+  load.
 
 ## What running in parallel found
 
