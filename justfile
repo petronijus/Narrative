@@ -187,30 +187,11 @@ bump version:
     pnpm --filter @narrative/commands skill
     echo "Versions set to {{ version }}. Next: CHANGELOG section, commit, tag v{{ version }}, push, just deploy v{{ version }} (docs/deploy.md)."
 
-# Host: the `narrative` ssh alias, or NARRATIVE_SSH=<user@host>; Claude Code asks before running it.
+# The build host (infra/release.env) fetches the tag, builds, pushes and deploys; this machine only checks
+# and orders, so its uplink, CPU and env files do not matter. Claude Code asks before running it.
 # Release a pushed tag to production: images to GHCR, the tagged tree to the VM, deploy, verify (docs/deploy.md)
 deploy tag:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tag="$1" host="${NARRATIVE_SSH:-narrative}"
-    [[ "$(git describe --exact-match --tags HEAD 2>/dev/null)" == "$tag" ]] ||
-      { echo "deploy: HEAD is not tagged $tag — commit, tag and push the release first" >&2; exit 1; }
-    [[ -z "$(git status --porcelain --untracked-files=no)" ]] ||
-      { echo "deploy: tracked files have uncommitted changes; the images are built from this tree" >&2; exit 1; }
-    git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null ||
-      { echo "deploy: $tag is not on origin — push it first (git push origin main $tag)" >&2; exit 1; }
-    NARRATIVE_TAG="$tag" infra/scripts/build-push.sh
-    # The VM gets the tagged tree itself, never the working directory (gitignored
-    # local files — fixtures, the private overlay — must not travel). --delete
-    # spares what lives only on the VM: its env files and the backups.
-    tree="$(mktemp -d "${TMPDIR:-/tmp}/narrative-deploy.XXXXXX")"
-    trap 'rm -rf "$tree"' EXIT
-    git archive "$tag" | tar -x -C "$tree"
-    rsync -az --delete --exclude /.env --exclude infra/.env.prod --exclude backups/ "$tree/" "$host:/opt/narrative/"
-    ssh "$host" "chmod +x /opt/narrative/infra/scripts/*.sh && cd /opt/narrative && USE_SHARED_TUNNEL=1 NARRATIVE_TAG=$tag ./infra/scripts/deploy.sh prod"
-    served="$(curl -fsS https://narrative.bastla.com/version.json)"
-    echo "$served"
-    [[ "$served" == *"\"$tag+"* ]] || { echo "deploy: production does not serve $tag" >&2; exit 1; }
+    infra/scripts/ship.sh "$1"
 
 # ── guards (private; fail with the fix) ──────────────────────────────────
 

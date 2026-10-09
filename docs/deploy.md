@@ -56,31 +56,17 @@ both Linux (Ubuntu desktop) and macOS workstations as the deploy client.
 
 ## Prerequisites (deploy client)
 
-### Linux (Ubuntu)
+`just deploy` needs on the machine it runs on only git, `gh` logged in,
+Tailscale, and SSH with the 1Password agent: the agent opens the build host
+(`NARRATIVE_BUILDER`) and, forwarded, the VM. No Docker, no
+`infra/.env.prod`, no particular CPU or uplink (Quick deploy below).
+
+For work on the VM by hand:
 
 ```bash
-# SSH access to VM 103
-ssh petr@192.0.2.147       # direct (from LAN)
-ssh -J root@192.0.2.100 petr@192.0.2.147  # via jump host (outside LAN)
-
-# Required tools
-rsync --version   # pre-installed on Ubuntu
-ssh -V            # pre-installed
-```
-
-### macOS
-
-```bash
-# Install rsync if missing (macOS ships an older version, but it works)
-brew install rsync   # optional, for a newer version
-
-# SSH access — same as Linux
 ssh petr@192.0.2.147       # direct (from LAN)
 ssh -J root@192.0.2.100 petr@192.0.2.147  # via jump host (outside LAN)
 ```
-
-Both platforms need the ed25519 SSH key that VM 103 trusts. The key is
-already set up on both machines.
 
 🚨 **The images must be linux/amd64, whatever you build on.** The VM is
 x86_64; Docker builds for the host architecture unless told otherwise, so an
@@ -88,7 +74,7 @@ Apple Silicon Mac produces arm64 images and the deploy dies at the pull with
 `no matching manifest for linux/amd64 in the manifest list entries` — after
 the tag has been pushed and `:latest` overwritten with it, so the next
 tagless deploy would break too. Since 0.9.16 `build-push.sh` pins
-`DOCKER_DEFAULT_PLATFORM=linux/amd64` itself (override with
+the target platform itself (override with
 `TARGET_PLATFORM=` if the VM ever moves), so nothing is needed from you — but
 on an arm64 Mac the build runs under QEMU emulation and takes longer.
 
@@ -274,48 +260,66 @@ Host narrative  # the VM: user petr (sudo + docker), ProxyJump pve
 ```
 
 - Log in as **`petr`**, not root. The Tailscale host `docker`
-  (alias `docker-vm`) is an **unrelated** homelab box — Narrative does not
-  live there.
-- A machine without the `narrative` alias (the Linux desktop, 2026-09-22)
-  reaches the VM directly on the LAN: pass `NARRATIVE_SSH=petr@<vm address>`
-  to `just deploy`.
+  (alias `docker-vm`, VM 105) does not run Narrative; it is the **build
+  host** `just deploy` uses (Quick deploy), and it reaches the VM on the LAN
+  with the deploying machine's forwarded agent — no alias needed anywhere.
 - Coding agents connect to these hosts only with Petr's explicit consent per
   host.
 
 ## Quick deploy
 
-From the project root, with the release tagged and pushed (AGENTS.md →
-Conventions: `just bump`, CHANGELOG, commit → tag → push):
+From the project root of any of Petr's machines, with the release tagged and
+pushed (AGENTS.md → Conventions: `just bump`, CHANGELOG, commit → tag →
+push):
 
 ```bash
-just deploy v0.10.15
+just deploy v0.10.18
 ```
 
-The recipe refuses unless `HEAD` is that tag, the tracked files are clean and
-the tag is on origin, then:
+`just deploy` (`infra/scripts/ship.sh`) does not build on the machine it runs
+on. The **build host** — `NARRATIVE_BUILDER` in `infra/release.env`, the
+always-on x86_64 homelab VM 105 on the LAN, logged in to GHCR — does the work,
+so a slow uplink, an Apple Silicon CPU, a missing Docker or a stale
+`infra/.env.prod` on the deploying machine no longer matter (each of them
+stopped the 0.10.18 deploy from a MacBook on 2026-10-07/09).
 
-1. builds the images and pushes them to GHCR
-   (`NARRATIVE_TAG=<tag> infra/scripts/build-push.sh`; needs Docker,
-   `infra/.env.prod` and a `docker login ghcr.io`);
-2. syncs **the tagged tree** (`git archive <tag>`, never the working
-   directory — gitignored local files such as PPTX fixtures or the private
-   overlay must not travel) to `/opt/narrative` with `rsync --delete`,
-   sparing `infra/.env.prod`, a root `.env` and `backups/`, which live only on
-   the VM;
-3. runs `USE_SHARED_TUNNEL=1 NARRATIVE_TAG=<tag> ./infra/scripts/deploy.sh
-prod` there;
-4. fails unless `https://<domain>/version.json` then serves the tag.
+1. **Preflight** (seconds, before anything is built): the tag and the
+   deploying checkout's `HEAD` are on GitHub, `gh` is logged in, and the
+   builder answers, has Docker with buildx, is logged in to `ghcr.io`, has
+   15 GB free and reaches the VM with the forwarded SSH agent. A failure
+   names its fix.
+2. **On the builder** (`infra/scripts/remote-release.sh`, streamed over
+   `ssh -A`, one release at a time under a lock): fetches the tag from
+   GitHub (a `gh` token passed on stdin, kept in the git process's
+   environment only, never written), checks out fresh worktrees of the tag
+   and of the deploying `HEAD` (the tooling, so an older tag ships with
+   today's scripts), then `build-push.sh`: builds the three images for
+   linux/amd64 with **no secrets** (only `DOMAIN` from `infra/release.env`),
+   pushes them with up to five attempts each, and checks that the registry
+   holds linux/amd64 images for the tag.
+3. Syncs **the tagged tree** (`git archive <tag>`, never a working directory)
+   to `/opt/narrative` on the VM over the LAN with `rsync --delete`, sparing
+   `infra/.env.prod`, a root `.env` and `backups/`, which live only on the
+   VM; runs `USE_SHARED_TUNNEL=1 NARRATIVE_TAG=<tag> ./infra/scripts/deploy.sh
+prod` there.
+4. Fails unless `https://<domain>/version.json` serves the tag — checked from
+   the builder and again from the deploying machine.
 
-Claude Code asks before running it (`.claude/settings.json`). By hand, the
-same steps:
+Claude Code asks before running it (`.claude/settings.json`). Another build
+host: `NARRATIVE_BUILDER=user@host just deploy vX.Y.Z`; it needs Docker with
+buildx, `docker login ghcr.io -u petronijus` with a write:packages token,
+git, rsync, flock, curl, python3 and GNU base64, and must reach the VM.
+
+By hand, without a builder (any Docker host, slow under emulation on arm64):
 
 ```bash
-echo "$GHCR_PAT" | docker login ghcr.io -u petronijus --password-stdin
-NARRATIVE_TAG=v0.10.15 infra/scripts/build-push.sh
-tree="$(mktemp -d)" && git archive v0.10.15 | tar -x -C "$tree"
+docker login ghcr.io -u petronijus          # a write:packages token
+src="$(mktemp -d)" && git worktree add --detach "$src" v0.10.18
+NARRATIVE_TAG=v0.10.18 infra/scripts/build-push.sh --src "$src"
+tree="$(mktemp -d)" && git archive v0.10.18 | tar -x -C "$tree"
 rsync -az --delete --exclude /.env --exclude infra/.env.prod --exclude backups/ "$tree/" narrative:/opt/narrative/
 ssh narrative 'chmod +x /opt/narrative/infra/scripts/*.sh &&
-  cd /opt/narrative && NARRATIVE_TAG=v0.10.15 USE_SHARED_TUNNEL=1 ./infra/scripts/deploy.sh prod'
+  cd /opt/narrative && NARRATIVE_TAG=v0.10.18 USE_SHARED_TUNNEL=1 ./infra/scripts/deploy.sh prod'
 ```
 
 That's it. The script pulls the prebuilt images, extracts the SPA static files,
