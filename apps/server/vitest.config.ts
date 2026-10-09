@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { TEST_TIMEOUTS } from '../../vitest.timeouts.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -18,6 +19,7 @@ export default defineConfig({
     },
   },
   test: {
+    ...TEST_TIMEOUTS,
     environment: 'node',
     include: ['src/**/*.test.ts'],
     exclude: ['src/**/*.integration.test.ts'],

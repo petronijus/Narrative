@@ -59,11 +59,7 @@ describe('the action catalog', () => {
   })
 })
 
-// Parses every .tsx file in src with the TypeScript compiler: ~0.3 s alone,
-// growing with the code base, so it gets its own budget rather than the 5 s
-// of a unit test — on a busy MacBook it crossed that inside `just check`
-// (2026-10-07/08).
-describe('hand-rolled menu items', { timeout: 60_000 }, () => {
+describe('hand-rolled menu items', () => {
   /** Every element with a menu-item role, in every source file, with its data-action. */
   function menuItems(): Array<{ where: string; action: ts.JsxAttribute | undefined }> {
     const out: Array<{ where: string; action: ts.JsxAttribute | undefined }> = []

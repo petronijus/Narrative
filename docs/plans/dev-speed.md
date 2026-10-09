@@ -30,6 +30,14 @@ Measured on the Linux desktop (24 threads) on 2026-09-30:
   the 12-thread MacBook `just check` took 117–177 s at a load of 85 and
   timed out property and web tests (0.2 s alone, over 5 s there). Budgeted,
   the MacBook's `just check` is green in ~70 s.
+- **One time limit for every unit test: 30 s** (2026-10-09,
+  `vitest.timeouts.ts`, spread into each workspace's vitest config; the web
+  app's in `apps/web/vitest.config.ts`, so the production build of
+  `vite.config.ts` does not import it). A limit ends a hanging test; it is no
+  speed check. Vitest's 5 s / 10 s defaults failed a different test on each
+  busy run of the MacBook (property tests, MCP worlds, xmllint, the catalog
+  parse — 0.1–0.8 s alone), and the per-file budgets added for some of them
+  first are gone again.
 - **`just e2e-affected`** (`tools/dev/e2e-affected.py`): the specs the
   working tree (or `--base REF`) needs, from an `AREAS` table — AGENTS.md
   "When to run what" as code. A shared package, the schema or an app entry
