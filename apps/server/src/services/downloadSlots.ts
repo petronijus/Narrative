@@ -24,10 +24,11 @@ const inFlight = new Map<string, number>()
 
 /**
  * Take one of the user's download slots, or throw `conflict` when both are
- * taken. Returns the release function; it is idempotent, so a `finally`
- * that calls it after an earlier release does not free someone else's slot.
+ * taken. The slot is freed when the returned handle is disposed — hold it
+ * with `using`, so it is freed however the scope exits. Disposal is
+ * idempotent: disposing a handle twice does not free someone else's slot.
  */
-export function acquireDownloadSlot(userId: string): () => void {
+export function acquireDownloadSlot(userId: string): Disposable {
   const current = inFlight.get(userId) ?? 0
   if (current >= MAX_URL_DOWNLOADS_PER_USER) {
     throw conflict(
@@ -37,12 +38,14 @@ export function acquireDownloadSlot(userId: string): () => void {
   }
   inFlight.set(userId, current + 1)
   let released = false
-  return () => {
-    if (released) return
-    released = true
-    const n = (inFlight.get(userId) ?? 1) - 1
-    if (n <= 0) inFlight.delete(userId)
-    else inFlight.set(userId, n)
+  return {
+    [Symbol.dispose]() {
+      if (released) return
+      released = true
+      const n = (inFlight.get(userId) ?? 1) - 1
+      if (n <= 0) inFlight.delete(userId)
+      else inFlight.set(userId, n)
+    },
   }
 }
 

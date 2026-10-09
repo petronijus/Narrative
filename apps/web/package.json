@@ -113,7 +113,7 @@
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.1",
-    "@types/node": "^22.19.17",
+    "@types/node": "^24.19.1",
     "@types/pngjs": "^6.0.5",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",

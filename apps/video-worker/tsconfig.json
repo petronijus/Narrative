@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "target": "ES2025",
     "outDir": "dist",
     "rootDir": "../..",
     "moduleResolution": "bundler",

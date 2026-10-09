@@ -6,6 +6,16 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+### Changed
+
+- **Node 24.** The server and video-worker images run on `node:24-alpine`
+  and the web image builds on it (was `node:22-alpine`); development needs
+  Node ≥ 24.4 (`engines`, `just doctor`; was ≥ 22.18) and the Node-side
+  TypeScript targets ES2025. URL downloads hold their temporary directory,
+  file handle and per-user download slot with `using` / `await using`, so
+  the slot is freed even when removing the directory fails. Every dev
+  machine needs Node 24 (HANDOVER.md).
+
 ## 0.10.18 — Share a folder (2026-10-07)
 
 Migrations 0033 (`folder_invites`, created empty) and 0034

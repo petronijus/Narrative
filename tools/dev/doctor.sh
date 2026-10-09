@@ -20,16 +20,17 @@ echo "Toolchain"
 if has node; then
   v="$(node -v | tr -d v)"
   IFS=. read -r major minor _ <<<"$v"
-  # engines.node: >= 22.18 (built-in type stripping, which the ESLint config
-  # needs to load the TypeScript parity table).
-  if ((major > 22 || (major == 22 && minor >= 18))); then ok "Node $v"; else
-    bad "Node $v (want ≥ 22.18)" "install a current Node LTS (fnm / brew install node)"; fi
+  # engines.node: >= 24.4 — Node 24 LTS, the line the images run; 24.4 added
+  # fs.promises.mkdtempDisposable (the server's URL downloads). Node 24 strips
+  # types by default, which the ESLint config needs for the parity table.
+  if ((major > 24 || (major == 24 && minor >= 4))); then ok "Node $v"; else
+    bad "Node $v (want ≥ 24.4)" "install the current Node LTS (fnm / brew install node@24)"; fi
   ts="$(node -p 'process.features.typescript ?? false' 2>/dev/null)"
   [[ "$ts" != false ]] && ok "Node type stripping ($ts)" ||
     warn "this Node build has no TypeScript support (Ubuntu's distro package)" \
       "nothing to do for just recipes (they load tsx); raw \`pnpm lint\` needs NODE_OPTIONS=--import=tsx"
 else
-  bad "Node missing" "install Node ≥ 22.18"
+  bad "Node missing" "install Node ≥ 24.4"
 fi
 want_pnpm="$(node -p 'require("./package.json").packageManager.split("@")[1]' 2>/dev/null)"
 if has pnpm; then

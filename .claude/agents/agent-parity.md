@@ -294,7 +294,7 @@ Quote the failing test name and message verbatim in the ledger.
 `pnpm lint` failing with `ERR_UNKNOWN_FILE_EXTENSION` for
 `packages/commands/src/parity/slideModelExports.ts` before any file is
 linted is the environment, not a parity finding: the Node in use cannot
-strip types (Ubuntu 26.04's distro Node 22.22.1 on `petronijus-PC`,
+strip types (as Ubuntu 26.04's distro Node 22.22.1 on `petronijus-PC` did,
 2026-09-29 — `node -p process.features.typescript` prints `false`). Run
 lint as `just lint`, which loads tsx for such a Node (SETUP.md,
 "Common first-run failures").

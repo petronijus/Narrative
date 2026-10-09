@@ -21,7 +21,7 @@
     "pino": "^10.3.1"
   },
   "devDependencies": {
-    "@types/node": "^22.14.1",
+    "@types/node": "^24.19.1",
     "@types/pg": "^8.11.11",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7"

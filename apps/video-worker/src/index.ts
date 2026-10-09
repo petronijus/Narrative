@@ -6,7 +6,7 @@ import bullmq from 'bullmq'
 const { Worker } = bullmq
 // ioredis is published as CJS with `module.exports = Redis`. Different Node
 // versions disagree on how that becomes an ESM default import:
-//  - Node 22 ESM-default-import gives the bare Redis class.
+//  - Node 22 and 24 ESM-default-import gives the bare Redis class.
 //  - Node 25 ESM-default-import gives a namespace { default: Redis, Redis, ... }.
 // Normalise by accepting either shape.
 import IORedisModule from 'ioredis'

@@ -3,8 +3,9 @@
  * strict base64 (plain, base64url, data: URLs), the two limit tiers (bytes a
  * route received vs. URL / base64 fetched on the caller's behalf) checked
  * before decoding, URL downloads landing in a private temporary directory
- * that is always removed, the per-user limit of two URL downloads in flight,
- * and URL failures mapped to the right errors. The download itself is
+ * that is always removed, the per-user limit of two URL downloads in flight
+ * (a slot freed even when removing the directory fails), and URL failures
+ * mapped to the right errors. The download itself is
  * net/ssrfGuard.ts (tested there against a real server); here it is mocked
  * with an implementation that writes the destination file like the real one.
  */
@@ -19,6 +20,11 @@ vi.mock('../net/ssrfGuard.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../net/ssrfGuard.js')>()
   return { ...original, guardedDownloadToFile: vi.fn() }
 })
+// The real temporary directories, wrapped so one test can make removal fail.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...original, mkdtempDisposable: vi.fn(original.mkdtempDisposable) }
+})
 
 const { guardedDownloadToFile, UnsafeUrlError, FetchFailedError } =
   await import('../net/ssrfGuard.js')
@@ -28,6 +34,10 @@ const { downloadsInFlight } = await import('./downloadSlots.js')
 const { ServiceError } = await import('./errors.js')
 const { serviceErrorOf } = await import('../test-support/serviceErrors.js')
 const downloadMock = vi.mocked(guardedDownloadToFile)
+const { mkdtempDisposable } = await import('node:fs/promises')
+const { mkdtempDisposable: realMkdtempDisposable } =
+  await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+const mkdtempMock = vi.mocked(mkdtempDisposable)
 
 const USER = 'user-1'
 
@@ -295,6 +305,31 @@ describe('withBinarySource: URL downloads', () => {
     await expect(resolveBinarySource(src, opts)).resolves.toMatchObject({
       bytes: Buffer.from('again'),
     })
+  })
+
+  it('frees the slot even when removing the temporary directory fails', async () => {
+    let tmpDir = ''
+    mkdtempMock.mockImplementationOnce(async (prefix, options) => {
+      const dir = await realMkdtempDisposable(prefix, options)
+      tmpDir = dir.path
+      return {
+        path: dir.path,
+        remove: dir.remove,
+        async [Symbol.asyncDispose]() {
+          await dir.remove()
+          throw new Error('EBUSY: resource busy or locked')
+        },
+      }
+    })
+    downloadMock.mockImplementationOnce(serves(Buffer.from('data')))
+    await expect(
+      resolveBinarySource(
+        { kind: 'url', url: 'https://example.com/f' },
+        { userId: USER, maxBytes: 100 },
+      ),
+    ).rejects.toThrow('EBUSY')
+    expect(existsSync(tmpDir)).toBe(false)
+    expect(downloadsInFlight(USER)).toBe(0)
   })
 
   it('frees the slot of a failed download', async () => {

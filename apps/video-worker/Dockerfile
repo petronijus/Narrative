@@ -1,5 +1,5 @@
 # ── Stage 1: builder ─────────────────────────────────────────────────────────
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
@@ -25,10 +25,10 @@ COPY tsconfig.base.json  ./
 RUN pnpm --filter @narrative/video-worker build
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
-FROM node:22-alpine
+FROM node:24-alpine
 
 # ffmpeg (~80 MB) — the only system dep needed by the worker.
-# Pinned to whatever alpine:3.x provides in the node:22-alpine base.
+# Pinned to whatever alpine:3.x provides in the node:24-alpine base.
 RUN apk add --no-cache ffmpeg
 
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate

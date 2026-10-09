@@ -39,7 +39,7 @@ Feature milestones before that:
 
 ## Requirements
 
-- Node.js >= 22.18 built with TypeScript support (`pnpm lint` needs Node's built-in type stripping; was >= 22 until 2026-09-28). Ubuntu 26.04's own `nodejs` 22.22.1 lacks it — see [SETUP.md](./SETUP.md) "Common first-run failures" (2026-09-29)
+- Node.js >= 24.4 (the Node 24 LTS line the Docker images run; was >= 22.18 until 2026-10-09) built with TypeScript support (`pnpm lint` needs Node's built-in type stripping). A distro build can lack it — Ubuntu 26.04's own `nodejs` 22.22.1 did; see [SETUP.md](./SETUP.md) "Common first-run failures"
 - pnpm 9.15.4 (`packageManager`)
 - Docker (for local Postgres)
 - just, lefthook, gitleaks (task runner and git hooks), python3 ≥ 3.9 (the Claude Code hooks and the docs check) — `just doctor` checks the whole toolchain

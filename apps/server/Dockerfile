@@ -1,6 +1,6 @@
 # ── Stage 1: builder ─────────────────────────────────────────────────────────
 # Instaluje všechny deps (incl. devDeps) a kompiluje TypeScript → dist/
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
@@ -27,7 +27,7 @@ RUN pnpm --filter @narrative/server build
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 # Minimální image — node_modules z builderu (prod-only deps via prune), dist, drizzle
-FROM node:22-alpine AS runtime
+FROM node:24-alpine AS runtime
 
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 

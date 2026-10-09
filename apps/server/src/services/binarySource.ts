@@ -33,7 +33,7 @@
  */
 
 import { createReadStream } from 'node:fs'
-import { mkdtemp, open, readFile, rm } from 'node:fs/promises'
+import { mkdtempDisposable, open, readFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
@@ -151,14 +151,10 @@ function diskFile(
     mimeType,
     filename,
     async head(n) {
-      const handle = await open(filePath, 'r')
-      try {
-        const buf = Buffer.alloc(Math.max(0, Math.min(n, sizeBytes)))
-        const { bytesRead } = await handle.read(buf, 0, buf.length, 0)
-        return buf.subarray(0, bytesRead)
-      } finally {
-        await handle.close()
-      }
+      await using handle = await open(filePath, 'r')
+      const buf = Buffer.alloc(Math.max(0, Math.min(n, sizeBytes)))
+      const { bytesRead } = await handle.read(buf, 0, buf.length, 0)
+      return buf.subarray(0, bytesRead)
     },
     readAll: () => readFile(filePath),
     stream: () => createReadStream(filePath),
@@ -213,34 +209,31 @@ export async function withBinarySource<T>(
     return fn(memoryFile(bytes, normaliseMime(source.mimeType) || mime, source.filename))
   }
 
-  const release = acquireDownloadSlot(opts.userId)
-  let dir: string | null = null
+  // Both are disposed when `fn` settles or anything before it throws, in
+  // reverse order: the directory — runtime scratch this function created
+  // itself, removed outright, never kept — then the slot, which is freed
+  // also when removing the directory fails.
+  using _slot = acquireDownloadSlot(opts.userId)
+  await using dir = await mkdtempDisposable(path.join(os.tmpdir(), DOWNLOAD_TMP_PREFIX))
+  const target = path.join(dir.path, 'download')
+  let file: BinaryFile
   try {
-    dir = await mkdtemp(path.join(os.tmpdir(), DOWNLOAD_TMP_PREFIX))
-    const target = path.join(dir, 'download')
-    let file: BinaryFile
-    try {
-      const fetched = await guardedDownloadToFile(source.url, target, {
-        maxBytes: maxRemoteBytes,
-        timeoutMs: opts.timeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS,
-      })
-      if (fetched.sizeBytes === 0) throw badRequest(`${what} at the URL is empty`)
-      file = diskFile(
-        target,
-        fetched.sizeBytes,
-        normaliseMime(source.mimeType) || normaliseMime(fetched.contentType),
-        source.filename ?? fetched.filename ?? undefined,
-      )
-    } catch (err) {
-      throw downloadError(err, what)
-    }
-    return await fn(file)
-  } finally {
-    // Runtime scratch this function created itself: removed outright, never
-    // kept. `force` makes a directory that was never created a no-op.
-    if (dir !== null) await rm(dir, { recursive: true, force: true })
-    release()
+    const fetched = await guardedDownloadToFile(source.url, target, {
+      maxBytes: maxRemoteBytes,
+      timeoutMs: opts.timeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS,
+    })
+    if (fetched.sizeBytes === 0) throw badRequest(`${what} at the URL is empty`)
+    file = diskFile(
+      target,
+      fetched.sizeBytes,
+      normaliseMime(source.mimeType) || normaliseMime(fetched.contentType),
+      source.filename ?? fetched.filename ?? undefined,
+    )
+  } catch (err) {
+    throw downloadError(err, what)
   }
+  // `await` keeps the scope open until `fn` has finished reading the file.
+  return await fn(file)
 }
 
 /**
