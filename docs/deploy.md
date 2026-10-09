@@ -273,6 +273,17 @@ ssh narrative 'docker exec narrative-minio sh -c '"'"'MC_HOST_l="http://$MINIO_R
 `deploy.sh` snapshots the dataset only when `ZFS_DATASET` is set in
 `.env.prod`; otherwise take one by hand first (`zfs snapshot
 <dataset>@pre-minio-mirror`) — it is the way back to root-owned data.
+Production (VM 103) has neither: no `ZFS_DATASET`, no ZFS on the VM, and
+MinIO's data is the Docker volume `narrative_minio_data` on the VM's own
+disk. There the way back is a tarball that keeps the owners, taken with an
+image already on the VM (done for 0.10.19 on 2026-10-09: 106 MB, 1449
+entries, in `backups/2026-10-09-pre-minio-mirror/`):
+
+```bash
+ssh narrative 'B=/opt/narrative/backups/$(date +%F)-pre-minio-mirror && mkdir -p $B &&
+  docker run --rm -v narrative_minio_data:/data:ro -v $B:/b alpine:3.20 \
+    tar -C /data --numeric-owner -cpzf /b/minio_data.tgz .'
+```
 
 **After deploying:** `docker ps` shows `narrative-minio` on the
 `ghcr.io/petronijus/minio` image and `healthy`;
