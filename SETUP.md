@@ -8,7 +8,7 @@ something's broken — file an issue, don't paper over it.
 
 - **Node.js ≥ 24.4 built with TypeScript support** (`node -v`; `engines` in `package.json`). Node 24 is the Active LTS and the line the Docker images run (`node:24-alpine`); 24.4 added `fs.promises.mkdtempDisposable`, which the server's URL downloads use. `pnpm lint` loads the TypeScript parity table through Node's built-in type stripping, on by default in every Node 24. Was ≥ 22.18 from A2.1 (2026-09-28) until 2026-10-09, ≥ 22 before. The version alone is not enough: check `node -p process.features.typescript` prints `strip` (or `transform`), not `false` — a distro build can leave type stripping out (see "`pnpm lint` fails with `ERR_UNKNOWN_FILE_EXTENSION`" below)
 - **pnpm 9.15.4** (the `packageManager` pin) — via Corepack: `corepack enable && corepack prepare pnpm@9.15.4 --activate`
-- **Docker** with the Compose plugin (`docker compose version`)
+- **Docker** with the Compose plugin (`docker compose version`), logged in to GHCR once: `docker login ghcr.io -u petronijus` with a token that has `read:packages`. MinIO's official images are gone, and the dev stack's MinIO is a private mirror there ([docs/storage.md → MinIO image](docs/storage.md#minio-image))
 - **just, lefthook, gitleaks** — the task runner and the git hooks (macOS: `brew install just lefthook gitleaks`; Linux: the distro packages or the projects' release binaries). **xmllint** for the PPTX schema tests (`libxml2`). **python3 ≥ 3.9** for the Claude Code hooks and the docs check (standard library only). For secrets: **sops, age** and the 1Password CLI `op`.
 
 `just doctor` checks all of this and prints the fix for anything missing.
@@ -77,6 +77,7 @@ What this brings up (`infra/docker-compose.yml`):
 
 - `postgres` — main DB.
 - `minio` — S3-compatible object store on `:9100` (API) and `:9101` (console).
+- `minio-perms` — one-shot job, before `minio`, that gives the data volume to MinIO's nonroot user (`65532`).
 - `minio-init` — one-shot job that creates the `narrative-media` bucket. Should exit `0`. Verify: `docker compose -f infra/docker-compose.yml --env-file .env logs minio-init` — last line should say `Bucket ready: narrative-media`.
 - `imgproxy` — image transformer on `:8080`.
 - `media-redis` — the video pipeline's queue on `:6380` (step 7).
@@ -237,7 +238,8 @@ already checked. Subagents in
 - **Vite serves stale code after a `git pull`** — `touch` the affected file, or stop+start `pnpm dev`. Vite occasionally caches transformed modules across hard reloads.
 - **Editor logs `Hocuspocus: authentication token required`** — `VITE_BYPASS_AUTH` differs from `BYPASS_AUTH`. Set both to the same value.
 - **Pre-commit hooks fail with permission errors** — you ran `pnpm install` as root. Re-clone, install as a normal user.
-- **`minio-init` cannot pull `minio/mc`** — MinIO's images are gone from Docker Hub and quay (pull access denied, 2026-09). `just services` then creates the bucket with any `minio/mc` image already on the machine; with none at all, create `narrative-media` with another S3 client or a cached image from another machine.
+- **`minio` (or `minio-init`) cannot pull `ghcr.io/petronijus/minio`** — `denied` / `unauthorized`: this machine is not logged in to GHCR, where the MinIO image is a private mirror (MinIO deleted its own images from Docker Hub in 2026-09). `docker login ghcr.io -u petronijus` with a `read:packages` token, then `just services` again. A compose override that swapped in other MinIO images before 2026-10 can go.
+- **`minio` exits with `Unable to write to the backend`** — its data is not owned by user `65532`. `minio-perms` fixes that before every start; if it did not run (a `docker run` by hand, or `--no-deps`), `docker compose --env-file ../.env up minio-perms` in `infra/`.
 - **Two compose projects (`infra-*` and `narrative-*` containers)** — the compose file has been named `narrative` since 2026-08; containers started before that belong to a project called `infra`, with its own volumes, and hold the ports `just services` needs. Back up what you need, then `cd infra && docker compose -p infra --env-file ../.env down -v` (the Linux desktop was moved on 2026-09-30; its old data is in `backups/2026-09-30-infra-project/`, gitignored).
 - **`docs-check` names a path or recipe that is right in context** (another repo's file, a file a plan will create, a file that was moved) — write the reference so it cannot be misread (a moved file: its old place in plain text), or put `<!-- docs-check: ignore -->` on that line (above a code fence: the whole block). Docs that record history (handoffs, finished plans) are listed in `EXCLUDE` in `tools/dev/docs-check.py`; never exclude a living doc to make the check pass.
 - **Git hooks do not run after pulling the lefthook change (2026-09-30)** — husky had set `core.hooksPath=.husky/_`, which still points git at the deleted husky hooks. `just setup` (unsets it and runs `lefthook install`); `just doctor` reports it.

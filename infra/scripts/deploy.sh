@@ -98,6 +98,9 @@ done
 # 'docker login'" and took the whole deploy with it, although every one of those
 # images was already on the host. Refresh them best-effort instead; a genuinely
 # missing image still fails loudly at `compose up`, with a better message.
+# MinIO itself has since moved to a digest-pinned mirror in this host's GHCR
+# account (docs/storage.md → MinIO image), pulled here with the same login as
+# the app images; the cached minio/minio stays on the host, unused.
 log "Refreshing third-party images (best effort)..."
 ${COMPOSE} pull --ignore-pull-failures || warn "Third-party image refresh incomplete — using the copies already on this host"
 

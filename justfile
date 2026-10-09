@@ -154,22 +154,16 @@ services:
     #!/usr/bin/env bash
     set -euo pipefail
     cd infra
-    docker compose --env-file ../.env up -d --wait postgres minio imgproxy media-redis
-    # minio-init creates the bucket. MinIO's images can no longer be pulled
-    # (Docker Hub and quay deny them, 2026-09); where the pinned client image
-    # is missing, any minio/mc image already on this machine does the same job.
-    mc_image="$(docker compose --env-file ../.env config --images minio-init)"
-    if docker image inspect "$mc_image" >/dev/null 2>&1; then
-      docker compose --env-file ../.env up minio-init --no-log-prefix | tail -n 1
-      exit 0
-    fi
-    fallback="$(docker images --format '{{{{.Repository}}:{{{{.Tag}}' 'minio/mc' | head -n 1)"
-    if [[ -z "$fallback" ]]; then
-      echo "services: no MinIO client image here ($mc_image cannot be pulled); create the bucket narrative-media by hand (SETUP.md → Troubleshooting)" >&2
+    # minio pulls from a private GHCR mirror (docs/storage.md → MinIO image);
+    # minio-perms runs before it on its own (depends_on).
+    if ! docker compose --env-file ../.env up -d --wait postgres minio imgproxy media-redis; then
+      echo "services: if the MinIO image failed to pull, log in once: docker login ghcr.io -u petronijus (a token with read:packages)" >&2
       exit 1
     fi
-    docker run --rm --network host --env-file ../.env --entrypoint sh "$fallback" -c \
-      'MC_HOST_local="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:${MINIO_API_PORT:-9100}" mc mb --ignore-existing local/narrative-media'
+    # minio-init creates the bucket; `up` reports success whatever the job's exit code.
+    docker compose --env-file ../.env up minio-init --no-log-prefix | tail -n 1
+    code="$(docker inspect --format '{{{{.State.ExitCode}}' narrative-minio-init)"
+    [[ "$code" == 0 ]] || { echo "services: minio-init exited $code (docker compose logs minio-init)" >&2; exit 1; }
 
 # Regenerate the capability manifest and the Claude Code plugin after a command change
 capabilities:

@@ -7,7 +7,7 @@
 #   - Caddy serves plain HTTP on the internal Docker network only — TLS is
 #     terminated by Cloudflare at the edge, then cloudflared tunnels back to caddy:80.
 #   - cloudflared service runs the tunnel (TUNNEL_TOKEN required)
-#   - Postgres / MinIO / media-redis bind volumes (set *_DATA_PATH in .env.prod)
+#   - Postgres / MinIO (+ minio-perms) / media-redis bind volumes (set *_DATA_PATH in .env.prod)
 #   - MinIO + imgproxy + media-redis ports bound to 127.0.0.1 (admin access via SSH)
 #   - video-worker restart=always; resource limits deferred to M29 [M12]
 #   - Restart policy `always`
@@ -75,6 +75,12 @@ services:
       # Bind to localhost — Caddy + internal Docker network only
       - '127.0.0.1:${MINIO_API_PORT:-9100}:9000'
       - '127.0.0.1:${MINIO_CONSOLE_PORT:-9101}:9001'
+
+  # Must see the same data as minio: the ZFS bind mount is root-owned on the
+  # host, and minio runs as 65532 (docker-compose.yml → minio-perms).
+  minio-perms:
+    volumes:
+      - ${MINIO_DATA_PATH:-minio_data}:/data
 
   imgproxy:
     restart: always

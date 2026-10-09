@@ -15,6 +15,17 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
   file handle and per-user download slot with `using` / `await using`, so
   the slot is freed even when removing the directory fails. Every dev
   machine needs Node 24 (HANDOVER.md).
+- **MinIO runs from a GHCR mirror of Chainguard's build**
+  (`ghcr.io/petronijus/minio:RELEASE.2026-09-22T19-25-18Z`, pinned by
+  digest), for `minio` and the `minio-init` job alike: MinIO deleted
+  `minio/minio` and `minio/mc` from Docker Hub on 2026-09-11, so a machine
+  without cached copies could no longer start the storage stack. The server
+  now runs as the nonroot user 65532; a new one-shot `minio-perms` service
+  gives data written by the old, root-running image to that user before
+  every start. Every machine needs `docker login ghcr.io` once (`just doctor`
+  checks it), and `just services` no longer falls back to a cached
+  `minio/mc`. Production switches with the next deploy (`docs/deploy.md`,
+  "Releasing the MinIO image switch"; HANDOVER.md).
 
 ## 0.10.18 — Share a folder (2026-10-07)
 

@@ -248,6 +248,47 @@ the env allowlist admits everyone and the list does not matter. For each
 such account: add it to the allowlist, share a deck or a folder with it
 after the deploy, or let it go — decide before deploying.
 
+## Releasing the MinIO image switch
+
+The first release after `infra/docker-compose.yml` moved MinIO from
+`minio/minio:RELEASE.2024-12-18T13-15-44Z` (deleted from Docker Hub on
+2026-09-11, so it cannot be pulled again anywhere) to the private GHCR mirror
+of Chainguard's build ([storage.md → MinIO image](./storage.md#minio-image)).
+`just deploy` handles it: `deploy.sh` pulls the new image with the host's
+GHCR login, and `compose up -d` recreates `minio` because its image changed.
+Before that, the new one-shot `minio-perms` hands `MINIO_DATA_PATH` (the ZFS
+dataset, root-owned because the old image ran as root) to user `65532`,
+which the new server runs as. No migration, no env var.
+
+**Before deploying** (on the VM, with Petr's consent for the host):
+
+```bash
+ssh narrative 'docker pull ghcr.io/petronijus/minio:RELEASE.2026-09-22T19-25-18Z@sha256:25bc63a89475bc494bfbce9bbeddb0421aece3f3968d77c809db5104d07b4545'
+# denied / unauthorized: the VM's GHCR token cannot read the package —
+#   docker login ghcr.io -u petronijus with a read:packages token
+ssh narrative 'docker exec narrative-minio sh -c '"'"'MC_HOST_l="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@127.0.0.1:9000" mc ls --recursive l/narrative-media | wc -l'"'"''
+# the object count to compare with after the deploy (398 on 2026-10-04)
+```
+
+`deploy.sh` snapshots the dataset only when `ZFS_DATASET` is set in
+`.env.prod`; otherwise take one by hand first (`zfs snapshot
+<dataset>@pre-minio-mirror`) — it is the way back to root-owned data.
+
+**After deploying:** `docker ps` shows `narrative-minio` on the
+`ghcr.io/petronijus/minio` image and `healthy`;
+`docker inspect narrative-minio-perms --format '{{.State.ExitCode}}'` prints
+`0`; the object count matches (the same command, now run with the new
+image's `mc`); an existing deck shows its pictures and a new upload works.
+
+**Rollback.** The old image survives only in the VM's image cache:
+`prune-images.sh` leaves it alone, but `docker system prune -a` or
+`docker image prune -a` would delete it for good — do not run either there
+until the switch has proven itself. Rolling back to a release before this
+one brings back its compose files and with them the old image, which runs
+as root and so reads and writes the `65532`-owned data without a `chown`
+back. Once the cached copy is gone, there is no way back to the official
+image: stay on the mirror (any later Chainguard build is a `crane copy` away).
+
 ## Access
 
 The VM is reachable only through the Proxmox host (`pve`), which is the jump

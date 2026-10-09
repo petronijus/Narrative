@@ -13,6 +13,14 @@
 
 name: narrative
 
+# MinIO server and client (mc) for minio, minio-perms and minio-init: Chainguard's
+# maintained build, mirrored byte for byte into GHCR, because MinIO deleted
+# minio/minio and minio/mc from Docker Hub (2026-09-11) and quay.io has no tags.
+# The GHCR package is private: `docker login ghcr.io` once per machine. To refresh
+# the mirror and bump this reference, see docs/storage.md → "MinIO image".
+# tools/dev/doctor.sh and infra/scripts/verify-minio.sh read this line.
+x-minio-image: &minio-image ghcr.io/petronijus/minio:RELEASE.2026-09-22T19-25-18Z@sha256:25bc63a89475bc494bfbce9bbeddb0421aece3f3968d77c809db5104d07b4545
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -81,10 +89,14 @@ services:
   # See README "Authentication" section for setup.
 
   # ─── MinIO object storage (M11) ──────────────────────────────────────────────
+  # The image runs as the nonroot user 65532 (entrypoint /usr/bin/minio).
   minio:
-    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    image: *minio-image
     container_name: narrative-minio
     restart: unless-stopped
+    depends_on:
+      minio-perms:
+        condition: service_completed_successfully
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?required}
@@ -100,11 +112,33 @@ services:
       timeout: 5s
       retries: 5
 
+  # One-shot ownership fix for the MinIO data, run before every start of minio.
+  # Data written by the old official image (minio/minio, which ran as root) is
+  # root-owned, and the nonroot server refuses it ("Unable to write to the
+  # backend"). Gives everything under /data to 65532:65532 and logs how many
+  # entries actually changed (`chown -c`) — 0 once done. The image has GNU
+  # coreutils but no findutils, hence chown -R rather than find.
+  # The prod override gives it the same data volume as minio.
+  minio-perms:
+    image: *minio-image
+    container_name: narrative-minio-perms
+    user: '0:0'
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - >-
+        set -o pipefail;
+        changed=$$(chown -R -c 65532:65532 /data | wc -l);
+        echo "minio-perms: $$changed entries handed to 65532:65532"
+    volumes:
+      - minio_data:/data
+    restart: 'no'
+
   # One-shot bucket bootstrap — creates the narrative-media bucket if absent.
-  # Uses mc (MinIO client) baked into the minio/mc image. Runs once on compose up,
-  # then exits. A non-zero exit fails the stack — intentional, makes config drift loud.
+  # Uses the mc (MinIO client) that ships in the MinIO image (Chainguard's
+  # separate client image has no shell). Runs once on compose up, then exits.
+  # A non-zero exit fails the stack — intentional, makes config drift loud.
   minio-init:
-    image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    image: *minio-image
     container_name: narrative-minio-init
     depends_on:
       minio:

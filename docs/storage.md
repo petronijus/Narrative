@@ -148,7 +148,32 @@ docker compose --env-file ../.env up -d minio minio-init imgproxy
 - MinIO console: `http://localhost:9101`
 - imgproxy: `http://localhost:8080`
 
-The `minio-init` container runs once and creates the `narrative-media` bucket automatically, then exits.
+The `minio-init` container runs once and creates the `narrative-media` bucket automatically, then exits. Before `minio` starts, the one-shot `minio-perms` container hands the data volume to the server's user (below).
+
+## MinIO image
+
+MinIO deleted `minio/minio` and `minio/mc` from Docker Hub on 2026-09-11, and quay.io has no tags for them either, so a machine without a cached copy can no longer pull the official images. Narrative runs **Chainguard's maintained build** instead, mirrored byte for byte into Petr's GHCR:
+
+```text
+ghcr.io/petronijus/minio:RELEASE.2026-09-22T19-25-18Z@sha256:25bc63a89475bc494bfbce9bbeddb0421aece3f3968d77c809db5104d07b4545
+```
+
+It is a multi-arch index (amd64 + arm64), a `crane copy` of `cgr.dev/chainguard/minio` at that digest. The reference is written once, as the `x-minio-image` anchor at the top of `infra/docker-compose.yml`; `minio`, `minio-perms` and `minio-init` all use it, and `infra/scripts/verify-minio.sh` and `just doctor` read it from there. Always the full `tag@digest`.
+
+- **The GHCR package is private.** Every machine that pulls it — each dev machine, the production VM, the build host — needs `docker login ghcr.io -u petronijus` once, with a token that has `read:packages`. `just doctor` reports a machine that has neither the image nor the login.
+- **What is in it:** entrypoint `/usr/bin/minio` (no default command), user `65532` (nonroot), `mc` and `sh` in `/usr/bin`, no `curl` or `wget`. The same image runs the `mc` jobs: Chainguard's separate `minio-client` image has no shell.
+- **Ownership.** The old official image ran as root, so data it wrote is root-owned and the nonroot server refuses it (`Unable to initialize backend: Unable to write to the backend`). `minio-perms` runs as root before every start of `minio` and gives everything under `/data` to `65532:65532` (`chown -R -c`; the image has no `find`), logging how many entries changed — 0 once done. Data written by `minio/minio:RELEASE.2024-12-18` reads and writes fine after that.
+
+To refresh the mirror (a newer Chainguard build):
+
+```bash
+crane digest cgr.dev/chainguard/minio:latest            # the new digest
+docker run --rm cgr.dev/chainguard/minio@<new digest> --version   # prints the RELEASE tag
+crane copy cgr.dev/chainguard/minio@<new digest> ghcr.io/petronijus/minio:<RELEASE tag>
+crane digest ghcr.io/petronijus/minio:<RELEASE tag>     # must print <new digest>
+```
+
+Then bump both the tag and the digest of `x-minio-image` in `infra/docker-compose.yml`, run `just services` and `just integration`, and ship it with the next release.
 
 ## Production ops
 

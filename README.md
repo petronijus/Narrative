@@ -395,7 +395,8 @@ xxd -g 2 -l 32 -p /dev/random | tr -d '\n'
 # 2. Set env vars in .env
 #    Required: MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, IMGPROXY_KEY, IMGPROXY_SALT
 
-# 3. Start MinIO + imgproxy
+# 3. Start MinIO + imgproxy. The MinIO image is a private GHCR mirror
+#    (docs/storage.md → MinIO image): docker login ghcr.io -u petronijus, once.
 cd infra
 docker compose --env-file ../.env up -d minio minio-init imgproxy
 

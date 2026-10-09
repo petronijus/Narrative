@@ -42,6 +42,19 @@ else
 fi
 has docker && docker compose version >/dev/null 2>&1 && ok "Docker + compose (dev services)" ||
   bad "Docker with the compose plugin missing" "install Docker (SETUP.md → Boot the storage / image stack)"
+# MinIO comes from a private GHCR mirror (docs/storage.md → MinIO image):
+# without a login, `just services` cannot pull it on a fresh machine.
+minio_image="$(sed -n 's/^x-minio-image: *&minio-image *//p' infra/docker-compose.yml)"
+if ! docker info >/dev/null 2>&1; then
+  warn "Docker daemon not running (cannot check the MinIO image)" "start Docker, then just doctor"
+elif docker image inspect "$minio_image" >/dev/null 2>&1; then
+  ok "MinIO image (pulled)"
+elif docker manifest inspect "$minio_image" >/dev/null 2>&1; then
+  ok "MinIO image (pullable from GHCR)"
+else
+  bad "MinIO image not pulled and not pullable ($minio_image)" \
+    "docker login ghcr.io -u petronijus   (a token with read:packages; docs/storage.md → MinIO image)"
+fi
 # The PPTX round-trip tests validate against the ECMA-376 schema with it.
 has xmllint && ok "xmllint (PPTX schema tests)" || bad "xmllint missing" "$(install_hint libxml2)"
 
