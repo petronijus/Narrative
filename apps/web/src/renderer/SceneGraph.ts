@@ -39,6 +39,8 @@ import {
   tokenColoursDiffer,
   type ColourResolverFn,
 } from './colourResolver.js'
+import { subscribeFontFamilyChanges } from './fontChanges.js'
+import { fontFamilyNames } from '@narrative/slide-model'
 import type { SlideObject, SlideObjectType, ObjectChangeSet } from '@narrative/shared'
 import type { ObjectBounds } from './types'
 import type { RenderScheduler } from './RenderScheduler'
@@ -46,6 +48,30 @@ import type { RenderScheduler } from './RenderScheduler'
 interface SceneNode {
   container: Container
   data: SlideObject
+}
+
+/**
+ * Make an HTMLText rasterise again on the next render, though its style key
+ * has not changed (a face it uses landed, the resolution moved): its
+ * per-renderer cache key is cleared, and the async catch-up guard
+ * (patchHTMLTextRace) reset so follow-up frames pick the new texture up.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function invalidateHtmlText(node: any, rendererUid: number | undefined): void {
+  if (rendererUid !== undefined) {
+    const gpu = node._gpuData?.[rendererUid]
+    if (gpu !== undefined) gpu.currentKey = ''
+  }
+  node._didTextUpdate = true
+  node.__narrativeCatchupActive = false
+  node.__narrativeLastKey = ''
+  if (typeof node.onViewUpdate === 'function') {
+    try {
+      node.onViewUpdate()
+    } catch {
+      /* safe */
+    }
+  }
 }
 
 export class SceneGraph {
@@ -118,6 +144,7 @@ export class SceneGraph {
 
   /** Ends the colour-resolver subscription (destroy). */
   private readonly unsubscribeColourResolver: () => void
+  private readonly unsubscribeFontChanges: () => void
 
   constructor(app: Application) {
     this.app = app
@@ -125,6 +152,11 @@ export class SceneGraph {
     this.app.stage.addChild(this.root)
     this.unsubscribeColourResolver = subscribeColourResolver(({ prev, next }) => {
       this.repaintTokenColours(prev, next)
+    })
+    // A face installed (or removed) after text in its family was rasterised:
+    // draw that text again with the faces there now (renderer/fontChanges.ts).
+    this.unsubscribeFontChanges = subscribeFontFamilyChanges((family) => {
+      this.refreshTextNodesUsingFamily(family)
     })
   }
 
@@ -608,6 +640,7 @@ export class SceneGraph {
     textRendererForMetrics?.forgetFontMetrics?.(family)
 
     let touched = 0
+    const handled = new Set<unknown>()
     for (const [, node] of this.nodes) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const data = node.data as any
@@ -628,7 +661,7 @@ export class SceneGraph {
           const delta = t.toDelta() as Array<{ attributes?: Record<string, unknown> }>
           for (const op of delta) {
             const runFam = op.attributes?.['fontFamily']
-            if (typeof runFam === 'string' && runFam === family) {
+            if (typeof runFam === 'string' && fontFamilyNames(runFam).includes(family)) {
               matchesRun = true
               break
             }
@@ -646,19 +679,9 @@ export class SceneGraph {
         (c) => (c as any).anchor !== undefined,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ) as any
-      if (textChild !== undefined && rendererUid !== undefined) {
-        const gpu = textChild._gpuData?.[rendererUid]
-        if (gpu !== undefined) {
-          gpu.currentKey = ''
-        }
-        textChild._didTextUpdate = true
-        if (typeof textChild.onViewUpdate === 'function') {
-          try {
-            textChild.onViewUpdate()
-          } catch {
-            /* ignore */
-          }
-        }
+      if (textChild !== undefined) {
+        invalidateHtmlText(textChild, rendererUid)
+        handled.add(textChild)
       }
 
       const renderer = getRenderer('text')
@@ -673,6 +696,29 @@ export class SceneGraph {
 
       touched++
     }
+
+    // Text that is not a top-level text object — table cells, the leaves of
+    // component instances — is drawn by the same HTMLText: every one whose
+    // families (the box's and its runs', textRenderer.htmlTextFontFamilies)
+    // include this one rasterises again, now with the face.
+    const walk = (c: Container): void => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const t = c as any
+      if (t.anchor !== undefined && '_didTextUpdate' in t && !handled.has(t)) {
+        const families: unknown = t.style?.fontFamily
+        const list = Array.isArray(families)
+          ? families
+          : typeof families === 'string'
+            ? [families]
+            : []
+        if (list.includes(family)) {
+          invalidateHtmlText(t, rendererUid)
+          touched++
+        }
+      }
+      for (const child of c.children) walk(child as Container)
+    }
+    walk(this.root)
     if (touched > 0) this.markDirty()
   }
 
@@ -719,22 +765,7 @@ export class SceneGraph {
       const node = c as any
       // HTMLText nodes have .anchor (sprites) + ._didTextUpdate (text)
       if (node.anchor !== undefined && '_didTextUpdate' in node) {
-        if (rendererUid !== undefined) {
-          const gpu = node._gpuData?.[rendererUid]
-          if (gpu !== undefined) gpu.currentKey = ''
-        }
-        node._didTextUpdate = true
-        // Reset catchup guard + last-key so the patched onViewUpdate
-        // triggers scheduleAsyncTextureCatchup for follow-up frames.
-        node.__narrativeCatchupActive = false
-        node.__narrativeLastKey = ''
-        if (typeof node.onViewUpdate === 'function') {
-          try {
-            node.onViewUpdate()
-          } catch {
-            /* safe */
-          }
-        }
+        invalidateHtmlText(node, rendererUid)
         touched++
       }
       for (const child of c.children) {
@@ -858,6 +889,7 @@ export class SceneGraph {
    */
   destroy(): void {
     this.unsubscribeColourResolver()
+    this.unsubscribeFontChanges()
     for (const id of [...this.nodes.keys()]) {
       this.removeObject(id)
     }

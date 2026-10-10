@@ -32,6 +32,7 @@ vi.mock('pixi.js', () => pixiMock())
 import { Container, HTMLText } from 'pixi.js'
 import { buildStyleOpts, lineOvershootFor, textRenderer } from './textRenderer.js'
 import type { TextObject } from '@narrative/shared'
+import * as Y from 'yjs'
 
 function makeText(overrides: Partial<TextObject> = {}): TextObject {
   return {
@@ -53,11 +54,34 @@ function makeText(overrides: Partial<TextObject> = {}): TextObject {
 }
 
 describe('buildStyleOpts — Pixi HTMLText cache + CSS bridge', () => {
-  it('passes BARE family name as style.fontFamily (cache lookup hits)', () => {
+  it('passes BARE family names as style.fontFamily (cache lookup hits)', () => {
     const opts = buildStyleOpts(makeText({ fontFamily: 'Northwind Sans ST Pro 60 Black' }))
-    // Pixi's extractFontFamilies uses style.fontFamily verbatim as the
-    // cache key. The bare name matches FolderFontLoader's registration.
-    expect(opts.fontFamily).toBe('Northwind Sans ST Pro 60 Black')
+    // Pixi's extractFontFamilies uses each entry of the array as a cache
+    // key. The bare name matches FolderFontLoader's registration.
+    expect(opts.fontFamily).toEqual(['Northwind Sans ST Pro 60 Black'])
+  })
+
+  it('leaves out names Pixi would write into its SVG unescaped (a quote, </style>)', () => {
+    const doc = new Y.Doc()
+    const text = doc.getText('t')
+    text.insert(0, 'a', { fontFamily: "O'Brien Sans" })
+    text.insert(1, 'b', { fontFamily: 'Proseware Pro' })
+    const opts = buildStyleOpts(
+      makeText({ fontFamily: 'X</style><img src=x>', text } as Partial<TextObject>),
+    )
+    expect(opts.fontFamily).toEqual(['Arial', 'Proseware Pro'])
+    // The override's quoted stack cannot end the <style> either.
+    expect(opts.cssOverrides[0]).not.toContain('<')
+  })
+
+  it("adds every run's family, so Pixi embeds those faces too", () => {
+    const doc = new Y.Doc()
+    const text = doc.getText('t')
+    text.insert(0, 'Run ')
+    text.insert(4, 'Wide', { fontFamily: 'Proseware Pro' })
+    text.insert(8, ' more', { fontFamily: '"Proseware Pro", Druk Wide' })
+    const opts = buildStyleOpts(makeText({ fontFamily: 'Inter', text } as Partial<TextObject>))
+    expect(opts.fontFamily).toEqual(['Inter', 'Proseware Pro', 'Druk Wide'])
   })
 
   it('emits a cssOverrides entry that re-declares font-family with CSS-safe quoting', () => {
@@ -82,25 +106,24 @@ describe('buildStyleOpts — Pixi HTMLText cache + CSS bridge', () => {
     const opts = buildStyleOpts(makeText())
     // No custom family → no cache lookup needed → pass a CSS-valid
     // system font as the bare name.
-    expect(opts.fontFamily).toBe('Arial')
+    expect(opts.fontFamily).toEqual(['Arial'])
     expect(opts.cssOverrides[0]).toContain('Arial')
   })
 
   it('preserves single-word family names as-is (Inter → Inter)', () => {
     const opts = buildStyleOpts(makeText({ fontFamily: 'Inter' }))
-    expect(opts.fontFamily).toBe('Inter')
+    expect(opts.fontFamily).toEqual(['Inter'])
     // The CSS override still applies a fallback stack on top, which is
     // fine — `Inter` resolves first when installed, fallback when not.
     expect(opts.cssOverrides[0]).toContain('Inter')
     expect(opts.cssOverrides[0]).toMatch(/sans-serif$/)
   })
 
-  it('handles author-supplied stacks (comma-separated fontFamily) by passing through', () => {
+  it('handles author-supplied stacks (comma-separated fontFamily) name by name', () => {
     const opts = buildStyleOpts(makeText({ fontFamily: 'Roboto, sans-serif' }))
-    // Author included their own fallback stack — pass through as the
-    // bare value (Pixi's cache lookup will miss, which is fine because
-    // none of the families are folder-uploaded).
-    expect(opts.fontFamily).toBe('Roboto, sans-serif')
+    // Author included their own fallback stack — each name is its own
+    // cache key (a folder font anywhere in the stack is embedded).
+    expect(opts.fontFamily).toEqual(['Roboto', 'sans-serif'])
     // The override should respect the author's stack rather than appending
     // another generic — cssFontFamily detects the comma and returns the
     // input unchanged.

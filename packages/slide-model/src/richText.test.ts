@@ -75,12 +75,29 @@ describe('richText helpers', () => {
     expect(toHtml(toDelta(yt), {})).toBe('<span style="font-family:Arial">hi</span>')
   })
 
-  it('toHtml emits a multi-word fontFamily unquoted (safe inside a double-quoted attr)', () => {
+  it('toHtml quotes a multi-word fontFamily in single quotes (safe inside a double-quoted attr)', () => {
     const yt = attach()
     yt.insert(0, 'hi')
     applyFormat(yt, 0, 2, { fontFamily: 'Druk Wide' })
-    // No quotes: a `"` here would break the surrounding style="" attribute.
-    expect(toHtml(toDelta(yt), {})).toBe('<span style="font-family:Druk Wide">hi</span>')
+    // Single quotes: a `"` here would break the surrounding style="" attribute.
+    expect(toHtml(toDelta(yt), {})).toBe('<span style="font-family:\'Druk Wide\'">hi</span>')
+  })
+
+  it('toHtml quotes a family with digits, which unquoted would drop the declaration', () => {
+    const yt = attach()
+    yt.insert(0, 'hi')
+    applyFormat(yt, 0, 2, { fontFamily: 'Northwind Sans ST Pro 36 Regular, sans-serif' })
+    // Each name of a stack on its own; the generic family stays bare.
+    expect(toHtml(toDelta(yt), {})).toBe(
+      '<span style="font-family:\'Northwind Sans ST Pro 36 Regular\', sans-serif">hi</span>',
+    )
+  })
+
+  it("toHtml escapes an apostrophe in a family name (O'Hare Sans)", () => {
+    const yt = attach()
+    yt.insert(0, 'hi')
+    applyFormat(yt, 0, 2, { fontFamily: "O'Hare Sans" })
+    expect(toHtml(toDelta(yt), {})).toBe("<span style=\"font-family:'O\\'Hare Sans'\">hi</span>")
   })
 
   it('toHtml strips a hostile fontFamily so it cannot break out of the style attribute', () => {
@@ -93,7 +110,7 @@ describe('richText helpers', () => {
     expect(html).not.toContain('<img')
     expect(html).not.toContain('onerror=')
     // No quote/angle-bracket survives the allowlist; chars left are inert.
-    expect(html).toBe('<span style="font-family:ximg srcq onerroralert1">pwn</span>')
+    expect(html).toBe('<span style="font-family:\'ximg srcq onerroralert1\'">pwn</span>')
   })
 
   it('toHtml drops a fontFamily that sanitises to nothing', () => {

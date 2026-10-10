@@ -45,13 +45,21 @@ import {
   paragraphsOf,
 } from '../../lib/textLayout.js'
 import * as Y from 'yjs'
-import { toDelta, toHtml, buildListedHtml, type HtmlDefaults } from '@narrative/slide-model'
+import {
+  buildListedHtml,
+  fontFamilyNames,
+  sanitizeFontFamily,
+  toDelta,
+  toHtml,
+  type HtmlDefaults,
+} from '@narrative/slide-model'
 import type { TextObject } from '../types'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { markRenderDirty } from '../RenderScheduler.js'
 import { applyFlip } from './applyFlip.js'
 import { resolveColour } from '../colourResolver.js'
 import { cssFontFamily } from '../fontFallback.js'
+import { isEmbeddableFamilyName } from '../fontChanges.js'
 import { getRenderingSlideNumber } from '../slideNumberContext.js'
 
 /**
@@ -258,16 +266,8 @@ function colorWithAlpha(hex: number, alpha: number): string {
 
 /**
  * Walk Y.Text deltas and collect every distinct `fontFamily` attribute
- * present on any run. Used to feed Pixi's `extractFontFamilies` via the
- * box-level style array so per-run inline `<span style="font-family:X">`
- * markers reliably get an embedded `@font-face` rule in the rasterised
- * SVG — without depending on Pixi's text-scraping regex, which breaks
- * on family names containing whitespace.
+ * present on any run (see `htmlTextFontFamilies`).
  */
-// Unused after the switch to a CSS-quoted string (R2-mini font fix).
-// Kept so future work that wants per-run @font-face embeds has the
-// helper handy; remove if it gets stale.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function collectRunFontFamilies(data: TextObject): string[] {
   const t = data.text
   if (!(t instanceof Y.Text)) return []
@@ -278,6 +278,34 @@ function collectRunFontFamilies(data: TextObject): string[] {
     if (typeof fam === 'string' && fam !== '') set.add(fam)
   }
   return [...set]
+}
+
+/**
+ * Every font family the text uses, by name — the box's (Arial when it has
+ * none) and each run's — for `HTMLTextStyle.fontFamily`. Pixi embeds an
+ * `@font-face` into the SVG it rasterises for each name it finds in its
+ * asset Cache (`getFontCss`), and an SVG image sees no other font: a family
+ * left out paints in a fallback face wherever the font is not installed (the
+ * render worker always). Pixi also scans the run markup, but its pattern
+ * stops at the first space or quote, so a run in "Proseware Pro" was never
+ * embedded; the names are given here instead. The `font-family` rule Pixi
+ * writes from this array is replaced by `cssOverrides` (below) — but Pixi
+ * writes it unescaped into a `<style>` set through innerHTML, so a name
+ * that is not plain letters, digits, spaces, hyphens and underscores is
+ * left out (renderer/fontChanges.ts, `isEmbeddableFamilyName`): its text
+ * paints in the fallback face; a quote or `</style>` breaks nothing.
+ */
+export function htmlTextFontFamilies(data: TextObject): string[] {
+  const names = fontFamilyNames(
+    typeof data.fontFamily === 'string' ? data.fontFamily : '',
+  ).filter(isEmbeddableFamilyName)
+  if (names.length === 0) names.push('Arial')
+  for (const run of collectRunFontFamilies(data)) {
+    for (const name of fontFamilyNames(sanitizeFontFamily(run) ?? '')) {
+      if (isEmbeddableFamilyName(name) && !names.includes(name)) names.push(name)
+    }
+  }
+  return names
 }
 
 /**
@@ -304,37 +332,20 @@ export function buildStyleOpts(data: TextObject): any {
   //
   // FolderFontLoader registers our uploaded fonts in the cache under
   // the BARE family name (e.g. `Northwind Sans ST Pro 60 Black-and-url`).
-  // To make the cache lookup hit we must pass the bare name as
-  // `style.fontFamily`. But the bare name isn't valid CSS verbatim
-  // when it contains digits (e.g. `60`) or whitespace — the CSS
-  // tokeniser sees `Northwind Sans ST Pro 60 Black` as five identifiers
-  // followed by a number followed by an identifier, which can't form
-  // a single family-name value, so the rule is dropped and the
-  // browser falls back to its system default.
-  //
-  // The two-step trick: bare name for the cache lookup, then layer
-  // `cssOverrides` with a CSS-safe quoted form to win the cascade for
-  // the actual rendering rule. Later declarations override earlier
-  // ones inside the same `<style>` block, so the override is what the
-  // SVG renderer applies.
-  //
-  // Per-run fontFamily values land in the inline `<span style="font-
-  // family:X">` markup (richText.toHtml) — those feed Pixi's
-  // `extractFontFamilies` regex separately; the run-level CSS in the
-  // inline span needs no override because the browser falls back to
-  // the box font (with our overridden stack) when a per-run font is
-  // missing.
-  const rawFamily = typeof data.fontFamily === 'string' ? data.fontFamily.trim() : ''
+  // So `style.fontFamily` is an array of bare names — the box's and every
+  // run's (`htmlTextFontFamilies`) — each one a cache key whose face Pixi
+  // embeds. The rule Pixi writes from the array (`font-family: A,B`) is not
+  // valid CSS once a name holds digits or spaces — the CSS tokeniser sees
+  // `Northwind Sans ST Pro 60 Black` as five identifiers followed by a number
+  // followed by an identifier, and drops the rule — so `cssOverrides`
+  // layers a CSS-safe quoted stack after it, which wins the cascade inside
+  // the same `<style>` block. Runs carry their own quoted rule in the
+  // inline span (richText.toHtml).
   const cssStack =
     cssFontFamily(data.fontFamily) ?? 'Arial, Helvetica, "Helvetica Neue", "Segoe UI", sans-serif'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const opts: any = {
-    // Bare family name → matches Pixi's cache key for embedded
-    // `@font-face` lookups. Single-ident families (e.g. `Inter`) render
-    // correctly even without the override; multi-word + digit families
-    // (e.g. `Northwind Sans ST Pro 60 Black`) get their CSS fixed by
-    // the cssOverrides entry below.
-    fontFamily: rawFamily.length > 0 ? rawFamily : 'Arial',
+    fontFamily: htmlTextFontFamilies(data),
     fontSize: data.fontSize,
     fontWeight: data.fontWeight,
     fontStyle: data.italic === true ? 'italic' : 'normal',

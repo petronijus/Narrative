@@ -3,11 +3,15 @@
  *
  * Slides rendered by the render worker (agentic A3,
  * docs/plans/a3-render-worker.md): `deck.exportPng` through the command API
- * (links and inline), the editor's "Export as PNG" on a slide, and a render
- * right after an edit showing that edit — the worker reads the live document.
+ * (links and inline), the editor's "Export as PNG" on a slide, a render
+ * right after an edit showing that edit — the worker reads the live document —
+ * and the folder's fonts in the picture, set on a text box and on a run.
  * Needs the whole dev stack, the render worker included (`just dev`).
  */
 
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { PNG } from 'pngjs'
 
@@ -16,21 +20,28 @@ const WEB_ORIGIN = 'http://localhost:5173'
 const RED = { r: 0xe5, g: 0x39, b: 0x35 }
 const GREEN = { r: 0x43, g: 0xa0, b: 0x47 }
 
+/** Every letter a solid block (fixtures/make-block-font.py): no fallback face looks like it. */
+const BLOCK_FONT = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'block-font.ttf')
+
 let deckId = ''
+let folderId = ''
 
 test.afterEach(async ({ request }) => {
   if (deckId !== '') await request.delete(`${API}/decks/${deckId}`).catch(() => undefined)
+  if (folderId !== '') await request.delete(`${API}/folders/${folderId}`).catch(() => undefined)
   deckId = ''
+  folderId = ''
 })
 
 async function command<T>(
   request: APIRequestContext,
   commandId: string,
   input: unknown,
+  target: Record<string, string> = { deckId },
 ): Promise<T> {
   const res = await request.post(`${API}/commands`, {
     headers: { Origin: WEB_ORIGIN },
-    data: { target: { deckId }, command: commandId, input },
+    data: { target, command: commandId, input },
     timeout: 120_000,
   })
   const body = (await res.json()) as { ok: boolean; result: T; error?: { message: string } }
@@ -153,20 +164,84 @@ test('an unknown slide is refused before anything renders', async ({ request }) 
   expect(body.error?.code).toBe('not_found')
 })
 
-test('the editor exports a slide as a PNG from its menu', async ({ page }) => {
-  test.setTimeout(180_000)
-  await seedDeck(page.request)
-  await page.goto(`/deck/${deckId}`)
-  const firstSlide = page.locator('[role="option"][data-slide-id]').first()
-  await expect(firstSlide).toBeVisible({ timeout: 30_000 })
-  await firstSlide.click({ button: 'right' })
-  const download = page.waitForEvent('download', { timeout: 120_000 })
-  await page.getByRole('menuitem', { name: 'Export as PNG' }).click()
-  const file = await download
-  expect(file.suggestedFilename()).toBe('e2e render export - slide 1.png')
-  const png = PNG.sync.read(
+/** A folder with the block font, and a deck in it: "Wide" in the font on a box and on a run, a red block. */
+async function seedFontDeck(request: APIRequestContext): Promise<string> {
+  folderId = (
+    await command<{ id: string }>(
+      request,
+      'folder.create',
+      { name: `e2e render fonts ${Date.now()}` },
+      {},
+    )
+  ).id
+  const { family } = await command<{ family: string }>(
+    request,
+    'folder.fonts.upload',
+    { file: { base64: readFileSync(BLOCK_FONT).toString('base64'), filename: 'block-font.ttf' } },
+    { folderId },
+  )
+  const res = await request.post(`${API}/decks`, {
+    data: { title: 'e2e render fonts', folderId },
+  })
+  expect(res.ok()).toBe(true)
+  deckId = ((await res.json()) as { id: string }).id
+  // The whole box in the folder font…
+  await command(request, 'object.create', {
+    slide: { index: 0 },
+    id: 'box',
+    object: { type: 'text', x: 200, y: 150, width: 1000, height: 200, text: 'Wide', fontSize: 100 },
+  })
+  await command(request, 'text.setBoxTypography', {
+    slide: { index: 0 },
+    objects: ['box'],
+    style: { fontFamily: family },
+  })
+  // …and one run of another box, as an imported deck has it (a family with
+  // a space in its name: Pixi's own scan of the run markup never found it).
+  await command(request, 'object.create', {
+    slide: { index: 0 },
+    id: 'runs',
+    object: { type: 'text', x: 200, y: 550, width: 1000, height: 200, text: 'x', fontSize: 100 },
+  })
+  await command(request, 'text.set', {
+    target: { slide: { index: 0 }, object: 'runs' },
+    text: { paragraphs: [{ runs: [{ text: 'Run ' }, { text: 'Wide', fontFamily: family }] }] },
+  })
+  // …and a table cell (drawn by the same HTMLText, inside the table's node).
+  const { objectId: table } = await command<{ objectId: string }>(request, 'table.insert', {
+    slide: { index: 0 },
+    x: 200,
+    y: 820,
+    width: 900,
+    height: 200,
+    rows: 1,
+    cols: 1,
+    defaults: { fontFamily: family, fontSize: 100 },
+  })
+  await command(request, 'text.set', {
+    target: { slide: { index: 0 }, object: table, cell: { row: 0, col: 0 } },
+    text: 'Wide',
+  })
+  await command(request, 'object.create', {
+    slide: { index: 0 },
+    object: { type: 'rectangle', x: 1300, y: 150, width: 300, height: 150, fill: '#E53935' },
+  })
+  return family
+}
+
+/** "Wide" in blocks: four solid 92×70 px rectangles — about 6,400 of the sampled pixels. */
+function expectBlockText(png: PNG): void {
+  expect(darkPixels(png, { x0: 200, y0: 150, x1: 1000, y1: 350 })).toBeGreaterThan(4_500)
+  // The run: "Run " in the box's own face, then "Wide" in blocks.
+  expect(darkPixels(png, { x0: 200, y0: 550, x1: 1200, y1: 750 })).toBeGreaterThan(4_500)
+  // The table cell.
+  expect(darkPixels(png, { x0: 200, y0: 820, x1: 1100, y1: 1020 })).toBeGreaterThan(4_500)
+}
+
+async function readDownload(download: import('@playwright/test').Download): Promise<PNG> {
+  return PNG.sync.read(
     await new Promise<Buffer>((resolve, reject) => {
-      void file.createReadStream().then((stream) => {
+      void download.createReadStream().then((stream) => {
         const chunks: Buffer[] = []
         stream.on('data', (c: Buffer) => chunks.push(c))
         stream.on('end', () => resolve(Buffer.concat(chunks)))
@@ -174,6 +249,90 @@ test('the editor exports a slide as a PNG from its menu', async ({ page }) => {
       }, reject)
     }),
   )
+}
+
+async function exportFromMenu(page: import('@playwright/test').Page): Promise<PNG> {
+  const firstSlide = page.locator('[role="option"][data-slide-id]').first()
+  await firstSlide.click({ button: 'right' })
+  const download = page.waitForEvent('download', { timeout: 120_000 })
+  await page.getByRole('menuitem', { name: 'Export as PNG' }).click()
+  const file = await download
+  expect(file.suggestedFilename()).toBe('e2e render fonts - slide 1.png')
+  return readDownload(file)
+}
+
+test('the editor exports a slide in the browser: what it shows, edits of a moment ago and folder fonts included', async ({
+  page,
+}) => {
+  test.setTimeout(180_000)
+  await seedFontDeck(page.request)
+  const serverRenders: string[] = []
+  page.on('request', (req) => {
+    if (req.url().includes('/export.png')) serverRenders.push(req.url())
+  })
+  await page.goto(`/deck/${deckId}`)
+  await expect(page.locator('[role="option"][data-slide-id]').first()).toBeVisible({
+    timeout: 30_000,
+  })
+  await expect
+    .poll(() => page.evaluate(() => typeof window.__narrative_test_api), { timeout: 30_000 })
+    .toBe('object')
+  // An edit made in this editor a moment before the export.
+  await page.evaluate(() =>
+    window.__narrative_test_api!.addRect({
+      id: 'fresh',
+      x: 1300,
+      y: 800,
+      w: 300,
+      h: 150,
+      fill: 0x43a047,
+    }),
+  )
+
+  const png = await exportFromMenu(page)
   expect([png.width, png.height]).toEqual([1920, 1080])
-  expect(near(pixelOf(png, 400, 300), RED)).toBe(true)
+  expect(near(pixelOf(png, 1450, 225), RED)).toBe(true)
+  expect(near(pixelOf(png, 1450, 875), GREEN)).toBe(true)
+  expectBlockText(png)
+  // Again: the hidden frame is reused, and still nothing went to the server.
+  const again = await exportFromMenu(page)
+  expect(near(pixelOf(again, 1450, 875), GREEN)).toBe(true)
+  await expect(page.locator('iframe[title="Slide export"]')).toHaveCount(1)
+  expect(serverRenders).toEqual([])
+})
+
+test('the editor falls back to the render worker when the browser cannot render', async ({
+  page,
+}) => {
+  test.setTimeout(180_000)
+  await seedFontDeck(page.request)
+  // The hidden frame's page cannot load here.
+  await page.route('**/deck/*/render?*', (route) => route.abort())
+  const serverRenders: string[] = []
+  page.on('request', (req) => {
+    if (req.url().includes('/export.png')) serverRenders.push(req.url())
+  })
+  await page.goto(`/deck/${deckId}`)
+  await expect(page.locator('[role="option"][data-slide-id]').first()).toBeVisible({
+    timeout: 30_000,
+  })
+  const png = await exportFromMenu(page)
+  expect(serverRenders).toHaveLength(1)
+  expect([png.width, png.height]).toEqual([1920, 1080])
+  expect(near(pixelOf(png, 1450, 225), RED)).toBe(true)
+  expectBlockText(png)
+})
+
+test('the render worker draws the folder fonts, set on a text box and on a run', async ({
+  request,
+}) => {
+  test.setTimeout(180_000)
+  await seedFontDeck(request)
+  const out = await command<{
+    delivery: 'base64'
+    slides: Array<Rendered & { base64: string }>
+    failedFonts: string[]
+  }>(request, 'deck.exportPng', { slides: [{ index: 0 }], delivery: 'base64' })
+  expect(out.failedFonts).toEqual([])
+  expectBlockText(PNG.sync.read(Buffer.from(out.slides[0]!.base64, 'base64')))
 })

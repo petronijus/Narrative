@@ -20,6 +20,7 @@
  */
 
 import { Cache } from 'pixi.js'
+import { announceFontFamilyChanged } from '../renderer/fontChanges.js'
 // `?url` returns the public URL to the asset Vite emits at build time.
 import interLatinNormalUrl from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url'
 import interLatinItalicUrl from '@fontsource-variable/inter/files/inter-latin-wght-italic.woff2?url'
@@ -61,24 +62,8 @@ export async function registerBundledFonts(): Promise<void> {
     ],
   })
 
-  // Any text nodes that mounted before the FontFace + Cache entry
-  // landed are still rasterised with the fallback face. Poke the
-  // SceneGraph so HTMLText re-runs getFontCss and embeds Inter.
-  // Retry briefly because the SceneGraph may not be installed yet
-  // at registration time on a cold reload.
-  let attempts = 0
-  const refresh = (): void => {
-    const sg = (
-      window as unknown as {
-        __narrative_scene_graph?: { refreshTextNodesUsingFamily?: (f: string) => void }
-      }
-    ).__narrative_scene_graph
-    if (sg?.refreshTextNodesUsingFamily !== undefined) {
-      sg.refreshTextNodesUsingFamily(family)
-      return
-    }
-    attempts += 1
-    if (attempts < 20) setTimeout(refresh, 100)
-  }
-  refresh()
+  // Text that rasterised before the face and its Cache entry landed shows
+  // the fallback: every canvas redraws its Inter text now
+  // (renderer/fontChanges.ts); a canvas created later finds the entry.
+  announceFontFamilyChanged(family)
 }

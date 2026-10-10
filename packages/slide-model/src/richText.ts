@@ -27,6 +27,7 @@ import {
   type ParagraphAttrKey,
   type TextListStyle,
 } from '@narrative/shared'
+import { fontFamilyNames, quoteCssFamilyName } from './cssFontFamily.js'
 
 export interface RichAttrs {
   italic?: boolean
@@ -672,13 +673,16 @@ export function toHtml(delta: RichDeltaOp[], defaults: HtmlDefaults): string {
     if (typeof weight === 'number' && weight !== 400) styleBits.push(`font-weight:${weight}`)
     if (typeof color === 'number') styleBits.push(`color:${colorHex(color)}`)
     if (typeof a.fontFamily === 'string' && a.fontFamily !== '') {
-      // Emit the sanitised value UNQUOTED — it goes inside a double-quoted
-      // style="" attribute, and the allowlist guarantees no `"` (which
-      // would break the attribute) and no `;`/`<`/`>` (which would inject
-      // CSS or markup). Quoting it would put `"` back into a `"`-delimited
-      // attribute and break multi-word families.
+      // The sanitised value (no `"`, `;`, `<`, `>` or `\` survive the
+      // allowlist), each name as a CSS string in single quotes — inside the
+      // double-quoted style="" attribute — unless it is a plain identifier
+      // or a generic family: unquoted, `Northwind Sans ST Pro 36 Regular`
+      // breaks the declaration at the digits and the run falls back.
       const family = sanitizeFontFamily(a.fontFamily)
-      if (family !== undefined) styleBits.push(`font-family:${family}`)
+      const names = family === undefined ? [] : fontFamilyNames(family)
+      if (names.length > 0) {
+        styleBits.push(`font-family:${names.map((n) => quoteCssFamilyName(n, "'")).join(', ')}`)
+      }
     }
     const size = typeof a.fontSize === 'number' && a.fontSize > 0 ? a.fontSize : defaults.fontSize
     if (typeof size === 'number' && size > 0) {

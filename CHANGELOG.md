@@ -8,6 +8,39 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.22 — Export as PNG in the browser; folder fonts everywhere (2026-10-11)
+
+### Changed
+
+- **Export as PNG is instant in the editor.** The slide is rendered in your
+  browser — in a hidden frame running the same render page the server uses
+  — instead of waiting for the render worker: about 1–2 s the first time,
+  a third of a second after that (it was 11 s on production). The picture
+  includes edits made a moment ago. If the browser cannot render it, the
+  server still does.
+
+### Fixed
+
+- **Text shows its folder font everywhere, not only where the font is
+  installed.** Two causes: text drawn before its folder font finished
+  loading was never redrawn (the font loader never reached the canvas), and
+  a font set on part of a text — as imported PowerPoint decks have it —
+  was never embedded when its name has a space ("Proseware Pro"). Seen in the
+  PNG export (the server has no fonts installed), in shared links and for
+  anyone without the deck's fonts on their machine. Table cells and the
+  text inside components are redrawn too, and a font no longer falls back
+  after the editor has been open for an hour (the text embeds the font file
+  the editor already downloaded, not a link that expires).
+
+### Security
+
+- A font family name can no longer break out of the CSS the text renderer
+  writes into its SVG (a name like `X</style><img …>`, set by a
+  collaborator or an agent, or carried by an uploaded font): only plain
+  names are embedded, and quoted names escape `<`, `>` and `&`.
+
+---
+
 ## 0.10.21 — Export slides as PNG; the render worker (2026-10-10)
 
 ### Added

@@ -28,6 +28,8 @@
  * no-op because the comma triggers the pass-through branch.
  */
 
+import { quoteCssFamilyName } from '@narrative/slide-model'
+
 /** Sans fallback. Pixi v8 HTMLText renders into an SVG `<foreignObject>`
  *  where some platform-conditional fonts (system-ui, ui-monospace) don't
  *  always resolve, so we lead with concrete families that always exist
@@ -209,53 +211,7 @@ export function cssFontFamily(family: string | undefined): string | undefined {
           .split(',')
           .map((s) => s.trim()),
       ]
-  return entries.map(quoteFamilyName).join(', ')
-}
-
-const CSS_GENERIC_FAMILIES = new Set([
-  'serif',
-  'sans-serif',
-  'monospace',
-  'cursive',
-  'fantasy',
-  'system-ui',
-  'ui-serif',
-  'ui-sans-serif',
-  'ui-monospace',
-  'ui-rounded',
-  'math',
-  'emoji',
-  'fangsong',
-  'inherit',
-  'initial',
-  'unset',
-])
-
-/**
- * Wrap a family name in double quotes when it contains whitespace,
- * digits, or other characters that disqualify it as a CSS identifier.
- * CSS generics pass through; an already-quoted name (`"Foo"`, `'Foo'`) is
- * re-quoted safely, and a quoted generic stays a quoted name.
- */
-function quoteFamilyName(raw: string): string {
-  // A name that arrives quoted is unquoted first and quoted again below: its
-  // quotes are not trusted to be balanced, and the string ends up inside a
-  // <style> element of the HTMLText SVG, where an unescaped quote, backslash
-  // or line break would end the declaration (family names come from folder
-  // text styles and imported decks).
-  const name = raw.replace(/^(["'])(.*)\1$/s, '$2')
-  const quoted = name !== raw
-  if (name.length === 0) return name
-  if (!quoted && CSS_GENERIC_FAMILIES.has(name.toLowerCase())) return name
-  // CSS identifier: starts with letter / hyphen, then letters / digits /
-  // hyphens / underscores. No whitespace. Anything else needs quoting.
-  if (!quoted && /^[A-Za-z_][A-Za-z0-9_-]*$/.test(name)) return name
-  // A CSS string: backslash and double quote escaped, control characters
-  // (line breaks included) written as hex escapes.
-  const escaped = name.replace(/[\\"\u0000-\u001f\u007f]/g, (c) =>
-    c === '\\' || c === '"' ? `\\${c}` : `\\${c.charCodeAt(0).toString(16)} `,
-  )
-  return `"${escaped}"`
+  return entries.map((entry) => quoteCssFamilyName(entry)).join(', ')
 }
 
 function categoryStackFor(family: string): string {

@@ -137,6 +137,9 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/pages/renderSlide.ts", ["render-page"]),
     # The toolbar's PowerPoint download goes through it too.
     ("apps/web/src/lib/download.ts", ["render-export", "pptx-roundtrip"] + SLIDES_PANEL),
+    # The editor's in-browser "Export as PNG" (a hidden frame on the render page).
+    ("apps/web/src/state/browserSlideExport.ts", ["render-export", "render-page"]),
+    ("apps/web/src/lib/stateVector.ts", ["render-export"]),
     ("apps/web/src/lib/endpoints.ts", SMOKE + SYNC + ["render-page"]),
     ("apps/web/src/lib/shareToken.ts", ACCESS + TOKENS + MEDIA + ["render-page"]),
     ("apps/web/src/ui/PresenterOverlay.tsx", PRESENT),
@@ -209,7 +212,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/state/FolderDoc*", TOKENS),
     ("apps/web/src/state/TokensContext.tsx", TOKENS + RENDER),
     ("apps/web/src/state/folderTokenWriter.ts", TOKENS),
-    ("apps/web/src/state/FolderFontLoader.ts", ["folder-font-preview"]),
+    ("apps/web/src/state/FolderFontLoader.ts", ["folder-font-preview", "render-export"]),
     ("apps/web/src/state/useFolderFonts.tsx", ["folder-font-preview"]),
     ("apps/web/src/state/useDeckFonts.tsx", ["folder-font-preview"]),
     ("apps/web/src/state/bundledFonts.ts", TEXT),

@@ -336,4 +336,35 @@ the dev stack (sandbox required and active, the stored PNG `private,
 no-store`); an internal Docker network reaching its peers and nothing else;
 on VM 103, a user namespace created under these container settings.
 
-Next: A3.4 `query.render` (the agent sees a slide).
+**After 0.10.21** (2026-10-11, Petr's first export on production): the
+slide came out in the wrong fonts, and took 11.6 s.
+
+- Fonts: not the worker's — the editor's. HTMLText draws through an SVG that
+  sees only the faces Pixi embeds from its cache at raster time. Text drawn
+  before its folder font loaded was never redrawn (FolderFontLoader sits
+  above the canvas, so its canvas context was always null), and run-level
+  families with a space were never embedded (Pixi's scan of the run markup
+  stops at the space). A machine with the fonts installed hid both. Fixed
+  with font-change announcements every SceneGraph listens to
+  (`renderer/fontChanges.ts`) and the box's and runs' families passed to
+  Pixi by name (`htmlTextFontFamilies`); e2e with a font whose letters are
+  solid blocks, so no fallback face can pass. The review of the fix (same
+  night) added: faces embedded from the bytes the loader downloaded, not
+  re-fetched by Pixi from presigned URLs that die after an hour;
+  announcements delivered once per family as tracked render work; table
+  cells and component leaves redrawn (every HTMLText whose families include
+  the one that changed); and family names kept out of Pixi's unescaped SVG
+  `<style>` unless they are plain (`isEmbeddableFamilyName`) — a name like
+  `X</style><img …>` could otherwise inject markup, pre-existing.
+- Speed: the editor no longer asks the worker. "Export as PNG" renders in
+  the browser, in a hidden same-origin frame running this render page
+  (`state/browserSlideExport.ts`, `__narrativeRenderCapture`): exact, the
+  user's caches and session, edits of a moment ago included (the page waits
+  until its copy of the deck covers the editor's state vector). Measured in
+  dev: 1.6 s cold, 0.36 s warm. The worker stays the agents' way, and the
+  fallback when the browser cannot render.
+- The worker's 11.6 s per job is the app loading in a fresh page each time:
+  A3.4 keeps a warm page per deck.
+
+Next: A3.4 `query.render` (the agent sees a slide), with a warm page per
+deck in the worker.

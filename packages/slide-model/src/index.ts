@@ -180,6 +180,7 @@ export type {
   ParagraphPatch,
   ListedHtmlOptions,
 } from './richText.js'
+export { CSS_GENERIC_FAMILIES, fontFamilyNames, quoteCssFamilyName } from './cssFontFamily.js'
 
 // Bindings — animations (M6)
 export {

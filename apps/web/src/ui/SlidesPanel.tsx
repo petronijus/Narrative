@@ -19,7 +19,7 @@
  */
 
 import { dismissEditorNotice, showEditorNotice } from '../state/editorNotice.js'
-import { downloadBlob } from '../lib/download.js'
+import { downloadBlob, safeFilename } from '../lib/download.js'
 import {
   Fragment,
   memo,
@@ -32,6 +32,12 @@ import {
   type ReactElement,
 } from 'react'
 import { useSlides } from '../state/useSlides.js'
+import { useSlideDoc } from '../state/useSlideDoc.js'
+import {
+  closeBrowserSlideExport,
+  exportSlidePngInBrowser,
+  SlideRenderRefused,
+} from '../state/browserSlideExport.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideThumbnails } from '../state/useSlideThumbnails.js'
@@ -525,6 +531,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   // page can show a deck preview without re-opening every deck. The
   // deckId comes from the route — `/deck/:id` mounts this panel.
   const { id: deckId } = useParams<{ id: string }>()
+  const { deckCtx } = useSlideDoc()
   const firstSlideId = allSlideIds[0]
   const firstSlideThumb = firstSlideId !== undefined ? thumbnailMap.get(firstSlideId) : undefined
   const api = useApi()
@@ -810,23 +817,41 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
 
   // Rendered on the server from the live deck (the render worker): a few
   // seconds, so say so first.
+  // "Export as PNG": rendered in this browser (state/browserSlideExport.ts) —
+  // exactly what the editor shows, edits of a moment ago included. If that
+  // cannot work here (no WebGL, the hidden frame failed), the render worker
+  // does it instead; a slide the page refuses (gone, no access) is not
+  // retried.
   const handleExportPng = useCallback(
     (slideId: string) => {
       if (deckId === undefined || deckId === '') return
+      const index = slides.findIndex((s) => s.id === slideId)
       showEditorNotice('Exporting the slide as PNG…')
-      api.exportSlidePng(deckId, slideId).then(
-        ({ blob, filename }) => {
-          dismissEditorNotice()
-          downloadBlob(blob, filename)
-        },
-        (err: unknown) =>
-          showEditorNotice(
-            `Could not export the slide: ${err instanceof Error ? err.message : String(err)}`,
-          ),
+      const title = api.getDeck(deckId).then(
+        (deck) => deck.title,
+        () => 'slide',
       )
+      exportSlidePngInBrowser({ deckId, slideId, doc: deckCtx.doc })
+        .catch(async (err: unknown) => {
+          if (err instanceof SlideRenderRefused) throw err
+          console.warn('[export] rendering in the browser failed; asking the server', err)
+          return (await api.exportSlidePng(deckId, slideId)).blob
+        })
+        .then(
+          async (blob) => {
+            dismissEditorNotice()
+            downloadBlob(blob, `${safeFilename(await title)} - slide ${index + 1}.png`)
+          },
+          (err: unknown) =>
+            showEditorNotice(
+              `Could not export the slide: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+        )
     },
-    [api, deckId],
+    [api, deckId, deckCtx, slides],
   )
+  // The hidden export frame belongs to this deck.
+  useEffect(() => closeBrowserSlideExport, [deckId])
 
   const { enqueueInsert, reportError } = pptxDrop
   const handlePaste = useCallback(

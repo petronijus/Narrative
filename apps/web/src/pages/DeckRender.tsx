@@ -22,6 +22,12 @@
  *     deck has no slides, the slide does not exist, a font list could not be
  *     read, the inputs never came within `PAGE_TIMEOUT_MS` (it lists which),
  *     or the slide did not settle within `SETTLE_TIMEOUT_MS`.
+ *
+ * Two hooks drive it from outside: `__narrativeRenderShow` switches the slide
+ * in place (the render worker goes through a deck that way), and
+ * `__narrativeRenderCapture` hands back the shown slide as a PNG — the
+ * editor's "Export as PNG" keeps this page in a hidden frame
+ * (state/browserSlideExport.ts) and asks it, instead of the server.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -34,6 +40,8 @@ import { getDefaultRenderScheduler } from '../renderer/RenderScheduler.js'
 import { getRenderer } from '../renderer/objectRenderers/index.js'
 import { settleScene, type SettleResult } from '../renderer/settleScene.js'
 import { failedRenderFonts, failedRenderWork } from '../renderer/renderWork.js'
+import { captureSlidePng } from '../renderer/captureSlide.js'
+import { decodeBase64, untilCoversStateVector } from '../lib/stateVector.js'
 import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
@@ -88,8 +96,18 @@ declare global {
      * page. The status goes back to `loading` until that slide settles.
      */
     __narrativeRenderShow?: (slide: string) => void
+    /**
+     * The shown slide as a PNG (1920×1080), once it is ready. With
+     * `stateVector` (base64 of the asking editor's Y.encodeStateVector), it
+     * first waits until this page's copy of the deck holds those edits, then
+     * settles the slide again — the picture shows what the editor shows.
+     */
+    __narrativeRenderCapture?: (opts?: { stateVector?: string }) => Promise<Blob>
   }
 }
+
+/** How long a capture waits for the asking editor's latest edits to reach this page. */
+const CAPTURE_SYNC_TIMEOUT_MS = 15_000
 
 function publish(status: RenderStatus): void {
   window.__narrativeRender = status
@@ -266,6 +284,43 @@ export function DeckRender() {
     })
     return () => stop.abort()
   }, [inputsReady, canvas, targetSlideId, targetIndex, slideParam])
+
+  // A picture of the shown slide for the editor (see the header).
+  useEffect(() => {
+    if (canvas === null) return
+    window.__narrativeRenderCapture = async (opts) => {
+      if (opts?.stateVector !== undefined) {
+        await untilCoversStateVector(
+          deckCtx.doc,
+          decodeBase64(opts.stateVector),
+          CAPTURE_SYNC_TIMEOUT_MS,
+        )
+      }
+      const status = window.__narrativeRender
+      if (status?.status !== 'ready') {
+        throw new Error(
+          status?.status === 'error'
+            ? `the slide cannot be rendered (${status.reason})`
+            : 'the slide is not ready yet',
+        )
+      }
+      const scheduler = getDefaultRenderScheduler()
+      if (scheduler === null) throw new Error('the canvas is not ready')
+      // Edits since `ready` (the ones just waited for among them) may have
+      // started loads and rasters: wait for those as well.
+      const settle = await settleScene(canvas.sceneGraph, {
+        expectedIds: () =>
+          objectsRef.current.filter((o) => getRenderer(o.type) !== undefined).map((o) => o.id),
+        renderNow: () => scheduler.renderNow(),
+        timeoutMs: SETTLE_TIMEOUT_MS,
+      })
+      if (!settle.settled) throw new Error('the slide did not finish drawing')
+      return captureSlidePng(canvas.sceneGraph)
+    }
+    return () => {
+      delete window.__narrativeRenderCapture
+    }
+  }, [canvas, deckCtx])
 
   return (
     <div
