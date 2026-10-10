@@ -15,8 +15,9 @@ if ! command -v just >/dev/null 2>&1; then
   exit 0
 fi
 
-fp="$(tools/dev/check-cache.sh fingerprint)" || exit 1
-tools/dev/check-cache.sh is-green "$fp" && exit 0
+# A fingerprint that cannot be taken must not read as "nothing to check":
+# `run` then checks uncached.
+fp="$(tools/dev/check-cache.sh fingerprint)" && tools/dev/check-cache.sh is-green "$fp" && exit 0
 
 log="$(mktemp "${TMPDIR:-/tmp}/check.XXXXXX")"
 if tools/dev/check-cache.sh run "$log"; then

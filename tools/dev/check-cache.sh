@@ -46,7 +46,10 @@ fingerprint() {
     index="$(mktemp "${TMPDIR:-/tmp}/check-index.XXXXXX")" || return 1
     # A deleted path is simply absent from the add; read-tree already has it,
     # so drop it from the throwaway index first.
-    GIT_INDEX_FILE="$index" git read-tree HEAD &&
+    # Before the first commit there is no HEAD: start from the empty tree.
+    local base=HEAD
+    git rev-parse -q --verify HEAD >/dev/null || base=--empty
+    GIT_INDEX_FILE="$index" git read-tree "$base" &&
       GIT_INDEX_FILE="$index" git rm -r -q --cached --ignore-unmatch -- "${paths[@]}" &&
       { ((${#present[@]} == 0)) || GIT_INDEX_FILE="$index" git -c core.safecrlf=false add -A -- "${present[@]}"; } &&
       tree="$(GIT_INDEX_FILE="$index" git write-tree)"
@@ -65,7 +68,13 @@ mark_green() {
 
 run() {
   local log="${1:-/dev/stdout}" fp
-  fp="$(fingerprint)" || { echo "check-cache: cannot fingerprint the working tree" >&2; return 1; }
+  # A git failure must not read as "already checked" or skip the check: run
+  # it, uncached (nothing to record without a fingerprint).
+  if ! fp="$(fingerprint)"; then
+    echo "check-cache: cannot fingerprint the working tree; running \`just check\` uncached" >&2
+    just check >"$log" 2>&1
+    return
+  fi
   is_green "$fp" && return 0
   # One run at a time; a waiter re-reads the stamps after the first one ends.
   local waited=0
@@ -80,7 +89,7 @@ run() {
   done
   echo $$ >"$lock/pid"
   trap 'rm -rf "$lock"' RETURN
-  fp="$(fingerprint)" || return 1
+  fp="$(fingerprint)" || { just check >"$log" 2>&1; return; }
   is_green "$fp" && return 0
   if just check >"$log" 2>&1; then
     # Record the content that was checked (unchanged during the run, or the

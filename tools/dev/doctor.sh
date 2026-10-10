@@ -11,7 +11,29 @@ ok() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 bad() { printf '  \033[31m✗\033[0m %s\n      → %s\n' "$1" "$2"; fail=1; }
 warn() { printf '  \033[33m!\033[0m %s\n      → %s\n' "$1" "$2"; }
 has() { command -v "$1" >/dev/null 2>&1; }
-install_hint() { [[ "$(uname)" == Darwin ]] && echo "brew install $1" || echo "see SETUP.md → Toolchain ($1)"; }
+# The first version number in a command's output.
+ver() { "$@" 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1; }
+# at_least <have> <want>: version comparison by sort -V.
+at_least() { [[ -n "$1" && "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" == "$2" ]]; }
+# The pacman package that owns a tool, if pacman installed it.
+pacman_pkg() { has pacman && has "$1" && pacman -Qqo "$(command -v "$1")" 2>/dev/null; }
+# tool_ver <tool> <args…>: the tool's own answer, else its package's version
+# (distro builds can lack the stamp: Arch's gitleaks prints "version is set
+# by build process").
+tool_ver() {
+  local v pkg
+  v="$(ver "$@")"
+  if [[ -z "$v" ]] && pkg="$(pacman_pkg "$1")"; then
+    v="$(pacman -Q "$pkg" | awk '{print $2}' | grep -Eo '^[0-9]+\.[0-9]+(\.[0-9]+)?')"
+  fi
+  printf '%s' "$v"
+}
+# How to install a package on this machine (Omarchy: pacman, MacBook: brew).
+install() {
+  if has pacman; then echo "sudo pacman -S $1"
+  elif has brew; then echo "brew install $1"
+  else echo "see SETUP.md → Toolchain ($1)"; fi
+}
 
 root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 cd "$root" || exit 1
@@ -56,21 +78,26 @@ else
     "docker login ghcr.io -u petronijus   (a token with read:packages; docs/storage.md → MinIO image)"
 fi
 # The PPTX round-trip tests validate against the ECMA-376 schema with it.
-has xmllint && ok "xmllint (PPTX schema tests)" || bad "xmllint missing" "$(install_hint libxml2)"
+has xmllint && ok "xmllint (PPTX schema tests)" || bad "xmllint missing" "$(install libxml2)"
 
 echo "Dev tools"
-for t in just lefthook gitleaks; do
-  has "$t" && ok "$t" || bad "$t missing" "$(install_hint "$t")"
+for t in just lefthook; do
+  has "$t" && ok "$t" || bad "$t missing" "$(install "$t")"
 done
+# The pre-commit hook runs `gitleaks git --pre-commit --staged` (8.19+).
+v="$(tool_ver gitleaks version)"
+at_least "$v" 8.19 && ok "gitleaks $v" ||
+  bad "gitleaks ${v:-missing or unknown version} (want ≥ 8.19: the pre-commit hook's \`gitleaks git --staged\`)" "$(install gitleaks)"
 # The Claude Code hooks and the docs check (tools/dev/docs-check.py) run on it.
 if has python3 && python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2>/dev/null; then
   ok "python3 $(python3 -c 'import platform; print(platform.python_version())')"
 else
-  bad "python3 ≥ 3.9 missing (Claude Code hooks, docs check)" "$(install_hint python3)"
+  bad "python3 ≥ 3.9 missing (Claude Code hooks, docs check)" "$(install python)"
 fi
 # Secrets: SOPS + age, key from 1Password (scripts/secrets-decrypt.sh).
 for t in sops age op; do
-  has "$t" && ok "$t" || warn "$t missing (only for decrypting secrets)" "$(install_hint "$t")"
+  # op is 1password-cli (brew cask; the AUR on Omarchy).
+  has "$t" && ok "$t" || warn "$t missing (only for decrypting secrets)" "$(install "${t/#op/1password-cli}")"
 done
 # e2e: Playwright's own Chromium where it installs, the system Chrome
 # elsewhere (Ubuntu 26.04) — the same decision `just e2e` makes.
