@@ -6,6 +6,14 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+## 0.10.20 — The render page; share links show their pictures (2026-10-10)
+
+No migrations, no new env vars (`VITE_IMGPROXY_URL` is no longer read; an
+old value in `infra/.env.prod` is harmless). The deploy reloads Caddy itself
+now — this release changes the Caddyfile (access-log filter,
+`Referrer-Policy: strict-origin`). After it, open a share link without
+signing in: its pictures and folder fonts must show.
+
 ### Fixed
 
 - **A share link shows its deck's pictures, videos and fonts.** The media
