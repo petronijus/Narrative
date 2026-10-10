@@ -299,6 +299,8 @@ one brings back its compose files and with them the old image, which runs
 as root and so reads and writes the `65532`-owned data without a `chown`
 back. Once the cached copy is gone, there is no way back to the official
 image: stay on the mirror (any later Chainguard build is a `crane copy` away).
+On production that is the state since 2026-10-10: the cached copy was
+removed after 0.10.19 ran healthy for 17 hours.
 
 ## Access
 

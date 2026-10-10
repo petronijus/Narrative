@@ -107,6 +107,20 @@ bugs. Watch for them; a run on a loaded machine proves little:
 - `layer-reorder` once failed with "no live deck document (the provider is
   between mounts)" right after a cold start of the stack; not reproduced in
   22 repeats.
+- `fill-mode-switch` "Linear → Solid clears gradient…" and "rapid Linear →
+  Solid…" plus `component-promote-stamp` "a picture pasted from a deck into
+  a master editor…" failed in the full run on the Omarchy desktop on
+  2026-10-10 (182 of 201 passed, 2.8 min) and passed when run alone right
+  after.
+
+Requests for `/decks/undefined` and `/api/decks/undefined/fonts` (about
+ten per full run on the Linux desktop until early October; only
+`DeckShell`, with the id from the `/deck/:id` route, asks for either, so a
+spec navigated to the literal `/deck/undefined`) no longer appear: none in
+three full runs on the MacBook (2026-10-07) and none among the 2916
+request URLs the dev server logged during the full run on the Omarchy
+desktop (2026-10-10). If they come back, the dev log's timestamps against
+the JSON reporter's test windows name the spec.
 
 ## Test tiers
 
