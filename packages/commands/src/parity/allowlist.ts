@@ -71,6 +71,14 @@ export const AGENT_ALLOWLIST: readonly AllowlistEntry[] = [
     ],
   },
   {
+    capability: 'Render tokens for the e2e suite (development only)',
+    reason:
+      'POST /dev/render-token exists only with BYPASS_AUTH (refused in production) so the e2e suite can open the ' +
+      'render page as the render worker does. Render tokens are credentials only the server mints for its own ' +
+      'render jobs; an agent asks for a render (query.render, A3) and never holds one.',
+    routes: [{ method: 'POST', path: '/dev/render-token' }],
+  },
+  {
     capability: 'Personal access tokens (list, create, revoke)',
     reason:
       'Credential management. An agent must not mint or revoke credentials: a leaked agent token that could create ' +

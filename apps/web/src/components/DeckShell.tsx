@@ -42,7 +42,8 @@
 
 import { useState, useCallback, useLayoutEffect } from 'react'
 import { markDeckLoadStart } from '../state/loadTimings.js'
-import { useParams, Navigate, Outlet } from 'react-router-dom'
+import { useParams, useMatch, useLocation, Navigate, Outlet } from 'react-router-dom'
+import { shareTokenFrom } from '../state/hocuspocusAuth.js'
 import { SlideDocProvider } from '../state/SlideDocProvider.js'
 import { ActiveSlideProvider } from '../state/ActiveSlideContext.js'
 import { CanvasInstanceContext } from '../renderer/CanvasInstanceContext.js'
@@ -115,6 +116,14 @@ export function FolderDocGate({ children }: FolderDocGateProps) {
 export function DeckShell() {
   const { id } = useParams<{ id: string }>()
   const [canvasInstance, setCanvasInstance] = useState<CanvasInstance | null>(null)
+  // The render page (/deck/:id/render) shows the deck as the server holds
+  // it: no seeded first slide. The render worker's browser, which opens it
+  // with a render token, must not appear as a peer; a person opening the page
+  // does, as in present mode.
+  const isRender = useMatch('/deck/:id/render') !== null
+  const { search } = useLocation()
+  const shareToken = shareTokenFrom(search)
+  const isRenderWorker = isRender && shareToken !== null && shareToken.startsWith('nrr_')
 
   // P12d: stamp t0 for the perf HUD's load-time breakdown. Re-stamps
   // whenever the deckId changes so each navigation gets a fresh
@@ -139,7 +148,7 @@ export function DeckShell() {
       <DeckRoleProvider deckId={id}>
         <DeckFontsProvider deckId={id}>
           <FolderDocGate>
-            <SlideDocProvider deckId={id}>
+            <SlideDocProvider deckId={id} presence={!isRenderWorker} hydrate={!isRender}>
               <ActiveSlideProvider>
                 <MediaUploadProvider deckId={id}>
                   <RulersProvider>

@@ -14,6 +14,7 @@
  * sees the current canvas (even if it spins up after fonts have loaded).
  */
 
+import { trackRenderWork } from '../renderer/renderWork.js'
 import { useEffect, useRef, useCallback } from 'react'
 import { Cache } from 'pixi.js'
 import { useFolderFonts } from './useFolderFonts.js'
@@ -145,60 +146,64 @@ export function FolderFontLoader(): null {
       })
       pendingIds.add(font.assetId)
 
-      void (async () => {
-        try {
-          // Fetch the bytes ourselves rather than handing the URL to
-          // FontFace: the same download then also yields the file's own
-          // vertical metrics, which the line-height resolver needs because
-          // no browser API exposes them for a font that sets
-          // USE_TYPO_METRICS (see lib/fontFileMetrics.ts).
-          const response = await fetch(font.url)
-          if (!response.ok) throw new Error(`font download failed: HTTP ${response.status}`)
-          const bytes = await response.arrayBuffer()
-          const face = new FontFace(font.family, bytes, {
-            weight: String(font.weight),
-            style: font.style,
-            display: 'swap',
-          })
-          await face.load()
-          const metrics = await readFontVerticalMetrics(bytes)
-          if (metrics !== null) {
-            registerDeclaredLineMetrics(font.family, font.weight, font.style, {
-              lineHeight: powerpointLineHeightRatio(metrics),
-              descent: powerpointDescentRatio(metrics),
+      // Counted until it settles, so the render page waits for the folder's
+      // fonts before it measures or paints text (renderer/renderWork.ts).
+      void trackRenderWork(
+        (async () => {
+          try {
+            // Fetch the bytes ourselves rather than handing the URL to
+            // FontFace: the same download then also yields the file's own
+            // vertical metrics, which the line-height resolver needs because
+            // no browser API exposes them for a font that sets
+            // USE_TYPO_METRICS (see lib/fontFileMetrics.ts).
+            const response = await fetch(font.url)
+            if (!response.ok) throw new Error(`font download failed: HTTP ${response.status}`)
+            const bytes = await response.arrayBuffer()
+            const face = new FontFace(font.family, bytes, {
+              weight: String(font.weight),
+              style: font.style,
+              display: 'swap',
             })
+            await face.load()
+            const metrics = await readFontVerticalMetrics(bytes)
+            if (metrics !== null) {
+              registerDeclaredLineMetrics(font.family, font.weight, font.style, {
+                lineHeight: powerpointLineHeightRatio(metrics),
+                descent: powerpointDescentRatio(metrics),
+              })
+            }
+            // If cleanup ran while we were loading, bail without installing.
+            // The cleanup will have already deleted the placeholder slot, so
+            // the next effect invocation will retry.
+            if (cancelled) return
+
+            document.fonts.add(face)
+            addToPixiFontCache(font.family, font.url, String(font.weight), font.style)
+
+            // Slot is now fully installed — remove from pending so cleanup
+            // does NOT delete it (the face is live and should stay).
+            pendingIds.delete(font.assetId)
+            installed.set(font.assetId, {
+              face,
+              family: font.family,
+              weight: String(font.weight),
+              style: font.style,
+            })
+
+            // Cold-start: read canvas via ref so we get whatever is current
+            // RIGHT NOW, not the value at IIFE-schedule time.
+            canvasRef.current?.sceneGraph.refreshTextNodesUsingFamily(font.family)
+          } catch (err) {
+            // Drop the placeholder so a future re-emit retries
+            installed.delete(font.assetId)
+            pendingIds.delete(font.assetId)
+            console.warn('[FolderFontLoader] failed to install', font.assetId, err)
+            // MEDIA-1: likely an expired presigned URL — pull a fresh list so
+            // the next effect run loads with a valid URL.
+            requestUrlRefresh()
           }
-          // If cleanup ran while we were loading, bail without installing.
-          // The cleanup will have already deleted the placeholder slot, so
-          // the next effect invocation will retry.
-          if (cancelled) return
-
-          document.fonts.add(face)
-          addToPixiFontCache(font.family, font.url, String(font.weight), font.style)
-
-          // Slot is now fully installed — remove from pending so cleanup
-          // does NOT delete it (the face is live and should stay).
-          pendingIds.delete(font.assetId)
-          installed.set(font.assetId, {
-            face,
-            family: font.family,
-            weight: String(font.weight),
-            style: font.style,
-          })
-
-          // Cold-start: read canvas via ref so we get whatever is current
-          // RIGHT NOW, not the value at IIFE-schedule time.
-          canvasRef.current?.sceneGraph.refreshTextNodesUsingFamily(font.family)
-        } catch (err) {
-          // Drop the placeholder so a future re-emit retries
-          installed.delete(font.assetId)
-          pendingIds.delete(font.assetId)
-          console.warn('[FolderFontLoader] failed to install', font.assetId, err)
-          // MEDIA-1: likely an expired presigned URL — pull a fresh list so
-          // the next effect run loads with a valid URL.
-          requestUrlRefresh()
-        }
-      })()
+        })(),
+      )
     }
 
     // Remove fonts no longer in the list

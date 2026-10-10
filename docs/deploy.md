@@ -348,7 +348,8 @@ stopped the 0.10.18 deploy from a MacBook on 2026-10-07/09).
    environment only, never written), checks out fresh worktrees of the tag
    and of the deploying `HEAD` (the tooling, so an older tag ships with
    today's scripts), then `build-push.sh`: builds the three images for
-   linux/amd64 with **no secrets** (only `DOMAIN` from `infra/release.env`),
+   linux/amd64 with **no secrets and no domain** (the web app uses `/api` and
+   `/ws` on its own origin, `apps/web/src/lib/endpoints.ts`; since 0.10.20),
    pushes them with up to five attempts each, and checks that the registry
    holds linux/amd64 images for the tag.
 3. Syncs **the tagged tree** (`git archive <tag>`, never a working directory)
@@ -405,9 +406,10 @@ Deploy dokončen.
    packages are private
 4. Pulls `ghcr.io/petronijus/narrative-web:$NARRATIVE_TAG`, creates a throwaway
    container and copies `/srv/web` into the `narrative_web_static` Docker
-   volume that Caddy serves. The prod `VITE_*` values (API URL, WS URL,
-   imgproxy URL, `VITE_BUILD_VERSION`) were baked in **at build time** by
-   `build-push.sh` from `infra/.env.prod`
+   volume that Caddy serves. The bundle's API and WS addresses are the
+   relative `/api` and `/ws` (resolved against the page, so the image is
+   domain-independent); only `VITE_BUILD_VERSION` is stamped in at build
+   time by `build-push.sh`
 5. Runs Drizzle DB migrations
 6. `docker compose up -d --remove-orphans` — once listening, the server also
    runs any pending one-time **data** migrations in the background
@@ -423,6 +425,8 @@ Deploy dokončen.
    `2026-09-30-component-media` (A2.12b, 0.10.15), copies the deck media
    that older component masters show into their components (see
    "Releasing A2.12b" above).
+   Then it validates and reloads the Caddyfile inside `narrative-caddy` (a
+   file that does not validate fails the deploy; the running config stays).
 7. Waits 15s, then runs healthchecks (API, Caddy, optionally cloudflared)
 8. **Prunes old release images** — `infra/scripts/prune-images.sh` keeps the
    deployed tag plus two previous per image (server / video-worker / web),
@@ -493,7 +497,9 @@ how the CSP fix of 2026-09-09 appeared not to land. The **directory** is
 mounted now (`./caddy:/etc/caddy:ro`, commit `e6b4042`) — do not "simplify" it
 back to a file mount.
 
-After a Caddy config change:
+`deploy.sh` validates and reloads the Caddyfile after `compose up` (since
+0.10.20), so a release or a redeploy picks a change up by itself and a file
+that does not validate fails the deploy. By hand, without a deploy:
 
 ```bash
 ssh petr@192.0.2.147 'docker exec narrative-caddy caddy validate --config /etc/caddy/Caddyfile'

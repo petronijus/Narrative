@@ -77,6 +77,20 @@ describe('scrubSentryPayload', () => {
     }
   })
 
+  it('masks a share link token, which has no prefix, wherever a URL carries it', () => {
+    expect(scrubString('GET /decks/d1?share_token=example-share-link-id&x=1')).toBe(
+      `GET /decks/d1?share_token=${FILTERED}&x=1`,
+    )
+    const event = scrubSentryPayload({
+      request: {
+        url: 'https://n.example/deck/d1?share_token=abc',
+        query_string: { share_token: 'abc' },
+      },
+    })
+    expect(event.request.url).toBe(`https://n.example/deck/d1?share_token=${FILTERED}`)
+    expect(event.request.query_string).toEqual({ share_token: FILTERED })
+  })
+
   it('leaves ordinary text alone', () => {
     expect(scrubString('deck d1 has 3 slides; tokens.colors.primary')).toBe(
       'deck d1 has 3 slides; tokens.colors.primary',

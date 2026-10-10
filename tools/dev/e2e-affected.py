@@ -43,6 +43,7 @@ SMOKE = [
 
 RENDER = [
     "renderer-visual",
+    "render-page",
     "inspector-flows",
     "canvas-sharpness-final",
     "htmltext-live-update",
@@ -130,6 +131,10 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/components/PresentLayout.tsx", PRESENT),
     ("apps/web/src/components/presentStartSlide.ts", PRESENT),
     ("apps/web/src/pages/DeckPresent.tsx", PRESENT),
+    ("apps/web/src/pages/DeckRender.tsx", ["render-page"]),
+    ("apps/web/src/pages/renderSlide.ts", ["render-page"]),
+    ("apps/web/src/lib/endpoints.ts", SMOKE + SYNC + ["render-page"]),
+    ("apps/web/src/lib/shareToken.ts", ACCESS + TOKENS + MEDIA + ["render-page"]),
     ("apps/web/src/ui/PresenterOverlay.tsx", PRESENT),
     ("apps/web/src/components/EditorLayout.tsx", RENDER + CANVAS_TOOLS + ["keyboard-shortcuts"]),
     ("apps/web/src/components/DeckShell.tsx", RENDER + SYNC),
@@ -204,7 +209,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/state/useFolderFonts.tsx", ["folder-font-preview"]),
     ("apps/web/src/state/useDeckFonts.tsx", ["folder-font-preview"]),
     ("apps/web/src/state/bundledFonts.ts", TEXT),
-    ("apps/web/src/state/SlideDocProvider.tsx", SYNC),
+    ("apps/web/src/state/SlideDocProvider.tsx", SYNC + ["render-page"]),
+    ("apps/web/src/state/slideDocContext.ts", SYNC + ["render-page"]),
     ("apps/web/src/state/hocuspocusAuth.ts", SYNC + TOKENS),
     ("apps/web/src/state/DeckRoleContext.tsx", ACCESS + TOKENS),
     ("apps/web/src/state/folderAccess.ts", ACCESS + COMPONENTS),
@@ -257,6 +263,8 @@ AREAS: list[tuple[str, list[str]]] = [
     # ── server ────────────────────────────────────────────────────────────
     ("apps/server/src/hocuspocus/*", SYNC + ACCESS),
     ("apps/server/src/auth/*", ACCESS),
+    ("apps/server/src/http/requestLogSerializer.ts", SMOKE),
+    ("apps/server/src/routes/devRender.ts", ["render-page"]),
     ("apps/server/src/services/sharing.ts", ACCESS),
     ("apps/server/src/services/folderSharing.ts", ACCESS),
     ("apps/server/src/routes/folderSharing.ts", ACCESS),

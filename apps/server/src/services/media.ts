@@ -423,7 +423,8 @@ export function createMediaService(deps: ServiceDeps): MediaService {
   }
 
   async function fontUrl(args: {
-    userId: string
+    userId: string | null
+    shareToken?: string | null | undefined
     assetId: string
     folderId?: string | undefined
   }): Promise<FontUrlInfo> {
@@ -433,8 +434,12 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     }
     // Legacy deck-scoped row (should have been migrated by 0009): no caller expects it.
     if (!asset.folderId) throw notFound('Font asset is not folder-scoped')
-    // A deck guest loads its folder's fonts too: the deck renders with them.
-    await requireFolderContentReader(db, asset.folderId, args.userId, { bypass: deps.bypass })
+    // A deck guest loads its folder's fonts too, a share-link visitor
+    // included: the deck renders with them.
+    await requireFolderContentReader(db, asset.folderId, args.userId, {
+      bypass: deps.bypass,
+      shareToken: args.shareToken,
+    })
     return {
       assetId: asset.id,
       url: await presignGetUrl(asset.storageKey, FONT_URL_TTL_SEC),

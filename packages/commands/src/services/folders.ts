@@ -63,7 +63,12 @@ export interface FolderService {
   rename(args: { userId: string; folderId: string; name: string }): Promise<FolderRecord>
   /** Delete the folder and every deck in it. The Drafts folder cannot be deleted. */
   delete(args: { userId: string; folderId: string }): Promise<{ deletedDeckCount: number }>
-  listFonts(args: { userId: string; folderId: string }): Promise<FontFaceInfo[]>
+  /** The folder's fonts: its members, its decks' guests, and a share-link visitor of one of its decks. */
+  listFonts(args: {
+    userId: string | null
+    folderId: string
+    shareToken?: string | null | undefined
+  }): Promise<FontFaceInfo[]>
   /**
    * Add a font file (TTF / OTF / WOFF / WOFF2, at most 10 MB) to the folder.
    * `familyOverride` binds it to a family name other than the one in the file.

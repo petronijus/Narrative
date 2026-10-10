@@ -14,11 +14,14 @@
  * follow-up milestone (Yjs-driven refresh).
  *
  * Bootstrap (Canvas.tsx):
- *   setDefaultVideoInfoResolver(createVideoInfoResolver(import.meta.env.VITE_API_URL))
+ *   setDefaultVideoInfoResolver(createVideoInfoResolver(API_BASE))
  *
  * Auth: fetch with `credentials: 'include'` so the narrative_session cookie
  * travels automatically.
  */
+
+import { withShareToken } from '../lib/shareToken.js'
+import { trackRenderWork } from './renderWork.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -99,45 +102,51 @@ export function createVideoInfoResolver(apiBaseUrl: string): VideoInfoResolver {
       cache.delete(cacheKey)
     }
 
-    const fetchPromise: Promise<VideoInfoResult> = (async () => {
-      const url = `${apiBaseUrl}/api/media/${opts.assetId}/video-info`
-      const res = await fetch(url, { credentials: 'include' })
+    // Counted until it settles, so the render page waits for it (renderWork.ts).
+    const fetchPromise: Promise<VideoInfoResult> = trackRenderWork(
+      (async () => {
+        // A share-link visit (or the render page) has no session: its token authorises.
+        const url = withShareToken(`${apiBaseUrl}/api/media/${opts.assetId}/video-info`)
+        const res = await fetch(url, { credentials: 'include' })
 
-      if (!res.ok) {
-        cache.delete(cacheKey)
-        throw new Error(
-          `[videoInfo] Failed to fetch video info for ${opts.assetId}: HTTP ${res.status}`,
-        )
-      }
+        if (!res.ok) {
+          cache.delete(cacheKey)
+          throw new Error(
+            `[videoInfo] Failed to fetch video info for ${opts.assetId}: HTTP ${res.status}`,
+          )
+        }
 
-      const json = (await res.json()) as Partial<VideoInfoResult>
+        const json = (await res.json()) as Partial<VideoInfoResult>
 
-      if (typeof json.assetId !== 'string' || typeof json.transcodeStatus !== 'string') {
-        cache.delete(cacheKey)
-        throw new Error(`[videoInfo] Invalid response for ${opts.assetId}: missing required fields`)
-      }
+        if (typeof json.assetId !== 'string' || typeof json.transcodeStatus !== 'string') {
+          cache.delete(cacheKey)
+          throw new Error(
+            `[videoInfo] Invalid response for ${opts.assetId}: missing required fields`,
+          )
+        }
 
-      const result: VideoInfoResult = {
-        assetId: json.assetId,
-        transcodeStatus: json.transcodeStatus as VideoInfoResult['transcodeStatus'],
-        durationSec: json.durationSec ?? null,
-        width: json.width ?? null,
-        height: json.height ?? null,
-        posterUrl: json.posterUrl ?? null,
-        thumbnailUrl: json.thumbnailUrl ?? null,
-        playbackUrl: json.playbackUrl ?? null,
-        transcodeError: json.transcodeError ?? null,
-      }
+        const result: VideoInfoResult = {
+          assetId: json.assetId,
+          transcodeStatus: json.transcodeStatus as VideoInfoResult['transcodeStatus'],
+          durationSec: json.durationSec ?? null,
+          width: json.width ?? null,
+          height: json.height ?? null,
+          posterUrl: json.posterUrl ?? null,
+          thumbnailUrl: json.thumbnailUrl ?? null,
+          playbackUrl: json.playbackUrl ?? null,
+          transcodeError: json.transcodeError ?? null,
+        }
 
-      // Upgrade cache entry to permanent for terminal states.
-      const status = result.transcodeStatus
-      if (status === 'done' || status === 'failed') {
-        // Replace TTL entry with permanent entry now that we have the result.
-        cache.set(cacheKey, { promise: Promise.resolve(result), expiresAt: undefined })
-      }
+        // Upgrade cache entry to permanent for terminal states.
+        const status = result.transcodeStatus
+        if (status === 'done' || status === 'failed') {
+          // Replace TTL entry with permanent entry now that we have the result.
+          cache.set(cacheKey, { promise: Promise.resolve(result), expiresAt: undefined })
+        }
 
-      return result
-    })()
+        return result
+      })(),
+    )
 
     // On rejection clear cache so caller can retry.
     fetchPromise.catch(() => {

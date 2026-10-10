@@ -22,6 +22,7 @@
  */
 
 import Fastify from 'fastify'
+import { notFoundWithRedactedUrl, serializeRequestForLog } from './http/requestLogSerializer.js'
 import cors from '@fastify/cors'
 import cookie from '@fastify/cookie'
 import { fileURLToPath } from 'url'
@@ -135,13 +136,17 @@ if (isDev) {
 // ---------------------------------------------------------------------------
 
 const app = Fastify({
+  // The request serializer masks credentials a URL can carry (share links,
+  // render tokens): http/requestLogSerializer.ts.
   logger: isDev
     ? {
         level: process.env['LOG_LEVEL'] ?? 'info',
         transport: { target: 'pino-pretty', options: { colorize: true } },
+        serializers: { req: serializeRequestForLog },
       }
     : {
         level: process.env['LOG_LEVEL'] ?? 'info',
+        serializers: { req: serializeRequestForLog },
       },
   // Default is 1 MB. Deck-thumbnail uploads (JSON-wrapped base64 of the
   // first-slide preview) can land in the 800 KB – 2 MB range for slides
@@ -159,6 +164,10 @@ const app = Fastify({
 // which makes Fastify demand a parser for the absent Content-Type and answer
 // 415 before the route runs. Registered first so every route inherits it.
 registerBodylessRequestCompat(app)
+
+// Fastify's own 404 writes the raw URL into the log message and the reply; a
+// URL can carry a share link or a render token (http/requestLogSerializer.ts).
+app.setNotFoundHandler(notFoundWithRedactedUrl)
 
 // CORS_ORIGIN may be a single origin or a comma-separated allowlist.
 // fastify/cors accepts string[] for the allowlist case.
@@ -355,6 +364,7 @@ app.log.info(
       allowedOrigins: corsOriginEnv,
     },
     uploadSessions,
+    devRoutes: bypassAuth,
   })
 }
 

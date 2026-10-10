@@ -57,6 +57,8 @@ async function registeredRoutes(): Promise<RouteRef[]> {
     // The MCP routes read their runtime only when a request arrives.
     mcp: { mcp: {} as McpRuntime, allowedOrigins: [] },
     uploadSessions: createAllowingUploadSessionService(),
+    // Like /metrics: development routes count too.
+    devRoutes: true,
   })
   // Plugins registered with app.register() add their routes when loaded.
   await app.ready()

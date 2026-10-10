@@ -32,6 +32,7 @@
 // codegen for Pixi's official eval-free polyfills. It MUST be evaluated before
 // any `Application` is constructed, hence the module-level import here.
 // Dev has no CSP, so this only ever mattered in prod.
+import { collectHtmlTextRasters } from './htmlTextRaster.js'
 import 'pixi.js/unsafe-eval'
 import { Application, Container, Graphics } from 'pixi.js'
 import { getRenderer } from './objectRenderers/index.js'
@@ -308,16 +309,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // on `_gpuData[renderer.uid]` after the first render dispatch), then
     // render a second frame so the now-loaded glyph textures actually
     // appear in the bitmap we extract.
-    const textPromises: Promise<unknown>[] = []
-    const rendererUid = app.renderer.uid
-    const collectHtmlTextPromises = (c: Container): void => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const gpu = (c as any)._gpuData?.[rendererUid]
-      const p = gpu?.texturePromise
-      if (p && typeof p.then === 'function') textPromises.push(p)
-      for (const child of c.children) collectHtmlTextPromises(child as Container)
-    }
-    collectHtmlTextPromises(slideContainer)
+    const textPromises = collectHtmlTextRasters(slideContainer, app.renderer.uid)
     if (textPromises.length > 0) {
       await Promise.allSettled(textPromises)
       if (destroyed || app.renderer === null) {

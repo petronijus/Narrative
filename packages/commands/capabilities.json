@@ -1879,11 +1879,6 @@
   ],
   "knownMissing": [
     {
-      "capability": "deck.exportPdf",
-      "phase": "A3",
-      "source": "new"
-    },
-    {
       "capability": "deck.exportPng",
       "phase": "A3",
       "source": "new"
@@ -1936,6 +1931,12 @@
       "phase": "A4",
       "source": "new",
       "note": "reapply a changed master to the stamps made from it, keeping their slot content (needs component provenance)"
+    },
+    {
+      "capability": "deck.exportPdf",
+      "phase": "A5",
+      "source": "new",
+      "note": "moved out of A3 by Petr (2026-10-10): not wanted yet; the render worker (A3) makes it a raster PDF of its PNGs when it is"
     }
   ],
   "allowlist": [
@@ -1998,6 +1999,16 @@
         {
           "method": "POST",
           "path": "/auth/logout"
+        }
+      ]
+    },
+    {
+      "capability": "Render tokens for the e2e suite (development only)",
+      "reason": "POST /dev/render-token exists only with BYPASS_AUTH (refused in production) so the e2e suite can open the render page as the render worker does. Render tokens are credentials only the server mints for its own render jobs; an agent asks for a render (query.render, A3) and never holds one.",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/dev/render-token"
         }
       ]
     },

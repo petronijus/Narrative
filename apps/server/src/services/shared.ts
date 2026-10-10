@@ -143,8 +143,12 @@ export async function requireComponentRole(
 export async function requireFolderContentReader(
   db: Database,
   folderId: string,
-  userId: string,
-  opts: { bypass?: boolean | undefined } = {},
+  userId: string | null,
+  opts: {
+    bypass?: boolean | undefined
+    /** A share link (or render token) to one of the folder's decks: read access as its guest. */
+    shareToken?: string | null | undefined
+  } = {},
 ): Promise<FolderContentAccess> {
   const [folder] = await db
     .select({ id: folders.id })
@@ -156,6 +160,7 @@ export async function requireFolderContentReader(
     folderId,
     userId,
     alsoAs: bypassAliases(userId, opts.bypass),
+    shareToken: opts.shareToken ?? null,
   })
   if (!access) throw forbidden()
   return access

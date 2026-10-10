@@ -13,7 +13,8 @@ toolchain, troubleshooting). The agentic layer is planned in
 the "Where we stand" section of `docs/plans/a2-extraction.md`. Folder
 sharing (folder roles, linked component media) is planned in
 `docs/plans/folder-sharing.md` (ADR 0013); faster test loops in
-`docs/plans/dev-speed.md`.
+`docs/plans/dev-speed.md`; the render worker (phase A3: the agent sees
+slides, PNG export, server thumbnails) in `docs/plans/a3-render-worker.md`.
 
 ## Hard rules
 
@@ -89,7 +90,7 @@ below that match it.
 | `apps/server/src/pptx/**`                                                                                                             | `just pptx-roundtrip <real deck>` — target 0 differences; **5 pre-existing on 2026-09-26** (0.9.26–0.9.29, not bisected): add none (`apps/server/src/pptx/README.md`)                              |
 | Auth, sharing, folders, cascade-delete                                                                                                | `just e2e -g "destructive-flows"`                                                                                                                                                                  |
 | Yjs mutations, Hocuspocus, sync                                                                                                       | `just e2e -g "multi-client-collab"` (**flaky since 2026-09-26**: "three clients … converge" failed 6/6 on clean 0.9.29 and 2/6 with A0 — compare with a clean baseline before blaming your change) |
-| Bundle entry points, dynamic imports, vendor chunks                                                                                   | `just size` (**Tiptap chunk 12.6 kB over budget, pre-existing** — grow no chunk)                                                                                                                   |
+| Bundle entry points, dynamic imports, vendor chunks                                                                                   | `just size` (**Tiptap chunk 12.8 kB over budget, pre-existing** — 132.82 kB gz at 0.10.19; grow no chunk)                                                                                          |
 | Hot edit / awareness / doc-growth paths                                                                                               | `just load` (warns on > 20% drift from a local `baselines.json`, copied from `tests/load/baselines.example.json` after a clean run)                                                                |
 | Editor render path (FCP / LCP / TTI)                                                                                                  | `just lighthouse`                                                                                                                                                                                  |
 | `packages/slide-model/src/{mutations,slides}.ts` deep changes                                                                         | `just mutate` — **broken since 2026-09-26** (`@stryker-mutator/vitest-runner` 8.x vs vitest 4): say so instead of skipping silently                                                                |

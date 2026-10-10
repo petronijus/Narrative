@@ -16,6 +16,7 @@
  * M11 (image uploads): ResourceManager bude zásadní — rozhraní musí být stabilní.
  */
 
+import { trackRenderWork } from './renderWork.js'
 import { Assets, Texture, type TextureSourceOptions } from 'pixi.js'
 
 interface TextureEntry {
@@ -107,7 +108,8 @@ export class ResourceManager {
     }
 
     const entry: UrlTextureEntry = {
-      load: this.loadTexture(url),
+      // Counted until it settles, so the render page waits for it (renderWork.ts).
+      load: trackRenderWork(this.loadTexture(url)),
       texture: null,
       refCount: 1,
       unloadTimer: null,

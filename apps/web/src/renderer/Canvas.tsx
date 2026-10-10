@@ -12,6 +12,7 @@
 // codegen for Pixi's official eval-free polyfills. It MUST be evaluated before
 // any `Application` is constructed, hence the module-level import here.
 // Dev has no CSP, so this only ever mattered in prod.
+import { API_BASE } from '../lib/endpoints.js'
 import 'pixi.js/unsafe-eval'
 import { useEffect, useRef, useState } from 'react'
 import { Application, TextureSource } from 'pixi.js'
@@ -128,9 +129,8 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize, zoom = 1 }: CanvasP
     // Install default image / video URL resolvers. Auth is carried by the
     // narrative_session HttpOnly cookie via fetch credentials, no token
     // plumbing needed.
-    const apiBase = (import.meta.env['VITE_API_URL'] as string | undefined) ?? ''
-    setDefaultImageUrlResolver(createImageUrlResolver(apiBase))
-    setDefaultVideoInfoResolver(createVideoInfoResolver(apiBase))
+    setDefaultImageUrlResolver(createImageUrlResolver(API_BASE))
+    setDefaultVideoInfoResolver(createVideoInfoResolver(API_BASE))
 
     let cancelled = false
     let app: Application | null = null

@@ -36,6 +36,14 @@ describe('Narrative credential patterns', () => {
 
   it('covers every prefix a Narrative credential uses', () => {
     // Update credentialPatterns.ts (and this list) when a new format appears.
-    expect([...CREDENTIAL_PREFIXES].sort()).toEqual(['nmc', 'nmo', 'nmr', 'nms', 'nrt', 'nus'])
+    expect([...CREDENTIAL_PREFIXES].sort()).toEqual([
+      'nmc',
+      'nmo',
+      'nmr',
+      'nms',
+      'nrr',
+      'nrt',
+      'nus',
+    ])
   })
 })

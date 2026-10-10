@@ -57,6 +57,11 @@ const DeckPresent = lazyRoute(
   () => import('./pages/DeckPresent.js'),
   (m) => m.DeckPresent,
 )
+// The page the render worker screenshots (agentic A3): one slide, no chrome.
+const DeckRender = lazyRoute(
+  () => import('./pages/DeckRender.js'),
+  (m) => m.DeckRender,
+)
 // Account settings: small, rarely visited — kept off the dashboard chunk.
 const AccessTokens = lazyRoute(
   () => import('./pages/AccessTokens.js'),
@@ -104,6 +109,7 @@ export function App() {
                     <Route path="/deck/:id" element={<DeckShell />}>
                       <Route index element={<DeckEditor />} />
                       <Route path="present" element={<DeckPresent />} />
+                      <Route path="render" element={<DeckRender />} />
                     </Route>
                   </Route>
                 </Routes>
@@ -124,7 +130,8 @@ export function App() {
 
 function GlobalChrome() {
   const location = useLocation()
-  if (location.pathname.endsWith('/present')) return null
+  // Present shows the slides alone; the render page is screenshotted.
+  if (location.pathname.endsWith('/present') || location.pathname.endsWith('/render')) return null
   return (
     <div className="pointer-events-auto fixed bottom-2 left-2 z-50 flex items-center gap-1">
       <VersionChip />

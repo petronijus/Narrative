@@ -16,6 +16,7 @@ import type { UploadSessionService } from '../media/uploadSessions.js'
 import type { FastifyInstance } from 'fastify'
 import type { Database } from '../db/client.js'
 import { registerDeckRoutes } from '../routes/decks.js'
+import { registerDevRenderRoutes } from '../routes/devRender.js'
 import { registerFolderRoutes } from '../routes/folders.js'
 import { registerComponentRoutes } from '../routes/components.js'
 import { registerTokenRoutes } from '../routes/tokens.js'
@@ -56,6 +57,11 @@ export interface HttpRouteDeps {
   mcp: McpRouteDeps
   /** Upload session tokens the tus server accepts (`media.uploadSession`). */
   uploadSessions: UploadSessionService
+  /**
+   * Development routes (BYPASS_AUTH only — refused in production by
+   * `assertAuthBootSafety`): POST /dev/render-token for the e2e suite (routes/devRender.ts).
+   */
+  devRoutes: boolean
 }
 
 export async function registerHttpRoutes(app: FastifyInstance, deps: HttpRouteDeps): Promise<void> {
@@ -69,6 +75,9 @@ export async function registerHttpRoutes(app: FastifyInstance, deps: HttpRouteDe
   // Prometheus metrics. /metrics leaks connection counts / doc sizes; the
   // endpoint gates itself by METRICS_TOKEN (loopback-only fallback in dev).
   if (deps.metrics) await registerMetricsEndpoint(app)
+
+  // Development only: render tokens for the e2e suite (routes/devRender.ts).
+  if (deps.devRoutes) await registerDevRenderRoutes(app, db)
 
   // Deck routes
   await registerDeckRoutes(app, db)

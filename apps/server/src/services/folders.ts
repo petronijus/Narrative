@@ -429,9 +429,17 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
     return { deletedDeckCount: containedDecks.length }
   }
 
-  async function listFonts(args: { userId: string; folderId: string }): Promise<FontFaceInfo[]> {
-    // A deck guest reads its folder's fonts too: the deck renders with them.
-    await requireFolderContentReader(db, args.folderId, args.userId, { bypass: deps.bypass })
+  async function listFonts(args: {
+    userId: string | null
+    folderId: string
+    shareToken?: string | null | undefined
+  }): Promise<FontFaceInfo[]> {
+    // A deck guest reads its folder's fonts too, a share-link visitor
+    // included: the deck renders with them.
+    await requireFolderContentReader(db, args.folderId, args.userId, {
+      bypass: deps.bypass,
+      shareToken: args.shareToken,
+    })
     const rows = await listFolderFontAssets(db, args.folderId)
     return Promise.all(rows.map(fontFaceInfo))
   }

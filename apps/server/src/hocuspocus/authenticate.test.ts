@@ -180,7 +180,12 @@ describe('browser paths', () => {
     deckAccess.mockResolvedValue({ role: 'viewer', reason: 'share-link' })
     const data = payload({ params: { share_token: 'link-123' } })
     await onAuthenticate()(data)
-    expect(data.context).toMatchObject({ userId: 'share:link-123', shareToken: 'link-123' })
+    // Named by a hash prefix, never by characters of the token itself.
+    expect(data.context).toMatchObject({
+      userId: expect.stringMatching(/^share:[0-9a-f]{8}$/),
+      shareToken: 'link-123',
+    })
+    expect(data.context.userId).not.toContain('link')
     expect(data.connection.readOnly).toBe(true)
   })
 
@@ -193,7 +198,10 @@ describe('browser paths', () => {
       userId: null,
       shareToken: 'link-123',
     })
-    expect(folder.context).toMatchObject({ userId: 'share:link-123', shareToken: 'link-123' })
+    expect(folder.context).toMatchObject({
+      userId: expect.stringMatching(/^share:[0-9a-f]{8}$/),
+      shareToken: 'link-123',
+    })
     expect(folder.connection.readOnly).toBe(true)
 
     await expect(

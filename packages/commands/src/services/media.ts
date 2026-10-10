@@ -122,9 +122,10 @@ export interface MediaService {
     variant: ImageVariant
     owner?: DocumentRef | undefined
   }): Promise<{ url: string }>
-  /** Presigned URL of a folder font file (its folder's members and deck guests). */
+  /** Presigned URL of a folder font file (its folder's members and deck guests, share links included). */
   fontUrl(args: {
-    userId: string
+    userId: string | null
+    shareToken?: string | null | undefined
     assetId: string
     folderId?: string | undefined
   }): Promise<FontUrlInfo>

@@ -26,6 +26,14 @@ export interface SlideDocContextValue {
   deckCtx: SlideMutationContext
   undoManager: Y.UndoManager
   wsStatus: WsStatus
+  /**
+   * The server's state of the document has arrived (Hocuspocus `onSynced`);
+   * always true for a local document. The render page (agentic A3) waits for
+   * it before it calls a slide settled.
+   */
+  synced: boolean
+  /** The server refused the connection (no access, revoked or expired token); never true locally. */
+  refused: boolean
   /** Y.Awareness instance from HocuspocusProvider. Direct access for state hooks only. */
   awareness: Awareness
   /** Local user identity — deterministic from session ID. */
@@ -139,6 +147,8 @@ export function createMockSlideDocValue(
       canRedo: () => false,
     } as unknown as Y.UndoManager,
     wsStatus: 'connected',
+    synced: true,
+    refused: false,
     awareness: mockAwareness,
     documentName: null,
     documentKey: 'mock-deck',

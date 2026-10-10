@@ -6,8 +6,10 @@
 # NARRATIVE_BUILDER) through infra/scripts/remote-release.sh; it also runs on
 # any machine with Docker for a one-off build.
 #
-# Needs no secrets. The images carry no configuration but the web app's
-# public URLs, which come from DOMAIN (infra/release.env). The server and the
+# Needs no secrets and no domain: the images carry no configuration. The web
+# app reaches the API and the sync server at /api and /ws on whatever origin
+# serves it (apps/web/src/lib/endpoints.ts), so the image names no domain.
+# The server and the
 # video worker are built with plain `docker build`, not `docker compose
 # build`: compose interpolates the whole prod file first and so demanded every
 # runtime secret of infra/.env.prod on the build machine (a stale copy there
@@ -41,18 +43,6 @@ while (($# > 0)); do
       ;;
   esac
 done
-
-# Settings: the environment first, then infra/release.env of this checkout.
-release_setting() {
-  local name="$1" value
-  value="${!name:-}"
-  if [[ -z "$value" ]]; then
-    value="$(sed -n "s/^${name}=//p" "${TOOLING_DIR}/infra/release.env" | tail -n 1)"
-  fi
-  [[ -n "$value" ]] || { echo "✗ ${name} is set neither in the environment nor in infra/release.env" >&2; exit 1; }
-  printf '%s' "$value"
-}
-DOMAIN="$(release_setting DOMAIN)"
 
 # The prod VM is x86_64. Docker builds for the host's architecture unless told
 # otherwise, so building on an Apple Silicon Mac produced arm64 images that the
@@ -114,9 +104,8 @@ build video-worker
 build web \
   --target runtime \
   --build-arg VITE_BUILD_VERSION="${NARRATIVE_TAG}+${SRC_SHA}" \
-  --build-arg VITE_API_URL="https://${DOMAIN}/api" \
-  --build-arg VITE_HOCUSPOCUS_URL="wss://${DOMAIN}/ws" \
-  --build-arg VITE_IMGPROXY_URL="${VITE_IMGPROXY_URL:-https://${DOMAIN}/imgproxy}"
+  --build-arg VITE_API_URL=/api \
+  --build-arg VITE_HOCUSPOCUS_URL=/ws
 
 for app in server video-worker web; do
   push "${REG}/narrative-${app}:${NARRATIVE_TAG}"

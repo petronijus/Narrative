@@ -24,7 +24,7 @@
  *   mount   → HocuspocusProvider.connect() (WS handshake, server hydrates Y.Doc)
  *   unmount → HocuspocusProvider.destroy() (cleanup WS + Yjs subscriptions)
  *
- * Connection URL from env: VITE_HOCUSPOCUS_URL (default ws://localhost:3002)
+ * Connection URL: HOCUSPOCUS_URL (lib/endpoints.ts; env VITE_HOCUSPOCUS_URL)
  * Document name = deckId from props (passed from URL param /deck/:id)
  *
  * M16 P6 — Optional `doc` prop.
@@ -47,6 +47,7 @@
  *   The deck path (no `doc` prop) is unchanged.
  */
 
+import { HOCUSPOCUS_URL } from '../lib/endpoints.js'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useAuth } from './AuthContext.js'
@@ -68,7 +69,6 @@ import { whenComponentDocSaved } from './componentDocCache.js'
 import { hocuspocusAuthOptions } from './hocuspocusAuth.js'
 import { usePointerUndoGestures } from './undoGestures.js'
 
-const HOCUSPOCUS_URL = import.meta.env['VITE_HOCUSPOCUS_URL'] ?? 'ws://localhost:3002'
 const PEER_ID_STORAGE_KEY = 'narrative:peerId'
 
 // ---------------------------------------------------------------------------
@@ -97,10 +97,28 @@ interface SlideDocProviderProps {
    * The caller owns the doc's lifecycle; we do NOT destroy it on unmount.
    */
   doc?: Y.Doc
+  /**
+   * Publish this client in the deck's awareness (default true). The render
+   * page (agentic A3) passes false: the render worker's browser must not
+   * appear to the deck's editors as a peer.
+   */
+  presence?: boolean
+  /**
+   * Seed an empty deck with its first slide once synced (default true). The
+   * render page passes false: it shows the deck as the server holds it and
+   * reports an empty deck as such, never a slide it made up.
+   */
+  hydrate?: boolean
   children: React.ReactNode
 }
 
-export function SlideDocProvider({ deckId, doc: externalDoc, children }: SlideDocProviderProps) {
+export function SlideDocProvider({
+  deckId,
+  doc: externalDoc,
+  presence = true,
+  hydrate = true,
+  children,
+}: SlideDocProviderProps) {
   if (externalDoc !== undefined) {
     return (
       <ExternalDocSlideProvider deckId={deckId} doc={externalDoc}>
@@ -108,7 +126,11 @@ export function SlideDocProvider({ deckId, doc: externalDoc, children }: SlideDo
       </ExternalDocSlideProvider>
     )
   }
-  return <HocuspocusSlideProvider deckId={deckId}>{children}</HocuspocusSlideProvider>
+  return (
+    <HocuspocusSlideProvider deckId={deckId} presence={presence} hydrate={hydrate}>
+      {children}
+    </HocuspocusSlideProvider>
+  )
 }
 
 /**
@@ -120,12 +142,24 @@ const TEARDOWN_DELAY_MS = 250
 
 interface HocuspocusSlideProviderProps {
   deckId: string
+  presence: boolean
+  hydrate: boolean
   children: React.ReactNode
 }
 
-function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderProps) {
-  const [value, setValue] = useState<Omit<SlideDocContextValue, 'wsStatus'> | null>(null)
+function HocuspocusSlideProvider({
+  deckId,
+  presence,
+  hydrate,
+  children,
+}: HocuspocusSlideProviderProps) {
+  const [value, setValue] = useState<Omit<
+    SlideDocContextValue,
+    'wsStatus' | 'synced' | 'refused'
+  > | null>(null)
   const [wsStatus, setWsStatus] = useState<WsStatus>('connecting')
+  const [synced, setSynced] = useState(false)
+  const [refused, setRefused] = useState(false)
   const location = useLocation()
   const { user } = useAuth()
 
@@ -133,6 +167,8 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
   // mount cycle (see the deferred teardown in the cleanup below).
   const providerRef = useRef<{
     deckId: string
+    presence: boolean
+    hydrate: boolean
     provider: HocuspocusProvider
     doc: Y.Doc
     awareness: Awareness
@@ -203,14 +239,22 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
 
     const held = providerRef.current
     if (held !== null) {
-      if (held.deckId === deckId) return scheduleTeardown(held.provider)
-      // Genuinely a different deck — let the old one go right away.
+      // The same connection only for the same deck opened the same way: a
+      // change of presence or hydration (the editor ↔ the render page) needs
+      // a connection set up for it.
+      if (held.deckId === deckId && held.presence === presence && held.hydrate === hydrate) {
+        return scheduleTeardown(held.provider)
+      }
+      // A different deck (or mode) — let the old one go right away.
       destroyNow(held)
       providerRef.current = null
       setValue(null)
     }
 
     const doc = new Y.Doc()
+    // A new document has not heard from the server yet.
+    setSynced(false)
+    setRefused(false)
     // A key told for the previous deck must not label this one's agents.
     principalStore.set(null)
 
@@ -239,10 +283,17 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
         setWsStatus('connected')
         // M8: Restore awareness state on (re)connect — Hocuspocus clears it after reconnect.
         const current = (provider.awareness?.getLocalState() ?? null) as PeerAwarenessState | null
-        provider.awareness?.setLocalState(restoredLocalState(localUser, current ?? lastLocalState))
+        provider.awareness?.setLocalState(
+          presence ? restoredLocalState(localUser, current ?? lastLocalState) : null,
+        )
       },
       onDisconnect() {
         setWsStatus('disconnected')
+      },
+      // The server refused this connection (no access, a revoked share link,
+      // an expired render token): the document will never sync.
+      onAuthenticationFailed() {
+        setRefused(true)
       },
       // Agentic A1: the server addresses this user's open editors with
       // stateless messages — `editor.show`, and the user's agent principal
@@ -258,8 +309,12 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
           setWsStatus(status as WsStatus)
         }
       },
-      onSynced() {
+      // Hocuspocus also reports `state: false` (on close); only a real sync
+      // counts — and only it may hydrate.
+      onSynced({ state }: { state: boolean }) {
+        if (!state) return
         markWsSynced()
+        setSynced(true)
         // P12d: hydrate AFTER sync so we don't race the server with an
         // empty default slide. Children have already mounted with the
         // pre-sync deckCtx (the doc reference is stable); Yjs observers
@@ -267,7 +322,7 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
         // context's `slides` Y.Array reference is the same one we
         // installed below, since hydrateSlideDoc is idempotent and only
         // touches the doc when the deck is genuinely empty.
-        hydrateSlideDoc(doc)
+        if (hydrate) hydrateSlideDoc(doc)
         // E2E: expose a dev-only hook on window for Playwright to seed
         // reproducible Y.Doc fixtures (bypassing flaky editor-UI locators).
         // Stripped from prod bundles via import.meta.env.DEV in testApi.ts.
@@ -312,14 +367,14 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     if (awareness === null) {
       throw new Error('HocuspocusProvider.awareness is null — provider not initialized')
     }
-    providerRef.current = { deckId, provider, doc, awareness }
+    providerRef.current = { deckId, presence, hydrate, provider, doc, awareness }
     awareness.on('update', () => {
       const local = awareness.getLocalState() as PeerAwarenessState | null
       if (local !== null) lastLocalState = local
     })
     // `activeSlideId: null` until the editor publishes the slide it shows;
     // present mode never does (it is not an editing context).
-    awareness.setLocalState(restoredLocalState(localUser, null))
+    awareness.setLocalState(presence ? restoredLocalState(localUser, null) : null)
 
     // M9: Do NOT hydrate before onSynced fires. hydrateSlideDoc() seeds a
     // default empty slide when the doc has no slides — but if WS sync is still
@@ -332,7 +387,7 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     // fast-refresh re-render) reclaims this provider instead of trading it for
     // a fresh doc and socket. A real unmount just runs it late.
     return scheduleTeardown(provider)
-  }, [deckId, showBus, principalStore])
+  }, [deckId, presence, hydrate, showBus, principalStore])
 
   // Memoize the merged context value — without this, every parent re-render
   // creates a fresh `{...value, wsStatus}` object reference, which forces
@@ -342,8 +397,8 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
   // Hooks). When `value === null` we still call useMemo and just return null
   // from the provider; the early-return for the loading state happens AFTER.
   const fullValue = useMemo<SlideDocContextValue | null>(
-    () => (value === null ? null : { ...value, wsStatus }),
-    [value, wsStatus],
+    () => (value === null ? null : { ...value, wsStatus, synced, refused }),
+    [value, wsStatus, synced, refused],
   )
   // Each pointer gesture is one undo step, by its boundaries (undoGestures.ts).
   usePointerUndoGestures(value?.undoManager)
@@ -425,6 +480,8 @@ function ExternalDocSlideProvider({ deckId, doc, children }: ExternalDocSlidePro
       // The cache's provider carries this document's edits to the server.
       whenSaved: () => whenComponentDocSaved(componentIdOf(deckId)),
       wsStatus: 'connected',
+      synced: true,
+      refused: false,
     }
   }, [deckId, doc, localUser])
 

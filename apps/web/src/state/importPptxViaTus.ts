@@ -30,11 +30,11 @@
  * in its placeholder row.
  */
 
+import { API_BASE } from '../lib/endpoints.js'
 import * as tus from 'tus-js-client'
 import type { AppendPptxResult, ImportPptxResult } from '../api/client.js'
 
-const API_URL = (import.meta.env['VITE_API_URL'] as string | undefined) ?? ''
-const UPLOAD_ENDPOINT = `${API_URL}/api/uploads`
+const UPLOAD_ENDPOINT = `${API_BASE}/api/uploads`
 const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 
 export interface ImportPptxProgress {

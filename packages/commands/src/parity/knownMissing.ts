@@ -41,7 +41,6 @@ const PUT = (path: string): RouteRef => ({ method: 'PUT', path })
 
 export const KNOWN_MISSING: readonly KnownMissing[] = [
   // --- A3: render worker ------------------------------------------------------
-  { capability: 'deck.exportPdf', phase: 'A3', source: 'new' },
   { capability: 'deck.exportPng', phase: 'A3', source: 'new' },
   {
     capability: 'deck.refreshThumbnail',
@@ -74,6 +73,14 @@ export const KNOWN_MISSING: readonly KnownMissing[] = [
     phase: 'A4',
     source: 'new',
     note: 'reapply a changed master to the stamps made from it, keeping their slot content (needs component provenance)',
+  },
+
+  // --- A5: deck builder (and what was moved out of A3) -----------------------
+  {
+    capability: 'deck.exportPdf',
+    phase: 'A5',
+    source: 'new',
+    note: 'moved out of A3 by Petr (2026-10-10): not wanted yet; the render worker (A3) makes it a raster PDF of its PNGs when it is',
   },
 ]
 

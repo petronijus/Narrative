@@ -660,6 +660,23 @@ describe('MediaService.fontUrl', () => {
       folderId: 'f1',
       userId: 'guest',
       alsoAs: [],
+      shareToken: null,
+    })
+  })
+
+  it('signs it for a share-link visitor of one of its decks, who has no session', async () => {
+    // The render worker's page reads fonts the same way (its render token is a share link).
+    vi.mocked(getFontAsset).mockResolvedValue(FONT as never)
+    vi.mocked(resolveFolderContentAccess).mockResolvedValue({ role: 'viewer', via: 'deck' })
+
+    const out = await fonts().fontUrl({ userId: null, shareToken: 'link-1', assetId: 'font-1' })
+
+    expect(out).toMatchObject({ assetId: 'font-1', family: 'Brand Sans' })
+    expect(resolveFolderContentAccess).toHaveBeenCalledWith(expect.anything(), {
+      folderId: 'f1',
+      userId: null,
+      alsoAs: [],
+      shareToken: 'link-1',
     })
   })
 

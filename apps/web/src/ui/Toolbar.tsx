@@ -12,6 +12,7 @@
  *   Ctrl/Cmd+Enter → present mode.
  */
 
+import { API_URL } from '../lib/endpoints.js'
 import {
   useCallback,
   useEffect,
@@ -877,10 +878,8 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
             onClose={() => setExportDialogSlides(null)}
             onExport={async () => {
               setExporting(true)
-              const apiUrl =
-                (import.meta.env['VITE_API_URL'] as string | undefined) ?? 'http://localhost:3001'
               try {
-                const res = await fetch(`${apiUrl}/decks/${id}/export.pptx`, {
+                const res = await fetch(`${API_URL}/decks/${id}/export.pptx`, {
                   credentials: 'include',
                 })
                 if (!res.ok) {

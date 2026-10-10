@@ -37,10 +37,17 @@ http://{$DOMAIN:localhost} {
   # override the stricter `Content-Security-Policy sandbox` that the /storage/*
   # block puts on user-uploaded objects (CSP only meaningfully governs document
   # contexts, and the SPA HTML is the only document this origin serves).
+  #
+  # Referrer-Policy strict-origin: a page opened from a share link (or the
+  # render worker's page) has `?share_token=` in its URL, and the default
+  # `strict-origin-when-cross-origin` sends that full URL as the Referer of
+  # every same-origin request — images, fonts, imgproxy — into the access
+  # logs here and in imgproxy-cache. Nothing reads the Referer (the API's
+  # same-origin check uses Origin, apps/server/src/http/sameOrigin.ts).
   header {
     X-Content-Type-Options nosniff
     X-Frame-Options DENY
-    Referrer-Policy strict-origin-when-cross-origin
+    Referrer-Policy strict-origin
   }
 
   # ── Client IP: never trust a client-supplied CF-Connecting-IP ──────────────
@@ -201,9 +208,20 @@ http://{$DOMAIN:localhost} {
   }
 
   # ── Logging ─────────────────────────────────────────────────────────────────
+  # JSON access log, with the credentials a URL can carry masked: a share
+  # link's id or a render token in `?share_token=` (on the page, on
+  # /api/decks/:id and the media reads, on the /ws upgrade — which the API's
+  # own redacting serializer never sees, apps/server/src/http/
+  # requestLogSerializer.ts), in the URI and in a Referer from an older client.
   log {
     output stdout
-    format json
+    format filter {
+      wrap json
+      request>uri query {
+        replace share_token REDACTED
+      }
+      request>headers>Referer regexp share_token=[^&#]* share_token=REDACTED
+    }
     level INFO
   }
 }

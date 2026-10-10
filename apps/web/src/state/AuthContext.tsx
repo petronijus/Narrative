@@ -18,6 +18,7 @@
  * (prod) or same-site cross-origin fetch with credentials:'include' (dev).
  */
 
+import { API_URL } from '../lib/endpoints.js'
 import {
   createContext,
   useCallback,
@@ -49,8 +50,6 @@ export interface AuthContextValue {
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-
-const API_URL = (import.meta.env['VITE_API_URL'] as string | undefined) ?? 'http://localhost:3001'
 
 // ---------------------------------------------------------------------------
 // Context

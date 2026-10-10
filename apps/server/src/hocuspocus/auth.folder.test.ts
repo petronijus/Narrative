@@ -123,7 +123,7 @@ describe('onAuthenticate — folder:<id>', () => {
       shareToken: 'tok-abcdefgh-rest',
     })
     expect(data.context).toMatchObject({
-      userId: 'share:tok-abcd',
+      userId: expect.stringMatching(/^share:[0-9a-f]{8}$/),
       folderId: 'folder-1',
       role: 'viewer',
       shareToken: 'tok-abcdefgh-rest',

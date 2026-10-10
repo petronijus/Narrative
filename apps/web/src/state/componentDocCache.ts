@@ -33,11 +33,10 @@
  * here; no Yjs mutation APIs called either — readers only.
  */
 
+import { HOCUSPOCUS_URL } from '../lib/endpoints.js'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import { whenProviderSaved } from './providerSaved.js'
-
-const HOCUSPOCUS_URL = import.meta.env['VITE_HOCUSPOCUS_URL'] ?? 'ws://localhost:3002'
 
 /** How long to keep a component doc alive after the last subscriber leaves. */
 const LINGER_MS = 30_000

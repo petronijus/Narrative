@@ -11,12 +11,15 @@
  *   nmc_  MCP OAuth authorization code
  *   nms_  MCP OAuth client secret
  *   nus_  upload session token           (media/uploadSessions.ts)
+ *   nrr_  render token                   (auth/renderTokens.ts; a share link
+ *         for the render worker, so the WebSocket admits it only as
+ *         `share_token`, never as a bearer)
  *
  * A NEW credential format must be added here (and its test in
  * credentialPatterns.test.ts), or it leaks through all of them.
  */
 
-export const CREDENTIAL_PREFIXES = ['nrt', 'nmo', 'nmr', 'nmc', 'nms', 'nus'] as const
+export const CREDENTIAL_PREFIXES = ['nrt', 'nmo', 'nmr', 'nmc', 'nms', 'nus', 'nrr'] as const
 
 /** Any Narrative credential anywhere in a string; group 1 is its prefix (without `_`). */
 export function credentialPattern(): RegExp {
@@ -26,6 +29,15 @@ export function credentialPattern(): RegExp {
 /** `value` with every Narrative credential's secret replaced by `mask` (the prefix is kept). */
 export function maskCredentials(value: string, mask: string): string {
   return value.replace(credentialPattern(), `$1_${mask}`)
+}
+
+/**
+ * `value` with every `share_token=` value masked. A share link's id carries
+ * no prefix (a bare nanoid, valid until revoked), so `maskCredentials` cannot
+ * see it; it travels as this query parameter — and so does a render token.
+ */
+export function maskShareTokens(value: string, mask: string): string {
+  return value.replace(/(share_token=)[^&#\s"'<>]*/g, `$1${mask}`)
 }
 
 /** Whether a value claims to be a Narrative credential of any kind (well-formed or not). */

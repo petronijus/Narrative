@@ -30,7 +30,7 @@
  *
  * Auth: tus.Upload runs with `withCredentials: true` so the
  *   narrative_session HttpOnly cookie is carried on every PATCH.
- * Endpoint: VITE_API_URL/api/uploads (tus protocol)
+ * Endpoint: API_BASE/api/uploads (tus protocol; lib/endpoints.ts)
  * Metadata: deckId (or componentId), filename, content-type, width?, height?
  *   (tus-js-client encodes as base64) — see buildUploadMetadata.
  *
@@ -43,6 +43,7 @@
  * Max file size: 500 MB for video (enforced server-side; drop zone restricts client-side).
  */
 
+import { API_BASE } from '../lib/endpoints.js'
 import {
   createContext,
   useCallback,
@@ -109,8 +110,7 @@ export const MediaUploadContext = createContext<MediaUploadContextValue | null>(
 // Provider
 // ---------------------------------------------------------------------------
 
-const API_URL = (import.meta.env['VITE_API_URL'] as string | undefined) ?? ''
-const UPLOAD_ENDPOINT = `${API_URL}/api/uploads`
+const UPLOAD_ENDPOINT = `${API_BASE}/api/uploads`
 const VIDEO_MAX_BYTES = 500 * 1024 * 1024 // 500 MB
 const TRANSCODE_POLL_INTERVAL_MS = 2_000
 
@@ -218,7 +218,7 @@ export function MediaUploadProvider(props: MediaUploadProviderProps) {
       // — otherwise this loop reschedules itself forever after navigation.
       if (disposedRef.current) return
       try {
-        const url = `${API_URL}/api/media/${assetId}/video-info`
+        const url = `${API_BASE}/api/media/${assetId}/video-info`
         const res = await fetch(url, { credentials: 'include' })
         if (disposedRef.current) return
         if (!res.ok) throw new Error(`HTTP ${res.status}`)

@@ -15,6 +15,8 @@
  * the logged-out state. We never retry automatically here to avoid loops.
  */
 
+import { withShareToken } from '../lib/shareToken.js'
+import { API_URL } from '../lib/endpoints.js'
 import { useMemo } from 'react'
 import type {
   AgentRunSummary,
@@ -23,8 +25,6 @@ import type {
   TokenCategory,
   TokenPropagation,
 } from '@narrative/commands'
-
-const API_URL = import.meta.env['VITE_API_URL'] ?? 'http://localhost:3001'
 
 /**
  * The document whose agent runs the Agent activity popover lists: a deck, or
@@ -1030,8 +1030,9 @@ export function createApiClient(): ApiClient {
     // -------------------------------------------------------------------------
 
     listFolderFonts: async (folderId) => {
+      // A share-link visit (or the render page) reads them with its token.
       const data = await requestJson<{ fonts: FolderFontSummary[] }>(
-        `/api/folders/${folderId}/fonts`,
+        withShareToken(`/api/folders/${folderId}/fonts`),
       )
       return data.fonts
     },
@@ -1101,7 +1102,9 @@ export function createApiClient(): ApiClient {
     },
 
     listDeckFonts: async (deckId) => {
-      const data = await requestJson<{ fonts: FolderFontSummary[] }>(`/api/decks/${deckId}/fonts`)
+      const data = await requestJson<{ fonts: FolderFontSummary[] }>(
+        withShareToken(`/api/decks/${deckId}/fonts`),
+      )
       return data.fonts
     },
 

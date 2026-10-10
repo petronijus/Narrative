@@ -27,6 +27,7 @@
  * with its folder's tokens (docs/plans/folder-sharing.md).
  */
 
+import { HOCUSPOCUS_URL } from '../lib/endpoints.js'
 import { createContext, useContext, useEffect, useRef, useState, useMemo } from 'react'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
@@ -37,8 +38,6 @@ import { FolderDocContext, emptyTokensSnapshot } from './FolderDocContext.js'
 import type { FolderTokensSnapshot, FolderDocContextValue } from './FolderDocContext.js'
 import { FolderTokenWriter, overlayTokens } from './folderTokenWriter.js'
 import { hocuspocusAuthOptions } from './hocuspocusAuth.js'
-
-const HOCUSPOCUS_URL = import.meta.env['VITE_HOCUSPOCUS_URL'] ?? 'ws://localhost:3002'
 
 /** The writer the subtree changes tokens with; null until the folder is known. */
 const FolderTokenWriterContext = createContext<FolderTokenWriter | null>(null)

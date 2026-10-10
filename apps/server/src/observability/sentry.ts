@@ -24,7 +24,7 @@
  * M29: add @sentry/profiling-node once the full observability stack lands.
  */
 
-import { maskCredentials } from '../auth/credentialPatterns.js'
+import { maskCredentials, maskShareTokens } from '../auth/credentialPatterns.js'
 import type { FastifyInstance } from 'fastify'
 
 let _initialized = false
@@ -41,11 +41,16 @@ const MAX_DEPTH = 32
 
 /**
  * Any Narrative credential anywhere in a string (auth/credentialPatterns.ts:
- * access tokens, OAuth tokens / codes / secrets, upload sessions) loses its
- * secret; the prefix stays so a report shows WHICH kind leaked.
+ * access tokens, OAuth tokens / codes / secrets, upload sessions, render
+ * tokens) loses its secret — the prefix stays so a report shows WHICH kind
+ * leaked — and so does every `share_token=` value (a share link's id has no
+ * prefix: a request URL or query string carries it bare).
  */
 export function scrubString(value: string): string {
-  return maskCredentials(value, FILTERED).replace(SESSION_COOKIE_RE, `$1${FILTERED}`)
+  return maskShareTokens(maskCredentials(value, FILTERED), FILTERED).replace(
+    SESSION_COOKIE_RE,
+    `$1${FILTERED}`,
+  )
 }
 
 function scrub(value: unknown, depth: number, seen: WeakSet<object>, parentKey: string): unknown {
@@ -68,7 +73,9 @@ function scrub(value: unknown, depth: number, seen: WeakSet<object>, parentKey: 
     const lower = key.toLowerCase()
     if (
       (isHeaders && SECRET_HEADERS.has(lower)) ||
-      (parentKey === 'request' && lower === 'cookies')
+      (parentKey === 'request' && lower === 'cookies') ||
+      // A parsed query (`query_string` as an object or pairs) names it as a key.
+      lower === 'share_token'
     ) {
       out[key] = FILTERED
       continue

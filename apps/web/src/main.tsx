@@ -16,6 +16,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import { App } from './App'
 import { registerBundledFonts } from './state/bundledFonts.js'
+import { trackRenderWork } from './renderer/renderWork.js'
 import { installHocuspocusWarningFilter } from './state/installHocuspocusWarningFilter.js'
 
 // Drop a single cosmetic warning fired by @hocuspocus/provider when the
@@ -28,8 +29,9 @@ installHocuspocusWarningFilter()
 // — the FolderFontLoader for folder-uploaded fonts uses the same Pixi
 // Cache shape so any Inter-using text in the deck picks up the metrics
 // once registration resolves. We do NOT await here because blocking
-// on woff2 fetch would visibly delay the editor mount.
-void registerBundledFonts()
+// on woff2 fetch would visibly delay the editor mount. Counted as render work
+// (renderer/renderWork.ts): the render page waits for the default text face.
+void trackRenderWork(registerBundledFonts())
 
 // Global pointer-capture lifecycle for native range inputs.
 //

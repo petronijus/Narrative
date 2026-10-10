@@ -39,6 +39,7 @@
  *   Legacy bare name → treated as deck id (backward compat)
  */
 
+import { createHash } from 'node:crypto'
 import type { IncomingHttpHeaders } from 'node:http'
 import type { Database } from '../db/client.js'
 import {
@@ -87,6 +88,18 @@ export interface WsAuthPayload {
   request?: { socket?: { remoteAddress?: string | undefined } | undefined }
   connection: { readOnly: boolean }
   context: Record<string, unknown>
+}
+
+/**
+ * How a share-link connection is named in its context and the logs: a hash
+ * prefix, never characters of the token itself (a link stays valid until
+ * revoked; a render token is a credential too).
+ */
+function shareDisplayId(shareToken: string | null): string {
+  return `share:${createHash('sha256')
+    .update(shareToken ?? '')
+    .digest('hex')
+    .slice(0, 8)}`
 }
 
 interface WsPrincipal {
@@ -204,7 +217,7 @@ function createAuthenticate(deps: WsAuthDeps) {
       const access = await resolveFolderContentAccess(db, { folderId, userId, shareToken })
       if (!access) throw new Error('Forbidden')
 
-      const displayId = userId ?? `share:${shareToken?.slice(0, 8)}`
+      const displayId = userId ?? shareDisplayId(shareToken)
       // Write the context here; the exported wrapper returns these writes so
       // Hocuspocus merges them (see createOnAuthenticate).
       data.context.userId = displayId
@@ -256,7 +269,7 @@ function createAuthenticate(deps: WsAuthDeps) {
     })
     if (!access) throw new Error('Forbidden')
 
-    const displayId = userId ?? `share:${shareToken?.slice(0, 8)}`
+    const displayId = userId ?? shareDisplayId(shareToken)
 
     data.context.userId = displayId
     data.context.deckId = documentName
@@ -265,7 +278,7 @@ function createAuthenticate(deps: WsAuthDeps) {
     // CONN-1: record the principal that authorised this connection so a
     // later revocation can target exactly the right live connections.
     //   - share-token connections carry the full token (userId is only the
-    //     truncated `share:<8>` display id, not enough to disambiguate).
+    //     `share:<hash>` display id, not enough to disambiguate).
     //   - authenticated connections carry the real userId via displayId.
     if (shareToken) {
       data.context.shareToken = shareToken

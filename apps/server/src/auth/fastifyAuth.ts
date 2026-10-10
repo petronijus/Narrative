@@ -238,6 +238,39 @@ export async function authPreHandler(req: FastifyRequest, reply: FastifyReply): 
 }
 
 // ---------------------------------------------------------------------------
+// shareReadPreHandler
+// ---------------------------------------------------------------------------
+
+/**
+ * Pre-handler for the reads a share-link visitor makes too — the media URLs,
+ * video info and fonts a shared deck renders with (and the render worker's
+ * page, whose render token is a share link: auth/renderTokens.ts):
+ *   - a session (or BYPASS_AUTH) is attached exactly as by `authPreHandler`;
+ *   - NO credential at all passes through anonymously — the route must then
+ *     authorise from `share_token` (resolveDeckAccess /
+ *     resolveFolderContentAccess) and refuse without one;
+ *   - a credential that does not verify is still 401, never downgraded to
+ *     anonymous, and a personal access token is 403 as on every browser route.
+ */
+export async function shareReadPreHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const result = await resolveFastifyIdentity(req)
+  if (result.status === 'none') return
+  if (result.status !== 'ok') {
+    await reply.status(401).send({ error: 'Unauthorized' })
+    return
+  }
+  if (result.identity.auth.kind === 'token') {
+    await reply.status(403).send({
+      error: 'token_not_accepted',
+      message:
+        'Personal access tokens are accepted only on the agent endpoints (/api/mcp, /api/commands).',
+    })
+    return
+  }
+  attachIdentity(req, result.identity)
+}
+
+// ---------------------------------------------------------------------------
 // requireTokenScope
 // ---------------------------------------------------------------------------
 

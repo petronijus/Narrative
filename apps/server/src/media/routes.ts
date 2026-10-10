@@ -5,14 +5,16 @@
  *
  *   GET  /api/media/:assetId/url?variant=<thumb|display|original>
  *     Returns a signed imgproxy URL for the given asset + variant.
- *     Auth: JWT required (authPreHandler). Deck access: viewer or above.
+ *     Auth: a session or `?share_token=` (shareReadPreHandler — a share-link
+ *     visitor's deck renders with its media). Deck access: viewer or above.
  *     Cache-Control: private, max-age=600 (10 min). Signed URLs are stable, so the
  *     browser may keep one; a shared cache must not (it would hand one viewer's
  *     answer to another — component media is only for its folder's readers).
  *
  *   GET  /api/media/:assetId/video-info
  *     Returns transcode status + signed poster/thumbnail URLs + progressive MP4 playback URL.
- *     Auth: JWT required. Deck access: viewer or above.
+ *     Auth: a session or `?share_token=` (shareReadPreHandler). Deck access:
+ *     viewer or above.
  *     Poll this endpoint at 2 s intervals until transcodeStatus === 'done'.
  *
  *   GET  /api/media/:assetId/font-url
@@ -20,10 +22,10 @@
  *     parsed metadata (MEDIA-1: bucket is private). M16 P3: only resolves
  *     folder-scoped fonts now (kind='font', folder_id IS NOT NULL,
  *     deck_id IS NULL). Auth: the caller may read the folder's content (a
- *     member, or a guest of one of its decks).
+ *     member, or a guest of one of its decks — `?share_token=` included).
  *
  *   POST   /api/folders/:folderId/fonts
- *   GET    /api/folders/:folderId/fonts
+ *   GET    /api/folders/:folderId/fonts   (also with `?share_token=` to a deck of the folder)
  *   DELETE /api/folders/:folderId/fonts/:assetId
  *     Folder-scoped custom font management. See "Folder fonts (M16 P3)" section.
  *
@@ -56,7 +58,7 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Database } from '../db/client.js'
-import { authPreHandler } from '../auth/fastifyAuth.js'
+import { authPreHandler, shareReadPreHandler } from '../auth/fastifyAuth.js'
 import { resolveDeckAccess } from '../auth/permissions.js'
 import { createMediaService, isImageVariant, IMAGE_VARIANTS } from '../services/media.js'
 import {
@@ -155,7 +157,7 @@ export async function registerMediaRoutes(
   app.get<{
     Params: { assetId: string }
     Querystring: { variant?: string }
-  }>('/api/media/:assetId/url', { preHandler: authPreHandler }, async (request, reply) => {
+  }>('/api/media/:assetId/url', { preHandler: shareReadPreHandler }, async (request, reply) => {
     const variantParam = request.query.variant ?? 'display'
     if (!isImageVariant(variantParam)) {
       return reply.status(400).send({
@@ -184,19 +186,23 @@ export async function registerMediaRoutes(
   app.get<{
     Params: { assetId: string }
     Querystring: { share_token?: string }
-  }>('/api/media/:assetId/video-info', { preHandler: authPreHandler }, async (request, reply) => {
-    try {
-      return reply.send(
-        await createMediaService(routeDeps(app, db, request.log)).videoInfo({
-          userId: request.user?.sub ?? null,
-          shareToken: request.query.share_token ?? null,
-          assetId: request.params.assetId,
-        }),
-      )
-    } catch (err) {
-      return sendServiceError(reply, err)
-    }
-  })
+  }>(
+    '/api/media/:assetId/video-info',
+    { preHandler: shareReadPreHandler },
+    async (request, reply) => {
+      try {
+        return reply.send(
+          await createMediaService(routeDeps(app, db, request.log)).videoInfo({
+            userId: request.user?.sub ?? null,
+            shareToken: request.query.share_token ?? null,
+            assetId: request.params.assetId,
+          }),
+        )
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
+    },
+  )
 
   // -------------------------------------------------------------------------
   // GET /api/media/:assetId/font-url
@@ -206,24 +212,31 @@ export async function registerMediaRoutes(
   // -------------------------------------------------------------------------
   app.get<{
     Params: { assetId: string }
-  }>('/api/media/:assetId/font-url', { preHandler: authPreHandler }, async (request, reply) => {
-    const userId = (request as FastifyRequest & { user?: { sub: string } }).user?.sub ?? null
-    if (!userId) {
-      return reply.status(401).send({ error: 'Unauthenticated' })
-    }
-    try {
-      const info = await createMediaService(routeDeps(app, db, request.log)).fontUrl({
-        userId,
-        assetId: request.params.assetId,
-      })
-      // Short-TTL presigned URL (MEDIA-1, private bucket): not immutable-
-      // cacheable any more — the URL rotates per TTL, so browser caching is
-      // capped well under the TTL and private (the URL embeds auth).
-      return reply.header('Cache-Control', 'private, max-age=300').send(info)
-    } catch (err) {
-      return sendServiceError(reply, err)
-    }
-  })
+    Querystring: { share_token?: string }
+  }>(
+    '/api/media/:assetId/font-url',
+    { preHandler: shareReadPreHandler },
+    async (request, reply) => {
+      const userId = request.user?.sub ?? null
+      const shareToken = request.query.share_token ?? null
+      if (!userId && !shareToken) {
+        return reply.status(401).send({ error: 'Unauthenticated' })
+      }
+      try {
+        const info = await createMediaService(routeDeps(app, db, request.log)).fontUrl({
+          userId,
+          shareToken,
+          assetId: request.params.assetId,
+        })
+        // Short-TTL presigned URL (MEDIA-1, private bucket): not immutable-
+        // cacheable any more — the URL rotates per TTL, so browser caching is
+        // capped well under the TTL and private (the URL embeds auth).
+        return reply.header('Cache-Control', 'private, max-age=300').send(info)
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
+    },
+  )
 
   // -------------------------------------------------------------------------
   // Folder fonts (M16 P3)
@@ -304,17 +317,28 @@ export async function registerMediaRoutes(
   // GET /api/folders/:folderId/fonts — list folder fonts
   app.get<{
     Params: { folderId: string }
-  }>('/api/folders/:folderId/fonts', { preHandler: authPreHandler }, async (request, reply) => {
-    try {
-      const fonts = await createFoldersService(routeDeps(app, db, request.log)).listFonts({
-        userId: (request as FastifyRequest & { user?: { sub: string } }).user!.sub,
-        folderId: request.params.folderId,
-      })
-      return reply.header('Cache-Control', 'private, no-cache').send({ fonts })
-    } catch (err) {
-      return sendServiceError(reply, err)
-    }
-  })
+    Querystring: { share_token?: string }
+  }>(
+    '/api/folders/:folderId/fonts',
+    { preHandler: shareReadPreHandler },
+    async (request, reply) => {
+      const userId = request.user?.sub ?? null
+      const shareToken = request.query.share_token ?? null
+      if (!userId && !shareToken) {
+        return reply.status(401).send({ error: 'Unauthenticated' })
+      }
+      try {
+        const fonts = await createFoldersService(routeDeps(app, db, request.log)).listFonts({
+          userId,
+          shareToken,
+          folderId: request.params.folderId,
+        })
+        return reply.header('Cache-Control', 'private, no-cache').send({ fonts })
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
+    },
+  )
 
   // DELETE /api/folders/:folderId/fonts/:assetId — remove a folder font
   app.delete<{
@@ -346,7 +370,7 @@ export async function registerMediaRoutes(
   // -------------------------------------------------------------------------
   app.get<{
     Params: { deckId: string }
-  }>('/api/decks/:deckId/fonts', { preHandler: authPreHandler }, async (request, reply) => {
+  }>('/api/decks/:deckId/fonts', { preHandler: shareReadPreHandler }, async (request, reply) => {
     const { deckId } = request.params
     const userId = request.user?.sub ?? null
     const shareToken = (request.query as Record<string, string>)['share_token'] ?? null

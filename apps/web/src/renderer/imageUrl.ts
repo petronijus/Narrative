@@ -12,12 +12,15 @@
  *   setDefaultImageUrlResolver(). Renderer code calls getDefaultImageUrlResolver().
  *
  * Bootstrap (Canvas.tsx / App.tsx):
- *   setDefaultImageUrlResolver(createImageUrlResolver(import.meta.env.VITE_API_URL))
+ *   setDefaultImageUrlResolver(createImageUrlResolver(API_BASE))
  *
  * Auth: this module fetches `${api}/media/:id/url` with `credentials: 'include'`,
  * so the narrative_session cookie travels automatically on same-origin (prod)
  * and same-site cross-origin (dev). No Bearer token needed any more.
  */
+
+import { withShareToken } from '../lib/shareToken.js'
+import { trackRenderWork } from './renderWork.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,29 +62,33 @@ export function createImageUrlResolver(apiBaseUrl: string): ImageUrlResolver {
       return cached
     }
 
-    const fetchPromise: Promise<string> = (async () => {
-      const url = `${apiBaseUrl}/api/media/${opts.assetId}/url?variant=${variant}`
-      const res = await fetch(url, { credentials: 'include' })
+    // Counted until it settles, so the render page waits for it (renderWork.ts).
+    const fetchPromise: Promise<string> = trackRenderWork(
+      (async () => {
+        // A share-link visit (or the render page) has no session: its token authorises.
+        const url = withShareToken(`${apiBaseUrl}/api/media/${opts.assetId}/url?variant=${variant}`)
+        const res = await fetch(url, { credentials: 'include' })
 
-      if (!res.ok) {
-        // Remove from cache to allow retry.
-        cache.delete(cacheKey)
-        throw new Error(
-          `[imageUrl] Failed to fetch signed URL for ${opts.assetId}/${variant}: HTTP ${res.status}`,
-        )
-      }
+        if (!res.ok) {
+          // Remove from cache to allow retry.
+          cache.delete(cacheKey)
+          throw new Error(
+            `[imageUrl] Failed to fetch signed URL for ${opts.assetId}/${variant}: HTTP ${res.status}`,
+          )
+        }
 
-      const json = (await res.json()) as { url?: string }
+        const json = (await res.json()) as { url?: string }
 
-      if (typeof json.url !== 'string') {
-        cache.delete(cacheKey)
-        throw new Error(
-          `[imageUrl] Invalid response for ${opts.assetId}/${variant}: missing 'url' field`,
-        )
-      }
+        if (typeof json.url !== 'string') {
+          cache.delete(cacheKey)
+          throw new Error(
+            `[imageUrl] Invalid response for ${opts.assetId}/${variant}: missing 'url' field`,
+          )
+        }
 
-      return json.url
-    })()
+        return json.url
+      })(),
+    )
 
     // On rejection remove cache entry so caller can retry.
     fetchPromise.catch(() => {

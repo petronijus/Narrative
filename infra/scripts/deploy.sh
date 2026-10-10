@@ -140,6 +140,21 @@ log "Migrace hotovy"
 log "Startujeme služby..."
 ${COMPOSE} up -d --remove-orphans
 
+# ── Caddy config ───────────────────────────────────────────────────────────────
+# `up -d` recreates Caddy only when its image or compose definition changes; a
+# changed Caddyfile (synced into ./caddy, which is mounted as a directory —
+# docs/deploy.md "Config-only changes") takes effect only on a reload, and
+# nothing else reloads it. Validate first: a broken file fails the deploy and
+# the running Caddy keeps its previous config.
+log "Reloading the Caddy config..."
+if ! docker exec narrative-caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile > /dev/null 2>&1; then
+  err "The Caddyfile does not validate; Caddy keeps its previous config"
+  docker exec narrative-caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1 | tail -n 5
+  exit 1
+fi
+docker exec narrative-caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+log "Caddy config reloaded"
+
 # ── Healthcheck ────────────────────────────────────────────────────────────────
 log "Čekám na start (15s)..."
 sleep 15

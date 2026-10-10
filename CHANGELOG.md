@@ -6,6 +6,42 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+### Fixed
+
+- **A share link shows its deck's pictures, videos and fonts.** The media
+  and font reads answered 401 to a visitor without a session before they
+  ever looked at the link, and the web app did not send it to them: an
+  anonymous share-link visitor saw grey placeholders and fallback fonts.
+  They now accept `?share_token=` (no credential → the link decides; a
+  credential that does not verify is still refused), and the app sends it.
+
+### Added
+
+- **A render page for the coming render worker** (agentic A3,
+  [plan](docs/plans/a3-render-worker.md)): `/deck/:id/render?slide=` shows
+  one slide of the live deck on the real renderer, 1920×1080, without
+  editor chrome, and reports on `window.__narrativeRender` once the slide is
+  settled — every object mounted, every picture, poster and font loaded,
+  every text raster drawn — or why it cannot (access refused, empty deck,
+  unknown slide, fonts unavailable, timed out).
+- **Render tokens** (`nrr_…`): 5 minutes, in the server's memory, viewer
+  access to one deck while the person who asked for the render can still
+  read it; resolved like a share link. Only the server mints them, for
+  render jobs (from A3.2 on; `POST /dev/render-token` with BYPASS_AUTH for
+  the e2e suite).
+
+### Changed
+
+- **The web app reaches the API and the sync server at `/api` and `/ws` on
+  its own origin**: the production build no longer bakes `https://<domain>/…`
+  into the bundle, so the web image names no domain.
+- **Share-link tokens stay out of logs and error reports**: masked in the
+  server's request log and 404s, in Sentry reports and in Caddy's access log
+  (URI and Referer), and `Referrer-Policy: strict-origin` keeps a shared
+  page's URL out of the Referer of its own requests. A share connection is
+  named by a hash, not by the first characters of its token.
+- `deck.exportPdf` is planned for phase A5 instead of A3 (not wanted yet).
+
 ## 0.10.19 — Node 24, MinIO from the GHCR mirror (2026-10-09)
 
 No migrations, no new env vars. Production's MinIO switches to the GHCR
