@@ -363,6 +363,11 @@ slide came out in the wrong fonts, and took 11.6 s.
   until its copy of the deck covers the editor's state vector). Measured in
   dev: 1.6 s cold, 0.36 s warm. The worker stays the agents' way, and the
   fallback when the browser cannot render.
+- 0.10.22 shipped with production denying all framing (`frame-ancestors
+'none'`, `X-Frame-Options: DENY`, `frame-src 'none'`): the hidden frame
+  never loaded there and every export fell back to the worker. 0.10.23 lets
+  the render page, and only it, be framed by this origin (ADR 0007
+  amendment; `browserSlideExport.caddy.test.ts` guards it).
 - The worker's 11.6 s per job is the app loading in a fresh page each time:
   A3.4 keeps a warm page per deck.
 

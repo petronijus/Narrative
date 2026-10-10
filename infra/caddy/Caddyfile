@@ -44,11 +44,20 @@ http://{$DOMAIN:localhost} {
   # every same-origin request — images, fonts, imgproxy — into the access
   # logs here and in imgproxy-cache. Nothing reads the Referer (the API's
   # same-origin check uses Origin, apps/server/src/http/sameOrigin.ts).
+  #
+  # Framing: nothing may be framed (DENY) except the render page,
+  # /deck/<id>/render, which the editor itself frames to render a slide to
+  # PNG in the browser (apps/web/src/state/browserSlideExport.ts) — only by
+  # this origin (SAMEORIGIN, and `frame-ancestors 'self'` in its CSP below).
+  # Two matchers that exclude each other, so no header order decides it.
+  @render_page path_regexp render_page ^/deck/[^/]+/render$
+  @not_render_page not path_regexp ^/deck/[^/]+/render$
   header {
     X-Content-Type-Options nosniff
-    X-Frame-Options DENY
     Referrer-Policy strict-origin
   }
+  header @not_render_page X-Frame-Options DENY
+  header @render_page X-Frame-Options SAMEORIGIN
 
   # ── Client IP: never trust a client-supplied CF-Connecting-IP ──────────────
   # The API keys anonymous rate-limit buckets, its per-IP pre-limit and the
@@ -185,8 +194,15 @@ http://{$DOMAIN:localhost} {
     #                            settles, so images silently never appear on the
     #                            canvas (slide thumbnails, which decode via
     #                            Image.decode(), kept working and masked it).
-    #   no iframes or plugins; base-uri/frame-ancestors locked down.
-    header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self' data:; connect-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; frame-src 'none'"
+    #   frame-src  'self'      — the editor frames its own render page to
+    #                            export a slide as PNG in the browser
+    #                            (state/browserSlideExport.ts); nothing else.
+    #   frame-ancestors        — 'none', except the render page itself:
+    #                            'self', so the editor can frame it and no
+    #                            other site can.
+    #   no plugins; base-uri locked down.
+    header @not_render_page Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self' data:; connect-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; frame-src 'self'"
+    header @render_page Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self' data:; connect-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; frame-src 'self'"
     root * /srv/web
     # SPA fallback — client-side routes return index.html
     try_files {path} /index.html

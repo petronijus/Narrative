@@ -8,6 +8,18 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.23 — Export as PNG in the browser on production too (2026-10-11)
+
+### Fixed
+
+- **Export as PNG really renders in the browser on production.** 0.10.22
+  shipped with production forbidding any page to be framed, so the editor's
+  hidden render frame never loaded there and every export quietly went to
+  the server (as slow as before). Only the render page may now be framed,
+  and only by the app itself.
+
+---
+
 ## 0.10.22 — Export as PNG in the browser; folder fonts everywhere (2026-10-11)
 
 ### Changed

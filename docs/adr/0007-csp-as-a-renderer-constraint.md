@@ -81,3 +81,16 @@ https://<domain>/ | grep -i content-security-policy`. The file on disk is not
 - The residual risk is accepted: `style-src` keeps `'unsafe-inline'` (Pixi and
   Tailwind both write inline styles) and `img-src`/`worker-src` keep `blob:`.
   These are same-origin-ish sinks with no script execution.
+
+## Amendment (2026-10-11): the render page may be framed by its own origin
+
+The editor renders a slide to PNG in the browser by framing its own render
+page, `/deck/<id>/render` (`apps/web/src/state/browserSlideExport.ts`,
+0.10.22). So the SPA documents get `frame-src 'self'` (not `'none'`), and the
+render page alone gets `frame-ancestors 'self'` and `X-Frame-Options:
+SAMEORIGIN`; every other document keeps `frame-ancestors 'none'` and `DENY`.
+No other origin can frame anything, and the render page has no controls to
+click. `apps/web/src/state/browserSlideExport.caddy.test.ts` checks the
+Caddyfile for it: 0.10.22 shipped with framing denied, and every export on
+production quietly fell back to the render worker — the dev server sends no
+CSP, so only the public URL showed it.

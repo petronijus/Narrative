@@ -1,6 +1,6 @@
 {
   "name": "narrative",
-  "version": "0.10.22",
+  "version": "0.10.23",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.15.4",
