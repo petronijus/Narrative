@@ -16,7 +16,7 @@
 # (a lock in the git dir); a second caller waits for it and reuses its result.
 set -uo pipefail
 
-root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 cd "$root" || exit 1
 gitdir="$(git rev-parse --absolute-git-dir)"
 stamps="$gitdir/claude-check-green"

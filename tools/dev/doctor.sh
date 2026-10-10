@@ -35,7 +35,7 @@ install() {
   else echo "see SETUP.md → Toolchain ($1)"; fi
 }
 
-root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 cd "$root" || exit 1
 
 echo "Toolchain"
@@ -121,7 +121,10 @@ echo "Project"
 hooks_path="$(git config --get core.hooksPath || true)"
 if [[ -n "$hooks_path" ]]; then
   bad "core.hooksPath=$hooks_path (left by husky; lefthook's hooks never run)" "just setup"
-elif [[ -x .git/hooks/pre-commit ]] && grep -q lefthook .git/hooks/pre-commit; then
+# --git-path: in a linked worktree `.git` is a file and the hooks live in the
+# main checkout's git directory.
+elif pre_commit="$(git rev-parse --path-format=absolute --git-path hooks/pre-commit)" &&
+  [[ -x "$pre_commit" ]] && grep -q lefthook "$pre_commit"; then
   ok "git hooks installed (lefthook)"
 else
   warn "git hooks not installed" "just setup"

@@ -10,7 +10,7 @@
 # /usr/bin/google-chrome-stable on Arch).
 set -uo pipefail
 
-root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 installed="$(cd "$root/apps/web" && node -e '
   const path = require("path"), fs = require("fs"), os = require("os")
   try {
