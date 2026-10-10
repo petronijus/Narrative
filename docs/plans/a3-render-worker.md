@@ -139,8 +139,8 @@ release and deploy.
 
 ## Where we stand
 
-2026-10-10: plan written. **A3.1 built** (unreleased), then reworked after
-the code and security reviews of the same day:
+2026-10-10: plan written. **A3.1 released in 0.10.20** (deployed the same
+day; built, then reworked after the code and security reviews):
 
 - The production bundle uses relative `/api` and `/ws`
   (`apps/web/src/lib/endpoints.ts`); `build-push.sh` bakes no domain; the
@@ -183,6 +183,17 @@ strict-origin` keeps a share-link page's URL out of same-origin Referers.
   Caddy 2.11.
 - `deck.exportPdf` moved to phase A5 in `knownMissing.ts`.
 
-Next: full e2e, release (the Caddy config changes with it), check on
-production that a share link shows its pictures and fonts; then A3.2 (the
-worker).
+Deploy of 0.10.20 checked on production: `/version.json` serves
+`v0.10.20+c01cccf`, `deploy.sh` reloaded the Caddyfile (`Referrer-Policy:
+strict-origin` served), Caddy's access log writes `share_token=REDACTED`,
+the `/ws` upgrade answers 101, and an anonymous media read reaches the
+service (404 for an unknown asset, no longer 401). Left for Petr: open the
+editor (it now talks to `/api` and `/ws` relatively) and a share link
+without signing in — pictures and folder fonts must show.
+
+Full e2e at release: 189 passed; one known flake (the
+`component-promote-stamp` cleanup `DELETE /folders/:id` timeout,
+dev-speed.md), green alone. `just size`: only the Tiptap chunk over, the
+same 132.82 kB as on 0.10.19 (measured on a worktree of HEAD).
+
+Next: A3.2 (the worker).
