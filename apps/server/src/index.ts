@@ -42,6 +42,7 @@ import { createAgentRuntime, parseUrlFetchAllowedHosts } from './agent/runtime.j
 import { createAgentPrincipalKeys } from './agent/presence.js'
 import { agentPrincipalKeySecretFromEnv } from './agent/principalKeySecret.js'
 import { closeQueueConnection } from './media/enqueue.js'
+import { closeRenderQueue, dropStaleRenderJobs } from './render/queue.js'
 import { metricsRegistrationDecision } from './metrics/index.js'
 import { initSentry } from './observability/sentry.js'
 import { createJwtVerifier } from './auth/jwt.js'
@@ -199,6 +200,8 @@ await app.register(cors, {
     'X-Narrative-Asset-Id',
     'X-Narrative-Width',
     'X-Narrative-Height',
+    // The download name of an export (.pptx, slide .png) the app saves itself.
+    'Content-Disposition',
   ],
 })
 
@@ -407,9 +410,10 @@ const shutdown = async (signal: string) => {
 
   try {
     await closeQueueConnection()
-    console.log('[server] BullMQ queue connection closed')
+    await closeRenderQueue()
+    console.log('[server] BullMQ queue connections closed')
   } catch (err) {
-    console.error('[server] Error closing BullMQ queue connection:', err)
+    console.error('[server] Error closing BullMQ queue connections:', err)
   }
 
   process.exit(0)
@@ -450,3 +454,14 @@ await Promise.all([
 void runDataMigrations({ db, log: app.log, hocuspocus: () => hocuspocus }).catch((err: unknown) => {
   app.log.error({ err }, 'data migrations could not run')
 })
+
+// Render jobs a previous server process left waiting carry render tokens that
+// lived in its memory: a page opened with one would only be refused. Drop
+// them (render/queue.ts); their callers were that process's requests. Only
+// jobs queued before this process started: this one already takes requests.
+void dropStaleRenderJobs(Date.now() - process.uptime() * 1000).then(
+  (dropped) => {
+    if (dropped > 0) app.log.info({ dropped }, 'render: dropped jobs left by the previous process')
+  },
+  (err: unknown) => app.log.warn({ err }, 'render: could not check the render queue at start'),
+)

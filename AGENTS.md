@@ -132,6 +132,7 @@ reading the comment; a new skip says why in the file and updates this count.
 apps/web            React editor, Pixi renderer (src/renderer), e2e (e2e/)
 apps/server         Fastify API, Hocuspocus, MCP server, services, drizzle/ migrations
 apps/video-worker   ffmpeg transcoding (BullMQ)
+apps/render-worker  headless Chromium on the render page: slide PNGs (BullMQ, A3)
 packages/shared     object types and zod schemas
 packages/slide-model  Yjs document model and writers
 packages/commands   command registry, parity guards, playbooks, capability manifest

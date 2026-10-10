@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2025",
+    "outDir": "dist",
+    "rootDir": "../..",
+    "moduleResolution": "bundler",
+    "paths": {
+      "bullmq": ["../../node_modules/bullmq/dist/esm/index.d.ts"],
+      "ioredis": ["../../node_modules/ioredis/built/index.d.ts"],
+      "@narrative/shared": ["../../packages/shared/src/index.ts"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}

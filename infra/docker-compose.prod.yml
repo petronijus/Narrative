@@ -127,10 +127,35 @@ services:
     #         cpus: '0.5'
     #         memory: 512M
 
+  # ─── Render worker prod overrides (agentic A3) ───────────────────────────────
+  # The page opens on the public origin — the signed media URLs and the CSP
+  # name it — while every request it makes goes to Caddy on the internal
+  # network (RENDER_UPSTREAM, apps/render-worker/src/routing.ts), not out
+  # through Cloudflare and back. Memory: Chromium runs only while there are
+  # jobs (it quits after RENDER_IDLE_MS); the limit keeps a runaway render from
+  # starving the server or Postgres on the 3 GB VM — measured in
+  # docs/plans/a3-render-worker.md.
+  render-worker:
+    restart: always
+    depends_on:
+      caddy:
+        condition: service_started
+    environment:
+      RENDER_APP_ORIGIN: https://${DOMAIN:?DOMAIN env var is required}
+      RENDER_UPSTREAM: http://caddy
+    mem_limit: 900m
+    # No swap past the limit: the worst case is a failed render, not a VM
+    # swapping under the server and Postgres.
+    memswap_limit: 900m
+    # SwiftShader paints on the CPU; two of the VM's four cores at most.
+    cpus: 2
+
   caddy:
     image: caddy:2-alpine
     container_name: narrative-caddy
     restart: always
+    # Also on the render worker's network: it is the worker's way to the app.
+    networks: [default, render]
     # No published ports — Caddy is reachable only on the internal Docker network
     # via `caddy:80`. Public ingress is handled by the `cloudflared` service below.
     expose:

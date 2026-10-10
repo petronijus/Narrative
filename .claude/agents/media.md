@@ -11,6 +11,12 @@ You own the **media pipeline** of Narrative.
 
 - `apps/server/src/media/` — the tus-node-server integration
 - `apps/video-worker/` — BullMQ workers (ffmpeg video, future image transforms)
+- the render worker (agentic A3, `docs/plans/a3-render-worker.md`):
+  `apps/render-worker/` (headless Chromium, its isolation and routing), and
+  the server's side — `apps/server/src/render/queue.ts`,
+  `apps/server/src/services/render.ts`, `apps/server/src/routes/pngExport.ts`.
+  The render page it screenshots (`apps/web/src/pages/DeckRender.tsx`,
+  `renderer/{renderWork,settleScene}.ts`) is the renderer agent's
 - MinIO bucket layout + lifecycle policies
 - imgproxy deployment + the URL signer
 - Upload progress UX (drag-drop target, progress indicators — coordinated with

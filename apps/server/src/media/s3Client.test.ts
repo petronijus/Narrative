@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { presignGetUrl, MEDIA_BUCKET } from './s3Client.js'
+import { presignGetUrl, presignPutUrl, MEDIA_BUCKET } from './s3Client.js'
 
 const KEY = 'fonts/folder-1/asset-1/original.ttf'
 
@@ -40,6 +40,19 @@ describe('presignGetUrl (MEDIA-1)', () => {
     process.env['MINIO_ROOT_PASSWORD'] = saved.pass ?? ''
     if (saved.pub === undefined) delete process.env['MINIO_PUBLIC_URL']
     if (saved.ep === undefined) delete process.env['MINIO_ENDPOINT']
+  })
+
+  it('a PUT signs the object type and caching: the uploader must send them, and gets them to send', async () => {
+    process.env['MINIO_PUBLIC_URL'] = 'https://narrative.example.com/storage'
+    const { url, headers } = await presignPutUrl('decks/d/exports/j/slide-1.png', 'image/png', 120)
+    const parsed = new URL(url)
+    expect(parsed.pathname).toBe(`/storage/${MEDIA_BUCKET}/decks/d/exports/j/slide-1.png`)
+    expect(parsed.searchParams.get('X-Amz-SignedHeaders')?.split(';').sort()).toEqual([
+      'cache-control',
+      'content-type',
+      'host',
+    ])
+    expect(headers).toEqual({ 'content-type': 'image/png', 'cache-control': 'private, no-store' })
   })
 
   it('signs and carries an expiry (X-Amz-* query params present)', async () => {

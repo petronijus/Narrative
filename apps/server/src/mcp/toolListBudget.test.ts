@@ -69,8 +69,11 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * folder.members.* / folder.invites.* tools — invite 1.4 KB, setRole 1.0,
  * remove 0.7, cancel 0.7, list 0.6, invites.list 0.5 (descriptions trimmed
  * once before measuring): 179,645 bytes in url mode, 135 tools.
+ * A3.3 (2026-10-10): 181,000 → 182,500 for deck.exportPng ≈ 1.0 KB, the first
+ * render-worker tool (description trimmed once before measuring): 181,807
+ * bytes in url mode, 136 tools.
  */
-export const TOOL_LIST_BUDGET_BYTES = 181_000
+export const TOOL_LIST_BUDGET_BYTES = 182_500
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

@@ -27,12 +27,31 @@ installed="$(cd "$root/apps/web" && node -e '
   } catch { process.stdout.write("no") }' 2>/dev/null)"
 [[ "$installed" == yes ]] && exit 0
 
+# Playwright's `channel: 'chrome'` looks for Chrome at its fixed install path
+# (/opt/google/chrome/chrome on Linux) whatever is on PATH, so a wrapper named
+# google-chrome, or only the beta or Chromium installed, is no Chrome to it.
+# Use the channel where that path exists; otherwise name a binary that does
+# exist (stable channels first, as apps/render-worker/src/browser.ts does).
 if [[ -z "${PLAYWRIGHT_USE_SYSTEM_CHROME:-}${PLAYWRIGHT_CHROME_EXECUTABLE:-}" ]]; then
-  if command -v google-chrome >/dev/null 2>&1 || command -v google-chrome-stable >/dev/null 2>&1; then
+  if [[ -x /opt/google/chrome/chrome || -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]]; then
     echo "export PLAYWRIGHT_USE_SYSTEM_CHROME=1"
   else
-    echo "echo 'no browser for Playwright: pnpm --filter web exec playwright install chromium, or install Google Chrome' >&2; exit 1"
-    exit 0
+    found=""
+    # A stable channel before the beta: Chrome 156 beta fails
+    # route-load-failure's "failed dependency" case that 152 passes (2026-10-10).
+    for candidate in /usr/bin/google-chrome-stable /usr/bin/google-chrome /usr/bin/chromium \
+      /usr/bin/chromium-browser /usr/bin/google-chrome-beta; do
+      if [[ -x "$candidate" ]]; then
+        found="$candidate"
+        break
+      fi
+    done
+    if [[ -n "$found" ]]; then
+      echo "export PLAYWRIGHT_CHROME_EXECUTABLE=$found"
+    else
+      echo "echo 'no browser for Playwright: pnpm --filter web exec playwright install chromium, or install Google Chrome or Chromium' >&2; exit 1"
+      exit 0
+    fi
   fi
 fi
 [[ -n "${PLAYWRIGHT_NO_VIDEO:-}" ]] || echo "export PLAYWRIGHT_NO_VIDEO=1"

@@ -19,13 +19,14 @@
  *     person who asked for the render can still read that deck:
  *     `findShareLink` re-checks the requester on every use, so a revoked
  *     share, a removed folder member or a deleted deck ends it at once;
- *   - expires `RENDER_TOKEN_TTL_MS` after it was minted — the page's live
- *     connections are closed then too — and can be revoked as soon as the
+ *   - expires when its job's caller stops waiting, plus a margin
+ *     (`RENDER_TOKEN_TTL_MS` unless the job asks for its own) — the page's
+ *     live connections are closed then too — and is revoked as soon as the
  *     job ends;
  *   - lives in this process's memory only (its SHA-256, never the token):
  *     the API and the sync server run in one process, which is the only one
- *     that mints and checks them; a restart invalidates them, and the job
- *     that held one is retried with a fresh one.
+ *     that mints and checks them; a restart invalidates them (the render
+ *     queue's waiting jobs are dropped at start, services/render.ts).
  */
 
 import { createHash, randomBytes } from 'node:crypto'
@@ -79,6 +80,7 @@ export function mintRenderToken(
   deckId: string,
   requestedBy: string,
   now: number = Date.now(),
+  ttlMs: number = RENDER_TOKEN_TTL_MS,
 ): string {
   const token = RENDER_TOKEN_PREFIX + randomBytes(SECRET_BYTES).toString('base64url')
   const hash = hashToken(token)
@@ -87,9 +89,9 @@ export function mintRenderToken(
   const expiryTimer = setTimeout(() => {
     drop(hash)
     closeShareTokenConnections(token)
-  }, RENDER_TOKEN_TTL_MS)
+  }, ttlMs)
   expiryTimer.unref()
-  grants.set(hash, { deckId, requestedBy, expiresAt: now + RENDER_TOKEN_TTL_MS, expiryTimer })
+  grants.set(hash, { deckId, requestedBy, expiresAt: now + ttlMs, expiryTimer })
   return token
 }
 

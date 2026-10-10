@@ -80,6 +80,24 @@ export function isAllowedOrigin(policy: SameOriginPolicy, origin: string | undef
   return normalized !== null && policy.allowedOrigins.has(normalized)
 }
 
+/**
+ * For a GET a session cookie authenticates that must not be triggered from
+ * elsewhere (an expensive render): did the browser send it from the web app?
+ * Same-origin requests and direct navigations (`Sec-Fetch-Site` same-origin /
+ * none) pass, and so do clients that send no fetch metadata (API clients).
+ * Anything else — another site, or a sibling subdomain (`same-site`: a
+ * `SameSite=Lax` cookie rides along) — passes only with an `Origin` from the
+ * allowed list: the web app on another origin (development's :5173 → :3001)
+ * sends one on its fetch; an `<img>` or a link elsewhere does not.
+ */
+export function isFromWebApp(req: FastifyRequest): boolean {
+  const raw = req.headers['sec-fetch-site']
+  const site = Array.isArray(raw) ? raw[0] : raw
+  if (site === undefined || site === 'same-origin' || site === 'none') return true
+  const rawOrigin = req.headers['origin']
+  return isAllowedOrigin(policyOf(req.server), Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin)
+}
+
 export async function requireSameOrigin(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const policy = policyOf(req.server)
   const result = await resolveFastifyIdentity(req)

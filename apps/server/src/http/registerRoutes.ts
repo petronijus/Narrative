@@ -24,6 +24,7 @@ import { registerSharingRoutes } from '../routes/sharing.js'
 import { registerFolderSharingRoutes } from '../routes/folderSharing.js'
 import { registerPptxImportRoutes } from '../routes/pptxImport.js'
 import { registerPptxExportRoutes } from '../routes/pptxExport.js'
+import { registerPngExportRoutes } from '../routes/pngExport.js'
 import { registerAuthRoutes, type AuthRoutesOpts } from '../routes/auth.js'
 import { registerAccessTokenRoutes } from '../routes/accessTokens.js'
 import { registerTusPlugin } from '../media/tus.js'
@@ -102,6 +103,8 @@ export async function registerHttpRoutes(app: FastifyInstance, deps: HttpRouteDe
 
   // PowerPoint export — synchronous Y.Doc → .pptx (pptx/ooxml/writeDeck)
   await registerPptxExportRoutes(app, db)
+  // One slide as PNG, rendered by the render worker (A3).
+  await registerPngExportRoutes(app, db)
 
   // Server-driven OAuth flow + session cookie minting (replaces the old
   // browser-PKCE + Bearer-id_token path). Public endpoints by design.

@@ -8,7 +8,7 @@
 # "no space left on device". Every image is also in GHCR, so keeping more
 # than a rollback's worth here buys nothing.
 #
-# Removes, per app image (narrative-server / -video-worker / -web):
+# Removes, per app image (narrative-server / -video-worker / -render-worker / -web):
 #   every tag except the current one, `latest`, the KEEP most recent others,
 #   and anything a running container uses.
 # Then drops dangling layers, and — with --builder-cache — the build cache
@@ -22,7 +22,7 @@
 set -euo pipefail
 
 REG="ghcr.io/petronijus"
-SERVICES=(server video-worker web)
+SERVICES=(server video-worker render-worker web)
 CURRENT=""
 KEEP=2
 BUILDER_CACHE=0

@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **135**. Known missing: **7**. Deliberately excluded: **21**.
+Commands: **136**. Known missing: **6**. Deliberately excluded: **21**.
 
 ## agent
 
@@ -44,6 +44,7 @@ Commands: **135**. Known missing: **7**. Deliberately excluded: **21**.
 | `deck.create`        | Create deck                       | owner  | undoable     | never                      |            |
 | `deck.delete`        | Delete deck                       | owner  | irreversible | always                     |            |
 | `deck.duplicate`     | Duplicate deck                    | editor | undoable     | never                      |            |
+| `deck.exportPng`     | Export slides as PNG              | viewer | n/a          | never                      |            |
 | `deck.exportPptx`    | Export PowerPoint                 | editor | n/a          | never                      |            |
 | `deck.fonts.list`    | Deck fonts                        | viewer | n/a          | never                      | read-only  |
 | `deck.get`           | Deck details                      | viewer | n/a          | never                      | read-only  |
@@ -225,7 +226,6 @@ Commands: **135**. Known missing: **7**. Deliberately excluded: **21**.
 
 | Capability                   | Phase | Today in                                                                      | Note                                                                                                                                                                                                                                                                                                |
 | ---------------------------- | ----- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `deck.exportPng`             | A3    | new                                                                           |                                                                                                                                                                                                                                                                                                     |
 | `deck.refreshThumbnail`      | A3    | apps/web/src/ui/SlidesPanel.tsx; `PUT /decks/:id/thumbnail`                   | the browser renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                                                                                                                                |
 | `component.refreshThumbnail` | A3    | apps/web/src/pages/ComponentMasterEditor.tsx; `PUT /components/:id/thumbnail` | the master editor renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                                                                                                                          |
 | `query.render`               | A3    | new                                                                           |                                                                                                                                                                                                                                                                                                     |

@@ -42,11 +42,12 @@ served by the real Caddy with the real CSP — never a second renderer.
 
 ```
 MCP / route ──▶ server ──BullMQ "render" (media-redis)──▶ render-worker
-                  ▲  mints a render token                   │ Chromium, on demand
-                  │  result: MinIO key                      ▼
-                  └──── MinIO ◀── PNG ── https://<domain>/deck/:id/render?slide=…&share_token=nrr_…
-                                         (page origin: the public domain; every request,
-                                          the /ws socket included, routed to http://caddy)
+                  │  per job: a render token,                │ Chromium, on demand
+                  │  one presigned PUT per slide              ▼
+                  │                       https://<domain>/deck/:id/render?slide=…&share_token=nrr_…
+                  │                       (page origin: the public domain; every request,
+                  │                        the /ws socket included, routed to http://caddy)
+                  └── reads the PNGs ── MinIO ◀── PUT /storage/… (through Caddy) ── worker
 ```
 
 - **Render page** (`/deck/:id/render?slide=<id|index>`, web app): the deck's
@@ -54,17 +55,19 @@ MCP / route ──▶ server ──BullMQ "render" (media-redis)──▶ render
   main canvas at 1920×1080, no editor chrome. It reports on
   `window.__narrativeRender` once the slide is settled — every object
   mounted, every tracked load (media URLs, textures, folder and bundled
-  fonts) done, every HTMLText raster drawn — with the count of loads that
-  failed; or an error with its reason (access refused, empty deck, slide not
+  fonts) done, every HTMLText raster drawn — with the count of this slide's
+  loads that failed and the font families that failed for the page; or an
+  error with its reason (access refused, empty deck, slide not
   found, font list unreadable, inputs never came, not settled). The worker
   screenshots the canvas. Contact sheets and crops are composed in the page
   (a 2D canvas), so the worker needs no image library.
 - **Live document**: the page connects to Hocuspocus like any client, so a
   render right after a command already shows it.
 - **Render token** `nrr_…` (`apps/server/src/auth/renderTokens.ts`): 256
-  bits, minted per job by the server, held in its memory as a SHA-256 for 5
-  minutes (the page's connections close at expiry), viewer of one deck for
-  as long as the requester can still read it. It is a share link:
+  bits, minted per job by the server, held in its memory as a SHA-256 until
+  the job's deadline plus a minute and revoked when the job ends (the page's
+  connections close then), viewer of one deck for as long as the requester
+  can still read it. It is a share link:
   `findShareLink` resolves it, so it reaches exactly what a share-link
   visitor reaches — the deck and folder documents, `GET /decks/:id`, and the
   media and font reads (`shareReadPreHandler`) — read-only. The API and the
@@ -85,9 +88,10 @@ MCP / route ──▶ server ──BullMQ "render" (media-redis)──▶ render
   image names no domain.
 - **render-worker** (`apps/render-worker`): BullMQ consumer of queue
   `render` on media-redis, like the video worker; Playwright with
-  `chromium-headless-shell`; uploads results to MinIO under
-  `decks/<id>/renders/<nanoid>/…` (swept like PPTX exports) and returns the
-  keys.
+  `chromium-headless-shell`; uploads each PNG through the presigned PUT the
+  job carries for it (through Caddy's `/storage`; the server chose the key,
+  `decks/<id>/exports/<job>/slide-N.png`, which the export sweep removes
+  after a day) and returns the slides' sizes and failures, no keys.
 
 ## Memory
 
@@ -98,11 +102,86 @@ Postgres:
   cost between agent sessions, warm during one;
 - `chromium-headless-shell` (no full browser UI), one page at a time
   (worker concurrency 1), Chromium's renderer-process limit 1;
-- a compose **memory limit** on the container (≈ 700 MB; measured in
-  A3.2 and set from the measurement), so the worst case is a failed
-  render, not an OOM-killed server;
-- measured with `docker stats` during a render of the largest production
-  deck before the step ships.
+- a compose **memory limit** (`mem_limit: 900m`, `memswap_limit: 900m`),
+  so the worst case is a failed render, not an OOM-killed server.
+
+Measured 2026-10-10 on the production image (headless shell 148,
+SwiftShader), with the compose hardening on, against a 50-slide deck of
+incompressible 800×600 photos shown at 1200×900: 107 MiB idle, 544 MiB peak
+for 20 slides at 1920×1080 (flat from the third slide on — no growth across
+slides), 1.8 s per slide with imgproxy resizing every picture for the first
+time. At 2× (3840×2160) the renderer was OOM-killed at 773 MiB within five
+slides — SwiftShader's 4K framebuffers — and a 50-slide 2× job took the
+whole container down: **renders are 1920×1080 only** (decided the same
+day; the slide's own size, more than the 1568 px a model reads), and a
+request renders **at most 20 slides** (a job's work budget is 20 s + 2.5 s
+per slide, so a one-slide request waiting behind the largest job still
+answers within its 95 s, under Cloudflare's 100 s).
+
+## Isolation
+
+The page renders other people's content (their text, fonts and pictures),
+so a Chromium renderer bug must not become code running with the worker's
+reach (security review, 2026-10-10):
+
+- **Chromium's sandbox is on** (`chromiumSandbox: true`; Playwright's
+  default is off, `--no-sandbox`): renderers run in their own user and PID
+  namespaces under Chromium's seccomp-bpf filter. Docker's default seccomp
+  profile forbids creating user namespaces, so the container runs
+  `seccomp=unconfined` — Chromium filters the processes that handle the
+  content itself, more tightly than Docker's profile; the other choice, a
+  copy of Docker's default profile with user namespaces allowed, would be a
+  frozen copy of upstream configuration (not done without Petr's approval
+  and an update path). Verified in the container: renderers in another user
+  and PID namespace, no `--no-sandbox`. Verified on VM 103 (Ubuntu 24.04,
+  kernel 6.8, Docker 29.4, `kernel.apparmor_restrict_unprivileged_userns=1`):
+  a non-root process in a container with these settings creates a user
+  namespace (`unshare -U -r`), with Docker's default seccomp it cannot.
+- **Required**: `RENDER_REQUIRE_SANDBOX=1` makes the worker check after every
+  launch that renderers are sandboxed (`renderersSandboxed`, /proc) and
+  refuse to render otherwise.
+- **No credentials**: the worker uploads each PNG through a presigned PUT
+  the server signs for exactly that object (through Caddy's `/storage`) —
+  its type and `Cache-Control: private, no-store` signed too, so the upload
+  cannot store anything else and a private slide stays out of shared caches
+  (Cloudflare caches `.png`) — and Chromium's environment holds none of the
+  worker's variables. The image carries no storage client.
+- **Its own internal network** (`narrative_render`, `internal: true`):
+  Caddy and the media Redis only, and no route out — not to the internet,
+  not to the LAN behind the VM (checked: a container on such a network
+  reaches its peers, nothing else). Inside the browser, every request off
+  the app origin is aborted and every other WebSocket closed (`routing.ts`);
+  the network catches what that routing cannot see (WebRTC, a compromised
+  renderer). The page cannot set the client-IP headers the rate limits key
+  on.
+- **Container**: non-root, `cap_drop: ALL`, `no-new-privileges`, read-only
+  root with a 512 MB tmpfs `/tmp`, `pids_limit: 512`, `cpus: 2`.
+- **Fair share** (the worker runs one job at a time, for everyone): two
+  renders in flight per person (eight for BYPASS_AUTH's dev identity, which
+  the e2e suite shares), twenty jobs waiting at most; a job's BullMQ
+  priority is the number of slides its caller has in flight with it, so
+  one slide asked for goes ahead of twenty someone else has queued; two
+  clocks per job, both enforced by the worker (it closes the page and
+  aborts the upload): the caller's wait (95 s from the request, queueing
+  included) and the job's work budget from its start (20 s + 2.5 s per
+  slide), so no job holds the worker longer than its size warrants; a job
+  that comes up after its caller stopped waiting is dropped before it
+  starts (or wakes) Chromium; the render token lives until the deadline
+  plus a minute; a render token's
+  WebSocket refusals do not count against the failed-login limit, and its
+  requests have their own rate-limit buckets (per requester, not the
+  worker's one address). Jobs a previous server process left waiting are
+  dropped at start (their tokens died with it; only jobs older than the
+  process, so a request already being served keeps its own). With the media
+  Redis down, a request hears "unavailable" within seconds (every Redis call
+  is bounded: BullMQ waits for a first connection forever), and shutdown
+  does not hang on it either.
+- **The PNG route** refuses a request the web app did not make
+  (`isFromWebApp`): a sibling subdomain's `<img>` carries the `SameSite=Lax`
+  cookie, but no allowed `Origin`.
+- Not done, as defence in depth beyond the above: a Redis ACL user for the
+  worker limited to the render queue (the media Redis has no auth; it needs
+  a new secret in the private overlay).
 
 ## Steps
 
@@ -115,26 +194,28 @@ release and deploy.
    render page paints a seeded slide and reports ready; a token for deck A
    cannot read deck B (writes: unit tests — the e2e stack's BYPASS_AUTH
    makes every request a signed-in user).
-2. **A3.2 render-worker.** The app, its Dockerfile (Playwright base, headless
-   shell), compose service with the memory limit, dev (`pnpm dev` runs it
-   with the system Chrome where Playwright has no Chromium), the queue
-   contract in `packages/shared`, the server's enqueue + wait, MinIO
-   upload + sweep. Measured memory.
-3. **A3.3 PNG export.** `deck.exportPng` (one slide or all, `delivery` url
-   or base64 like `deck.exportPptx`), the route, an editor menu item.
-4. **A3.4 `query.render`.** MCP image content (a new branch in
+2. **A3.2 render-worker** and **A3.3 PNG export**, shipped together (the
+   worker alone had nothing to test it by): the app, its Dockerfile
+   (headless shell), the compose service with the memory limit, dev
+   (`pnpm dev` runs it with the system Chrome where Playwright has no
+   Chromium), the queue contract in `packages/shared`, the server's
+   enqueue and wait, the presigned uploads and the sweep, measured memory;
+   `deck.exportPng` (one slide, several or a deck of up to 20; `delivery`
+   url or base64 like `deck.exportPptx`), `GET /decks/:id/export.png`,
+   "Export as PNG" in a slide's menu.
+3. **A3.4 `query.render`.** MCP image content (a new branch in
    `mcp/results.ts`), single slide downscaled to ≈ 1568 px, contact sheet,
    region crop; tools/list budget.
-5. **A3.5 Server thumbnails.** `deck.refreshThumbnail`,
+4. **A3.5 Server thumbnails.** `deck.refreshThumbnail`,
    `component.refreshThumbnail`; after a server-side or agent write to a
    deck with no editor connected, a debounced thumbnail job (the editor's
    upload stays for open decks).
-6. **A3.6 Before/after and text-fit.** The run records
+5. **A3.6 Before/after and text-fit.** The run records
    `encodeStateAsUpdate` at its first write (beside its `UndoManager`, same
    lifetime); the render page can render a fixed state; `compare: 'before'`.
    The page reports each text box's measured height; `query.render`
    returns overflowing boxes.
-7. **A3.7 Close.** Playbooks: look after every visible change; eval
+6. **A3.7 Close.** Playbooks: look after every visible change; eval
    scenarios; `FINISHED_PHASES += 'A3'`; handoff note.
 
 ## Where we stand
@@ -196,4 +277,63 @@ Full e2e at release: 189 passed; one known flake (the
 dev-speed.md), green alone. `just size`: only the Tiptap chunk over, the
 same 132.82 kB as on 0.10.19 (measured on a worktree of HEAD).
 
-Next: A3.2 (the worker).
+**A3.2 + A3.3 done** (2026-10-10, released in 0.10.21), reworked after the
+code, security and parity reviews of the same day (the isolation and the
+fair share above, 1920×1080 only, 20 slides a request):
+
+- `apps/render-worker`: BullMQ consumer of `render` (concurrency 1,
+  `maxStalledCount: 0`); `BrowserHolder` starts Chromium for the first job
+  (the start bounded by the job's deadline) and quits it after
+  `RENDER_IDLE_MS` (60 s), and after any browser-side failure;
+  `RENDER_CHROME_EXECUTABLE` when set, else Playwright's headless shell, else
+  a system Chrome / Chromium; WebGL always through SwiftShader. One fresh
+  browser context per job, closed when its time is up; the slides of a job
+  are shown in turn in one page (`window.__narrativeRenderShow`, no reload)
+  and screenshotted at `ready`; `failedLoads` per slide (pictures; fonts
+  load once for the page and come back as the job's `failedFonts`).
+- Routing (`routing.ts`): with `RENDER_UPSTREAM`, the app origin and its
+  `/ws` go to Caddy with the original `Host` (through `node:http`: Node's
+  `fetch` drops a `Host` header), no `accept-encoding`, no client-IP headers,
+  no `set-cookie` back, 64 MB per response; everything else is blocked.
+  Tested with a real Chromium against a local stand-in for Caddy
+  (`routing.browser.test.ts`).
+- Server: `services/render.ts` (reader check, slides from the live
+  document, a render token and presigned uploads per job, the fair share,
+  worker failures mapped: slide gone → 404, refused while still a reader →
+  503, gone → 403, renderer → 503, deadline → 504), `render/queue.ts` (no
+  offline queue on the producer — Redis down is a fast 503; typed timeout;
+  error listeners; stale jobs dropped at start; closed at shutdown),
+  `routes/pngExport.ts` (streams the stored PNG; its own rate limit, 20 a
+  minute; only the web app's requests). `deck.exportPng` (viewer; ≤ 20
+  slides; ≤ 8 MB inline; `failedLoads` per slide, `failedFonts` per call) —
+  tools/list budget 181,000 → 182,500.
+- Editor: "Export as PNG" in a slide's context menu and its "⋯" menu
+  (`slide.exportPng` in the action catalog); CORS exposes
+  `Content-Disposition`.
+- Measured, dev (Vite, unbundled): a one-slide job 1.6–2.4 s, ≈ 0.15 s per
+  further simple slide; with fresh photos 1.8 s per slide; memory above.
+- For A3.4: `query.render` wants well under a second per look; keep a warm
+  page per deck between jobs (a render session, so the token outlives one
+  job), and measure.
+- Tests: worker unit (routing, headers, forwarding with `Host`, signed
+  uploads and their abort, late jobs, the sandbox check against a fake
+  /proc, page URL, token masking) and the real-Chromium routing test; server
+  unit (`services/render.test.ts`: slide choice, access, the job's token /
+  uploads / deadline / work budget, the in-flight cap and the priority,
+  failure mapping, deliveries, limits; `render/queue.test.ts`: Redis down →
+  "unavailable" in seconds and a shutdown that does not hang; the PUT
+  presign's signed headers; `isFromWebApp`; render-token rate-limit buckets;
+  the WebSocket throttle sparing render tokens); web unit (font faces
+  failing apart from loads, cleared by a retry); e2e `render-export.spec.ts`
+  (links and inline with pixels, the in-place-switched slide's pixels, an
+  edit visible in the next render, an unknown slide refused, the editor's
+  menu download); eval scenario `export-png-slide` (live-only).
+
+Verified before the release: `just check`; the full e2e (195 passed, 15
+opt-in skipped); the eval scenario `export-png-slide` live (pass, $0.08)
+and the full eval (52/52, $6.75); the production image with the compose hardening against
+the dev stack (sandbox required and active, the stored PNG `private,
+no-store`); an internal Docker network reaching its peers and nothing else;
+on VM 103, a user namespace created under these container settings.
+
+Next: A3.4 `query.render` (the agent sees a slide).

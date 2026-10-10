@@ -41,7 +41,6 @@ const PUT = (path: string): RouteRef => ({ method: 'PUT', path })
 
 export const KNOWN_MISSING: readonly KnownMissing[] = [
   // --- A3: render worker ------------------------------------------------------
-  { capability: 'deck.exportPng', phase: 'A3', source: 'new' },
   {
     capability: 'deck.refreshThumbnail',
     phase: 'A3',

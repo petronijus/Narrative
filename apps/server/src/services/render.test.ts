@@ -1,0 +1,337 @@
+/**
+ * services/render.test.ts
+ *
+ * The render service (services/render.ts) around a fake worker queue: which
+ * slides it asks for, from the live document; who may ask; what the job
+ * carries (a render token for this deck that outlives the deadline a little,
+ * one presigned upload per slide with its signed headers, a deadline under
+ * Cloudflare's 100 s, a work budget by size); the fair share of the
+ * one-at-a-time queue (in-flight cap, priority by load); how the worker's
+ * failures reach the caller; the two deliveries.
+ */
+
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as Y from 'yjs'
+import type { RenderJobData, RenderJobResult } from '@narrative/shared'
+import { MAX_RENDER_SLIDES } from '@narrative/commands'
+
+vi.mock('../auth/permissions.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../auth/permissions.js')>()),
+  resolveDeckAccess: vi.fn(),
+}))
+vi.mock('./liveDocs.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./liveDocs.js')>()),
+  readDocCopy: vi.fn(),
+}))
+vi.mock('../media/s3Client.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../media/s3Client.js')>()),
+  buildS3Client: vi.fn(() => ({
+    send: vi.fn(async () => ({
+      Body: { transformToByteArray: async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]) },
+    })),
+  })),
+  presignGetUrl: vi.fn(async (key: string) => `https://storage.test/get/${key}?sig`),
+  presignPutUrl: vi.fn(async (key: string, type: string, ttl: number) => ({
+    url: `https://storage.test/put/${key}?type=${type}&ttl=${ttl}`,
+    headers: { 'content-type': type, 'cache-control': 'private, no-store' },
+  })),
+}))
+vi.mock('../hocuspocus/connections.js', () => ({ closeShareTokenConnections: vi.fn(() => 0) }))
+
+import { resolveDeckAccess } from '../auth/permissions.js'
+import { resolveRenderToken } from '../auth/renderTokens.js'
+import { readDocCopy } from './liveDocs.js'
+import {
+  clearRenderInFlightForTests,
+  createRenderService,
+  MAX_IN_FLIGHT_PER_USER,
+  MAX_WAITING_JOBS,
+  pickSlides,
+  RENDER_WAIT_MS,
+  RENDER_WORK_BASE_MS,
+  RENDER_WORK_PER_SLIDE_MS,
+} from './render.js'
+import { RenderTimeoutError, RenderUnavailableError, type RenderQueue } from '../render/queue.js'
+import type { ServiceDeps } from './deps.js'
+import { ServiceError } from './errors.js'
+
+/** A deck document holding slides with these ids. */
+function deckDoc(ids: string[]): Y.Doc {
+  const doc = new Y.Doc()
+  const slides = doc.getArray<Y.Map<unknown>>('slides')
+  for (const id of ids) {
+    const slide = new Y.Map<unknown>()
+    slide.set('id', id)
+    slide.set('objects', new Y.Array())
+    slides.push([slide])
+  }
+  return doc
+}
+
+const log = { error: vi.fn(), warn: vi.fn(), info: vi.fn() } as unknown as ServiceDeps['log']
+const NOW = 1_800_000_000_000
+
+function setup(run: RenderQueue['run'], waiting = async () => 0) {
+  const queue = { run: vi.fn(run), waiting: vi.fn(waiting) }
+  const service = createRenderService({
+    db: {} as ServiceDeps['db'],
+    log,
+    renderQueue: queue,
+    now: () => NOW,
+  })
+  return { queue, service }
+}
+
+/** What a successful job returns for the slides it was given. */
+const rendered = (data: RenderJobData): RenderJobResult => ({
+  slides: data.uploads.map(({ slideId }, i) => ({
+    slideId,
+    index: i,
+    width: 1920,
+    height: 1080,
+    sizeBytes: 4,
+    failedLoads: 0,
+  })),
+  failedFonts: [],
+})
+
+const ask = (
+  service: ReturnType<typeof setup>['service'],
+  over: Partial<Parameters<ReturnType<typeof setup>['service']['exportPng']>[0]> = {},
+) =>
+  service.exportPng({
+    userId: 'u1',
+    deckId: 'd1',
+    slides: 'all',
+    delivery: 'url',
+    ...over,
+  })
+
+async function status(promise: Promise<unknown>): Promise<number> {
+  try {
+    await promise
+    return 200
+  } catch (err) {
+    if (err instanceof ServiceError) return err.status
+    throw err
+  }
+}
+
+beforeEach(() => {
+  clearRenderInFlightForTests()
+  vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'viewer', reason: 'direct' })
+  vi.mocked(readDocCopy).mockImplementation(async () => deckDoc(['s1', 's2', 's3']))
+})
+
+describe('pickSlides', () => {
+  const slides = [{ id: 's1' }, { id: 's2' }, { id: 's3' }]
+
+  it('takes every slide, or the ones asked for in the order asked, each once', () => {
+    expect(pickSlides(slides, 'all')).toEqual([
+      { id: 's1', index: 0 },
+      { id: 's2', index: 1 },
+      { id: 's3', index: 2 },
+    ])
+    expect(pickSlides(slides, [{ id: 's3' }, { index: 0 }, { index: 2 }])).toEqual([
+      { id: 's3', index: 2 },
+      { id: 's1', index: 0 },
+    ])
+  })
+
+  it('refuses a slide that does not exist (404)', async () => {
+    expect(await status(Promise.resolve().then(() => pickSlides(slides, [{ id: 'zz' }])))).toBe(404)
+    expect(await status(Promise.resolve().then(() => pickSlides(slides, [{ index: 3 }])))).toBe(404)
+  })
+})
+
+describe('RenderService.exportPng', () => {
+  it('gives the worker the slides, a deck token, one upload each, a deadline and a work budget, then ends the token', async () => {
+    const { queue, service } = setup(async (data) => rendered(data))
+    const out = await ask(service, { slides: [{ index: 1 }] })
+    const [data, opts] = queue.run.mock.calls[0]!
+    expect(data.deckId).toBe('d1')
+    expect(data.deadline).toBe(NOW + RENDER_WAIT_MS)
+    expect(data.workBudgetMs).toBe(RENDER_WORK_BASE_MS + RENDER_WORK_PER_SLIDE_MS)
+    expect(opts).toEqual({ priority: 1 })
+    expect(data.uploads).toHaveLength(1)
+    expect(data.uploads[0]!.slideId).toBe('s2')
+    expect(data.uploads[0]!.url).toMatch(
+      /^https:\/\/storage\.test\/put\/decks\/d1\/exports\/[\w-]{16}\/slide-2\.png\?type=image\/png/,
+    )
+    // The headers the URL signs travel with it, for the worker to send.
+    expect(data.uploads[0]!.headers).toEqual({
+      'content-type': 'image/png',
+      'cache-control': 'private, no-store',
+    })
+    expect(data.token).toMatch(/^nrr_/)
+    // The token read the deck during the job and is dead now.
+    expect(resolveRenderToken(data.token)).toBeNull()
+    expect(out).toMatchObject({
+      delivery: 'url',
+      slides: [{ slideId: 's2', index: 0, width: 1920, height: 1080 }],
+      failedFonts: [],
+    })
+    if (out.delivery === 'url') {
+      expect(out.slides[0]!.url).toContain(
+        data.uploads[0]!.url.split('?')[0]!.replace('/put/', '/get/'),
+      )
+    }
+  })
+
+  it('keeps every wait under Cloudflare’s 100 s, a one-slide job behind the largest included', () => {
+    expect(RENDER_WAIT_MS).toBeLessThan(100_000)
+    const work = (slides: number) => RENDER_WORK_BASE_MS + RENDER_WORK_PER_SLIDE_MS * slides
+    expect(work(MAX_RENDER_SLIDES) + work(1)).toBeLessThanOrEqual(RENDER_WAIT_MS)
+  })
+
+  it('passes on the fonts the worker could not load', async () => {
+    const { service } = setup(async (data) => ({ ...rendered(data), failedFonts: ['Proseware Pro'] }))
+    expect((await ask(service)).failedFonts).toEqual(['Proseware Pro'])
+  })
+
+  it('ranks a job by the slides its caller has in flight: a light user goes ahead of a heavy one', async () => {
+    const releases: Array<() => void> = []
+    const { queue, service } = setup(
+      (data) => new Promise((resolve) => releases.push(() => resolve(rendered(data)))),
+    )
+    const queued = async (n: number) => {
+      for (let i = 0; i < 200 && releases.length < n; i++)
+        await new Promise((r) => setTimeout(r, 5))
+      expect(releases).toHaveLength(n)
+    }
+    // u1 asks for all three slides twice; u2 for one.
+    const heavy = [ask(service), ask(service)]
+    await queued(2)
+    const light = ask(service, { userId: 'u2', slides: [{ index: 0 }] })
+    await queued(3)
+    expect(queue.run.mock.calls.map(([, opts]) => opts.priority)).toEqual([3, 6, 1])
+    for (const release of releases.splice(0)) release()
+    await Promise.all([...heavy, light])
+    // Finished renders no longer weigh on the next one.
+    const again = ask(service, { slides: [{ index: 0 }] })
+    await queued(1)
+    expect(queue.run.mock.calls.at(-1)![1].priority).toBe(1)
+    releases.splice(0)[0]!()
+    await again
+  })
+
+  it('returns the images inline with delivery "base64"', async () => {
+    const { service } = setup(async (data) => rendered(data))
+    const out = await ask(service, { delivery: 'base64' })
+    expect(out.delivery).toBe('base64')
+    if (out.delivery === 'base64') {
+      expect(out.slides).toHaveLength(3)
+      expect(Buffer.from(out.slides[0]!.base64, 'base64').subarray(1, 4).toString()).toBe('PNG')
+    }
+  })
+
+  it('refuses someone who cannot read the deck, before anything renders (403)', async () => {
+    vi.mocked(resolveDeckAccess).mockResolvedValue(null)
+    const { queue, service } = setup(async (data) => rendered(data))
+    expect(await status(ask(service, { userId: 'x' }))).toBe(403)
+    expect(queue.run).not.toHaveBeenCalled()
+  })
+
+  it('refuses an empty deck (400) and too many slides (413)', async () => {
+    const { service } = setup(async (data) => rendered(data))
+    vi.mocked(readDocCopy).mockImplementation(async () => deckDoc([]))
+    expect(await status(ask(service))).toBe(400)
+    vi.mocked(readDocCopy).mockImplementation(async () =>
+      deckDoc(Array.from({ length: MAX_RENDER_SLIDES + 1 }, (_, i) => `s${i}`)),
+    )
+    expect(await status(ask(service))).toBe(413)
+  })
+
+  it(`lets one person have ${MAX_IN_FLIGHT_PER_USER} renders in flight, not more (429)`, async () => {
+    const releases: Array<() => void> = []
+    const { service } = setup(
+      (data) => new Promise((resolve) => releases.push(() => resolve(rendered(data)))),
+    )
+    /** Until `n` jobs have reached the queue. */
+    const queued = async (n: number) => {
+      for (let i = 0; i < 200 && releases.length < n; i++)
+        await new Promise((r) => setTimeout(r, 5))
+      expect(releases).toHaveLength(n)
+    }
+    const running = Array.from({ length: MAX_IN_FLIGHT_PER_USER }, () => ask(service))
+    await queued(MAX_IN_FLIGHT_PER_USER)
+    expect(await status(ask(service))).toBe(429)
+    // Someone else is not held back by it.
+    const other = ask(service, { userId: 'u2' })
+    await queued(MAX_IN_FLIGHT_PER_USER + 1)
+    for (const release of releases.splice(0)) release()
+    await Promise.all([...running, other])
+    // Done, so the person may render again.
+    const again = ask(service)
+    await queued(1)
+    releases.splice(0)[0]!()
+    expect(await status(again)).toBe(200)
+  })
+
+  it('refuses new renders while the queue is full, and when it cannot be reached (503)', async () => {
+    expect(
+      await status(
+        ask(
+          setup(
+            async (d) => rendered(d),
+            async () => MAX_WAITING_JOBS,
+          ).service,
+        ),
+      ),
+    ).toBe(503)
+    expect(
+      await status(
+        ask(
+          setup(
+            async (d) => rendered(d),
+            async () => {
+              throw new Error('ECONNREFUSED')
+            },
+          ).service,
+        ),
+      ),
+    ).toBe(503)
+  })
+
+  it("maps the worker's failures, and ends the token whatever happened", async () => {
+    const tokens: string[] = []
+    const failing = (err: Error) =>
+      setup(async (data) => {
+        tokens.push(data.token)
+        throw err
+      }).service
+    expect(await status(ask(failing(new Error('render failed (slide-not-found): slide s2'))))).toBe(
+      404,
+    )
+    expect(await status(ask(failing(new Error('render failed (browser): net::ERR_FAILED'))))).toBe(
+      503,
+    )
+    expect(await status(ask(failing(new Error('render failed (deadline): too slow'))))).toBe(504)
+    expect(await status(ask(failing(new Error('render failed (late): nobody waits'))))).toBe(504)
+    expect(await status(ask(failing(new RenderTimeoutError())))).toBe(504)
+    expect(await status(ask(failing(new RenderUnavailableError('redis down'))))).toBe(503)
+    for (const token of tokens) expect(resolveRenderToken(token)).toBeNull()
+  })
+
+  it('answers a refused page with 403 only when the caller really lost access', async () => {
+    const refused = () =>
+      setup(async () => {
+        throw new Error('render failed (access-refused): slide s1')
+      }).service
+    // Still a reader: the renderer had a token problem, not the caller.
+    expect(await status(ask(refused()))).toBe(503)
+    // Access went during the job.
+    vi.mocked(resolveDeckAccess)
+      .mockResolvedValueOnce({ role: 'viewer', reason: 'direct' })
+      .mockResolvedValueOnce(null)
+    expect(await status(ask(refused()))).toBe(403)
+  })
+
+  it('refuses inline images over the 8 MB limit (413)', async () => {
+    const { service } = setup(async (data) => ({
+      ...rendered(data),
+      slides: rendered(data).slides.map((s) => ({ ...s, sizeBytes: 3 * 1024 * 1024 })),
+    }))
+    expect(await status(ask(service, { delivery: 'base64' }))).toBe(413)
+  })
+})

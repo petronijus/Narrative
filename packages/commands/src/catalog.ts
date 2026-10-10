@@ -31,6 +31,7 @@ import { folderSharingCommands } from './commands/folderSharing.js'
 import { mediaCommands } from './commands/media.js'
 import { componentCommands } from './commands/components.js'
 import { pptxCommands } from './commands/pptx.js'
+import { renderCommands } from './commands/render.js'
 import { tokenCommands } from './commands/tokens.js'
 import { createOpsApply } from './commands/ops.js'
 
@@ -59,6 +60,7 @@ export function createDefaultRegistry(): CommandRegistry {
   registry.registerAll(mediaCommands)
   registry.registerAll(componentCommands)
   registry.registerAll(pptxCommands)
+  registry.registerAll(renderCommands)
   registry.registerAll(tokenCommands)
   registry.register(createOpsApply(registry))
   return registry

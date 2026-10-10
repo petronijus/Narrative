@@ -1,6 +1,6 @@
 {
   "name": "narrative",
-  "version": "0.10.20",
+  "version": "0.10.21",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.15.4",
@@ -9,7 +9,7 @@
     "pnpm": ">=9.0.0"
   },
   "scripts": {
-    "dev": "concurrently --kill-others-on-fail -n web,server,worker -c blue,green,magenta \"pnpm --filter web dev\" \"pnpm --filter server dev\" \"pnpm --filter @narrative/video-worker dev\"",
+    "dev": "concurrently --kill-others-on-fail -n web,server,worker,render -c blue,green,magenta,cyan \"pnpm --filter web dev\" \"pnpm --filter server dev\" \"pnpm --filter @narrative/video-worker dev\" \"pnpm --filter @narrative/render-worker dev\"",
     "dev:no-worker": "concurrently --kill-others-on-fail -n web,server -c blue,green \"pnpm --filter web dev\" \"pnpm --filter server dev\"",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",

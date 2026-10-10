@@ -102,7 +102,7 @@ See [docs/agents.md](./docs/agents.md) for the AI agent workflow and ownership m
 Everyday development):
 
 ```bash
-just dev          # web + server + video-worker
+just dev          # web + server + video-worker + render-worker
 just check        # fast lane, ~1 min: formatting, types, lint, docs, unit tests
 just test server  # one package's unit tests
 just e2e          # Playwright against the dev stack
@@ -490,7 +490,7 @@ source — see _Why local builds_ below):
 ```bash
 # on your build machine, with Docker running and infra/.env.prod present
 echo "$GHCR_PAT" | docker login ghcr.io -u petronijus --password-stdin
-infra/scripts/build-push.sh           # builds server + video-worker + web, pushes to GHCR
+infra/scripts/build-push.sh           # builds server + video-worker + render-worker + web, pushes to GHCR
 ```
 
 **On the target server** (pulls the prebuilt images):
@@ -508,7 +508,7 @@ NARRATIVE_TAG=latest ./scripts/deploy.sh prod
 The deploy script:
 
 1. Takes a ZFS snapshot (if `ZFS_DATASET` is set)
-2. **Pulls** the prebuilt images from GHCR (`narrative-{server,video-worker,web}`)
+2. **Pulls** the prebuilt images from GHCR (`narrative-{server,video-worker,render-worker,web}`)
 3. Extracts the React SPA static files (from the pulled `narrative-web` image) into the Caddy volume
 4. Runs DB migrations (Drizzle)
 5. Starts all services with `docker compose up -d`
@@ -516,9 +516,11 @@ The deploy script:
 
 #### Why local builds (not on the VM)
 
-Images are three single-purpose containers — **server** (API + Hocuspocus),
-**video-worker** (background video rendering), and **web** (static SPA, served
-by Caddy). They are built on a dev machine via `infra/scripts/build-push.sh` and
+Images are four single-purpose containers — **server** (API + Hocuspocus),
+**video-worker** (background video rendering), **render-worker** (headless
+Chromium rendering slides to PNG; boxed in and memory-limited, see
+`docs/deploy.md` → "Releasing the render worker"), and **web** (static SPA,
+served by Caddy). They are built on a dev machine via `infra/scripts/build-push.sh` and
 pushed to **private GHCR packages**; the VM only pulls. This keeps build load off
 the production host and removes the need for a source checkout / `git pull` there.
 The images are private (the source is published under a noncommercial license).

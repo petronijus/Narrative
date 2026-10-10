@@ -44,6 +44,7 @@ SMOKE = [
 RENDER = [
     "renderer-visual",
     "render-page",
+    "render-export",
     "inspector-flows",
     "canvas-sharpness-final",
     "htmltext-live-update",
@@ -131,8 +132,11 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/components/PresentLayout.tsx", PRESENT),
     ("apps/web/src/components/presentStartSlide.ts", PRESENT),
     ("apps/web/src/pages/DeckPresent.tsx", PRESENT),
-    ("apps/web/src/pages/DeckRender.tsx", ["render-page"]),
+    # render-export reaches __narrativeRenderShow (the worker's slide switch).
+    ("apps/web/src/pages/DeckRender.tsx", ["render-page", "render-export"]),
     ("apps/web/src/pages/renderSlide.ts", ["render-page"]),
+    # The toolbar's PowerPoint download goes through it too.
+    ("apps/web/src/lib/download.ts", ["render-export", "pptx-roundtrip"] + SLIDES_PANEL),
     ("apps/web/src/lib/endpoints.ts", SMOKE + SYNC + ["render-page"]),
     ("apps/web/src/lib/shareToken.ts", ACCESS + TOKENS + MEDIA + ["render-page"]),
     ("apps/web/src/ui/PresenterOverlay.tsx", PRESENT),
@@ -264,6 +268,10 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/hocuspocus/*", SYNC + ACCESS),
     ("apps/server/src/auth/*", ACCESS),
     ("apps/server/src/http/requestLogSerializer.ts", SMOKE),
+    # Every request passes the rate limiter; the same-origin policy guards the
+    # command API (every editor write) and the PNG route.
+    ("apps/server/src/http/rateLimit.ts", ["*"]),
+    ("apps/server/src/http/sameOrigin.ts", ["*"]),
     ("apps/server/src/routes/devRender.ts", ["render-page"]),
     ("apps/server/src/services/sharing.ts", ACCESS),
     ("apps/server/src/services/folderSharing.ts", ACCESS),
@@ -296,6 +304,10 @@ AREAS: list[tuple[str, list[str]]] = [
     # The service set every command and route is built from.
     ("apps/server/src/services/index.ts", AGENT + ACCESS),
     ("apps/video-worker/src/*", MEDIA),
+    ("apps/render-worker/*", ["render-export", "render-page"]),
+    ("apps/server/src/services/render.ts", ["render-export"]),
+    ("apps/server/src/render/*", ["render-export"]),
+    ("apps/server/src/routes/pngExport.ts", ["render-export"]),
     # ── packages ──────────────────────────────────────────────────────────
     ("packages/animation/src/*", PRESENT),
     # The service interfaces are types only; their server implementations

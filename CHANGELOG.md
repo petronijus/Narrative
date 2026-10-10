@@ -6,6 +6,33 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+---
+
+## 0.10.21 — Export slides as PNG; the render worker (2026-10-10)
+
+### Added
+
+- **Export slides as PNG.** Right-click a slide (or its "⋯" menu) →
+  **Export as PNG** saves that slide as a 1920×1080 image, exactly as the
+  editor shows it — fonts, pictures, shadows. Agents get `deck.exportPng`:
+  one slide, several or a whole deck of up to 20, as download links or
+  inline.
+- **The render worker** (`apps/render-worker`, agentic A3): headless
+  Chromium on the web app's render page renders slides from the live deck.
+  It starts the browser only for a job and quits it a minute later (about
+  100 MiB idle, 550 MiB while rendering, a 900 MiB limit). Boxed in:
+  Chromium's sandbox on and required, no storage credentials (presigned
+  uploads that sign the file's type and caching), its own internal network
+  with only Caddy and the media Redis and no way out, every request off the
+  app origin blocked, a read-only container without capabilities. Fair to
+  everyone sharing it: two renders in flight per person, light requests
+  ahead of heavy ones, and a time budget per job by its size.
+
+### Fixed
+
+- A download the app saves itself (the PowerPoint export, the new PNG
+  export) keeps the file name the server gives it in development too.
+
 ## 0.10.20 — The render page; share links show their pictures (2026-10-10)
 
 No migrations, no new env vars (`VITE_IMGPROXY_URL` is no longer read; an

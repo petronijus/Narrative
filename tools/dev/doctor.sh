@@ -104,9 +104,13 @@ done
 if env_out="$(tools/dev/playwright-env.sh)" && [[ -z "$env_out" ]]; then
   ok "Playwright Chromium"
 elif [[ "$env_out" == *PLAYWRIGHT_USE_SYSTEM_CHROME* || -n "${PLAYWRIGHT_CHROME_EXECUTABLE:-}${PLAYWRIGHT_USE_SYSTEM_CHROME:-}" ]]; then
-  ok "system Chrome for e2e (Playwright has no Chromium here; just e2e switches)"
+  ok "system Chrome for e2e and the render worker (Playwright has no Chromium here; just e2e switches)"
+elif [[ "$env_out" == *PLAYWRIGHT_CHROME_EXECUTABLE=* ]]; then
+  bin="${env_out#*PLAYWRIGHT_CHROME_EXECUTABLE=}"
+  ok "${bin%%$'\n'*} for e2e and the render worker (Playwright has no Chromium here)"
 else
-  warn "no browser for e2e" "pnpm --filter web exec playwright install chromium  (Ubuntu 26.04: install Google Chrome)"
+  warn "no browser for e2e or the render worker" \
+    "pnpm --filter web exec playwright install chromium  (Ubuntu 26.04 / Arch: install Google Chrome or Chromium)"
 fi
 
 echo "Project"

@@ -65,6 +65,7 @@ export {
   type SlideRef,
 } from './refs.js'
 export { stampMaster, type StampResult } from './commands/components.js'
+export { MAX_RENDER_SLIDES } from './commands/render.js'
 export {
   ANCHORS,
   OPPOSITE_ANCHOR,

@@ -46,6 +46,7 @@ import {
   type MemoryPatStore,
 } from '../test-support/memoryPatStore.js'
 import type { Database } from '../db/client.js'
+import { mintRenderToken, revokeRenderToken } from '../auth/renderTokens.js'
 
 let pats: PatService
 let patStore: MemoryPatStore
@@ -92,6 +93,40 @@ describe('bucket keys', () => {
     expect(await key(app, { authorization: `Bearer ${token}` })).toBe(`pat:${summary.id}`)
     expect(await key(app, { cookie: 'narrative_session=good-session' })).toBe('user:user-1')
     expect(await key(app)).toBe('ip:203.0.113.9')
+  })
+
+  it("keys the render worker's page by who asked for the render, not by its one address", async () => {
+    const app = await buildApp()
+    const token = mintRenderToken('deck-1', 'alice')
+    const res = await app.inject({
+      method: 'GET',
+      url: `/key?share_token=${token}`,
+      remoteAddress: '203.0.113.9',
+    })
+    expect(res.json().key).toBe('render:alice')
+    // An unknown or ended token is just an anonymous request.
+    revokeRenderToken(token)
+    const ended = await app.inject({
+      method: 'GET',
+      url: `/key?share_token=${token}`,
+      remoteAddress: '203.0.113.9',
+    })
+    expect(ended.json().key).toBe('ip:203.0.113.9')
+  })
+
+  it('counts render pages in the pre-limit per render, not per address', async () => {
+    const app = await buildApp({ ipPreLimit: { max: 2, timeWindowMs: 60_000 } })
+    const hit = (url: string) =>
+      app.inject({ method: 'GET', url, remoteAddress: '203.0.113.9' }).then((r) => r.statusCode)
+    const a = mintRenderToken('deck-1', 'alice')
+    const b = mintRenderToken('deck-2', 'bob')
+    expect([await hit(`/key?share_token=${a}`), await hit(`/key?share_token=${a}`)]).toEqual([
+      200, 200,
+    ])
+    // Render A spent its two; render B and the address itself still have theirs.
+    expect(await hit(`/key?share_token=${a}`)).toBe(429)
+    expect(await hit(`/key?share_token=${b}`)).toBe(200)
+    expect(await hit('/key')).toBe(200)
   })
 
   it("keys BYPASS_AUTH's identities apart, as dev buckets (dev only)", async () => {

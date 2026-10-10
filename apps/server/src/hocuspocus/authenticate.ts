@@ -50,6 +50,7 @@ import {
 import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../auth/session.js'
 import { devSubFromCookieHeader } from '../auth/devIdentity.js'
 import { looksLikeNarrativeCredential } from '../auth/credentialPatterns.js'
+import { isRenderToken } from '../auth/renderTokens.js'
 import { clientIpFromHeaders } from '../http/clientIp.js'
 import { createFixedWindowLimiter, type FixedWindowLimiter } from '../http/fixedWindowLimiter.js'
 import { subsystemLogger } from '../observability/logger.js'
@@ -193,7 +194,12 @@ export function createOnAuthenticate(deps: WsAuthDeps) {
     try {
       await authenticate(data)
     } catch (err) {
-      failures.hit(ip)
+      // A well-formed render token is checked in memory (no database cost
+      // to protect) and cannot be guessed; its refusals — a page holding a
+      // token that just expired — must not lock the render worker's one
+      // address out for everyone (auth/renderTokens.ts).
+      const shareToken = data.requestParameters.get('share_token')
+      if (shareToken === null || !isRenderToken(shareToken)) failures.hit(ip)
       throw err
     }
     const additions: Record<string, unknown> = {}

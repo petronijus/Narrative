@@ -112,4 +112,17 @@ export {
   type VideoTranscodeResult,
 } from './video-queue.js'
 
+export {
+  RENDER_QUEUE,
+  RENDER_WIDTH,
+  RENDER_HEIGHT,
+  renderFailureMessage,
+  parseRenderFailure,
+  type RenderJobData,
+  type RenderJobResult,
+  type RenderedSlide,
+  type RenderFailureReason,
+  type RenderUpload,
+} from './render-queue.js'
+
 export * from './schema/index.js'

@@ -33,10 +33,10 @@ both Linux (Ubuntu desktop) and macOS workstations as the deploy client.
 │  │ postgres │  │ imgproxy   │  │ video-worker │ │
 │  │  :5432   │  │  :8080     │  │ (ffmpeg)     │ │
 │  └──────────┘  └────────────┘  └──────────────┘ │
-│  ┌──────────────┐                                │
-│  │ media-redis   │                               │
-│  │  :6379        │                               │
-│  └──────────────┘                                │
+│  ┌──────────────┐  ┌───────────────┐            │
+│  │ media-redis   │  │ render-worker │            │
+│  │  :6379        │  │ (Chromium)    │            │
+│  └──────────────┘  └───────────────┘            │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -247,6 +247,38 @@ the deploy, its personal access tokens included. With neither variable set,
 the env allowlist admits everyone and the list does not matter. For each
 such account: add it to the allowlist, share a deck or a folder with it
 after the deploy, or let it go — decide before deploying.
+
+## Releasing the render worker — 0.10.21
+
+The first release with `apps/render-worker` (agentic A3,
+[plan](./plans/a3-render-worker.md): "Memory" and "Isolation"): a new image,
+`ghcr.io/petronijus/narrative-render-worker`, built by the build host with
+the others (`build-push.sh` `APPS`), pulled by `deploy.sh`, pruned by
+`prune-images.sh`; a new compose service (`render-worker`) on a new network
+(`narrative_render`, internal — no route out — which Caddy and the media
+Redis join too), with the
+production overrides in `docker-compose.prod.yml` (`RENDER_APP_ORIGIN
+https://<domain>`, `RENDER_UPSTREAM http://caddy`, `mem_limit` /
+`memswap_limit 900m`, `cpus: 2`). The GHCR package is private like the
+others: the VM's and the build host's logins cover it. No migration, no env
+var, no secret: the worker holds no credentials.
+
+The container runs `seccomp=unconfined` so Chromium's own sandbox can start
+(the plan's "Isolation" says why), with `RENDER_REQUIRE_SANDBOX=1`: if the
+sandbox cannot start, the worker refuses to render and says so in its log.
+Checked on VM 103 beforehand (2026-10-10): Ubuntu 24.04's
+`kernel.apparmor_restrict_unprivileged_userns=1` does not stop it — a
+non-root process in a container with these settings creates a user
+namespace.
+
+**After deploying:** `docker ps` shows `narrative-render-worker` running;
+`docker logs narrative-render-worker` ends with `ready — queue="render"
+app=https://<domain> via http://caddy sandbox=required`; open a deck,
+right-click a slide → **Export as PNG**: a 1920×1080 PNG downloads within a
+few seconds, and the log shows `browser started: Playwright headless shell …`
+(a sandbox failure would show `Chromium's sandbox is not active`);
+`docker stats narrative-render-worker` falls back to ~100 MiB a minute
+later.
 
 ## Releasing the MinIO image switch
 

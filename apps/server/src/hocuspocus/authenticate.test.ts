@@ -271,6 +271,31 @@ describe('failed-attempt throttle', () => {
     await hook(payload({ requestHeaders: COOKIE }))
   })
 
+  it("does not count a render token's refusals: they must not lock the render worker out", async () => {
+    // The worker's every page comes from one address; a page holding a token
+    // that just expired is refused, and must not throttle the next renders.
+    const limiter = createFixedWindowLimiter({ max: 2, windowMs: 60_000 })
+    const hook = onAuthenticate({ failedAuthLimiter: limiter })
+    deckAccess.mockResolvedValue(null)
+    const expired = `nrr_${'e'.repeat(43)}`
+    for (let i = 0; i < 5; i++) {
+      await expect(hook(payload({ params: { share_token: expired } }))).rejects.toThrow('Forbidden')
+    }
+    deckAccess.mockResolvedValue({ role: 'viewer', reason: 'share-link' })
+    const fresh = payload({ params: { share_token: `nrr_${'f'.repeat(43)}` } })
+    await hook(fresh)
+    expect(fresh.connection.readOnly).toBe(true)
+    // Something shaped otherwise still counts.
+    deckAccess.mockResolvedValue(null)
+    await expect(hook(payload({ params: { share_token: 'nrr_short' } }))).rejects.toThrow(
+      'Forbidden',
+    )
+    await expect(hook(payload({ params: { share_token: 'nrr_short2' } }))).rejects.toThrow(
+      'Forbidden',
+    )
+    await expect(hook(payload({ requestHeaders: COOKIE }))).rejects.toThrow(WS_TOO_MANY_ATTEMPTS)
+  })
+
   it('keys on the configured client-IP header when present', async () => {
     const limiter = createFixedWindowLimiter({ max: 1, windowMs: 60_000 })
     const hook = onAuthenticate({ failedAuthLimiter: limiter, clientIpHeader: 'cf-connecting-ip' })

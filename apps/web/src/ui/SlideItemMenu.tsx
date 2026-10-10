@@ -28,6 +28,8 @@ interface SlideItemMenuProps {
   onTransition: (id: string) => void
   onRename?: (id: string) => void
   onToggleSkip?: (id: string) => void
+  /** Download the slide as a PNG (rendered on the server). */
+  onExportPng?: (id: string) => void
   /**
    * P3: notifies the parent row when the popover opens / closes so the
    * row can lift its stacking order while the menu is showing —
@@ -48,6 +50,7 @@ export function SlideItemMenu({
   onTransition,
   onRename,
   onToggleSkip,
+  onExportPng,
   onOpenChange,
 }: SlideItemMenuProps): ReactElement {
   const [open, setOpen] = useState(false)
@@ -146,6 +149,15 @@ export function SlideItemMenu({
     [slideId, onToggleSkip, close],
   )
 
+  const handleExportPng = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      close()
+      onExportPng?.(slideId)
+    },
+    [slideId, onExportPng, close],
+  )
+
   // Keyboard navigation inside menu
   function handleMenuKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'))
@@ -231,6 +243,17 @@ export function SlideItemMenu({
           >
             Duplicate
           </button>
+          {onExportPng !== undefined && (
+            <button
+              type="button"
+              role="menuitem"
+              data-action="slide.exportPng"
+              onClick={handleExportPng}
+              className={ITEM_CLASS}
+            >
+              Export as PNG
+            </button>
+          )}
           {onToggleSkip !== undefined && (
             <button
               type="button"

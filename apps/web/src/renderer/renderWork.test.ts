@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   _resetRenderWorkForTests,
+  failedRenderFonts,
+  failedRenderWork,
   pendingRenderWork,
   trackRenderWork,
   whenRenderWorkIdle,
@@ -40,6 +42,28 @@ describe('renderWork', () => {
     await new Promise((r) => setTimeout(r, 0))
     expect(pendingRenderWork()).toBe(0)
     expect(idle).toBe(true)
+  })
+
+  it('names failed font faces by family apart from failed loads; a retry that loads clears them', async () => {
+    const settle = () => new Promise((r) => setTimeout(r, 0))
+    trackRenderWork(Promise.reject(new Error('404'))).catch(() => {})
+    trackRenderWork(Promise.reject(new Error('expired')), {
+      font: { key: 'f1', family: 'Proseware Pro' },
+    }).catch(() => {})
+    trackRenderWork(Promise.reject(new Error('gone')), {
+      font: { key: 'f2', family: 'Proseware Pro' },
+    }).catch(() => {})
+    await settle()
+    expect(failedRenderWork()).toBe(1)
+    expect(failedRenderFonts()).toEqual(['Proseware Pro'])
+    // f1 loads on retry; f2 (another face of the family) is still missing.
+    trackRenderWork(Promise.resolve(), { font: { key: 'f1', family: 'Proseware Pro' } })
+    await settle()
+    expect(failedRenderFonts()).toEqual(['Proseware Pro'])
+    trackRenderWork(Promise.resolve(), { font: { key: 'f2', family: 'Proseware Pro' } })
+    await settle()
+    expect(failedRenderFonts()).toEqual([])
+    expect(failedRenderWork()).toBe(1)
   })
 
   it('stays busy across a chain that starts its next step on settle', async () => {

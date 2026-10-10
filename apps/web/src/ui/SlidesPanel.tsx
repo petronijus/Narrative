@@ -18,6 +18,8 @@
  *   drop indicator they draw.
  */
 
+import { dismissEditorNotice, showEditorNotice } from '../state/editorNotice.js'
+import { downloadBlob } from '../lib/download.js'
 import {
   Fragment,
   memo,
@@ -173,6 +175,7 @@ interface SlideItemProps {
   onTransition: (id: string) => void
   onRename: (id: string, name: string) => void
   onToggleSkip: (id: string) => void
+  onExportPng: (id: string) => void
   /** When set to this slide's id, it enters edit mode on next render.
    *  Used by the panel-level context menu's "Rename" action so it can
    *  reach into the row from outside. The row clears the request via
@@ -204,6 +207,7 @@ function SlideItemImpl({
   onTransition,
   onRename,
   onToggleSkip,
+  onExportPng,
   editRequestId,
   onConsumeEditRequest,
 }: SlideItemProps) {
@@ -460,6 +464,7 @@ function SlideItemImpl({
               onTransition={onTransition}
               onRename={() => setEditing(true)}
               onToggleSkip={onToggleSkip}
+              onExportPng={onExportPng}
               onOpenChange={setMenuOpen}
             />
           </div>
@@ -801,6 +806,26 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       setClipboardTick((t) => t + 1)
     },
     [deckId, actionTargets],
+  )
+
+  // Rendered on the server from the live deck (the render worker): a few
+  // seconds, so say so first.
+  const handleExportPng = useCallback(
+    (slideId: string) => {
+      if (deckId === undefined || deckId === '') return
+      showEditorNotice('Exporting the slide as PNG…')
+      api.exportSlidePng(deckId, slideId).then(
+        ({ blob, filename }) => {
+          dismissEditorNotice()
+          downloadBlob(blob, filename)
+        },
+        (err: unknown) =>
+          showEditorNotice(
+            `Could not export the slide: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+      )
+    },
+    [api, deckId],
   )
 
   const { enqueueInsert, reportError } = pptxDrop
@@ -1326,6 +1351,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
         onDelete={handleDelete}
         onToggleSkip={handleToggleSkip}
         onCopy={handleCopy}
+        onExportPng={handleExportPng}
         onPaste={handlePaste}
         canPaste={canPaste}
       >
@@ -1424,6 +1450,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
                       onTransition={handleTransition}
                       onRename={handleRename}
                       onToggleSkip={handleToggleSkip}
+                      onExportPng={handleExportPng}
                       editRequestId={editRequestId}
                       onConsumeEditRequest={consumeEditRequest}
                     />

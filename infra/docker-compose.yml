@@ -175,6 +175,8 @@ services:
     # In prod the snapshot file lands on a ZFS dataset; acceptable durability
     # for a job queue (worst case: re-enqueue in-flight jobs on crash).
     command: ['redis-server', '--save', '60', '1000', '--appendonly', 'yes']
+    # Also on the render worker's network (the only thing it needs besides Caddy).
+    networks: [default, render]
     ports:
       - '${MEDIA_REDIS_PORT:-6380}:6379' # 6380 avoids colliding with a generic Redis on 6379
     healthcheck:
@@ -209,6 +211,51 @@ services:
       POSTGRES_URL: postgres://${POSTGRES_USER:-narrative}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-narrative}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+
+  # ─── Render worker (agentic A3) ──────────────────────────────────────────────
+  # Headless Chromium on the real web app's render page: slide PNGs for
+  # deck.exportPng and, later, the agent's query.render
+  # (docs/plans/a3-render-worker.md). Development runs it with `pnpm dev`
+  # instead; the production overlay sets where the page is opened.
+  #
+  # It renders content other people wrote, so it is boxed in:
+  #   - its own internal network: Caddy (the app, its API and storage) and
+  #     the media Redis (its queue) — not Postgres, MinIO, the server or
+  #     imgproxy, and no route out (no internet, no LAN);
+  #   - no credentials: it uploads through presigned URLs in each job;
+  #   - non-root (the image), no capabilities, no privilege gain, a
+  #     read-only root filesystem with a tmpfs /tmp, a process cap;
+  #   - Chromium's own sandbox ON, and required (RENDER_REQUIRE_SANDBOX: the
+  #     worker refuses to render without it). The sandbox puts renderers in
+  #     their own user namespaces, which Docker's default seccomp profile
+  #     forbids, so this container runs without it: Chromium filters its
+  #     renderers' system calls itself (seccomp-bpf), more tightly than
+  #     Docker's profile would. The other choice, a copy of Docker's profile
+  #     with user namespaces allowed, would be a frozen copy of upstream
+  #     configuration (docs/plans/a3-render-worker.md, "Isolation").
+  render-worker:
+    image: ghcr.io/petronijus/narrative-render-worker:${NARRATIVE_TAG:-latest}
+    build:
+      context: ../
+      dockerfile: apps/render-worker/Dockerfile
+    container_name: narrative-render-worker
+    restart: unless-stopped
+    depends_on:
+      media-redis:
+        condition: service_healthy
+    environment:
+      MEDIA_REDIS_URL: redis://media-redis:6379
+      RENDER_APP_ORIGIN: ${RENDER_APP_ORIGIN:-http://localhost:5173}
+      RENDER_REQUIRE_SANDBOX: '1'
+    networks: [render]
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=unconfined
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m
+    pids_limit: 512
 
   # ─── imgproxy (M11) ──────────────────────────────────────────────────────────
   imgproxy:
@@ -270,6 +317,16 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+networks:
+  # The render worker's network: Caddy, the media Redis and the worker.
+  # Internal: no route out of it — not to the internet, not to the LAN
+  # behind the VM. Caddy and the media Redis keep theirs through `default`;
+  # the worker has nothing else, so even a page that gets around the
+  # browser's request routing (WebRTC, a renderer exploit) reaches only them.
+  render:
+    name: narrative_render
+    internal: true
 
 volumes:
   postgres_data:

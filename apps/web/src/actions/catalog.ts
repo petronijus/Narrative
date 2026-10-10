@@ -135,6 +135,7 @@ export const USER_ACTIONS = {
   'slide.paste': { label: 'Paste slide(s)', commands: ['slide.copyTo', 'deck.insertFrom'] },
   'slide.toggleSkip': { label: 'Skip / unskip slide', commands: ['slide.skip'] },
   'slide.delete': { label: 'Delete slide', commands: ['slide.delete'] },
+  'slide.exportPng': { label: 'Export slide as PNG', commands: ['deck.exportPng'] },
   'slide.transition': { label: 'Transition settings', commands: ['slide.setTransition'] },
 
   // --- Text styles ----------------------------------------------------------

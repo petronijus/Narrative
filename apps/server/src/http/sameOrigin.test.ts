@@ -22,7 +22,12 @@ vi.mock('../auth/session.js', async (importOriginal) => {
 import { registerAuthPlugin, requireTokenScope } from '../auth/fastifyAuth.js'
 import { createPatService, type PatService } from '../auth/personalAccessTokens.js'
 import { allowAllPatOwners, createMemoryPatStore } from '../test-support/memoryPatStore.js'
-import { normalizeOrigin, registerSameOriginPolicy, requireSameOrigin } from './sameOrigin.js'
+import {
+  isFromWebApp,
+  normalizeOrigin,
+  registerSameOriginPolicy,
+  requireSameOrigin,
+} from './sameOrigin.js'
 import type { Database } from '../db/client.js'
 
 let pats: PatService
@@ -100,5 +105,34 @@ describe('requireSameOrigin', () => {
       registerSameOriginPolicy(Fastify(), { allowedOrigins: ['javascript:alert(1)'] }),
     ).toThrow()
     expect(normalizeOrigin('https://Example.com:443/path')).toBe('https://example.com')
+  })
+})
+
+describe('isFromWebApp', () => {
+  async function probe(headers: Record<string, string>): Promise<boolean> {
+    const app = Fastify({ logger: false })
+    registerSameOriginPolicy(app, { allowedOrigins: ['http://localhost:5173'] })
+    app.get('/x', async (req) => ({ ok: isFromWebApp(req) }))
+    await app.ready()
+    const res = await app.inject({ method: 'GET', url: '/x', headers })
+    return (res.json() as { ok: boolean }).ok
+  }
+
+  it('passes the app itself, a direct visit and clients without fetch metadata', async () => {
+    expect(await probe({ 'sec-fetch-site': 'same-origin' })).toBe(true)
+    expect(await probe({ 'sec-fetch-site': 'none' })).toBe(true)
+    expect(await probe({})).toBe(true)
+    // The web app on another origin (development) names itself.
+    expect(await probe({ 'sec-fetch-site': 'same-site', origin: 'http://localhost:5173' })).toBe(
+      true,
+    )
+  })
+
+  it('refuses an embed from a sibling subdomain or another site', async () => {
+    expect(await probe({ 'sec-fetch-site': 'same-site' })).toBe(false)
+    expect(await probe({ 'sec-fetch-site': 'cross-site' })).toBe(false)
+    expect(await probe({ 'sec-fetch-site': 'same-site', origin: 'https://blog.example.com' })).toBe(
+      false,
+    )
   })
 })

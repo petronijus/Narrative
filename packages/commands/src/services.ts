@@ -28,6 +28,7 @@ import type { FolderSharingService } from './services/folderSharing.js'
 import type { MediaService } from './services/media.js'
 import type { ComponentService } from './services/components.js'
 import type { PptxService } from './services/pptx.js'
+import type { RenderService } from './services/render.js'
 import type { TokenService } from './services/tokens.js'
 import type { EditorService } from './services/editor.js'
 import type { AgentRunService } from './services/runs.js'
@@ -40,6 +41,7 @@ export type {
   MediaService,
   ComponentService,
   PptxService,
+  RenderService,
   TokenService,
   EditorService,
   AgentRunService,
@@ -53,6 +55,7 @@ export interface ServerServices {
   media: MediaService
   components: ComponentService
   pptx: PptxService
+  render: RenderService
   tokens: TokenService
   editor: EditorService
   runs: AgentRunService

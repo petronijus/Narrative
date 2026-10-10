@@ -288,6 +288,23 @@
       ]
     },
     {
+      "id": "deck.exportPng",
+      "domain": "deck",
+      "title": "Export slides as PNG",
+      "description": "Render slides to PNG files exactly as the editor shows them now (seconds-old edits included), with the deck’s fonts and pictures: 1920×1080 per slide. Returns one download URL per slide, valid for 15 minutes — bearer links: give them only to the user who asked. `delivery: \"base64\"` returns the bytes inline (≤ 8 MB in total) to pass on (e.g. to media.upload), not to look at: this tool cannot show you a slide. An editable file is deck.exportPptx. At most 20 slides per call: ask for a longer deck in parts. `failedLoads` counts a slide’s pictures that no longer exist (they show their error mark, as in the editor); `failedFonts` names font families that failed to load (their text shows a fallback face). Takes a few seconds. Any reader of the deck.",
+      "role": "viewer",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks/:id/export.png"
+        }
+      ]
+    },
+    {
       "id": "deck.exportPptx",
       "domain": "deck",
       "title": "Export PowerPoint",
@@ -1878,11 +1895,6 @@
     }
   ],
   "knownMissing": [
-    {
-      "capability": "deck.exportPng",
-      "phase": "A3",
-      "source": "new"
-    },
     {
       "capability": "deck.refreshThumbnail",
       "phase": "A3",

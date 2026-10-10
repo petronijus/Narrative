@@ -13,9 +13,11 @@
  *     and the canvas are there and the slide is shown;
  *   - `ready` once the slide is settled (renderer/settleScene.ts: every object
  *     mounted, every load and font done, every text raster drawn) — the
- *     canvas then holds the final pixels; `settle.failedLoads` counts the
+ *     canvas then holds the final pixels; `failedLoads` counts this slide's
  *     loads that failed on the way (an asset that no longer exists paints its
- *     error mark, as in the editor);
+ *     error mark, as in the editor), `failedFonts` the font families with a
+ *     face that failed to load for the page (fonts load once, for every
+ *     slide);
  *   - `error` with a reason, never a guess: the server refused the deck, the
  *     deck has no slides, the slide does not exist, a font list could not be
  *     read, the inputs never came within `PAGE_TIMEOUT_MS` (it lists which),
@@ -31,6 +33,7 @@ import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { getDefaultRenderScheduler } from '../renderer/RenderScheduler.js'
 import { getRenderer } from '../renderer/objectRenderers/index.js'
 import { settleScene, type SettleResult } from '../renderer/settleScene.js'
+import { failedRenderFonts, failedRenderWork } from '../renderer/renderWork.js'
 import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
@@ -57,7 +60,16 @@ export type RenderErrorReason =
 
 export type RenderStatus =
   | { status: 'loading' }
-  | { status: 'ready'; slideId: string; slideIndex: number; settle: SettleResult }
+  | {
+      status: 'ready'
+      slideId: string
+      slideIndex: number
+      /** Loads (not fonts) that failed while this slide painted. */
+      failedLoads: number
+      /** Font families with a face that failed to load, for the whole page. */
+      failedFonts: string[]
+      settle: SettleResult
+    }
   | {
       status: 'error'
       reason: RenderErrorReason
@@ -70,6 +82,12 @@ export type RenderStatus =
 declare global {
   interface Window {
     __narrativeRender?: RenderStatus
+    /**
+     * Show another slide (id or 0-based index) without reloading the page:
+     * the render worker renders a deck's slides one after another in one
+     * page. The status goes back to `loading` until that slide settles.
+     */
+    __narrativeRenderShow?: (slide: string) => void
   }
 }
 
@@ -80,7 +98,7 @@ function publish(status: RenderStatus): void {
 
 export function DeckRender() {
   const { onCanvasReady } = useOutletContext<DeckShellContextValue>()
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
   const slideParam = params.get('slide')
 
   const { deckCtx, synced, refused } = useSlideDoc()
@@ -102,7 +120,8 @@ export function DeckRender() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [synced, deckCtx, slideParam, slideList],
   )
-  const [outcome, setOutcome] = useState<RenderStatus | null>(null)
+  // The outcome of one `?slide=`: a switch to another slide starts over.
+  const [outcome, setOutcome] = useState<{ for: string | null; status: RenderStatus } | null>(null)
 
   // What the paint still waits for, by name (reported if it never comes).
   const waitingFor = useMemo(() => {
@@ -148,7 +167,7 @@ export function DeckRender() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refused, synced, deckCtx, slideList, target, slideParam, folderFonts, deckFonts.error])
 
-  const reported = outcome ?? failure
+  const reported = outcome !== null && outcome.for === slideParam ? outcome.status : failure
   useEffect(() => {
     publish(reported ?? { status: 'loading' })
   }, [reported])
@@ -158,20 +177,51 @@ export function DeckRender() {
     if (target !== null && activeSlideId !== target.slide.id) setActiveSlideId(target.slide.id)
   }, [target, activeSlideId, setActiveSlideId])
 
-  // The inputs must come within PAGE_TIMEOUT_MS of the mount.
+  // The inputs must come within PAGE_TIMEOUT_MS — of the mount, and again of
+  // each switch to another slide.
   const waitingRef = useRef(waitingFor)
   useEffect(() => {
     waitingRef.current = waitingFor
   }, [waitingFor])
   useEffect(() => {
     const timer = setTimeout(() => {
-      setOutcome(
-        (current) =>
-          current ?? { status: 'error', reason: 'not-ready', waitingFor: waitingRef.current },
+      setOutcome((current) =>
+        current !== null && current.for === slideParam
+          ? current
+          : {
+              for: slideParam,
+              status: { status: 'error', reason: 'not-ready', waitingFor: waitingRef.current },
+            },
       )
     }, PAGE_TIMEOUT_MS)
     return () => clearTimeout(timer)
-  }, [])
+  }, [slideParam])
+
+  // Loads that fail count against the slide being shown: from the page's
+  // load for the first, from its switch for each later one (renderWork's
+  // count runs for the page's whole life). Fonts are not loads here: they
+  // load once for the page, and are reported by family instead.
+  const failureBaseline = useRef<number | null>(null)
+  useEffect(() => {
+    failureBaseline.current = failureBaseline.current === null ? 0 : failedRenderWork()
+  }, [slideParam])
+
+  // Switching slides in place (the render worker's way through a deck).
+  useEffect(() => {
+    window.__narrativeRenderShow = (slide: string) => {
+      setParams(
+        (current) => {
+          const next = new URLSearchParams(current)
+          next.set('slide', slide)
+          return next
+        },
+        { replace: true },
+      )
+    }
+    return () => {
+      delete window.__narrativeRenderShow
+    }
+  }, [setParams])
 
   // The ids the scene graph should mount (it skips unknown types), read live
   // by the settle loop: an edit during settling changes what it waits for
@@ -191,6 +241,7 @@ export function DeckRender() {
     const scheduler = getDefaultRenderScheduler()
     if (scheduler === null) return
     const stop = new AbortController()
+    const settledFor = slideParam
     void settleScene(canvas.sceneGraph, {
       expectedIds: () =>
         objectsRef.current.filter((o) => getRenderer(o.type) !== undefined).map((o) => o.id),
@@ -199,14 +250,22 @@ export function DeckRender() {
       signal: stop.signal,
     }).then((settle) => {
       if (stop.signal.aborted) return
-      setOutcome(
-        settle.settled
-          ? { status: 'ready', slideId: targetSlideId, slideIndex: targetIndex, settle }
+      setOutcome({
+        for: settledFor,
+        status: settle.settled
+          ? {
+              status: 'ready',
+              slideId: targetSlideId,
+              slideIndex: targetIndex,
+              failedLoads: settle.failedLoads - (failureBaseline.current ?? 0),
+              failedFonts: failedRenderFonts(),
+              settle,
+            }
           : { status: 'error', reason: 'not-settled', slideId: targetSlideId, settle },
-      )
+      })
     })
     return () => stop.abort()
-  }, [inputsReady, canvas, targetSlideId, targetIndex])
+  }, [inputsReady, canvas, targetSlideId, targetIndex, slideParam])
 
   return (
     <div

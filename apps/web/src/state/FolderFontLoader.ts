@@ -201,8 +201,12 @@ export function FolderFontLoader(): null {
             // MEDIA-1: likely an expired presigned URL — pull a fresh list so
             // the next effect run loads with a valid URL.
             requestUrlRefresh()
+            // Reported as a failed face (the render page names its family);
+            // the retry's success clears it.
+            throw err
           }
         })(),
+        { font: { key: font.assetId, family: font.family } },
       )
     }
 

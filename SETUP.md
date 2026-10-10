@@ -93,14 +93,23 @@ migrator, which could not get a fresh database past the enum migrations.)
 ## 6. Start the dev stack
 
 ```bash
-just dev          # or `just dev-lite` without the video worker
+just dev          # or `just dev-lite` without the two workers
 ```
 
-This boots three processes in parallel:
+This boots four processes in parallel:
 
 - `apps/web` — Vite on `http://localhost:5173`
 - `apps/server` — Fastify (REST + Hocuspocus WebSocket) on `:3001` / `:3002`
 - `apps/video-worker` — the transcoding worker (step 7)
+- `apps/render-worker` — renders slides to PNG in headless Chromium on the
+  web app's render page (`deck.exportPng`, "Export as PNG" on a slide;
+  agentic A3). It starts Chromium only for a job and quits it after a minute
+  without one. It uses `RENDER_CHROME_EXECUTABLE` when that is set (that
+  binary only, no fallback — leave it unset unless you need it); otherwise
+  Playwright's headless shell where Playwright ships one, else a system
+  Chrome or Chromium (`/usr/bin/google-chrome-stable`, `google-chrome`,
+  `chromium`) — what the e2e suite falls back to on Ubuntu 26.04 and Arch
+  too.
 
 Verify:
 

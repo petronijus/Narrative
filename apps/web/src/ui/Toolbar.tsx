@@ -12,6 +12,8 @@
  *   Ctrl/Cmd+Enter → present mode.
  */
 
+import { downloadBlob } from '../lib/download.js'
+import { attachmentFilename } from '../api/client.js'
 import { API_URL } from '../lib/endpoints.js'
 import {
   useCallback,
@@ -893,19 +895,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                   setExportError(msg)
                   throw new Error(msg)
                 }
-                const filenameMatch = /filename="([^"]+)"/.exec(
-                  res.headers.get('content-disposition') ?? '',
-                )
-                const filename = filenameMatch?.[1] ?? 'deck.pptx'
-                const blob = await res.blob()
-                const url = URL.createObjectURL(blob)
-                const a = document.createElement('a')
-                a.href = url
-                a.download = filename
-                document.body.appendChild(a)
-                a.click()
-                document.body.removeChild(a)
-                setTimeout(() => URL.revokeObjectURL(url), 1_000)
+                downloadBlob(await res.blob(), attachmentFilename(res, 'deck.pptx'))
                 setExportDialogSlides(null)
               } finally {
                 setExporting(false)

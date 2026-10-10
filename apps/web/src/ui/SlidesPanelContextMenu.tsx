@@ -33,6 +33,8 @@ interface SlidesPanelContextMenuProps {
   onDelete: (id: string) => void
   onToggleSkip: (id: string) => void
   onCopy: (id: string) => void
+  /** Download the slide as a PNG, rendered on the server (render worker). */
+  onExportPng: (id: string) => void
   /** Paste after the given slide id; null → paste at end. */
   onPaste: (afterSlideId: string | null) => void
   canPaste: boolean
@@ -49,6 +51,7 @@ export function SlidesPanelContextMenu({
   onDelete,
   onToggleSkip,
   onCopy,
+  onExportPng,
   onPaste,
   canPaste,
   children,
@@ -109,6 +112,9 @@ export function SlidesPanelContextMenu({
               onSelect={() => onPaste(targetId)}
             >
               Paste slide
+            </ContextMenuItem>
+            <ContextMenuItem action="slide.exportPng" onSelect={() => onExportPng(targetId)}>
+              Export as PNG
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem action="slide.toggleSkip" onSelect={() => onToggleSkip(targetId)}>

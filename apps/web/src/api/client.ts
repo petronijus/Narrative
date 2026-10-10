@@ -63,6 +63,12 @@ export interface ApiClient {
    */
   uploadDeckThumbnail(id: string, dataUrl: string): Promise<DeckSummary>
   /**
+   * One slide as a PNG (1920×1080), rendered on the server by the render
+   * worker from the live deck (`deck.exportPng`, agentic A3): the file and
+   * the name the server gives it.
+   */
+  exportSlidePng(deckId: string, slideId: string): Promise<{ blob: Blob; filename: string }>
+  /**
    * Copy chosen slides of another deck into `deckId` at `at` (the slides
    * panel's cross-deck paste). The server checks editor access to the source
    * deck, copies the media the slides show and rebinds token references
@@ -716,6 +722,23 @@ async function apiError(res: Response): Promise<ApiError> {
 // Factory
 // ---------------------------------------------------------------------------
 
+/**
+ * The file name of an attachment response: RFC 5987 `filename*=UTF-8''…`
+ * when present (the server sends it for every name), else `filename="…"`.
+ */
+export function attachmentFilename(res: Response, fallback: string): string {
+  const header = res.headers.get('content-disposition') ?? ''
+  const extended = /filename\*=UTF-8''([^;]+)/i.exec(header)?.[1]
+  if (extended !== undefined) {
+    try {
+      return decodeURIComponent(extended)
+    } catch {
+      // A malformed escape: fall back to the plain name.
+    }
+  }
+  return /filename="([^"]+)"/.exec(header)?.[1] ?? fallback
+}
+
 export function createApiClient(): ApiClient {
   async function request(path: string, init?: RequestInit): Promise<Response> {
     const res = await fetch(`${API_URL}${path}`, {
@@ -806,6 +829,14 @@ export function createApiClient(): ApiClient {
       })
       if (!res.ok) throw await apiError(res)
       return (await res.json()) as { objectIds: string[] }
+    },
+
+    exportSlidePng: async (deckId, slideId) => {
+      const res = await request(
+        `/decks/${encodeURIComponent(deckId)}/export.png?slide=${encodeURIComponent(slideId)}`,
+      )
+      if (!res.ok) throw await apiError(res)
+      return { blob: await res.blob(), filename: attachmentFilename(res, 'slide.png') }
     },
 
     uploadDeckThumbnail: (id, dataUrl) =>

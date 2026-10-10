@@ -13,6 +13,10 @@
  *                       auth/devIdentity.ts), with a budget of their own:
  *                       the e2e suite runs as one identity in several
  *                       parallel browsers, far above what one person does;
+ *   - `render:<sub>`    the render worker's page (a valid render token in
+ *                       `?share_token=`, auth/renderTokens.ts): each render
+ *                       counts against the person who asked for it, not
+ *                       against the one address every render arrives from;
  *   - `ip:<address>`    everything else — anonymous requests, share-link
  *                       viewers, and requests whose credential did NOT verify.
  *                       Falling back to the IP for a bad credential matters:
@@ -103,6 +107,8 @@
  * from the cloudflared address range (infra/caddy/Caddyfile, docs/deploy.md).
  */
 
+import { createHash } from 'node:crypto'
+import { isRenderToken, resolveRenderToken } from '../auth/renderTokens.js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import rateLimit, { normalizeIP, type RateLimitOptions } from '@fastify/rate-limit'
 import { getAuthOpts, getIdentityDeps } from '../auth/fastifyAuth.js'
@@ -261,7 +267,24 @@ export async function rateLimitKey(
   } catch {
     // fall through to the IP bucket
   }
+  const render = renderTokenOf(req)
+  if (render !== null) return `render:${render.grant.requestedBy}`
   return `ip:${normalizeIP(clientIp(req, settings.clientIpHeader))}`
+}
+
+/**
+ * A valid render token in the request's `?share_token=` — an in-memory
+ * lookup, no database: the render worker's page, whose every request arrives
+ * from the worker's one address. Null for anything else.
+ */
+export function renderTokenOf(
+  req: FastifyRequest,
+): { hash: string; grant: { deckId: string; requestedBy: string } } | null {
+  const token = (req.query as Record<string, unknown> | undefined)?.['share_token']
+  if (typeof token !== 'string' || !isRenderToken(token)) return null
+  const grant = resolveRenderToken(token)
+  if (grant === null) return null
+  return { hash: createHash('sha256').update(token).digest('hex'), grant }
 }
 
 // ---------------------------------------------------------------------------
@@ -310,6 +333,9 @@ function preLimitBucket(
   parts: PreLimitParts,
   settings: RateLimitSettings,
 ): { bucket: string } | { refused: LimiterDecision } {
+  // The render worker's page: a bucket per render, not the worker's address.
+  const render = renderTokenOf(req)
+  if (render !== null) return { bucket: `render:${render.hash}` }
   const ip = `ip:${normalizeIP(clientIpFromHeaders(req.headers, req.ip, settings.clientIpHeader))}`
   const { bearers, newBearers } = parts
   if (bearers === undefined || newBearers === undefined) return { bucket: ip }

@@ -101,6 +101,13 @@ describe('render tokens', () => {
     expect(resolveRenderToken(live)).toBeNull()
   })
 
+  it("lives as long as its job asks (the job's deadline plus a margin)", () => {
+    const now = 2_000_000
+    const token = mintRenderToken('deck-a', 'alice', now, 90_000)
+    expect(resolveRenderToken(token, now + 89_999)).not.toBeNull()
+    expect(resolveRenderToken(token, now + 90_000)).toBeNull()
+  })
+
   it('stops working when revoked, and closes the page connections', () => {
     const token = mintRenderToken('deck-a', 'alice')
     revokeRenderToken(token)

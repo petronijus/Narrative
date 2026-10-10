@@ -99,15 +99,19 @@ build() {
     "$SRC_DIR"
 }
 
+# The app images, in the order they build (each its apps/<name>/Dockerfile).
+APPS=(server video-worker render-worker web)
+
 build server
 build video-worker
+build render-worker
 build web \
   --target runtime \
   --build-arg VITE_BUILD_VERSION="${NARRATIVE_TAG}+${SRC_SHA}" \
   --build-arg VITE_API_URL=/api \
   --build-arg VITE_HOCUSPOCUS_URL=/ws
 
-for app in server video-worker web; do
+for app in "${APPS[@]}"; do
   push "${REG}/narrative-${app}:${NARRATIVE_TAG}"
   push "${REG}/narrative-${app}:latest"
 done
@@ -115,7 +119,7 @@ done
 # What the VM will pull is what was built: the registry's image for the tag
 # has the target platform (a pushed tag is checked, not assumed).
 want_os="${TARGET_PLATFORM%%/*}" want_arch="${TARGET_PLATFORM#*/}"
-for app in server video-worker web; do
+for app in "${APPS[@]}"; do
   ref="${REG}/narrative-${app}:${NARRATIVE_TAG}"
   got="$(docker buildx imagetools inspect "$ref" --format '{{json .Image}}' |
     python3 -c 'import json, sys; d = json.load(sys.stdin); print(d.get("os", "?") + "/" + d.get("architecture", "?"))')"
@@ -130,4 +134,4 @@ echo "→ Pruning local release images older than ${NARRATIVE_TAG} + 2 previous"
 "${SCRIPT_DIR}/prune-images.sh" --current "${NARRATIVE_TAG}" --keep 2 ||
   echo "! Local image prune did not complete — 'docker system df' to see what is left" >&2
 
-echo "✓ Pushed ${REG}/narrative-{server,video-worker,web}:{${NARRATIVE_TAG},latest} (${TARGET_PLATFORM})"
+echo "✓ Pushed ${REG}/narrative-{server,video-worker,render-worker,web}:{${NARRATIVE_TAG},latest} (${TARGET_PLATFORM})"

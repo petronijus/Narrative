@@ -16,6 +16,7 @@ import { createFolderSharingService } from './folderSharing.js'
 import { createMediaService } from './media.js'
 import { createComponentsService } from './components.js'
 import { createPptxService } from './pptx.js'
+import { createRenderService } from './render.js'
 import { createTokensService } from './tokens.js'
 import { createEditorService } from './editor.js'
 import { createRunsService } from './runs.js'
@@ -31,6 +32,7 @@ export function createServerServices(deps: ServiceDeps): ServerServices {
     media: createMediaService(deps),
     components: createComponentsService(deps),
     pptx: createPptxService(deps),
+    render: createRenderService(deps),
     tokens: createTokensService(deps),
     editor: createEditorService(deps),
     runs: createRunsService(deps),

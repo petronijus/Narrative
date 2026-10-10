@@ -86,7 +86,7 @@ fi
 NARRATIVE_TAG="${NARRATIVE_TAG:-latest}"
 export NARRATIVE_TAG
 log "Pulling prebuilt app images from GHCR (tag: ${NARRATIVE_TAG})..."
-for svc in server video-worker web; do
+for svc in server video-worker render-worker web; do
   docker pull "ghcr.io/petronijus/narrative-${svc}:${NARRATIVE_TAG}"
 done
 

@@ -142,3 +142,44 @@ export async function presignGetUrl(key: string, expiresIn = 3600): Promise<stri
   const url = new URL(signed)
   return `${url.origin}${routing.pathPrefix}${url.pathname}${url.search}`
 }
+
+/**
+ * Generates a presigned PUT URL for one object, routed like `presignGetUrl`
+ * (prod: `https://DOMAIN/storage/<bucket>/<key>?…`, through Caddy; dev: the
+ * MinIO port). The render worker uploads a finished slide with it (agentic
+ * A3): it holds no storage credentials, so it can write exactly the objects
+ * the server signed, until the URL expires.
+ *
+ * The object's type and caching are signed too (`signableHeaders`; the
+ * presigner leaves them out by default): the uploader must send `headers`
+ * exactly, storage refuses the PUT otherwise, and the stored object then
+ * carries them — `Cache-Control: private, no-store` keeps a private slide out
+ * of shared caches (Cloudflare caches `.png` by default) whatever link serves
+ * it later.
+ */
+export async function presignPutUrl(
+  key: string,
+  contentType: string,
+  expiresIn: number,
+): Promise<{ url: string; headers: Record<string, string> }> {
+  const headers = { 'content-type': contentType, 'cache-control': PRIVATE_NO_STORE }
+  const routing = publicRouting()
+  const cfg = buildS3Config()
+  const s3 = new S3Client(routing !== null ? { ...cfg, endpoint: routing.signOrigin } : cfg)
+  const cmd = new PutObjectCommand({
+    Bucket: MEDIA_BUCKET,
+    Key: key,
+    ContentType: headers['content-type'],
+    CacheControl: headers['cache-control'],
+  })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const signed = await getSignedUrl(s3 as any, cmd, {
+    expiresIn,
+    signableHeaders: new Set(Object.keys(headers)),
+  })
+  if (routing === null) return { url: signed, headers }
+  const url = new URL(signed)
+  return { url: `${url.origin}${routing.pathPrefix}${url.pathname}${url.search}`, headers }
+}
+
+const PRIVATE_NO_STORE = 'private, no-store'

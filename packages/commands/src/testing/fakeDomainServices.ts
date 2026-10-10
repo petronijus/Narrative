@@ -22,6 +22,7 @@
  * apps/server against the real services.
  */
 
+import { MAX_RENDER_SLIDES } from '../commands/render.js'
 import * as Y from 'yjs'
 import {
   addObjects,
@@ -47,7 +48,7 @@ import type { TextObject, RectangleObject } from '@narrative/shared'
 import { CommandError } from '../errors.js'
 import { applyInsertPlan } from '../insert/plan.js'
 import { objectsOf, requireObjects, resolveSlide } from '../refs.js'
-import { createFixtureDeck } from './fixtureDeck.js'
+import { createFixtureDeck, FIXTURE_SLIDE_IDS } from './fixtureDeck.js'
 import type { ServerServices } from '../services.js'
 import type {
   ComponentRecord,
@@ -142,7 +143,15 @@ export function fixtureComponentState(): Uint8Array {
 
 export type DomainFakes = Pick<
   ServerServices,
-  'decks' | 'folders' | 'sharing' | 'folderSharing' | 'media' | 'components' | 'pptx' | 'tokens'
+  | 'decks'
+  | 'folders'
+  | 'sharing'
+  | 'folderSharing'
+  | 'media'
+  | 'components'
+  | 'pptx'
+  | 'render'
+  | 'tokens'
 > & {
   /**
    * A deep copy of everything the fakes hold (and the id counter, so a
@@ -378,6 +387,7 @@ export function createDomainFakes(
   const rMedia = recorder('media')
   const rComponents = recorder('components')
   const rPptx = recorder('pptx')
+  const rRender = recorder('render')
   const rTokens = recorder('tokens')
 
   return {
@@ -1091,6 +1101,64 @@ export function createDomainFakes(
               ...base,
               url: 'https://storage.test/exports/deck.pptx?X-Amz-Signature=fixture',
               expiresAt: T0,
+            }
+      },
+    },
+
+    render: {
+      async exportPng(args) {
+        rRender('exportPng', args)
+        requireDeck(args.deckId)
+        // Like the real service: the deck's slides as they are, a missing
+        // one refused before anything renders. Only the fixture deck has
+        // slides here.
+        const ids: readonly string[] = args.deckId === world.deckId ? FIXTURE_SLIDE_IDS : []
+        const chosen =
+          args.slides === 'all'
+            ? ids.map((id, index) => ({ id, index }))
+            : args.slides.map((ref) => {
+                const index = 'index' in ref ? ref.index : ids.indexOf(ref.id)
+                const id = ids[index]
+                if (id === undefined || index < 0) {
+                  throw notFound('slide', 'index' in ref ? `#${ref.index}` : ref.id)
+                }
+                return { id, index }
+              })
+        if (chosen.length === 0) {
+          throw new CommandError('invalid_input', 'The deck has no slides to render')
+        }
+        if (chosen.length > MAX_RENDER_SLIDES) {
+          throw new CommandError(
+            'invalid_input',
+            `That is ${chosen.length} slides; one request renders at most ${MAX_RENDER_SLIDES}`,
+          )
+        }
+        const info = chosen.map(({ id, index }) => ({
+          slideId: id,
+          index,
+          width: 1920,
+          height: 1080,
+          sizeBytes: 68,
+          failedLoads: 0,
+        }))
+        return args.delivery === 'base64'
+          ? {
+              delivery: 'base64',
+              slides: info.map((slide) => ({
+                ...slide,
+                base64:
+                  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==',
+              })),
+              failedFonts: [],
+            }
+          : {
+              delivery: 'url',
+              slides: info.map((slide) => ({
+                ...slide,
+                url: `https://storage.test/exports/slide-${slide.index + 1}.png?X-Amz-Signature=fixture`,
+              })),
+              expiresAt: T0,
+              failedFonts: [],
             }
       },
     },
