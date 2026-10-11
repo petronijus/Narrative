@@ -27,6 +27,10 @@ function humaniseReason(code: string): string {
       return 'The Google callback was malformed. Please start sign-in again.'
     case 'auth_not_configured':
       return 'The server is missing OAuth configuration.'
+    case 'desktop_sign_in_failed':
+      return 'The sign-in link expired or was already used. Sign in again.'
+    case 'invalid_desktop_request':
+      return 'The desktop app sent an incomplete sign-in request. Restart Narrative and sign in again.'
     default:
       if (code.startsWith('google_')) {
         return `Google returned an error: ${code.slice('google_'.length)}.`

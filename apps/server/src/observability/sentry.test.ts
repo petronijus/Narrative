@@ -91,6 +91,18 @@ describe('scrubSentryPayload', () => {
     expect(event.request.query_string).toEqual({ share_token: FILTERED })
   })
 
+  it('masks PKCE verifiers, which have no prefix, in a form body and as keys', () => {
+    const verifier = 'v'.repeat(43)
+    expect(scrubString(`ticket=ndt_${'a'.repeat(43)}&verifier=${verifier}`)).toBe(
+      `ticket=ndt_${FILTERED}&verifier=${FILTERED}`,
+    )
+    expect(scrubString(`grant_type=authorization_code&code_verifier=${verifier}`)).toBe(
+      `grant_type=authorization_code&code_verifier=${FILTERED}`,
+    )
+    const event = scrubSentryPayload({ request: { data: { ticket: 'x', verifier } } })
+    expect(event.request.data).toEqual({ ticket: 'x', verifier: FILTERED })
+  })
+
   it('leaves ordinary text alone', () => {
     expect(scrubString('deck d1 has 3 slides; tokens.colors.primary')).toBe(
       'deck d1 has 3 slides; tokens.colors.primary',

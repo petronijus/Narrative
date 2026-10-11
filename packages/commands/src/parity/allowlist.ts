@@ -59,16 +59,27 @@ export const AGENT_ALLOWLIST: readonly AllowlistEntry[] = [
       'Human presentation runtime, not document state; agents get editor.present.link to open a deck at a slide.',
   },
   {
-    capability: 'Browser sign-in and session (Google OAuth start/callback, current user, sign-out)',
+    capability:
+      'Browser sign-in and session (Google OAuth start/callback, current user, sign-out, desktop-app sign-in ticket)',
     reason:
       'The interactive browser login that mints the session cookie. Agents never sign in this way: they authenticate ' +
-      'with a personal access token (or MCP OAuth) and every MCP session is already bound to one user.',
+      'with a personal access token (or MCP OAuth) and every MCP session is already bound to one user. The desktop ' +
+      "app's sign-in redeems a one-time ticket from the system browser into its own window session (ADR 0014).",
     routes: [
       { method: 'GET', path: '/auth/start' },
       { method: 'GET', path: '/auth/callback' },
       { method: 'GET', path: '/auth/me' },
       { method: 'POST', path: '/auth/logout' },
+      { method: 'POST', path: '/auth/desktop/redeem' },
     ],
+  },
+  {
+    capability:
+      'Desktop app shell: native menu, presenting on a chosen display, opening .pptx files from the OS, server ' +
+      'choice, app updates',
+    reason:
+      'Device-local behaviour of one installed app with no document effect (ADR 0014); an agent has no device. The ' +
+      'import an opened file starts runs deck.importPptx, and the menu items run existing catalog actions.',
   },
   {
     capability: 'Render tokens for the e2e suite (development only)',

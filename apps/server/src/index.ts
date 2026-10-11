@@ -359,7 +359,14 @@ app.log.info(
   await registerHttpRoutes(app, {
     db,
     metrics: metricsDecision.register,
-    auth: { verifier, spaOrigin, redirectUri, isProd, allowlist: allowlistConfig },
+    auth: {
+      verifier,
+      spaOrigin,
+      redirectUri,
+      isProd,
+      allowlist: allowlistConfig,
+      clientIpHeader: process.env['CLIENT_IP_HEADER'] || undefined,
+    },
     agent,
     mcp: {
       mcp,

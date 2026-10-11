@@ -35,6 +35,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { authPreHandler, resolveFastifyIdentity } from '../../auth/fastifyAuth.js'
 import { clientIpFromHeaders } from '../../http/clientIp.js'
+import { parseStrictForm } from '../../http/formBody.js'
 import { htmlHeaders, noStore } from '../../http/htmlHeaders.js'
 import { pathWithoutLeadingSlash } from '../config.js'
 import { consentPage, errorPage, signInPage } from './pages.js'
@@ -47,23 +48,6 @@ import {
 
 const MINUTE_MS = 60_000
 const FORM_BODY_LIMIT = 16 * 1024
-
-/**
- * Parse an OAuth form body. Parameters must not repeat (RFC 6749 §3.1):
- * a request that sends one twice is refused rather than silently resolved.
- */
-export function parseOAuthForm(body: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const [key, value] of new URLSearchParams(body)) {
-    if (Object.hasOwn(out, key)) {
-      const err = new Error(`parameter ${key} is repeated`) as Error & { statusCode: number }
-      err.statusCode = 400
-      throw err
-    }
-    out[key] = value
-  }
-  return out
-}
 
 /** Per-IP limits of the anonymous OAuth endpoints (a client's servers call them, not a browser). */
 export const OAUTH_RATE_LIMITS = {
@@ -215,7 +199,7 @@ export async function registerMcpOAuthRoutes(
       { parseAs: 'string', bodyLimit: FORM_BODY_LIMIT },
       (_req, body, done) => {
         try {
-          done(null, parseOAuthForm(body as string))
+          done(null, parseStrictForm(body as string))
         } catch (e) {
           done(e as Error, undefined)
         }

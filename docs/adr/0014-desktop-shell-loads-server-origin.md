@@ -91,6 +91,12 @@ only writer).
   D0 is online only.
 - Restarting the API process loses tickets in flight; the user signs in
   again.
+- A local app that registers `narrative://` and starts its own sign-in in
+  the person's browser receives a ticket it can redeem (it owns that
+  verifier; RFC 8252 §8.6). Accepted: Google's account chooser always asks,
+  the hand-off page names the account and the desktop app, and the redeem
+  takes only the shell's own navigation (`Sec-Fetch-Site: none` plus the
+  `X-Narrative-Desktop` header), so no web page can plant a session.
 - Losing the update signing key means existing installs can be updated
   only by a manual reinstall that carries the new public key. Approving each
   signature in 1Password is part of every release.

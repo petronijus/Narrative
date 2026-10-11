@@ -9,6 +9,10 @@
  *   GET  /auth/me                  → { sub, email, name } or 401
  *   POST /auth/logout              → revoke session + clear cookie, 204
  *
+ * The desktop app signs in through the same start and callback with
+ * `client=desktop`: the callback then mints a one-time ticket instead of a
+ * session (routes/desktopAuth.ts, ADR 0014).
+ *
  * Why server-driven (not the browser-PKCE flow that lived in oidc-client-ts)
  * ------------------------------------------------------------------------
  *   - The Google id_token never enters the SPA. The browser holds an opaque
@@ -43,10 +47,16 @@ import {
   lookupSession,
   revokeSession,
   SESSION_COOKIE_NAME,
-  SESSION_LIFETIME_MS,
 } from '../auth/session.js'
+import { clearSessionCookie, isSafeReturnTo, setSessionCookie } from '../auth/sessionCookie.js'
 import { upsertUser } from '../auth/users.js'
 import { consumePendingInvitesForEmail } from '../auth/invites.js'
+import {
+  isDesktopStartState,
+  parseDesktopStart,
+  sendDesktopHandoff,
+  type DesktopStartState,
+} from './desktopAuth.js'
 
 // ---------------------------------------------------------------------------
 // Config
@@ -75,6 +85,8 @@ export interface AuthRoutesOpts {
   /** Env-configured allowlist. The DB-based implicit allowlist (pending
    *  invite or existing permission) extends this — see auth/signInPolicy.ts. */
   allowlist: AllowlistConfig
+  /** Header carrying the real client IP behind the proxy (CLIENT_IP_HEADER; http/clientIp.ts). */
+  clientIpHeader?: string | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -99,18 +111,24 @@ interface OauthStatePayload {
   state: string
   verifier: string
   returnTo: string
+  /** Present when the desktop app started the sign-in (routes/desktopAuth.ts). */
+  desktop?: DesktopStartState
 }
 
-function isSafeReturnTo(value: unknown): value is string {
-  // Only accept same-origin relative paths to prevent open-redirect into
-  // attacker-controlled hosts. Disallow protocol-relative ("//evil.com")
-  // and absolute URLs entirely.
-  return (
-    typeof value === 'string' &&
-    value.startsWith('/') &&
-    !value.startsWith('//') &&
-    value.length < 500
-  )
+/** The state cookie's payload, or null when it is not one this server wrote. */
+function parseStatePayload(raw: string): OauthStatePayload | null {
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (typeof value !== 'object' || value === null) return null
+  const v = value as Record<string, unknown>
+  if (typeof v['state'] !== 'string' || typeof v['verifier'] !== 'string') return null
+  if (typeof v['returnTo'] !== 'string') return null
+  if (v['desktop'] !== undefined && !isDesktopStartState(v['desktop'])) return null
+  return value as OauthStatePayload
 }
 
 function clientIp(req: FastifyRequest): string {
@@ -119,36 +137,6 @@ function clientIp(req: FastifyRequest): string {
   // to the raw socket address which is the gateway in prod (less useful but
   // still non-empty).
   return req.ip ?? req.socket.remoteAddress ?? ''
-}
-
-function setSessionCookie(
-  reply: FastifyReply,
-  rawId: string,
-  expiresAt: Date,
-  isProd: boolean,
-): void {
-  reply.setCookie(SESSION_COOKIE_NAME, rawId, {
-    httpOnly: true,
-    secure: isProd,
-    // 'lax' is correct: cookie is sent on top-level navigations from any
-    // site (so the OAuth redirect from accounts.google.com lands with the
-    // cookie absent — Google's redirect IS the initial Set-Cookie, not a
-    // pre-existing one being sent), AND on same-origin / same-site fetches
-    // including dev's localhost:5173 ↔ localhost:3001 cross-origin path.
-    sameSite: 'lax',
-    path: '/',
-    maxAge: Math.floor(SESSION_LIFETIME_MS / 1000),
-    expires: expiresAt,
-  })
-}
-
-function clearSessionCookie(reply: FastifyReply, isProd: boolean): void {
-  reply.clearCookie(SESSION_COOKIE_NAME, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: 'lax',
-    path: '/',
-  })
 }
 
 // ---------------------------------------------------------------------------
@@ -171,13 +159,21 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
       return
     }
 
-    const rawReturnTo = (request.query as Record<string, string>)['returnTo'] ?? '/'
+    const query = request.query as Record<string, unknown>
+    const start = parseDesktopStart(query, isProd)
+    if (start.kind === 'invalid') {
+      // A browser navigation: show the error page, like the callback does.
+      await redirectWithError(reply, spaOrigin, 'invalid_desktop_request')
+      return
+    }
+    const rawReturnTo = query['returnTo'] ?? '/'
     const returnTo = isSafeReturnTo(rawReturnTo) ? rawReturnTo : '/'
 
     const state = randomState()
     const { verifier: codeVerifier, challenge } = pkcePair()
 
     const statePayload: OauthStatePayload = { state, verifier: codeVerifier, returnTo }
+    if (start.kind === 'desktop') statePayload.desktop = start.desktop
     // Path=/ is intentional. In prod the browser sees the routes as
     // /api/auth/start and /api/auth/callback (Caddy adds the /api/ prefix
     // from the browser's perspective; the server side only sees /auth/*).
@@ -241,10 +237,8 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
       await redirectWithError(reply, spaOrigin, 'bad_state_signature')
       return
     }
-    let statePayload: OauthStatePayload
-    try {
-      statePayload = JSON.parse(unsigned.value) as OauthStatePayload
-    } catch {
+    const statePayload = parseStatePayload(unsigned.value)
+    if (statePayload === null) {
       await redirectWithError(reply, spaOrigin, 'bad_state_json')
       return
     }
@@ -346,6 +340,22 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
       request.log.warn({ err }, '[auth] invite consumption failed')
     }
 
+    const returnPath = isSafeReturnTo(statePayload.returnTo) ? statePayload.returnTo : '/'
+
+    // The desktop app: no session for this browser — a one-time ticket the
+    // app redeems in its own window (routes/desktopAuth.ts).
+    if (statePayload.desktop) {
+      await sendDesktopHandoff(
+        reply,
+        {
+          user: { sub: userPayload.sub, email: userPayload.email, name: userPayload.name ?? null },
+          returnTo: returnPath,
+        },
+        statePayload.desktop,
+      )
+      return
+    }
+
     // Create session
     const { rawId, expiresAt } = await createSession(db, {
       user: {
@@ -359,7 +369,6 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
 
     setSessionCookie(reply, rawId, expiresAt, isProd)
 
-    const returnPath = isSafeReturnTo(statePayload.returnTo) ? statePayload.returnTo : '/'
     await reply.redirect(`${spaOrigin}${returnPath}`, 302)
   })
 

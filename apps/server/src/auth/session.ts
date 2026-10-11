@@ -170,8 +170,18 @@ export function readCookieFromHeader(
   return undefined
 }
 
-/** Mark a session revoked (logout). Idempotent. */
-export async function revokeSession(db: Database, rawId: string): Promise<void> {
+/**
+ * Mark a session revoked (logout). Idempotent. `keepConnectionsOf`: when the
+ * session belongs to this user, their live connections stay open — the
+ * desktop sign-in replaces a window's session with a fresh one of the same
+ * person, which must not disconnect their editors on other devices
+ * (routes/desktopAuth.ts).
+ */
+export async function revokeSession(
+  db: Database,
+  rawId: string,
+  opts: { keepConnectionsOf?: string } = {},
+): Promise<void> {
   if (!rawId) return
   const idHash = hashId(rawId)
   // RETURNING the userSub lets us tear down that user's live WS connections.
@@ -189,7 +199,7 @@ export async function revokeSession(db: Database, rawId: string): Promise<void> 
   // (its still-valid cookie re-authenticates immediately). That brief reconnect
   // is an acceptable trade for guaranteeing the revoked device loses access.
   const userSub = rows[0]?.userSub
-  if (userSub) closeUserConnections(userSub)
+  if (userSub && userSub !== opts.keepConnectionsOf) closeUserConnections(userSub)
 }
 
 export interface RevokedUserAccess extends RevokedAgentCredentials {

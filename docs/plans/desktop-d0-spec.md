@@ -342,7 +342,7 @@ Any other link is ignored and logged without the ticket. This includes a cold st
     postData: [
       { type: 'rawData', bytes: Buffer.from(new URLSearchParams({ ticket, verifier }).toString()) },
     ],
-    extraHeaders: 'Content-Type: application/x-www-form-urlencoded',
+    extraHeaders: 'Content-Type: application/x-www-form-urlencoded\nX-Narrative-Desktop: 1',
   })
   ```
 - On `did-redirect-navigation` (the server's 303), call `stop()`, close the window and look at the target:
@@ -752,14 +752,18 @@ export function clearDesktopTicketsForTests(): void
 
 ### 4.4 CSRF and login-CSRF reasoning
 
-- **Login CSRF into a browser.** An attacker who holds their own ticket and verifier could auto-submit a form. The fetch-metadata guard stops this:
-  - **pass** when `Sec-Fetch-Site` is `none` (a browser-initiated navigation such as Electron's `loadURL`) or `same-origin`;
-  - **when the header is absent**, pass only if `Origin` is absent or equals `new URL(spaOrigin).origin`;
-  - **refuse** everything else: `cross-site`, `same-site`, and `Origin: null`.
+- **Login CSRF into a browser.** An attacker who holds their own ticket and verifier could auto-submit a form — from another site, or from any page on the app's own origin (an inline upload, an XSS). The guard (`isDesktopRedeemSource`, revised after the security review of steps 2–4) takes only the shell's own navigation:
+  - the request must carry `X-Narrative-Desktop: 1`, which the shell's `loadURL` sets in `extraHeaders` and no HTML form can send;
+  - **and** `Sec-Fetch-Site` must be `none` (a navigation the browser itself started); `same-origin`, `same-site` and `cross-site` are refused;
+  - **when fetch metadata is absent**, pass only with no `Origin` at all.
 
   Do **not** reuse `isFromWebApp` (`apps/server/src/http/sameOrigin.ts:93-99`), because it passes requests that carry no metadata.
 
 - **Login CSRF into the desktop app** (the attacker knows the challenge from browser history and pushes in their own ticket): stopped by the shell's `state` nonce, which the server echoes from the signed state cookie and the shell compares in constant time (§3.4).
+- **What the server design relies on in the shell** (security review of steps 2–4, M2): (a) a `narrative://auth/complete` link is taken only while a sign-in is pending, its `state` compared in constant time, and the verifier and state are discarded after one redeem whatever the outcome; (b) the redeem is `webContents.loadURL(redeemUrl, { postData, extraHeaders })` in a hidden window — a `<form>` posted from a `data:`, `file:` or `about:blank` page sends `cross-site` and `Origin: null` and is refused, which must never be "fixed" by loosening the guard; (c) the incoming URL and argv are never logged or put into a crash report; (d) the hidden window uses the editor window's partition, or the cookie lands in the wrong jar. Step 8's tests check each.
+- **Production serves only the release build's scheme**: `scheme=narrative-dev` is refused when `isProd` (`allowedDesktopSchemes`).
+- **A local app that claims `narrative://` and starts its own flow** (RFC 8252 §8.6) receives a ticket it can redeem, because it owns that verifier: PKCE cannot help there. Accepted residual risk (ADR 0014): Google's account chooser always asks (`prompt=select_account`), and the hand-off page names the account and "the Narrative desktop app" with "If you did not start this sign-in, close this tab".
+- **The redeem ends a session the window held before**, with `keepConnectionsOf` the signing-in user, so the same person's editors on other devices stay connected (`revokeSession`).
 - **A stolen ticket** cannot be redeemed without the verifier, which never leaves main (RFC 8252 §8.1). It is single-use and lives 60 s.
 - **A junk deep link** neither consumes the pending sign-in nor navigates the main window. The redeem runs in a hidden window, and the pending entry survives up to 3 failed attempts.
 - **The sign-in allowlist** applies once, at the callback. A grant is at most 60 s old.
@@ -960,7 +964,7 @@ export function runAction(id: ActionId): boolean {
   - no session cookie and no `createSession` call;
   - 200 HTML whose meta refresh and link carry `narrative://auth/complete?ticket=ndt_…&state=<state>`;
   - the CSP, `no-store` and `no-referrer` headers are present;
-  - `scheme=narrative-dev` gives a `narrative-dev://` URL.
+  - `scheme=narrative-dev` is refused in production and gives a `narrative-dev://` URL against a development server.
 - **callback (web):** unchanged (regression check).
 - **redeem:**
   - success → one `createSession`, a cookie with `HttpOnly`, `SameSite=Lax` and `Path=/`, 303 to `spaOrigin + returnTo`, and `no-store`;

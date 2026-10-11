@@ -20,6 +20,13 @@ describe('redactUrl', () => {
     expect(redactUrl(`/render/d1#${token}`)).toBe('/render/d1#nrr_***')
   })
 
+  it('masks a desktop sign-in ticket', () => {
+    const ticket = `ndt_${'b'.repeat(43)}`
+    expect(redactUrl(`/auth/desktop/redeem?ticket=${ticket}`)).toBe(
+      '/auth/desktop/redeem?ticket=ndt_***',
+    )
+  })
+
   it('leaves an ordinary URL alone', () => {
     expect(redactUrl('/decks/d1?folderId=f1')).toBe('/decks/d1?folderId=f1')
   })

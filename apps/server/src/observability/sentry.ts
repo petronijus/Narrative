@@ -16,7 +16,10 @@
  *     access/refresh token, authorization code or client secret (`nmo_…`,
  *     `nmr_…`, `nmc_…`, `nms_…`) — and any `narrative_session=` cookie
  *     value inside ANY string — an error message, a URL, a stack frame
- *     variable — is masked.
+ *     variable — is masked;
+ *   - PKCE verifiers (`verifier`, `code_verifier`: the desktop sign-in
+ *     redeem and the MCP OAuth token request), as object keys or as
+ *     `key=value` in a form body, are replaced too: they carry no prefix.
  * A credential in an error report is a credential handed to a third party;
  * relying on the SDK's default PII settings alone would make that depend on
  * SDK version defaults.
@@ -39,6 +42,11 @@ const SESSION_COOKIE_RE = /(narrative_session=)[^;\s"',&]+/g
 
 const MAX_DEPTH = 32
 
+/** Body keys that hold a PKCE verifier (no prefix to recognise it by). */
+const PKCE_VERIFIER_KEYS = new Set(['verifier', 'code_verifier'])
+/** The same in a form-encoded string (a request body Sentry kept as text). */
+const PKCE_VERIFIER_FIELD_RE = /\b((?:code_)?verifier=)[^&#\s"'<>]*/g
+
 /**
  * Any Narrative credential anywhere in a string (auth/credentialPatterns.ts:
  * access tokens, OAuth tokens / codes / secrets, upload sessions, render
@@ -47,10 +55,9 @@ const MAX_DEPTH = 32
  * prefix: a request URL or query string carries it bare).
  */
 export function scrubString(value: string): string {
-  return maskShareTokens(maskCredentials(value, FILTERED), FILTERED).replace(
-    SESSION_COOKIE_RE,
-    `$1${FILTERED}`,
-  )
+  return maskShareTokens(maskCredentials(value, FILTERED), FILTERED)
+    .replace(SESSION_COOKIE_RE, `$1${FILTERED}`)
+    .replace(PKCE_VERIFIER_FIELD_RE, `$1${FILTERED}`)
 }
 
 function scrub(value: unknown, depth: number, seen: WeakSet<object>, parentKey: string): unknown {
@@ -75,7 +82,8 @@ function scrub(value: unknown, depth: number, seen: WeakSet<object>, parentKey: 
       (isHeaders && SECRET_HEADERS.has(lower)) ||
       (parentKey === 'request' && lower === 'cookies') ||
       // A parsed query (`query_string` as an object or pairs) names it as a key.
-      lower === 'share_token'
+      lower === 'share_token' ||
+      PKCE_VERIFIER_KEYS.has(lower)
     ) {
       out[key] = FILTERED
       continue

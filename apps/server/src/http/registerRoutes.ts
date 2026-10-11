@@ -26,6 +26,7 @@ import { registerPptxImportRoutes } from '../routes/pptxImport.js'
 import { registerPptxExportRoutes } from '../routes/pptxExport.js'
 import { registerPngExportRoutes } from '../routes/pngExport.js'
 import { registerAuthRoutes, type AuthRoutesOpts } from '../routes/auth.js'
+import { registerDesktopAuthRoutes } from '../routes/desktopAuth.js'
 import { registerAccessTokenRoutes } from '../routes/accessTokens.js'
 import { registerTusPlugin } from '../media/tus.js'
 import { registerMediaRoutes } from '../media/routes.js'
@@ -109,6 +110,8 @@ export async function registerHttpRoutes(app: FastifyInstance, deps: HttpRouteDe
   // Server-driven OAuth flow + session cookie minting (replaces the old
   // browser-PKCE + Bearer-id_token path). Public endpoints by design.
   registerAuthRoutes(app, { db, ...deps.auth })
+  // The desktop app's sign-in ticket redeem (ADR 0014); its own form scope.
+  await registerDesktopAuthRoutes(app, { db, ...deps.auth })
 
   // Personal access tokens (agentic A1) — session-cookie only, never a PAT.
   registerAccessTokenRoutes(app)
