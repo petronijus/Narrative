@@ -146,20 +146,30 @@ describe('installUpstreamRouting (real Chromium)', () => {
     expect(put.headers['cache-control']).toBe('private, no-store')
     expect(put.body).toBe('png')
     await expect(
-      putToUpstream('https://other.test/x.png', Buffer.from('png'), {}, {
-        appOrigin: APP,
-        upstream,
-      }),
+      putToUpstream(
+        'https://other.test/x.png',
+        Buffer.from('png'),
+        {},
+        {
+          appOrigin: APP,
+          upstream,
+        },
+      ),
     ).rejects.toThrow(/not on the app origin/)
   })
 
   it('abandons an upload when its job runs out of time', async () => {
     const stop = new AbortController()
-    const put = putToUpstream(`${APP}/stall`, Buffer.from('png'), {}, {
-      appOrigin: APP,
-      upstream,
-      signal: stop.signal,
-    })
+    const put = putToUpstream(
+      `${APP}/stall`,
+      Buffer.from('png'),
+      {},
+      {
+        appOrigin: APP,
+        upstream,
+        signal: stop.signal,
+      },
+    )
     stop.abort()
     await expect(put).rejects.toThrow(/abort/i)
   })

@@ -7,10 +7,7 @@ describe('renderPageUrl', () => {
       'https://narrative.example.com',
       {
         deckId: 'd 1',
-        uploads: [{ slideId: 's1', url: 'https://storage.test/a', headers: {} }],
         token: `nrr_${'a'.repeat(43)}`,
-        deadline: 0,
-        workBudgetMs: 0,
       },
       's1',
     )
@@ -24,9 +21,11 @@ describe('renderPageUrl', () => {
 
 describe('refuseLate', () => {
   const job = (deadline: number) => ({
+    kind: 'export' as const,
     deckId: 'd',
     uploads: [],
     token: 'nrr_x',
+    stateVector: '',
     deadline,
     workBudgetMs: 1_000,
   })

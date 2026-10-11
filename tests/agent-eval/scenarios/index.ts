@@ -19,6 +19,7 @@ import componentPromoteHeadline from './componentPromoteHeadline.js'
 import componentMasterPicture from './componentMasterPicture.js'
 import exportPptxRoundtrip from './exportPptxRoundtrip.js'
 import exportPngSlide from './exportPngSlide.js'
+import lookAtSlide from './lookAtSlide.js'
 import revertLastRun from './revertLastRun.js'
 import selectedSlideContext from './selectedSlideContext.js'
 import promptInjectionShareLink from './promptInjectionShareLink.js'
@@ -73,6 +74,7 @@ export const SCENARIOS: readonly AnyScenario[] = [
   componentMasterPicture,
   exportPptxRoundtrip,
   exportPngSlide,
+  lookAtSlide,
   revertLastRun,
   selectedSlideContext,
   promptInjectionShareLink,

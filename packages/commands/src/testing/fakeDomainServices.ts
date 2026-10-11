@@ -23,6 +23,7 @@
  */
 
 import { MAX_RENDER_SLIDES } from '../commands/render.js'
+import type { RenderSlideRef } from '../services/render.js'
 import * as Y from 'yjs'
 import {
   addObjects,
@@ -174,6 +175,39 @@ function folderDocWith(tokens: FolderTokensSnapshot): Y.Doc {
     }
   }
   return doc
+}
+
+/**
+ * The fixture deck's slides a render asks for, like the real service: in the
+ * order asked, a missing one refused before anything renders, at most
+ * MAX_RENDER_SLIDES. Only the fixture deck has slides here.
+ */
+function pickFixtureSlides(
+  hasSlides: boolean,
+  refs: RenderSlideRef[] | 'all',
+): Array<{ id: string; index: number }> {
+  const ids: readonly string[] = hasSlides ? FIXTURE_SLIDE_IDS : []
+  const chosen =
+    refs === 'all'
+      ? ids.map((id, index) => ({ id, index }))
+      : refs.map((ref) => {
+          const index = 'index' in ref ? ref.index : ids.indexOf(ref.id)
+          const id = ids[index]
+          if (id === undefined || index < 0) {
+            throw notFound('slide', 'index' in ref ? `#${ref.index}` : ref.id)
+          }
+          return { id, index }
+        })
+  if (chosen.length === 0) {
+    throw new CommandError('invalid_input', 'The deck has no slides to render')
+  }
+  if (chosen.length > MAX_RENDER_SLIDES) {
+    throw new CommandError(
+      'invalid_input',
+      `That is ${chosen.length} slides; one request renders at most ${MAX_RENDER_SLIDES}`,
+    )
+  }
+  return chosen
 }
 
 export function createDomainFakes(
@@ -388,6 +422,10 @@ export function createDomainFakes(
   const rComponents = recorder('components')
   const rPptx = recorder('pptx')
   const rRender = recorder('render')
+  const pickRenderSlides = (deckId: string, refs: RenderSlideRef[] | 'all') => {
+    requireDeck(deckId)
+    return pickFixtureSlides(deckId === world.deckId, refs)
+  }
   const rTokens = recorder('tokens')
 
   return {
@@ -1108,31 +1146,7 @@ export function createDomainFakes(
     render: {
       async exportPng(args) {
         rRender('exportPng', args)
-        requireDeck(args.deckId)
-        // Like the real service: the deck's slides as they are, a missing
-        // one refused before anything renders. Only the fixture deck has
-        // slides here.
-        const ids: readonly string[] = args.deckId === world.deckId ? FIXTURE_SLIDE_IDS : []
-        const chosen =
-          args.slides === 'all'
-            ? ids.map((id, index) => ({ id, index }))
-            : args.slides.map((ref) => {
-                const index = 'index' in ref ? ref.index : ids.indexOf(ref.id)
-                const id = ids[index]
-                if (id === undefined || index < 0) {
-                  throw notFound('slide', 'index' in ref ? `#${ref.index}` : ref.id)
-                }
-                return { id, index }
-              })
-        if (chosen.length === 0) {
-          throw new CommandError('invalid_input', 'The deck has no slides to render')
-        }
-        if (chosen.length > MAX_RENDER_SLIDES) {
-          throw new CommandError(
-            'invalid_input',
-            `That is ${chosen.length} slides; one request renders at most ${MAX_RENDER_SLIDES}`,
-          )
-        }
+        const chosen = pickRenderSlides(args.deckId, args.slides)
         const info = chosen.map(({ id, index }) => ({
           slideId: id,
           index,
@@ -1160,6 +1174,27 @@ export function createDomainFakes(
               expiresAt: T0,
               failedFonts: [],
             }
+      },
+      async look(args) {
+        rRender('look', args)
+        const sheet = 'sheet' in args.view
+        const chosen = pickRenderSlides(
+          args.deckId,
+          'sheet' in args.view ? args.view.sheet : [args.view.slide],
+        )
+        const region = 'slide' in args.view ? args.view.region : undefined
+        return {
+          mode: sheet ? 'sheet' : region !== undefined ? 'region' : 'slide',
+          width: 1430,
+          height: 804,
+          slides: chosen.map(({ id, index }) => ({ slideId: id, index, failedLoads: 0 })),
+          failedFonts: [],
+          image: {
+            mimeType: 'image/png',
+            base64:
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==',
+          },
+        }
       },
     },
 

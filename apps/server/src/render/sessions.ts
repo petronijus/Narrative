@@ -1,0 +1,105 @@
+/**
+ * render/sessions.ts — render sessions: one render token per person and
+ * deck, reused by their render jobs so the render worker keeps the page it
+ * opened with it (apps/render-worker/src/warmPages.ts) and the next look or
+ * export skips loading the app.
+ *
+ * A session lasts `SESSION_IDLE_MS` after its last job and never longer than
+ * `SESSION_MAX_MS` from its start. It ends — its token revoked, which closes
+ * the page's connections — when its person loses access to the deck
+ * (`endRenderSessions`, called wherever access is taken away), or when the
+ * render page is refused. In this process's memory, like the tokens
+ * (auth/renderTokens.ts); an entry goes when its token ends.
+ */
+
+import { extendRenderToken, mintRenderToken, revokeRenderToken } from '../auth/renderTokens.js'
+
+/** A session's token lives this long after its last job ends. */
+export const SESSION_IDLE_MS = 120_000
+/** No session (and no token of one) outlives this, however busy. */
+export const SESSION_MAX_MS = 15 * 60_000
+
+interface Session {
+  token: string
+  deckId: string
+  userId: string
+  startedAt: number
+}
+
+const sessions = new Map<string, Session>()
+const keyOf = (deckId: string, userId: string): string => `${deckId}\u0000${userId}`
+
+/**
+ * The session's token for a job that needs it for `jobMs`: the current one,
+ * extended, or a new one (none yet, its token ended, or `jobMs` would carry
+ * it past `SESSION_MAX_MS`).
+ */
+export function sessionTokenFor(
+  args: { deckId: string; userId: string },
+  jobMs: number,
+  now: number,
+): string {
+  const key = keyOf(args.deckId, args.userId)
+  const current = sessions.get(key)
+  if (
+    current !== undefined &&
+    now - current.startedAt + jobMs <= SESSION_MAX_MS &&
+    extendRenderToken(current.token, jobMs, now)
+  ) {
+    return current.token
+  }
+  // An old token is left to expire, not revoked: a job of it may still run.
+  const session: Session = { token: '', deckId: args.deckId, userId: args.userId, startedAt: now }
+  session.token = mintRenderToken(args.deckId, args.userId, now, jobMs, () => {
+    if (sessions.get(key) === session) sessions.delete(key)
+  })
+  sessions.set(key, session)
+  return session.token
+}
+
+/**
+ * After a job of `token`: its session goes on for `SESSION_IDLE_MS`, but not
+ * past `SESSION_MAX_MS` (its token then runs out with the job's own time).
+ */
+export function sessionJobEnded(token: string, now: number): void {
+  for (const session of sessions.values()) {
+    if (session.token !== token) continue
+    const left = session.startedAt + SESSION_MAX_MS - now
+    if (left > 0) extendRenderToken(token, Math.min(SESSION_IDLE_MS, left), now)
+    return
+  }
+}
+
+/**
+ * End the render sessions of `userId` (on `deckId`, or on every deck): their
+ * tokens are revoked and the render pages' connections closed. Called
+ * wherever the person's access is taken away — a page kept open from an
+ * earlier job would otherwise go on reading the deck until the session ran
+ * out.
+ */
+export function endRenderSessions(args: { userId: string; deckId?: string }): number {
+  let ended = 0
+  for (const session of [...sessions.values()]) {
+    if (session.userId !== args.userId) continue
+    if (args.deckId !== undefined && session.deckId !== args.deckId) continue
+    revokeRenderToken(session.token)
+    ended += 1
+  }
+  return ended
+}
+
+/** End one session by its token (its page was refused). */
+export function endRenderSession(token: string): void {
+  revokeRenderToken(token)
+}
+
+/** Live sessions (tests and diagnostics). */
+export function renderSessionCount(): number {
+  return sessions.size
+}
+
+/** Test helper. */
+export function clearRenderSessionsForTests(): void {
+  for (const session of [...sessions.values()]) revokeRenderToken(session.token)
+  sessions.clear()
+}

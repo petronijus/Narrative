@@ -15,7 +15,12 @@
  *                                   (routing.ts); unset → straight to the
  *                                   origin (development)
  *   RENDER_IDLE_MS                  Chromium quits after this long without a
- *                                   job (default 60 s)
+ *                                   job (default 60 s); a page kept for a
+ *                                   render session closes after as long
+ *   RENDER_WARM_PAGES               pages kept open between jobs, one per
+ *                                   render session (default 1; 0 opens a
+ *                                   page per job). Each costs memory beside
+ *                                   the 900 MB the container may use
  *   RENDER_CHROME_EXECUTABLE        a Chrome / Chromium binary to use instead
  *                                   of Playwright's headless shell (machines
  *                                   Playwright ships no build for)
@@ -30,6 +35,7 @@ export interface RenderWorkerConfig {
   appOrigin: string
   upstream: string | null
   idleMs: number
+  warmPages: number
   chromeExecutable: string | null
   requireSandbox: boolean
 }
@@ -54,11 +60,16 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): RenderWorkerCo
   if (!Number.isFinite(idleMs) || idleMs < 1_000) {
     throw new Error(`RENDER_IDLE_MS must be at least 1000: ${env['RENDER_IDLE_MS']}`)
   }
+  const warmPages = Number(env['RENDER_WARM_PAGES'] ?? 1)
+  if (!Number.isInteger(warmPages) || warmPages < 0 || warmPages > 4) {
+    throw new Error(`RENDER_WARM_PAGES must be 0–4: ${env['RENDER_WARM_PAGES']}`)
+  }
   return {
     redisUrl,
     appOrigin: originOf(env['RENDER_APP_ORIGIN'] ?? 'http://localhost:5173', 'RENDER_APP_ORIGIN'),
     upstream: env['RENDER_UPSTREAM'] ? originOf(env['RENDER_UPSTREAM'], 'RENDER_UPSTREAM') : null,
     idleMs,
+    warmPages,
     chromeExecutable: env['RENDER_CHROME_EXECUTABLE'] || null,
     requireSandbox: env['RENDER_REQUIRE_SANDBOX'] === '1',
   }

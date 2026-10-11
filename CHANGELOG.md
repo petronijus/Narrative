@@ -8,6 +8,29 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.24 — The agent looks at slides (2026-10-11)
+
+### Added
+
+- **The agent can look at slides.** `query.render` returns a picture the
+  agent sees: a slide (1430×804, what a model reads), a region of one at
+  full resolution (small type, a table, an alignment) or a numbered contact
+  sheet of up to 20 slides — drawn by the real renderer from the live deck,
+  seconds-old edits included. The playbooks now tell the agent to look
+  after a visible change.
+
+### Changed
+
+- **The render worker keeps a deck's page open between requests.** One
+  render session per person and deck (a few minutes): the next look or
+  export switches slides in place instead of loading the app again — about
+  0.7 s per look instead of several seconds. The page waits for the live
+  document's latest state before it draws, so it never shows a stale slide.
+  `deck.exportPng` draws slides the same way the editor's export does
+  (captured from the renderer, not screenshotted).
+
+---
+
 ## 0.10.23 — Export as PNG in the browser on production too (2026-10-11)
 
 ### Fixed

@@ -44,6 +44,7 @@ import { and, eq, gt, isNull, lt, or } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { sessions, type Session } from '../db/schema.js'
 import { closeUserConnections } from '../hocuspocus/connections.js'
+import { endRenderSessions } from '../render/sessions.js'
 import {
   revokeAllAgentCredentialsForUser,
   type RevokedAgentCredentials,
@@ -217,7 +218,9 @@ export async function revokeAllSessionsForUser(
   // connections across all docs. Their cookies are revoked so reconnect will
   // fail at onAuthenticate. (In-process only: a caller in another process,
   // such as the revokeUserAccess script, cannot reach the live sockets.)
+  // Their render sessions' pages go too (render/sessions.ts).
   closeUserConnections(userSub)
+  endRenderSessions({ userId: userSub })
 
   return { sessions: revokedSessions.length, ...agentCredentials }
 }

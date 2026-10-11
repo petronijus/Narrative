@@ -143,13 +143,17 @@ export const bullRenderQueue: RenderQueue = {
       )
     }
     try {
-      return await within(
+      const result = await within(
         // Its own timer a second later only cleans up its listeners; `within`
         // decides, so one clock says when the caller stopped waiting.
         job.waitUntilFinished(events, Math.max(1, data.deadline - Date.now()) + 1_000),
         data.deadline,
         () => new RenderTimeoutError(),
       )
+      // The record holds the render session's token, which outlives the job:
+      // it goes once its result is in, not minutes later.
+      await job.remove().catch(() => undefined)
+      return result
     } catch (err) {
       // Not finished in time: take it out of the queue if it has not started
       // (a running job stops itself at the deadline, apps/render-worker).
@@ -159,6 +163,8 @@ export const bullRenderQueue: RenderQueue = {
         await job.remove().catch(() => undefined)
         throw new RenderTimeoutError()
       }
+      // A failed job's record goes too (its error is in the worker's log).
+      await job.remove().catch(() => undefined)
       throw err
     }
   },

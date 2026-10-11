@@ -57,7 +57,6 @@ export const KNOWN_MISSING: readonly KnownMissing[] = [
     routes: [PUT('/components/:id/thumbnail')],
     note: 'the master editor renders the thumbnail and uploads it; the render worker takes over in A3',
   },
-  { capability: 'query.render', phase: 'A3', source: 'new' },
 
   // --- A4: style packs compiled into Narrative components (plan §7) ----------
   {

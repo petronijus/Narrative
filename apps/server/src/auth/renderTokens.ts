@@ -17,12 +17,15 @@
  *     was authorised for the deck — never by a client;
  *   - names one deck and grants viewer access to it only, for as long as the
  *     person who asked for the render can still read that deck:
- *     `findShareLink` re-checks the requester on every use, so a revoked
- *     share, a removed folder member or a deleted deck ends it at once;
- *   - expires when its job's caller stops waiting, plus a margin
- *     (`RENDER_TOKEN_TTL_MS` unless the job asks for its own) — the page's
- *     live connections are closed then too — and is revoked as soon as the
- *     job ends;
+ *     `findShareLink` re-checks the requester on every use (every new
+ *     connection and every media or font read); a connection already open
+ *     ends when the token does, so whatever takes a person's access away
+ *     also ends their render sessions (render/sessions.ts,
+ *     `endRenderSessions`), and deleting a deck closes all its connections;
+ *   - expires at the end of its render session — a few minutes per person
+ *     and deck, extended by each job (`extendRenderToken`) so the worker can
+ *     keep the page it opened for the next job — or when revoked; the page's
+ *     live connections are closed then too;
  *   - lives in this process's memory only (its SHA-256, never the token):
  *     the API and the sync server run in one process, which is the only one
  *     that mints and checks them; a restart invalidates them (the render
@@ -45,6 +48,8 @@ interface RenderGrant {
   requestedBy: string
   expiresAt: number
   expiryTimer: ReturnType<typeof setTimeout> | null
+  /** Called once when the token ends (expiry or revocation). */
+  onEnd: (() => void) | null
 }
 
 export interface RenderTokenGrant {
@@ -58,8 +63,10 @@ const hashToken = (token: string): string => createHash('sha256').update(token).
 
 function drop(hash: string): void {
   const grant = grants.get(hash)
-  if (grant?.expiryTimer) clearTimeout(grant.expiryTimer)
+  if (!grant) return
+  if (grant.expiryTimer) clearTimeout(grant.expiryTimer)
   grants.delete(hash)
+  grant.onEnd?.()
 }
 
 /**
@@ -81,18 +88,45 @@ export function mintRenderToken(
   requestedBy: string,
   now: number = Date.now(),
   ttlMs: number = RENDER_TOKEN_TTL_MS,
+  onEnd?: () => void,
 ): string {
   const token = RENDER_TOKEN_PREFIX + randomBytes(SECRET_BYTES).toString('base64url')
   const hash = hashToken(token)
+  grants.set(hash, {
+    deckId,
+    requestedBy,
+    expiresAt: now + ttlMs,
+    expiryTimer: null,
+    onEnd: onEnd ?? null,
+  })
+  armExpiry(token, hash, ttlMs)
+  return token
+}
+
+/** (Re)start the timer that ends the token in `ttlMs`. */
+function armExpiry(token: string, hash: string, ttlMs: number): void {
+  const grant = grants.get(hash)
+  if (!grant) return
+  if (grant.expiryTimer) clearTimeout(grant.expiryTimer)
   // At expiry the page's live connections go too: authentication happens
   // once, when a connection opens, so the TTL alone would only stop new ones.
-  const expiryTimer = setTimeout(() => {
+  grant.expiryTimer = setTimeout(() => {
     drop(hash)
     closeShareTokenConnections(token)
   }, ttlMs)
-  expiryTimer.unref()
-  grants.set(hash, { deckId, requestedBy, expiresAt: now + ttlMs, expiryTimer })
-  return token
+  grant.expiryTimer.unref()
+}
+
+/**
+ * Move a live token's expiry to `ttlMs` from now (its render session goes
+ * on). False when it has already expired or was revoked: mint another.
+ */
+export function extendRenderToken(token: string, ttlMs: number, now: number = Date.now()): boolean {
+  if (resolveRenderToken(token, now) === null) return false
+  const hash = hashToken(token)
+  grants.get(hash)!.expiresAt = now + ttlMs
+  armExpiry(token, hash, ttlMs)
+  return true
 }
 
 /** The grant of a valid, unexpired token; null for anything else. */

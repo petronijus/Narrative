@@ -12,6 +12,11 @@
  * per-field issues and can correct its call. `structuredContent.error`
  * carries the same fields for clients that read structure.
  *
+ * Images: an output with an `image` (`{ mimeType: 'image/…', base64 }`,
+ * `query.render`) gets it as MCP image content, which the model looks at;
+ * the text and structured copies say where it went instead of carrying the
+ * base64 (hundreds of thousands of characters the model would read as text).
+ *
  * No `outputSchema` is declared on the tools: two command outputs are
  * unions (not a single object), and a client validating structured content
  * against an imprecise schema would turn a successful write into an error.
@@ -70,14 +75,34 @@ function asStructured(value: unknown): Record<string, unknown> {
     : { result: value }
 }
 
+/** An output's `image`, if it carries one MCP can show. */
+function imageOf(value: unknown): { mimeType: string; base64: string } | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  const image = (value as Record<string, unknown>)['image']
+  if (image === null || typeof image !== 'object') return null
+  const { mimeType, base64 } = image as Record<string, unknown>
+  if (typeof mimeType !== 'string' || !mimeType.startsWith('image/')) return null
+  if (typeof base64 !== 'string') return null
+  return { mimeType, base64 }
+}
+
 export function hostResultToToolResult(
   outcome: HostResult,
   opts: { write: boolean },
 ): CallToolResult {
   if (!outcome.ok) return errorResult(outcome.error, { runId: outcome.runId })
+  const image = imageOf(outcome.result)
+  const result =
+    image === null
+      ? outcome.result
+      : {
+          ...(outcome.result as Record<string, unknown>),
+          image: { mimeType: image.mimeType, attached: 'as the image content of this result' },
+        }
   const content: CallToolResult['content'] = [
-    { type: 'text', text: JSON.stringify(outcome.result ?? null) },
+    { type: 'text', text: JSON.stringify(result ?? null) },
   ]
+  if (image !== null) content.push({ type: 'image', data: image.base64, mimeType: image.mimeType })
   if (opts.write && outcome.runId !== null) {
     content.push({
       type: 'text',
@@ -87,5 +112,5 @@ export function hostResultToToolResult(
         `. ${toolNameForCommand('agent.revert')} undoes the run or its last steps.`,
     })
   }
-  return { content, structuredContent: asStructured(outcome.result) }
+  return { content, structuredContent: asStructured(result) }
 }

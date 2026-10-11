@@ -296,9 +296,9 @@ function collectRunFontFamilies(data: TextObject): string[] {
  * paints in the fallback face; a quote or `</style>` breaks nothing.
  */
 export function htmlTextFontFamilies(data: TextObject): string[] {
-  const names = fontFamilyNames(
-    typeof data.fontFamily === 'string' ? data.fontFamily : '',
-  ).filter(isEmbeddableFamilyName)
+  const names = fontFamilyNames(typeof data.fontFamily === 'string' ? data.fontFamily : '').filter(
+    isEmbeddableFamilyName,
+  )
   if (names.length === 0) names.push('Arial')
   for (const run of collectRunFontFamilies(data)) {
     for (const name of fontFamilyNames(sanitizeFontFamily(run) ?? '')) {

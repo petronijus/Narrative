@@ -371,5 +371,56 @@ slide came out in the wrong fonts, and took 11.6 s.
 - The worker's 11.6 s per job is the app loading in a fresh page each time:
   A3.4 keeps a warm page per deck.
 
-Next: A3.4 `query.render` (the agent sees a slide), with a warm page per
-deck in the worker.
+**A3.4 done** (2026-10-11, released in 0.10.24):
+
+- `query.render` (viewer, server): `{slide}` → the slide at 1430×804
+  (`LOOK_MAX_EDGE` 1568 and `LOOK_MAX_PIXELS` 1.15 MP: what a model reads
+  unscaled), `{slide, region}` → that part at full resolution, `{slides}`
+  → a numbered contact sheet of ≤ 20 slides in the grid with the largest
+  tiles the limits allow (`sheetLayout`). Composed in the render page with
+  a 2D canvas (`pages/renderLook.ts`), from slides captured by the renderer
+  (`captureSlideCanvas`). The MCP result carries the picture as image
+  content; its base64 stays out of the JSON text and structured content
+  (`mcp/results.ts`). Playbooks `basics` and `edit` tell the agent to look
+  after a visible change (the full "look after every change" pass is A3.7).
+- Render sessions: one render token per person and deck, extended per job
+  (`extendRenderToken`), alive `SESSION_IDLE_MS` (2 min) after the last job
+  and at most `SESSION_MAX_MS` (15 min); a 403 ends it. The worker keeps the
+  page it opened with the token (`warmPages.ts`, `RENDER_WARM_PAGES`
+  default 1, idle `RENDER_IDLE_MS`), closed after any failed job. Every job
+  carries the live deck's state vector and the page draws only once its
+  copy covers it — a warm page cannot show a stale slide (e2e: an edit and a
+  new slide right before a look).
+- The export goes through the same page hook (`__narrativeRenderSlidePng`:
+  show, settle, capture from Pixi) instead of an element screenshot.
+- Measured in dev: a cold look (browser start included) 1.6 s, then 0.7 s
+  per look, a region 0.76 s, a 4-slide sheet 2.0 s.
+- Tests: worker unit (warm pages: session and deck only, LRU, idle, closed
+  contexts, max 0); server unit (sessions reused per person and deck, a new
+  one past the maximum, ended by a 403; looks: specs, weights, the picture;
+  token extension; MCP image content); web unit (region clamping, fit and
+  sheet layout); e2e `query-render.spec.ts` (slide, region, sheet with
+  labels, an edit and a new slide seen on a kept page, a missing slide).
+
+Reviewed the same day (code and security, read-only agents), fixed before
+the release: a refused deck ended the page job at once (it waited 15 s for a
+state vector a refused document never covers, then said 503, not 403); the
+index and `failedLoads` of a slide the kept page already showed came from
+its old status (now: the document's index after the sync, the loads failed
+since the slide was shown); faults of the page's own (canvas, encoder) are
+browser faults, not `not-ready`; a sheet keeps tiles, not 20 captures;
+whatever takes a person's access away ends their render sessions
+(`endRenderSessions` in sharing, folder membership and the account kill
+switch) — a kept page's open connection outlived a revocation otherwise; a
+job's record (with the session token) leaves Redis once its result is in;
+the server checks the stored picture is a PNG of a sane size; sessions are
+forgotten when their token ends and never outlive `SESSION_MAX_MS`; a kept
+page's context has one close listener. Tests added: `render.browser.test.ts`
+(the session page reused, closed after a failure, never shared — real
+Chromium), `render/sessions.test.ts`, the stored-PNG check.
+
+Verified before the release: `just check`; the full e2e (202 passed, 15
+opt-in skipped); the full eval live (53/53, $7.32), `look-at-slide` and
+`export-png-slide` again after the last description change.
+
+Next: A3.5 server thumbnails.

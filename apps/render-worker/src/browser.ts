@@ -47,7 +47,9 @@ const ARGS = [
   '--use-gl=angle',
   '--use-angle=swiftshader',
   '--enable-unsafe-swiftshader',
-  // One renderer process: the worker renders one page at a time.
+  // As few renderer processes as Chromium allows. Each browser context still
+  // gets its own — a page kept for a render session and the page of another
+  // session's job are two — so RENDER_WARM_PAGES counts in memory.
   '--renderer-process-limit=1',
   // Docker's /dev/shm is 64 MB by default; Chromium falls back to /tmp.
   '--disable-dev-shm-usage',

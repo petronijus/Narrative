@@ -23,11 +23,18 @@
  *     read, the inputs never came within `PAGE_TIMEOUT_MS` (it lists which),
  *     or the slide did not settle within `SETTLE_TIMEOUT_MS`.
  *
- * Two hooks drive it from outside: `__narrativeRenderShow` switches the slide
- * in place (the render worker goes through a deck that way), and
- * `__narrativeRenderCapture` hands back the shown slide as a PNG — the
- * editor's "Export as PNG" keeps this page in a hidden frame
- * (state/browserSlideExport.ts) and asks it, instead of the server.
+ * Hooks drive it from outside:
+ *   - `__narrativeRenderShow` switches the slide in place;
+ *   - `__narrativeRenderCapture` hands back the shown slide as a PNG — the
+ *     editor's "Export as PNG" keeps this page in a hidden frame
+ *     (state/browserSlideExport.ts) and asks it, instead of the server;
+ *   - `__narrativeRenderSlidePng` and `__narrativeRenderLook` are the render
+ *     worker's jobs (apps/render-worker/src/render.ts): a slide's PNG for the
+ *     export, and a picture for an agent (`query.render`: a slide, a region
+ *     or a numbered sheet, composed in pages/renderLook.ts). The worker keeps
+ *     this page open between the jobs of a render session.
+ * Each first waits until this page's copy of the deck holds the asking
+ * side's state vector, so a picture shows edits made a moment before.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -40,7 +47,9 @@ import { getDefaultRenderScheduler } from '../renderer/RenderScheduler.js'
 import { getRenderer } from '../renderer/objectRenderers/index.js'
 import { settleScene, type SettleResult } from '../renderer/settleScene.js'
 import { failedRenderFonts, failedRenderWork } from '../renderer/renderWork.js'
-import { captureSlidePng } from '../renderer/captureSlide.js'
+import { canvasToPng, captureSlideCanvas } from '../renderer/captureSlide.js'
+import type { RenderLookSpec } from '@narrative/shared'
+import { blobToBase64, composeLook, shrinkForSheet, type LookFrame } from './renderLook.js'
 import { decodeBase64, untilCoversStateVector } from '../lib/stateVector.js'
 import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
@@ -103,6 +112,52 @@ declare global {
      * settles the slide again — the picture shows what the editor shows.
      */
     __narrativeRenderCapture?: (opts?: { stateVector?: string }) => Promise<Blob>
+    /**
+     * The render worker's export: once the page holds the edits
+     * `stateVector` names, show `slideId`, settle it and return its PNG
+     * (1920×1080, base64) — or the reason it cannot.
+     */
+    __narrativeRenderSlidePng?: (
+      slideId: string,
+      opts: { stateVector: string },
+    ) => Promise<
+      PageJobOutcome<{
+        base64: string
+        slideIndex: number
+        failedLoads: number
+        failedFonts: string[]
+      }>
+    >
+    /**
+     * The render worker's look for an agent (`query.render`): the slides
+     * shown in turn, captured and composed into one PNG (pages/renderLook.ts).
+     */
+    __narrativeRenderLook?: (
+      spec: RenderLookSpec,
+      opts: { stateVector: string },
+    ) => Promise<
+      PageJobOutcome<{
+        base64: string
+        width: number
+        height: number
+        slides: Array<{ slideId: string; index: number; failedLoads: number }>
+        failedFonts: string[]
+      }>
+    >
+  }
+}
+
+/** A page job's outcome for the render worker (a reason it can map, never a thrown error). */
+export type PageJobOutcome<T> =
+  | { ok: true; value: T }
+  | { ok: false; reason: RenderErrorReason; detail: string }
+
+class PageJobError extends Error {
+  constructor(
+    readonly reason: RenderErrorReason,
+    detail: string,
+  ) {
+    super(detail)
   }
 }
 
@@ -185,7 +240,14 @@ export function DeckRender() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refused, synced, deckCtx, slideList, target, slideParam, folderFonts, deckFonts.error])
 
-  const reported = outcome !== null && outcome.for === slideParam ? outcome.status : failure
+  // A refusal ends whatever the page showed before (its token ended while it
+  // was kept open between jobs).
+  const reported =
+    refused || outcome === null || outcome.for !== slideParam ? failure : outcome.status
+  const refusedRef = useRef(refused)
+  useEffect(() => {
+    refusedRef.current = refused
+  }, [refused])
   useEffect(() => {
     publish(reported ?? { status: 'loading' })
   }, [reported])
@@ -285,17 +347,107 @@ export function DeckRender() {
     return () => stop.abort()
   }, [inputsReady, canvas, targetSlideId, targetIndex, slideParam])
 
-  // A picture of the shown slide for the editor (see the header).
+  // Pictures of slides for the editor and the render worker (see the header).
   useEffect(() => {
     if (canvas === null) return
-    window.__narrativeRenderCapture = async (opts) => {
-      if (opts?.stateVector !== undefined) {
-        await untilCoversStateVector(
-          deckCtx.doc,
-          decodeBase64(opts.stateVector),
-          CAPTURE_SYNC_TIMEOUT_MS,
-        )
+    const sceneGraph = canvas.sceneGraph
+
+    /**
+     * Until this page's copy of the deck holds the edits `stateVector` names
+     * — or the deck is refused, which no wait would end (an empty, refused
+     * document never covers anything).
+     */
+    const syncTo = async (stateVector: string | undefined): Promise<void> => {
+      if (stateVector === undefined) return
+      let waiting = true
+      const refusal = (async () => {
+        while (waiting) {
+          if (refusedRef.current) {
+            throw new PageJobError('access-refused', 'the server refused the deck')
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+      })()
+      try {
+        await Promise.race([
+          untilCoversStateVector(
+            deckCtx.doc,
+            decodeBase64(stateVector),
+            CAPTURE_SYNC_TIMEOUT_MS,
+          ).catch((err: unknown) => {
+            throw new PageJobError(
+              'not-ready',
+              err instanceof Error ? err.message : 'the latest edits did not arrive',
+            )
+          }),
+          refusal,
+        ])
+      } finally {
+        waiting = false
+        void refusal.catch(() => undefined)
       }
+    }
+    /**
+     * Settle the shown slide again — edits since `ready` (the ones just
+     * waited for among them) may have started loads and rasters — and
+     * capture it, with the loads that failed for it since it was shown.
+     */
+    const settleAndCapture = async (): Promise<{
+      canvas: HTMLCanvasElement | OffscreenCanvas
+      failedLoads: number
+    }> => {
+      const scheduler = getDefaultRenderScheduler()
+      if (scheduler === null) throw new Error('the canvas is not ready')
+      const settle = await settleScene(sceneGraph, {
+        expectedIds: () =>
+          objectsRef.current.filter((o) => getRenderer(o.type) !== undefined).map((o) => o.id),
+        renderNow: () => scheduler.renderNow(),
+        timeoutMs: SETTLE_TIMEOUT_MS,
+      })
+      if (!settle.settled) throw new PageJobError('not-settled', 'the slide did not finish drawing')
+      return {
+        canvas: captureSlideCanvas(sceneGraph),
+        failedLoads: settle.failedLoads - (failureBaseline.current ?? 0),
+      }
+    }
+    /**
+     * Show `slideId` and wait until the page calls it ready; a refusal throws
+     * its reason. Its position comes from the document now (a slide inserted
+     * before it since the page last showed it moved it).
+     */
+    const showAndWait = async (slideId: string): Promise<{ index: number }> => {
+      window.__narrativeRenderShow?.(slideId)
+      for (;;) {
+        const status = window.__narrativeRender
+        if (status?.status === 'ready' && status.slideId === slideId) break
+        if (status?.status === 'error') {
+          const waiting =
+            status.waitingFor !== undefined ? ` (waiting for ${status.waitingFor.join(', ')})` : ''
+          throw new PageJobError(status.reason, `slide ${slideId}${waiting}`)
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      const index = listSlides(deckCtx).findIndex((s) => s.id === slideId)
+      if (index < 0) throw new PageJobError('slide-not-found', `slide ${slideId}`)
+      return { index }
+    }
+    /**
+     * A page job's outcome: its value, or the reason the page could not do it
+     * (gone, refused, never ready). Anything else — the canvas, an encoder —
+     * is the renderer's fault and rejects, so the worker treats it as one.
+     */
+    const outcome = async <T,>(job: () => Promise<T>): Promise<PageJobOutcome<T>> => {
+      try {
+        return { ok: true, value: await job() }
+      } catch (err) {
+        if (err instanceof PageJobError)
+          return { ok: false, reason: err.reason, detail: err.message }
+        throw err
+      }
+    }
+
+    window.__narrativeRenderCapture = async (opts) => {
+      await syncTo(opts?.stateVector)
       const status = window.__narrativeRender
       if (status?.status !== 'ready') {
         throw new Error(
@@ -304,21 +456,51 @@ export function DeckRender() {
             : 'the slide is not ready yet',
         )
       }
-      const scheduler = getDefaultRenderScheduler()
-      if (scheduler === null) throw new Error('the canvas is not ready')
-      // Edits since `ready` (the ones just waited for among them) may have
-      // started loads and rasters: wait for those as well.
-      const settle = await settleScene(canvas.sceneGraph, {
-        expectedIds: () =>
-          objectsRef.current.filter((o) => getRenderer(o.type) !== undefined).map((o) => o.id),
-        renderNow: () => scheduler.renderNow(),
-        timeoutMs: SETTLE_TIMEOUT_MS,
-      })
-      if (!settle.settled) throw new Error('the slide did not finish drawing')
-      return captureSlidePng(canvas.sceneGraph)
+      return canvasToPng((await settleAndCapture()).canvas)
     }
+    window.__narrativeRenderSlidePng = (slideId, opts) =>
+      outcome(async () => {
+        await syncTo(opts.stateVector)
+        const { index } = await showAndWait(slideId)
+        const shot = await settleAndCapture()
+        return {
+          base64: await blobToBase64(await canvasToPng(shot.canvas)),
+          slideIndex: index,
+          failedLoads: shot.failedLoads,
+          failedFonts: failedRenderFonts(),
+        }
+      })
+    window.__narrativeRenderLook = (spec, opts) =>
+      outcome(async () => {
+        await syncTo(opts.stateVector)
+        const slideIds = spec.mode === 'sheet' ? spec.slideIds : [spec.slideId]
+        const frames: LookFrame[] = []
+        const slides: Array<{ slideId: string; index: number; failedLoads: number }> = []
+        for (const slideId of slideIds) {
+          const { index } = await showAndWait(slideId)
+          const shot = await settleAndCapture()
+          // A sheet keeps only its tile of each slide, not 20 full captures.
+          const canvas =
+            spec.mode === 'sheet' ? shrinkForSheet(shot.canvas, slideIds.length) : shot.canvas
+          frames.push({ canvas, index })
+          slides.push({ slideId, index, failedLoads: shot.failedLoads })
+        }
+        const look = await composeLook(
+          spec.mode === 'region' ? { mode: 'region', region: spec.region } : { mode: spec.mode },
+          frames,
+        )
+        return {
+          base64: await blobToBase64(look.png),
+          width: look.width,
+          height: look.height,
+          slides,
+          failedFonts: failedRenderFonts(),
+        }
+      })
     return () => {
       delete window.__narrativeRenderCapture
+      delete window.__narrativeRenderSlidePng
+      delete window.__narrativeRenderLook
     }
   }, [canvas, deckCtx])
 

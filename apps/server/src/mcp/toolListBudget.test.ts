@@ -72,8 +72,11 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * A3.3 (2026-10-10): 181,000 → 182,500 for deck.exportPng ≈ 1.0 KB, the first
  * render-worker tool (description trimmed once before measuring): 181,807
  * bytes in url mode, 136 tools.
+ * A3.4 (2026-10-11): 182,500 → 184,500 for query.render ≈ 1.6 KB (the agent
+ * looks at slides) and `failedFonts` on deck.exportPng: 183,680 bytes in url
+ * mode, 137 tools.
  */
-export const TOOL_LIST_BUDGET_BYTES = 182_500
+export const TOOL_LIST_BUDGET_BYTES = 184_500
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

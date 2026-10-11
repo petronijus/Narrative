@@ -39,7 +39,6 @@ The user asked: {{request}}
      occurrence;
    - copy a slide → `slide.duplicate`; reorder → `slide.move`;
    - put another deck's slides after slide N → `deck.insertFrom`.
-4. **Check the result** (`query.slide`, and a screenshot once `query.render`
-   (planned, not available yet) exists) and fix what does not match the
-   request.
+4. **Check the result**: look at the changed slide with `query.render` (and
+   `query.slide` for exact values), and fix what does not match the request.
 5. **Report** in one or two sentences what changed.
