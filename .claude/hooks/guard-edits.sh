@@ -68,7 +68,7 @@ while IFS=$'\t' read -r kind path; do
   esac
   # Leading slash so top-level directories match too.
   case "/$rel" in
-    */dist/* | */build/* | */node_modules/* | */test-results/* | */playwright-report/*)
+    */dist/* | */build/* | */node_modules/* | */test-results/* | */playwright-report/* | /apps/desktop/release/*)
       decide deny "$rel is generated; change its source instead." ;;
     /packages/commands/capabilities.json | /docs/capabilities.md)
       decide deny "$rel is generated from the command registry; run \`just capabilities\`." ;;

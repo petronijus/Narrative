@@ -129,5 +129,14 @@ elif pre_commit="$(git rev-parse --path-format=absolute --git-path hooks/pre-com
 else
   warn "git hooks not installed" "just setup"
 fi
+# The desktop shell's development Electron (apps/desktop): Ubuntu's AppArmor
+# keeps it from its sandbox until this checkout has a profile.
+if [[ -x node_modules/electron/dist/electron ]]; then
+  if tools/dev/desktop-apparmor.sh --check; then
+    ok "desktop Electron can use its sandbox"
+  else
+    warn "desktop Electron has no AppArmor profile (Ubuntu restricts user namespaces)" "just desktop-apparmor"
+  fi
+fi
 
 exit $fail

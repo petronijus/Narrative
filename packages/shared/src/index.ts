@@ -132,4 +132,20 @@ export {
   LOOK_MAX_PIXELS,
 } from './render-queue.js'
 
+export {
+  DESKTOP_BRIDGE_VERSION,
+  DESKTOP_IPC,
+  DESKTOP_MENU_LABEL_MAX,
+  DESKTOP_OPEN_FILE_CHUNK,
+  type DesktopIpcChannel,
+  type DesktopRole,
+  type DesktopNativeEdit,
+  type DesktopInfo,
+  type DesktopMenuItem,
+  type DesktopMenuEntry,
+  type DesktopMenuSection,
+  type DesktopOpenedFile,
+  type NarrativeDesktopBridge,
+} from './desktop.js'
+
 export * from './schema/index.js'

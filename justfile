@@ -149,6 +149,19 @@ dev: _services
 dev-lite: _services
     pnpm dev:no-worker
 
+# The desktop shell (apps/desktop, ADR 0014) against a server: `just desktop` (the dev stack),
+# `just desktop prod`, or any origin (`just desktop https://narrative.example.com`)
+desktop server="dev":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pnpm --filter @narrative/desktop run build
+    node -e 'require("electron")' 2>/dev/null || pnpm --filter @narrative/desktop run electron:install
+    exec node_modules/.bin/electron apps/desktop "--server={{ server }}"
+
+# Ubuntu 26.04 only: the AppArmor profile that lets this checkout's Electron use its sandbox (asks for sudo)
+desktop-apparmor:
+    tools/dev/desktop-apparmor.sh
+
 # Start the docker services the dev stack needs (Postgres, MinIO + its bucket, imgproxy, Redis)
 services:
     #!/usr/bin/env bash

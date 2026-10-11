@@ -43,6 +43,9 @@ Thumbs.db
 # Vite
 apps/web/.vite/
 
+# Desktop app packages (electron-builder output, apps/desktop)
+apps/desktop/release/
+
 # Playwright E2E artifacts (never commit)
 apps/web/test-results/
 apps/web/playwright-report/

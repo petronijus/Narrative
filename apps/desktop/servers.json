@@ -1,0 +1,7 @@
+{
+  "production": "https://narrative.bastla.com",
+  "development": "http://localhost:5173",
+  "developmentApi": "http://localhost:3001",
+  "updateFeed": "https://narrative.bastla.com/desktop/",
+  "updatePublicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB+4lmStYbkNfHVu5/QIukbPTKXjOwoUn4h90PPsxZd5"
+}

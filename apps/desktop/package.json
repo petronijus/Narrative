@@ -1,0 +1,25 @@
+{
+  "name": "@narrative/desktop",
+  "version": "0.10.24",
+  "private": true,
+  "type": "module",
+  "description": "Narrative desktop app: the Electron shell that loads the editor from a Narrative server (ADR 0014)",
+  "main": "dist/main.cjs",
+  "desktopName": "narrative.desktop",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src scripts",
+    "test": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts",
+    "electron:install": "install-electron"
+  },
+  "devDependencies": {
+    "@narrative/shared": "workspace:*",
+    "@types/node": "^24.19.1",
+    "electron": "44.7.0",
+    "esbuild": "0.27.7",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7",
+    "zod": "^4.6.5"
+  }
+}

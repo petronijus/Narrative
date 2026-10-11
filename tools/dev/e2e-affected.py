@@ -309,6 +309,21 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/services/index.ts", AGENT + ACCESS),
     ("apps/video-worker/src/*", MEDIA),
     ("apps/render-worker/*", ["render-export", "render-page", "query-render"]),
+    # The desktop shell (ADR 0014). Its Electron specs join with the shell's
+    # Playwright project (D0 step 9); the web e2e suite does not load it.
+    ("apps/desktop/*", []),
+    # The bridge contract: types and constants the shell and the web app's
+    # desktop module share; the editor does not import it otherwise.
+    ("packages/shared/src/desktop.ts", []),
+    # Browser and desktop sign-in; the MCP OAuth pages share the page headers
+    # and the strict form parser.
+    ("apps/server/src/routes/auth.ts", ACCESS),
+    ("apps/server/src/routes/desktopAuth.ts", ACCESS),
+    ("apps/server/src/http/htmlHeaders.ts", AGENT),
+    ("apps/server/src/http/formBody.ts", AGENT),
+    # Error reporting runs only with SENTRY_DSN, which no e2e run sets; its
+    # scrubbing is unit-tested.
+    ("apps/server/src/observability/*", []),
     ("apps/server/src/services/render.ts", ["render-export", "query-render"]),
     ("apps/server/src/render/*", ["render-export", "query-render"]),
     ("apps/server/src/mcp/results.ts", ["query-render"]),

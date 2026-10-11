@@ -151,6 +151,8 @@ export interface NarrativeDesktopMainBridge extends DesktopBridgeBase {
 export type NarrativeDesktopBridge = NarrativeDesktopMainBridge | NarrativeDesktopAudienceBridge
 ```
 
+**As built (steps 5–6, revision 3):** the presenting part of this contract is gone — `present`, `presentEnd`, `presentationEnded`, the `audience` role and its preload. Choosing the display is a web-app feature (§3.10), so the audience window is a popup the page opens and the shell places; it needs no bridge. `DesktopRole` is `'main'` only, and the settings file has no `presentDisplay`. `window-management` joins the allowed permissions (§3.3).
+
 - The server versions the editor and the install versions the shell, so the web app feature-detects with `bridgeVersion`. A later bridge only adds methods and raises the version.
 - The global declaration lives in `apps/web/src/desktop/bridge.ts`: `declare global { interface Window { narrativeDesktop?: NarrativeDesktopBridge } }`. <!-- docs-check: ignore -->
 

@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2024",
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true,
+    "rootDir": "../..",
+    "moduleResolution": "bundler",
+    "paths": {
+      "@narrative/shared": ["../../packages/shared/src/index.ts"]
+    }
+  },
+  "include": ["src", "scripts", "vitest.config.ts", "servers.json"],
+  "exclude": ["node_modules", "dist", "release"]
+}
