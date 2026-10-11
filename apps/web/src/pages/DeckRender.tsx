@@ -23,6 +23,14 @@
  *     read, the inputs never came within `PAGE_TIMEOUT_MS` (it lists which),
  *     or the slide did not settle within `SETTLE_TIMEOUT_MS`.
  *
+ * `?paint=off` draws nothing on screen (renderer/Canvas.tsx `onScreen`):
+ * the hooks' captures are rendered from the scene into a texture of their
+ * own, and every on-screen frame — the settle loop draws several — would
+ * be paid for again before each capture under software WebGL (on the render
+ * worker ~0.7 s of CPU per frame on two cores; a photo-heavy slide spent
+ * 9–12 s in its capture on production). The worker and the editor's hidden
+ * export frame open it so; a person opening the page sees the slide.
+ *
  * Hooks drive it from outside:
  *   - `__narrativeRenderShow` switches the slide in place;
  *   - `__narrativeRenderCapture` hands back the shown slide as a PNG — the
@@ -178,6 +186,7 @@ export function DeckRender() {
   const { onCanvasReady } = useOutletContext<DeckShellContextValue>()
   const [params, setParams] = useSearchParams()
   const slideParam = params.get('slide')
+  const onScreen = params.get('paint') !== 'off'
 
   const { deckCtx, synced, refused } = useSlideDoc()
   // Re-renders when the slide list changes; the target is read from the doc
@@ -541,7 +550,11 @@ export function DeckRender() {
       className="pointer-events-none fixed left-0 top-0 overflow-hidden"
       style={{ width: SLIDE_WIDTH, height: SLIDE_HEIGHT }}
     >
-      <Canvas onReady={onCanvasReady} artboardSize={{ width: SLIDE_WIDTH, height: SLIDE_HEIGHT }} />
+      <Canvas
+        onReady={onCanvasReady}
+        artboardSize={{ width: SLIDE_WIDTH, height: SLIDE_HEIGHT }}
+        onScreen={onScreen}
+      />
     </div>
   )
 }

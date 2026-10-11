@@ -8,6 +8,22 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.28 — The render worker draws only what it captures (2026-10-11)
+
+### Fixed
+
+- **Looks and PNG exports of photo-heavy slides are several times faster**,
+  and contact sheets of such decks finish within their deadline. The
+  render page drew every frame on screen too — under the worker's software
+  WebGL each 1920×1080 frame cost ~0.7 s of CPU on its two cores, and a
+  capture waited for all of them (production timings: 9–12 s per slide in
+  the capture, after 0.8 s of loads). With `?paint=off` it draws nothing on
+  screen and the capture renders the slide once, the same picture to the
+  pixel; a slide went from 7.4 s to 1.1 s on two cores. The render worker
+  and the editor's in-browser export open it so.
+
+---
+
 ## 0.10.27 — Render timings break down the settle (2026-10-11)
 
 ### Changed

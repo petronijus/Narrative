@@ -106,6 +106,9 @@ export function renderPageUrl(
 ): string {
   const url = new URL(`/deck/${encodeURIComponent(data.deckId)}/render`, appOrigin)
   url.searchParams.set('slide', firstSlideId)
+  // Nothing is looked at on screen: the jobs capture from the scene, and
+  // on-screen frames would cost as much CPU as the captures (DeckRender.tsx).
+  url.searchParams.set('paint', 'off')
   url.searchParams.set('share_token', data.token)
   return url.toString()
 }

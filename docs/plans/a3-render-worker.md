@@ -436,4 +436,21 @@ the worker restarts Chromium), and the limit is 1200 MB (Petr). Measured
 locally first: neither a small GPU budget nor the production image alone
 reproduced it — only the production deck on the 2.9 GB VM did.
 
+**Speed, 0.10.26–0.10.28.** With the memory fixed, a sheet of the Proseware
+deck still ran past its deadline: a slide took 9–15 s. The worker now logs
+each job's timings (pages/renderTimings.ts, with settleScene's phases), and
+production said: loads 0.8 s, settle 10 ms, capture 9.7–12 s. Locally, the
+same slide pinned to two cores (`taskset -c 2,3`, the container's
+`cpus: 2`) reproduced it: under SwiftShader every frame of a 1920×1080
+slide costs ~0.7 s of CPU (a full-bleed picture behind a stencil mask
+~0.45 s of it), `gl.finish()` does not wait, so the first pixel read pays
+for every frame queued since the last one — the settle loop's on-screen
+frames included, which nobody looks at. 0.10.28: the render page with
+`?paint=off` keeps its canvas 1×1 (Canvas `onScreen`); the worker and the
+editor's export frame open it so. The capture renders the scene into its
+own texture and is the same picture to the pixel (render-page.spec); a slide
+went from 7.4 s to 1.1 s on two cores. A sheet draws preview-size pictures
+(0.10.26). What remains is the one capture frame — the stencil-masked
+picture is its biggest part, if it is ever worth a cheaper clip.
+
 Next: A3.5 server thumbnails.

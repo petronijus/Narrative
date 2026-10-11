@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { maskTokens, refuseLate, RenderJobError, renderPageUrl } from './render.js'
 
 describe('renderPageUrl', () => {
-  it('opens the deck render page on the first slide with the token as share_token', () => {
+  it('opens the deck render page on the first slide, drawing nothing on screen, with the token as share_token', () => {
     const url = renderPageUrl(
       'https://narrative.example.com',
       {
@@ -15,6 +15,7 @@ describe('renderPageUrl', () => {
     expect(parsed.origin).toBe('https://narrative.example.com')
     expect(parsed.pathname).toBe('/deck/d%201/render')
     expect(parsed.searchParams.get('slide')).toBe('s1')
+    expect(parsed.searchParams.get('paint')).toBe('off')
     expect(parsed.searchParams.get('share_token')).toBe(`nrr_${'a'.repeat(43)}`)
   })
 })
