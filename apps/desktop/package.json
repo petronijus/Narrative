@@ -1,6 +1,6 @@
 {
   "name": "@narrative/desktop",
-  "version": "0.10.24",
+  "version": "0.10.25",
   "private": true,
   "type": "module",
   "description": "Narrative desktop app: the Electron shell that loads the editor from a Narrative server (ADR 0014)",
