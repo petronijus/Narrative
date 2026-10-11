@@ -14,12 +14,14 @@
  *   nrr_  render token                   (auth/renderTokens.ts; a share link
  *         for the render worker, so the WebSocket admits it only as
  *         `share_token`, never as a bearer)
+ *   ndt_  desktop sign-in ticket         (auth/desktopTickets.ts; one-time,
+ *         60 s, redeemed only with its PKCE verifier)
  *
  * A NEW credential format must be added here (and its test in
  * credentialPatterns.test.ts), or it leaks through all of them.
  */
 
-export const CREDENTIAL_PREFIXES = ['nrt', 'nmo', 'nmr', 'nmc', 'nms', 'nus', 'nrr'] as const
+export const CREDENTIAL_PREFIXES = ['nrt', 'nmo', 'nmr', 'nmc', 'nms', 'nus', 'nrr', 'ndt'] as const
 
 /** Any Narrative credential anywhere in a string; group 1 is its prefix (without `_`). */
 export function credentialPattern(): RegExp {
