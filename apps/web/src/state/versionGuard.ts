@@ -120,7 +120,10 @@ export async function checkForNewBuild(signal?: AbortSignal): Promise<string | n
 /**
  * Install the guard: one check at startup, and one whenever the tab comes
  * back to the foreground (a long-lived tab is exactly where a deploy is
- * missed). Throttled so tab-switching can't hammer the endpoint.
+ * missed) or its window gets the focus again — the desktop app's window is
+ * rarely `document.hidden` when it merely loses focus (ADR 0014), so
+ * visibility alone would leave it on an old build for days. Throttled so
+ * switching can't hammer the endpoint.
  *
  * Returns a teardown function.
  */
@@ -142,8 +145,10 @@ export function installVersionGuard(minIntervalMs = 60_000): () => void {
 
   run()
   document.addEventListener('visibilitychange', onVisible)
+  window.addEventListener('focus', run)
   return () => {
     controller.abort()
     document.removeEventListener('visibilitychange', onVisible)
+    window.removeEventListener('focus', run)
   }
 }

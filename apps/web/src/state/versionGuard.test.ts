@@ -6,8 +6,8 @@
  * a wrong "yes" here costs the user their unsaved editor state.
  */
 
-import { describe, it, expect } from 'vitest'
-import { shouldReloadForNewBuild } from './versionGuard.js'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { installVersionGuard, shouldReloadForNewBuild } from './versionGuard.js'
 
 const base = { running: 'v0.9.2+abc1234', served: 'v0.9.2+abc1234', alreadyReloadedFor: null }
 
@@ -51,5 +51,23 @@ describe('shouldReloadForNewBuild', () => {
 
   it('stays put when the running version is unknown', () => {
     expect(shouldReloadForNewBuild({ ...base, running: '', served: 'v0.9.3+def5678' })).toBe(false)
+  })
+})
+
+describe('installVersionGuard', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('checks at start and whenever the window gets the focus again (the desktop app)', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const teardown = installVersionGuard(0)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    window.dispatchEvent(new Event('focus'))
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    teardown()
+    window.dispatchEvent(new Event('focus'))
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })
