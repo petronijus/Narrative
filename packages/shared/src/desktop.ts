@@ -12,9 +12,9 @@
  * the editor feature-detects with `bridgeVersion`, and a later bridge only
  * adds methods and raises the version — it never changes or removes one.
  *
- * Presenting on a chosen display is not here: it is a web-app feature
- * (the Window Management API, ADR 0014 decision 8) that the shell supports
- * through its window handlers, without a bridge call.
+ * Presenting on a chosen display is a web-app feature (the Window
+ * Management API, ADR 0014 decision 8); the bridge adds one call for the
+ * compositors where a page cannot place its own window (Wayland).
  */
 
 export const DESKTOP_BRIDGE_VERSION = 1 as const
@@ -39,6 +39,8 @@ export const DESKTOP_IPC = {
   openFileRead: 'narrative:open-file-read',
   /** send { id } */
   openFileConsumed: 'narrative:open-file-consumed',
+  /** invoke DesktopScreenRect → boolean */
+  placeForPresentation: 'narrative:place-for-presentation',
 } as const
 
 export type DesktopIpcChannel = (typeof DESKTOP_IPC)[keyof typeof DESKTOP_IPC]
@@ -107,6 +109,14 @@ export interface DesktopMenuSection {
   items: readonly DesktopMenuEntry[]
 }
 
+/** A display's area as the Window Management API gives it (logical pixels). */
+export interface DesktopScreenRect {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
 /** A .pptx the operating system handed to the app (file association, dock drop). */
 export interface DesktopOpenedFile {
   id: string
@@ -130,4 +140,10 @@ export interface NarrativeDesktopBridge {
   onOpenFile(handler: (file: DesktopOpenedFile) => void): () => void
   readOpenFile(id: string, offset: number, length: number): Promise<Uint8Array>
   consumeOpenFile(id: string): void
+  /**
+   * Move the main window onto the display at `screen` before it goes
+   * fullscreen there, where the page cannot (Hyprland). False when the shell
+   * has nothing to do or cannot: the page then goes fullscreen as usual.
+   */
+  placeForPresentation(screen: DesktopScreenRect): Promise<boolean>
 }

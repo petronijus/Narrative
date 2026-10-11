@@ -34,6 +34,7 @@ import {
   noPayload,
   openFileConsumedRequest,
   openFileReadRequest,
+  screenRectRequest,
   setMenuRequest,
   signInRequest,
   type MenuSections,
@@ -43,6 +44,7 @@ import { buildApplicationMenu } from './menu.js'
 import { MenuRouter } from './menuRouting.js'
 import { OpenedFiles } from './openFiles.js'
 import { installPermissionHandlers } from './permissions.js'
+import { placeForPresentation } from './presentPlacement.js'
 import { activeScheme, canReceiveLinks, registerScheme } from './protocol.js'
 import { redeemInHiddenWindow } from './redeemWindow.js'
 import { chooseCustomServer } from './serverDialog.js'
@@ -463,6 +465,11 @@ void app.whenReady().then(async () => {
     openedFiles.read(id, offset, length),
   )
   ipc.on(DESKTOP_IPC.openFileConsumed, openFileConsumedRequest, ({ id }) => openedFiles.consume(id))
+  ipc.handle(DESKTOP_IPC.placeForPresentation, screenRectRequest, (screen) =>
+    mainWindow === null || mainWindow.isDestroyed()
+      ? false
+      : placeForPresentation(mainWindow, screen, log),
+  )
   ipc.handle(DESKTOP_IPC.signIn, signInRequest, async ({ returnTo }) => {
     if (!canReceiveLinks()) {
       await dialog.showMessageBox({

@@ -77,6 +77,13 @@ const bridge: NarrativeDesktopBridge = {
   readOpenFile: (id, offset, length) =>
     ipcRenderer.invoke(DESKTOP_IPC.openFileRead, { id, offset, length }) as Promise<Uint8Array>,
   consumeOpenFile: (id) => ipcRenderer.send(DESKTOP_IPC.openFileConsumed, { id }),
+  placeForPresentation: (screen) =>
+    ipcRenderer.invoke(DESKTOP_IPC.placeForPresentation, {
+      left: Math.round(screen.left),
+      top: Math.round(screen.top),
+      width: Math.round(screen.width),
+      height: Math.round(screen.height),
+    }) as Promise<boolean>,
 }
 
 contextBridge.exposeInMainWorld('narrativeDesktop', bridge)

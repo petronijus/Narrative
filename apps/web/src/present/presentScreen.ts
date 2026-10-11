@@ -13,6 +13,8 @@
  * declared here.
  */
 
+import { desktopBridge } from '../desktop/bridge.js'
+
 /** A display as the Window Management API describes it. */
 export interface DisplayScreen {
   readonly label: string
@@ -132,6 +134,18 @@ export async function requestPresentationFullscreen(element: Element): Promise<v
           ? null
           : (findChosenDisplay(details.screens, choice) as (DisplayScreen & Screen) | null)
     }
+  }
+  if (screen !== null) {
+    // In the desktop app under Hyprland the shell moves the window there
+    // first: a Wayland page cannot place its own window.
+    await desktopBridge()
+      ?.placeForPresentation({
+        left: screen.left,
+        top: screen.top,
+        width: screen.width,
+        height: screen.height,
+      })
+      .catch(() => false)
   }
   await element.requestFullscreen(screen === null ? undefined : ({ screen } as FullscreenOptions))
 }

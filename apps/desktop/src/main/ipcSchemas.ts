@@ -88,3 +88,15 @@ export const openFileReadRequest = z
 
 /** `openFileConsumed`: the page is done with a file. */
 export const openFileConsumedRequest = z.object({ id: fileId }).strict()
+
+const coordinate = z.number().int().min(-100_000).max(100_000)
+
+/** `placeForPresentation`: a display's area from the Window Management API. */
+export const screenRectRequest = z
+  .object({
+    left: coordinate,
+    top: coordinate,
+    width: z.number().int().min(1).max(100_000),
+    height: z.number().int().min(1).max(100_000),
+  })
+  .strict()

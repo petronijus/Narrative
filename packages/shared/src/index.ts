@@ -147,6 +147,7 @@ export {
   type DesktopMenuEntry,
   type DesktopMenuSection,
   type DesktopOpenedFile,
+  type DesktopScreenRect,
   type NarrativeDesktopBridge,
 } from './desktop.js'
 
