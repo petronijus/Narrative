@@ -152,6 +152,29 @@ describe('AuthProvider — login()', () => {
     expect(url.pathname).toBe('/auth/start')
     expect(url.searchParams.get('returnTo')).toBe('/dest')
   })
+
+  it('inside the desktop app, asks the shell to sign in through the system browser', async () => {
+    stubFetch(async () => jsonResponse(401, {}))
+    const assign = stubLocationAssign()
+    const signIn = vi.fn(async () => 'opened' as const)
+    vi.stubGlobal('narrativeDesktop', { bridgeVersion: 1, role: 'main', signIn })
+
+    render(
+      <AuthProvider>
+        <LoginButton />
+        <AuthReadout />
+      </AuthProvider>,
+    )
+    await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'))
+    act(() => {
+      screen.getByText('Login').click()
+    })
+
+    await waitFor(() => expect(signIn).toHaveBeenCalledWith({ returnTo: '/dest' }))
+    // Google refuses sign-in inside the app's window: it never navigates there.
+    expect(assign).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
 })
 
 // ---------------------------------------------------------------------------

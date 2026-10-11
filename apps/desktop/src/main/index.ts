@@ -9,14 +9,25 @@
  */
 
 import { app, dialog, Menu, session, shell, type BrowserWindow, type WebContents } from 'electron'
+import { DESKTOP_IPC } from '@narrative/shared'
+import {
+  capLaunchPayload,
+  parseLaunchArgs,
+  validateLaunchPayload,
+  type LaunchPayload,
+} from './deepLinks.js'
 import { applyWebContentsGuards, createPresenterWindow } from './guards.js'
 import { IpcRegistry, registerCoreIpc } from './ipc.js'
+import { signInRequest } from './ipcSchemas.js'
 import { createLogger, type Logger } from './log.js'
 import { buildApplicationMenu } from './menu.js'
 import { installPermissionHandlers } from './permissions.js'
+import { activeScheme, canReceiveLinks, registerScheme } from './protocol.js'
+import { redeemInHiddenWindow } from './redeemWindow.js'
 import { chooseCustomServer } from './serverDialog.js'
-import { parseServerArg, partitionFor, serverOrigin, type ServerTarget } from './servers.js'
+import { apiUrl, parseServerArg, partitionFor, serverOrigin, type ServerTarget } from './servers.js'
 import { loadSettings, saveSettings, type Settings } from './settings.js'
+import { SignInController } from './signIn.js'
 import { createMainWindow } from './window.js'
 
 // 1. Every renderer runs in the OS sandbox.
@@ -51,9 +62,38 @@ if ((process.env['XDG_CURRENT_DESKTOP'] ?? '').includes('Hyprland')) {
   app.commandLine.appendSwitch('password-store', 'gnome-libsecret')
 }
 
-// 7. One instance: a second launch hands over to the first and quits.
-if (!app.requestSingleInstanceLock()) {
-  app.quit()
+const scheme = activeScheme()
+
+// 5. Links and files the OS hands over (macOS delivers them as events, even
+//    before ready); they wait in the launch queue until the app is ready.
+const launchQueue: LaunchPayload[] = []
+let launchReady = false
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  handleLaunch({ deepLink: url, files: [] })
+})
+
+// 6. What this launch carries on its command line.
+const launch = parseLaunchArgs(process.argv, app.getAppPath(), process.cwd(), scheme)
+
+// 7. One instance: a second launch hands its link and files over to the
+//    first and quits. Electron drops an oversized hand-over message whole, so
+//    it is capped, and what did not fit is said, never lost silently.
+const handOver = capLaunchPayload(launch)
+const primary = app.requestSingleInstanceLock(handOver.payload)
+if (!primary) {
+  if (handOver.dropped === 0) app.quit()
+  else {
+    void app.whenReady().then(async () => {
+      await dialog.showMessageBox({
+        type: 'warning',
+        title: 'Narrative',
+        message: `${handOver.dropped} files were not opened: too many at once.`,
+        buttons: ['OK'],
+      })
+      app.quit()
+    })
+  }
 }
 
 const distDir = __dirname
@@ -63,6 +103,42 @@ let settings: Settings
 let target: ServerTarget | null = null
 let mainWindow: BrowserWindow | null = null
 const presenterWindows = new Set<BrowserWindow>()
+
+const signIn = new SignInController({
+  now: () => Date.now(),
+  server: () => (target === null ? null : { origin: serverOrigin(target), apiUrl: apiUrl(target) }),
+  scheme,
+  openExternal: (url) => shell.openExternal(url),
+  redeem: (req) => {
+    if (target === null) return Promise.resolve({ kind: 'failed', reason: 'no_server' })
+    return redeemInHiddenWindow(req, partitionFor(target))
+  },
+  signedIn: (url) => {
+    const win = ensureMainWindow()
+    if (win === null) return
+    if (process.platform === 'darwin') app.focus({ steal: true })
+    win.show()
+    win.focus()
+    void win.loadURL(url)
+  },
+  failed: () => {
+    const win = ensureMainWindow()
+    const origin = currentOrigin()
+    if (win === null || origin === null) return
+    win.show()
+    void win.loadURL(`${origin}/auth/error?reason=desktop_sign_in_failed`)
+  },
+  log,
+})
+
+/** A link or files the OS handed over; queued until the app is ready. */
+function handleLaunch(payload: LaunchPayload): void {
+  if (!launchReady) {
+    launchQueue.push(payload)
+    return
+  }
+  if (payload.deepLink !== null) void signIn.complete(payload.deepLink)
+}
 // True while the main window is replaced for another server, so closing the
 // old one does not quit the app.
 let switchingServer = false
@@ -150,6 +226,7 @@ async function switchServer(next: ServerTarget): Promise<void> {
   })
   switchingServer = true
   try {
+    signIn.cancel()
     for (const presenter of presenterWindows) presenter.close()
     const old = mainWindow
     target = next
@@ -174,12 +251,16 @@ function partitionOf(wc: WebContents): string | null {
   return wc.session === session.fromPartition(partition) ? partition : null
 }
 
-// 8. A second launch focuses the existing window.
-app.on('second-instance', () => {
+// 8. A second launch focuses the existing window and hands over its link
+//    and files (only the validated payload: Electron warns that argv there is
+//    unreliable).
+app.on('second-instance', (_event, _argv, _cwd, data) => {
   const win = ensureMainWindow()
-  if (win === null) return
-  if (win.isMinimized()) win.restore()
-  win.focus()
+  if (win !== null) {
+    if (win.isMinimized()) win.restore()
+    win.focus()
+  }
+  handleLaunch(validateLaunchPayload(data, scheme))
 })
 
 // 9. Every webContents, whoever creates it, gets the navigation rules.
@@ -201,6 +282,8 @@ app.on('web-contents-created', (_event, wc) => {
 
 // 10. Ready: settings, permissions, IPC, the window.
 void app.whenReady().then(async () => {
+  // A second instance only hands over and quits (step 7).
+  if (!primary) return
   if (sandboxDisabled) {
     await dialog.showMessageBox({
       type: 'error',
@@ -229,16 +312,32 @@ void app.whenReady().then(async () => {
   // Nothing the shell shows outside a server partition may ask for anything.
   installPermissionHandlers(session.defaultSession, null)
 
-  registerCoreIpc(
-    new IpcRegistry({
-      mainContents: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null),
-      serverOrigin: currentOrigin,
-      log,
-    }),
-  )
+  const ipc = new IpcRegistry({
+    mainContents: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null),
+    serverOrigin: currentOrigin,
+    log,
+  })
+  registerCoreIpc(ipc)
+  ipc.handle(DESKTOP_IPC.signIn, signInRequest, async ({ returnTo }) => {
+    if (!canReceiveLinks()) {
+      await dialog.showMessageBox({
+        type: 'info',
+        title: 'Narrative',
+        message: 'Signing in needs the installed app on macOS.',
+        detail:
+          'macOS hands sign-in links only to an installed app bundle. Build one with `just desktop-dist`, or sign in on Linux or Windows.',
+      })
+      return 'refused'
+    }
+    return signIn.start(returnTo)
+  })
 
+  registerScheme(log)
   applyMenu()
   ensureMainWindow()
+
+  launchReady = true
+  for (const payload of [launch, ...launchQueue.splice(0)]) handleLaunch(payload)
 })
 
 // 11. Closing the last window quits, except on macOS, where the app stays

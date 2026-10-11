@@ -347,6 +347,7 @@ Any other link is ignored and logged without the ticket. This includes a cold st
     extraHeaders: 'Content-Type: application/x-www-form-urlencoded\nX-Narrative-Desktop: 1',
   })
   ```
+- **As built (step 8):** the verifier and state are spent by the first link that passes the state check, whatever the redeem's outcome (security review M2a); a failed redeem shows `/auth/error?reason=desktop_sign_in_failed` at once instead of keeping the entry for three attempts. The server burns the ticket on any redeem anyway, so a retry could never succeed.
 - On `did-redirect-navigation` (the server's 303), call `stop()`, close the window and look at the target:
   - **Success** (same origin as the server and the path is not `/auth/error`): consume the pending entry, then `ensureMainWindow()`, show and focus it (`app.focus({ steal: true })` on macOS), and `mainWin.loadURL(target)`. The cookie from the 303 is already in the partition's jar.
   - **Failure** (`/auth/error…`, a network error, or no redirect within 15 s): `attempts += 1`, and the pending entry stays, so a later genuine link still works. At the third failure, consume the pending entry and load `serverOrigin + '/auth/error?reason=desktop_sign_in_failed'` in the main window.

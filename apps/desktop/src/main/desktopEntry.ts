@@ -1,0 +1,38 @@
+/**
+ * main/desktopEntry.ts
+ *
+ * Desktop Entry files (freedesktop.org), which register the dev build's
+ * `narrative-dev://` scheme on Linux (main/protocol.ts). An `Exec` argument
+ * is quoted as the specification requires: inside double quotes `"`, `` ` ``,
+ * `$` and `\` are escaped with a backslash, the string value level then
+ * doubles every backslash once more, and `%` (field codes) is written `%%`.
+ * Pure: no Electron here.
+ */
+
+export function quoteExecArg(arg: string): string {
+  const quoted = `"${arg.replace(/(["`$\\])/g, '\\$1')}"`
+  return quoted.replace(/\\/g, '\\\\').replace(/%/g, '%%')
+}
+
+export interface DesktopEntry {
+  name: string
+  exec: readonly string[]
+  /** Field code appended to Exec (`%U`: URLs). */
+  fieldCode: '%U' | '%u' | '%F' | '%f'
+  mimeTypes: readonly string[]
+  noDisplay: boolean
+}
+
+export function renderDesktopEntry(entry: DesktopEntry): string {
+  const exec = `${entry.exec.map(quoteExecArg).join(' ')} ${entry.fieldCode}`
+  return [
+    '[Desktop Entry]',
+    'Type=Application',
+    `Name=${entry.name.replace(/[\r\n]/g, ' ')}`,
+    `Exec=${exec}`,
+    'Terminal=false',
+    `NoDisplay=${entry.noDisplay ? 'true' : 'false'}`,
+    `MimeType=${entry.mimeTypes.map((m) => `${m};`).join('')}`,
+    '',
+  ].join('\n')
+}

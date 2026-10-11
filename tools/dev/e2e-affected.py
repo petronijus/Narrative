@@ -315,6 +315,9 @@ AREAS: list[tuple[str, list[str]]] = [
     # The bridge contract: types and constants the shell and the web app's
     # desktop module share; the editor does not import it otherwise.
     ("packages/shared/src/desktop.ts", []),
+    # The editor's side of the bridge: inert in a browser (no
+    # window.narrativeDesktop), so only the shell's own specs exercise it.
+    ("apps/web/src/desktop/*", []),
     # Browser and desktop sign-in; the MCP OAuth pages share the page headers
     # and the strict form parser.
     ("apps/server/src/routes/auth.ts", ACCESS),

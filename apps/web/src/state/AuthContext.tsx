@@ -7,7 +7,10 @@
  *   - `login()`   → window.location.assign(`${API_URL}/auth/start?returnTo=…`)
  *     The server runs the OAuth dance with Google, mints a session row, and
  *     sets the `narrative_session` HttpOnly cookie, then redirects back to
- *     the SPA. The browser never sees the id_token.
+ *     the SPA. The browser never sees the id_token. Inside the desktop app
+ *     Google refuses that dance, so `login()` asks the shell to run it in the
+ *     system browser instead (desktop/bridge.ts, ADR 0014); the shell then
+ *     loads `returnTo` signed in.
  *   - `logout()`  → POST /auth/logout with credentials:'include' to revoke
  *     and clear the cookie, then redirect to /auth/login.
  *   - On mount   → GET /auth/me to recover the current session (returns
@@ -18,6 +21,7 @@
  * (prod) or same-site cross-origin fetch with credentials:'include' (dev).
  */
 
+import { desktopBridge } from '../desktop/bridge.js'
 import { API_URL } from '../lib/endpoints.js'
 import {
   createContext,
@@ -40,10 +44,17 @@ export interface AuthUser {
   name?: string | null
 }
 
+export type LoginOutcome = 'navigating' | 'opened' | 'refused'
+
 export interface AuthContextValue {
   user: AuthUser | null
   isLoading: boolean
-  login(returnTo?: string): void
+  /**
+   * Start signing in. 'navigating': the browser leaves for Google.
+   * 'opened': the desktop app opened the sign-in in the system browser.
+   * 'refused': the desktop app did not (one was just started).
+   */
+  login(returnTo?: string): Promise<LoginOutcome>
   logout(): Promise<void>
 }
 
@@ -129,13 +140,22 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
   // Auth actions
   // -------------------------------------------------------------------------
 
-  const login = useCallback((returnTo?: string) => {
+  const login = useCallback(async (returnTo?: string): Promise<LoginOutcome> => {
     const target = returnTo ?? window.location.pathname + window.location.search
+    const desktop = desktopBridge()
+    if (desktop !== undefined) {
+      try {
+        return await desktop.signIn({ returnTo: target })
+      } catch {
+        return 'refused'
+      }
+    }
     const url = new URL(`${API_URL}/auth/start`)
     url.searchParams.set('returnTo', target)
     // Top-level navigation — the server-side OAuth flow can't run inside a
     // fetch because Google's consent screen needs to render in the browser.
     window.location.assign(url.toString())
+    return 'navigating'
   }, [])
 
   const logout = useCallback(async () => {
