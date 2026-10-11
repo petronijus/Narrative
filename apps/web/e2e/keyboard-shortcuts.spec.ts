@@ -502,6 +502,64 @@ test.describe('Canvas object shortcuts', () => {
       .toEqual(['dup-a', 'dup-b'])
   })
 
+  test('Mod+X cuts the selection, keeps a locked object, and pastes it back', async ({ page }) => {
+    test.setTimeout(30_000)
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+    await page.evaluate(() => {
+      const api = window.__narrative_test_api!
+      api.addRect({ id: 'cut-a', x: 100, y: 100, w: 200, h: 120, fill: 0xff0000 })
+      api.addRect({ id: 'cut-locked', x: 400, y: 100, w: 200, h: 120, fill: 0x00ff00 })
+      api.updateObject('cut-locked', { locked: true })
+    })
+    await selectWhenKnown(page, ['cut-a', 'cut-locked'])
+    await page.waitForTimeout(UNDO_CAPTURE_GAP_MS)
+
+    await page.keyboard.press('ControlOrMeta+x')
+    // Locks are editor-only: the locked object is copied but stays.
+    await expect
+      .poll(() => page.evaluate(() => window.__narrative_test_api!.objectIds()), { timeout: 3000 })
+      .toEqual(['cut-locked'])
+
+    await page.keyboard.press('ControlOrMeta+v')
+    await expect
+      .poll(() => page.evaluate(() => window.__narrative_test_api!.objectCount()), {
+        timeout: 3000,
+      })
+      .toBe(3)
+  })
+
+  test('Mod+C copies selected page text, not the canvas selection', async ({ page }) => {
+    test.setTimeout(30_000)
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+    await page.evaluate(() => {
+      window.__narrative_test_api!.addRect({ id: 'copy-a', x: 100, y: 100, w: 200, h: 120 })
+    })
+    await selectWhenKnown(page, ['copy-a'])
+    // Select some text outside any field (the canvas selection stays).
+    const prevented = await page.evaluate(() => {
+      const p = document.createElement('p')
+      p.textContent = 'copy this text'
+      document.body.append(p)
+      const range = document.createRange()
+      range.selectNodeContents(p)
+      window.getSelection()!.removeAllRanges()
+      window.getSelection()!.addRange(range)
+      const e = new KeyboardEvent('keydown', {
+        key: 'c',
+        ctrlKey: !navigator.platform.includes('Mac'),
+        metaKey: navigator.platform.includes('Mac'),
+        bubbles: true,
+        cancelable: true,
+      })
+      document.body.dispatchEvent(e)
+      return e.defaultPrevented
+    })
+    // The canvas binding yields: the browser's own copy runs.
+    expect(prevented).toBe(false)
+  })
+
   test('Alt-drag duplicates, drags the copy, and undoes as one step', async ({ page }) => {
     test.setTimeout(30_000)
     // Large enough that the artboard point we press on is not under chrome.

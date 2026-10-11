@@ -37,6 +37,8 @@ export interface ProvisionTextOptions {
   y?: number
   width?: number
   height?: number
+  /** The web app's origin, for a page without Playwright's baseURL (the desktop shell's window). */
+  origin?: string
 }
 
 /**
@@ -57,6 +59,7 @@ export async function provisionDeckWithText(
     y = 500,
     width = 600,
     height = 300,
+    origin = '',
   } = opts
 
   const res = await page.request.post(`${API_BASE}/decks`, { data: { title } })
@@ -64,7 +67,7 @@ export async function provisionDeckWithText(
   const { id: deckId } = (await res.json()) as { id: string }
   const deckUrl = `/deck/${deckId}`
 
-  await page.goto(deckUrl)
+  await page.goto(`${origin}${deckUrl}`)
   await expect
     .poll(() => page.evaluate(() => typeof window.__narrative_test_api), { timeout: 30_000 })
     .toBe('object')

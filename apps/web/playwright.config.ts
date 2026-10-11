@@ -65,15 +65,26 @@ export default defineConfig({
     {
       name: 'chromium',
       grepInvert: /@serial/,
+      testIgnore: [/desktop-.*\.spec\.ts$/, /desktop\.setup\.ts$/],
       use: chrome,
     },
     {
       name: 'serial',
       grep: /@serial/,
+      testIgnore: [/desktop-.*\.spec\.ts$/, /desktop\.setup\.ts$/],
       dependencies: ['chromium'],
       workers: 1,
       fullyParallel: false,
       use: chrome,
+    },
+    // The desktop shell (ADR 0014; e2e/fixtures/desktop.ts): bundled once,
+    // then driven through Playwright's Electron support, each worker on its
+    // own Xvfb. Specs that load the editor need the dev stack like the rest.
+    { name: 'desktop-build', testMatch: /desktop\.setup\.ts$/ },
+    {
+      name: 'electron',
+      testMatch: /desktop-.*\.spec\.ts$/,
+      dependencies: ['desktop-build'],
     },
   ],
 })
