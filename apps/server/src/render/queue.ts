@@ -166,7 +166,9 @@ export const bullRenderQueue: RenderQueue = {
       if (err instanceof RenderTimeoutError || Date.now() >= data.deadline) {
         const state = await job.getState().catch(() => 'unknown')
         await job.remove().catch(() => undefined)
-        throw new RenderTimeoutError(!(state === 'waiting' || state === 'prioritized' || state === 'delayed'))
+        throw new RenderTimeoutError(
+          !(state === 'waiting' || state === 'prioritized' || state === 'delayed'),
+        )
       }
       // A failed job's record goes too (its error is in the worker's log).
       await job.remove().catch(() => undefined)

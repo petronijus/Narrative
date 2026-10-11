@@ -8,7 +8,8 @@
  * (services/deckThumbnails.ts; the server waits until the deck has been
  * quiet for 10 s, and draws one deck at most once a minute — the second
  * test waits for that minute). Checked where a person sees it: the card's picture on the
- * folder page. Needs the whole dev stack, the render worker included
+ * folder page — and a component master's card the same way, in its
+ * folder's component list. Needs the whole dev stack, the render worker included
  * (`just dev`).
  *
  * Each test acts as a person of its own (the `narrative_dev_as` cookie, one
@@ -178,5 +179,65 @@ test('a deck nobody has open gets its card after a change, and a new one after t
     .poll(async () => (await deckRow(request)).thumbnailUpdatedAt, { timeout: 100_000 })
     .not.toBe(first.thumbnailUpdatedAt)
   const { left } = await cardColours(page)
+  expect(near(left, GREEN), JSON.stringify(left)).toBe(true)
+})
+
+test('a component master gets its card from the render worker, and the agent redraws it', async ({
+  browser,
+}, info) => {
+  test.setTimeout(200_000)
+  const page = await personPage(browser, info)
+  const request = page.request
+  folderId = (
+    await command<{ id: string }>(request, {}, 'folder.create', {
+      name: `e2e deck card master ${Date.now()}`,
+    })
+  ).id
+  const created = await request.post(`${API}/folders/${folderId}/components`, {
+    data: { name: 'Card master' },
+  })
+  expect(created.ok()).toBe(true)
+  const { id: componentId } = (await created.json()) as { id: string }
+  const master = { componentId }
+  await command(request, master, 'object.create', {
+    slide: { index: 0 },
+    id: 'half',
+    object: { type: 'rectangle', x: 0, y: 0, width: 960, height: 1080, fill: '#E53935' },
+  })
+  // Nobody has the master open: its card is drawn after it went quiet.
+  const cardOf = async () => {
+    const res = await request.get(`${API}/folders/${folderId}/components`)
+    expect(res.ok()).toBe(true)
+    const list = (await res.json()) as Array<{ id: string; thumbnailUrl: string | null }>
+    return list.find((c) => c.id === componentId)?.thumbnailUrl ?? null
+  }
+  await expect
+    .poll(cardOf, { timeout: 45_000 })
+    .toMatch(new RegExp(`components/${componentId}/thumb-`))
+  const first = await cardOf()
+
+  // The agent changes it and redraws the card at once.
+  await command(request, master, 'object.update', {
+    slide: { index: 0 },
+    object: 'half',
+    patch: { fill: '#43A047' },
+  })
+  const redrawn = await command<{ thumbnailUrl: string }>(
+    request,
+    master,
+    'deck.refreshThumbnail',
+    {},
+  )
+  expect(redrawn.thumbnailUrl).not.toBe(first)
+  // Where a person sees it: the folder's component list.
+  await page.goto(`/folder/${folderId}/settings?tab=components`)
+  const card = page.locator(`img[src*="components/${componentId}/thumb-"]`)
+  await expect(card).toBeVisible({ timeout: 30_000 })
+  await expect
+    .poll(() => card.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth))
+    .toBe(400)
+  const png = PNG.sync.read(await card.screenshot())
+  const i = (png.width * Math.round(png.height / 2) + Math.round(png.width * 0.25)) << 2
+  const left = { r: png.data[i]!, g: png.data[i + 1]!, b: png.data[i + 2]! }
   expect(near(left, GREEN), JSON.stringify(left)).toBe(true)
 })

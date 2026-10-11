@@ -108,7 +108,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { isRenderToken, resolveRenderToken } from '../auth/renderTokens.js'
+import { isRenderToken, resolveRenderToken, type RenderTokenGrant } from '../auth/renderTokens.js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import rateLimit, { normalizeIP, type RateLimitOptions } from '@fastify/rate-limit'
 import { getAuthOpts, getIdentityDeps } from '../auth/fastifyAuth.js'
@@ -281,11 +281,9 @@ export async function rateLimitKey(
  * lookup, no database: the render worker's page, whose every request arrives
  * from the worker's one address. Null for anything else.
  */
-export function renderTokenOf(
-  req: FastifyRequest,
-): {
+export function renderTokenOf(req: FastifyRequest): {
   hash: string
-  grant: { deckId: string; requestedBy: string; lane: 'person' | 'background' }
+  grant: RenderTokenGrant
 } | null {
   const token = (req.query as Record<string, unknown> | undefined)?.['share_token']
   if (typeof token !== 'string' || !isRenderToken(token)) return null

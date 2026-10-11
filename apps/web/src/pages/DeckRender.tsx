@@ -58,8 +58,18 @@ import { failedRenderFonts, failedRenderWork } from '../renderer/renderWork.js'
 import { canvasToPng, captureSlideCanvas, watchContextLoss } from '../renderer/captureSlide.js'
 import { getDefaultResourceManager } from '../renderer/ResourceManager.js'
 import { setImageVariantCap } from '../renderer/imageUrl.js'
-import type { RenderLookSpec } from '@narrative/shared'
-import { blobToBase64, composeLook, shrinkForSheet, type LookFrame } from './renderLook.js'
+import type { RenderPageLookSpec, TextOverflow } from '@narrative/shared'
+import {
+  blobToBase64,
+  composeLook,
+  decodePng,
+  shrinkForCompare,
+  shrinkForSheet,
+  type LookFrame,
+  type LookRequest,
+} from './renderLook.js'
+import { measureTextOverflow } from './textFit.js'
+import type { DeckFontsContextValue } from '../state/useDeckFonts.js'
 import { startJobTimer, type JobTimer, type JobTimings } from './renderTimings.js'
 import { decodeBase64, untilCoversStateVector } from '../lib/stateVector.js'
 import { useSlides } from '../state/useSlides.js'
@@ -68,7 +78,7 @@ import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { useFolderFontsOptional } from '../state/useFolderFonts.js'
-import { useDeckFonts } from '../state/useDeckFonts.js'
+import { useDeckFontsOptional } from '../state/useDeckFonts.js'
 import { useFolderTokensSettled } from '../state/FolderDocProvider.js'
 import type { DeckShellContextValue } from '../components/DeckShell.js'
 import { resolveRenderSlide } from './renderSlide.js'
@@ -145,7 +155,7 @@ declare global {
      * shown in turn, captured and composed into one PNG (pages/renderLook.ts).
      */
     __narrativeRenderLook?: (
-      spec: RenderLookSpec,
+      spec: RenderPageLookSpec,
       opts: { stateVector: string },
     ) => Promise<
       PageJobOutcome<{
@@ -153,6 +163,8 @@ declare global {
         width: number
         height: number
         slides: Array<{ slideId: string; index: number; failedLoads: number }>
+        /** The text boxes of those slides that overflow (textFit.ts). */
+        overflow: TextOverflow[]
         failedFonts: string[]
         timings: JobTimings
       }>
@@ -177,6 +189,12 @@ class PageJobError extends Error {
 /** How long a capture waits for the asking editor's latest edits to reach this page. */
 const CAPTURE_SYNC_TIMEOUT_MS = 15_000
 
+/** No deck fonts to wait for (a component master's render page). */
+const NO_DECK_FONTS: Pick<DeckFontsContextValue, 'loading' | 'error'> = {
+  loading: false,
+  error: null,
+}
+
 function publish(status: RenderStatus): void {
   window.__narrativeRender = status
   document.documentElement.dataset['renderStatus'] = status.status
@@ -187,6 +205,13 @@ export function DeckRender() {
   const [params, setParams] = useSearchParams()
   const slideParam = params.get('slide')
   const onScreen = params.get('paint') !== 'off'
+  // A frozen page draws only a compare's half: preview-size pictures do.
+  const frozen = params.get('frozen') === '1'
+  useEffect(() => {
+    if (!frozen) return
+    setImageVariantCap('preview')
+    return () => setImageVariantCap(null)
+  }, [frozen])
 
   const { deckCtx, synced, refused } = useSlideDoc()
   // Re-renders when the slide list changes; the target is read from the doc
@@ -198,7 +223,8 @@ export function DeckRender() {
   const canvas = useCanvasInstance()
   const { folderId, isLoading: roleLoading } = useDeckRole()
   const folderFonts = useFolderFontsOptional()
-  const deckFonts = useDeckFonts()
+  // A component master's render page has no deck fonts: its faces are its folder's.
+  const deckFonts = useDeckFontsOptional() ?? NO_DECK_FONTS
   const tokensSettled = useFolderTokensSettled()
 
   const target = useMemo(
@@ -505,27 +531,48 @@ export function DeckRender() {
         const slideIds = spec.mode === 'sheet' ? spec.slideIds : [spec.slideId]
         const frames: LookFrame[] = []
         const slides: Array<{ slideId: string; index: number; failedLoads: number }> = []
-        // A sheet's tiles and a card picture are small: their slides draw
-        // with preview-size pictures.
-        if (spec.mode === 'sheet' || spec.mode === 'thumbnail') setImageVariantCap('preview')
+        const overflow: TextOverflow[] = []
+        // A sheet's tiles, a card picture and a compare's halves are small:
+        // their slides draw with preview-size pictures.
+        if (spec.mode === 'sheet' || spec.mode === 'thumbnail' || spec.mode === 'compare') {
+          setImageVariantCap('preview')
+        }
         try {
           for (const slideId of slideIds) {
             const { index } = await showAndWait(slideId)
             timer.mark('ready')
             const shot = await settleAndCapture(timer)
-            // A sheet keeps only its tile of each slide, not 20 full captures.
+            overflow.push(...measureTextOverflow(sceneGraph, objectsRef.current, slideId))
+            // A sheet or a compare keeps only its tile of each slide, not full captures.
             const canvas =
-              spec.mode === 'sheet' ? shrinkForSheet(shot.canvas, slideIds.length) : shot.canvas
+              spec.mode === 'sheet'
+                ? shrinkForSheet(shot.canvas, slideIds.length)
+                : spec.mode === 'compare'
+                  ? shrinkForCompare(shot.canvas)
+                  : shot.canvas
             frames.push({ canvas, index })
             slides.push({ slideId, index, failedLoads: shot.failedLoads })
           }
         } finally {
           setImageVariantCap(null)
         }
-        const look = await composeLook(
-          spec.mode === 'region' ? { mode: 'region', region: spec.region } : { mode: spec.mode },
-          frames,
-        )
+        const before =
+          spec.mode === 'compare' && spec.beforePng !== null
+            ? await decodePng(spec.beforePng)
+            : null
+        const request: LookRequest =
+          spec.mode === 'region'
+            ? { mode: 'region', region: spec.region }
+            : spec.mode === 'compare'
+              ? { mode: 'compare', before }
+              : { mode: spec.mode }
+        let look
+        try {
+          look = await composeLook(request, frames)
+        } finally {
+          // A page kept between jobs must not hold the decoded picture.
+          before?.close()
+        }
         const base64 = await blobToBase64(look.png)
         timer.mark('compose')
         return {
@@ -533,6 +580,7 @@ export function DeckRender() {
           width: look.width,
           height: look.height,
           slides,
+          overflow,
           failedFonts: failedRenderFonts(),
           timings: timer.done(),
         }

@@ -9,8 +9,9 @@ every coding agent (Claude Code, Cursor, Codex, …); humans start at
 Read before changing code: `docs/testing-strategy.md` (what the suites
 cover), `docs/agents.md` (areas and their owners), `SETUP.md` (setup,
 toolchain, troubleshooting). The agentic layer is planned in
-`docs/plans/agentic-layer.md` (A0–A2 done); the status and next steps are
-the "Where we stand" section of `docs/plans/a2-extraction.md`. Folder
+`docs/plans/agentic-layer.md` (A0–A3 done; handoffs in `docs/handoff/`);
+the status of the last phase is the "Where we stand" section of
+`docs/plans/a3-render-worker.md`. Folder
 sharing (folder roles, linked component media) is planned in
 `docs/plans/folder-sharing.md` (ADR 0013); faster test loops in
 `docs/plans/dev-speed.md`; the render worker (phase A3: the agent sees

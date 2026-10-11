@@ -122,10 +122,21 @@ design.
 
 ## After a change
 
-- Look at what you did: `query.render` shows you the slide as it really
-  looks (a region of it at full resolution for small type; a numbered
-  sheet for several slides). Check it against your intent, fix what is
-  off, and look again. `query.slide` gives the exact values behind it.
+- Look at what you did, after each batch of visible changes: `query.render`
+  shows you the slide as it really looks (a region of it at full resolution for
+  small type; a numbered sheet for several slides). Check it against your
+  intent, fix what is off, and look again. `query.slide` gives the exact
+  values behind it.
+- Its `overflow` lists the text boxes whose text, laid out with the real
+  fonts, runs below the box. Fix every one you caused: shorten the wording
+  first, then make the box taller if the layout has room; shrink the type
+  only as a last resort, never below what the deck uses for the same role.
+- To show the user what you changed, `query.render` with
+  `compare: "before"` puts the slide as it was before your run beside it
+  now.
+- The deck's card on the folder page follows by itself;
+  `deck.refreshThumbnail` only when the user is about to send someone to
+  the folder.
 - Report briefly: what changed, on which slides, and anything you could not
   do and why.
 - If the user dislikes the result, `agent.revert` undoes your run (or its

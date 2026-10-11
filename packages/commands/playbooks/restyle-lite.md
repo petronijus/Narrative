@@ -35,5 +35,8 @@ playbook uses what exists today.
    with `object.update`. One `ops.apply` per slide.
 5. Do not move or resize objects in this playbook unless the user asked;
    layout changes need the layout-aware restyle that comes with style packs.
-6. Report which roles you mapped to which styles, and anything that did not
+6. Look at the restyled slides with `query.render` (a sheet for many): a
+   larger style can make text overflow its box (`overflow`) — say so, or
+   fix it with the wording, not by moving objects.
+7. Report which roles you mapped to which styles, and anything that did not
    fit.

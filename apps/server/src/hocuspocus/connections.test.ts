@@ -16,7 +16,7 @@ import {
   closeShareTokenConnections,
   closeUserConnectionsOnDocument,
   closeUserFolderConnections,
-  deckHasSignedInEditor,
+  hasSignedInEditor,
 } from './connections.js'
 import { setHocuspocusInstance } from './presence.js'
 
@@ -246,7 +246,7 @@ describe('CONN-1 connection teardown helpers', () => {
   })
 })
 
-describe('deckHasSignedInEditor', () => {
+describe('hasSignedInEditor', () => {
   beforeEach(() => {
     setHocuspocusInstance(null as never)
   })
@@ -264,15 +264,21 @@ describe('deckHasSignedInEditor', () => {
         // A legacy bare deck id.
         owned: [conn({ userId: 'u3', role: 'owner' })],
         'folder:edited': [conn({ userId: 'u4', role: 'owner' })],
+        'component:master': [conn({ userId: 'u5', role: 'editor' })],
+        'component:watched': [conn({ userId: 'cmp-render', role: 'viewer', shareToken: 'nrr_y' })],
       }),
     )
-    expect(deckHasSignedInEditor('viewed')).toBe(false)
-    expect(deckHasSignedInEditor('edited')).toBe(true)
-    expect(deckHasSignedInEditor('owned')).toBe(true)
-    expect(deckHasSignedInEditor('closed')).toBe(false)
+    expect(hasSignedInEditor({ kind: 'component', id: 'master' })).toBe(true)
+    expect(hasSignedInEditor({ kind: 'component', id: 'watched' })).toBe(false)
+    // A deck and a master of the same id are different documents.
+    expect(hasSignedInEditor({ kind: 'deck', id: 'master' })).toBe(false)
+    expect(hasSignedInEditor({ kind: 'deck', id: 'viewed' })).toBe(false)
+    expect(hasSignedInEditor({ kind: 'deck', id: 'edited' })).toBe(true)
+    expect(hasSignedInEditor({ kind: 'deck', id: 'owned' })).toBe(true)
+    expect(hasSignedInEditor({ kind: 'deck', id: 'closed' })).toBe(false)
   })
 
   it('is false when no Hocuspocus instance is wired', () => {
-    expect(deckHasSignedInEditor('d1')).toBe(false)
+    expect(hasSignedInEditor({ kind: 'deck', id: 'd1' })).toBe(false)
   })
 })

@@ -23,5 +23,6 @@ Shorten the text in <scope>. Target: <target>.
    better, the same list levels, the same emphasis on the key figure.
 4. Write back with `text_set` (rich form), all edits of a slide in one
    `ops_apply`.
-5. Report before/after for anything substantial you changed, so the user
-   can judge the meaning survived.
+5. Look at the slides with `query_render`; `compare: "before"` shows a slide
+   as it was beside it now. Report before/after for anything substantial
+   you changed, so the user can judge the meaning survived.

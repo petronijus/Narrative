@@ -26,18 +26,20 @@
  */
 
 import type { FastifyInstance } from 'fastify'
-import { eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { PutObjectCommand } from '@aws-sdk/client-s3'
 import type { Database } from '../db/client.js'
-import { components } from '../db/schema.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
-import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { parseDataUrl } from '../media/dataUrl.js'
 import { createComponentsService, MAX_COMPONENT_NAME } from '../services/components.js'
 import { createEmptyComponent, stampComponentIntoDeck } from '../services/componentStaging.js'
 import { sendInsertObjects } from './insertObjects.js'
+import { forgetCard } from '../render/cardState.js'
+import {
+  storeComponentThumbnail,
+  ThumbnailFormatError,
+  ThumbnailStorageError,
+} from '../services/deckThumbnailStore.js'
 import { isBypass, routeDeps } from '../services/http.js'
 import { requireComponentRole } from '../services/shared.js'
 import { sendCommandOrServiceError, sendServiceError } from '../services/errors.js'
@@ -250,8 +252,8 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
   // PUT /components/:id/thumbnail — upload component master snapshot (folder editors)
   //
   // Accepts a JSON body { dataUrl: "data:image/(jpeg|png);base64,..." }.
-  // Mirrors the deck thumbnail pattern. The MinIO key is stable per
-  // component (`components/<id>/thumb.<ext>`) so overwrites coalesce.
+  // Stored like a deck's card (services/deckThumbnailStore.ts): a key per
+  // picture, the row swapped under a lock.
   // -------------------------------------------------------------------------
   app.put<{ Params: { id: string }; Body: { dataUrl?: unknown } }>(
     '/components/:id/thumbnail',
@@ -289,32 +291,22 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
         return reply.status(413).send({ error: 'thumbnail too large' })
       }
 
-      const ext = parsed.mime === 'image/png' ? 'png' : 'jpg'
-      const storageKey = `components/${id}/thumb.${ext}`
-      const s3 = buildS3Client()
+      let updated
       try {
-        await s3.send(
-          new PutObjectCommand({
-            Bucket: MEDIA_BUCKET,
-            Key: storageKey,
-            Body: parsed.bytes,
-            ContentType: parsed.mime,
-            CacheControl: 'public, max-age=60',
-          }),
-        )
+        updated = await storeComponentThumbnail(db, id, { bytes: parsed.bytes, mime: parsed.mime })
       } catch (err) {
+        if (err instanceof ThumbnailFormatError) {
+          return reply.status(400).send({ error: `dataUrl: ${err.message}` })
+        }
+        if (!(err instanceof ThumbnailStorageError)) throw err
         request.log.error({ err, componentId: id }, 'component thumbnail upload failed')
         return reply.status(502).send({ error: 'storage upload failed' })
       }
-
-      const [updated] = await db
-        .update(components)
-        .set({ thumbnailKey: storageKey, updatedAt: new Date() })
-        .where(eq(components.id, id))
-        .returning()
       if (!updated) {
         return reply.status(404).send({ error: 'Component not found' })
       }
+      // The editor drew it; the server no longer knows what the card shows.
+      forgetCard({ kind: 'component', id })
       return reply.send(withThumbnailUrl(updated))
     },
   )

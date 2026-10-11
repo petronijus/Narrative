@@ -24,6 +24,7 @@
 
 import { MAX_RENDER_SLIDES } from '../commands/render.js'
 import type { RenderSlideRef } from '../services/render.js'
+import type { AgentRunService } from '../services/runs.js'
 import * as Y from 'yjs'
 import {
   addObjects,
@@ -213,6 +214,8 @@ function pickFixtureSlides(
 export function createDomainFakes(
   world: FakeWorld,
   recorder: (service: keyof ServerServices) => Recorder,
+  /** The fake runs' before-states (query.render's compare reads them, as the real service does). */
+  runs: Pick<AgentRunService, 'stateBefore'> = { stateBefore: () => null },
 ): DomainFakes {
   // The fixture folder's tokens are the ones the contract suite gives
   // commands as `ctx.folderTokens`; the other folders have none yet.
@@ -1177,28 +1180,61 @@ export function createDomainFakes(
       },
       async refreshThumbnail(args) {
         rRender('refreshThumbnail', args)
-        requireDeck(args.deckId)
-        if (args.deckId !== world.deckId) {
+        if ('componentId' in args.target) {
+          if (!components.has(args.target.componentId)) {
+            throw notFound('component', args.target.componentId)
+          }
+          return {
+            thumbnailUrl: `https://img.test/insecure/components/${args.target.componentId}/thumb-x.png`,
+            updatedAt: T0,
+          }
+        }
+        requireDeck(args.target.deckId)
+        if (args.target.deckId !== world.deckId) {
           throw new CommandError('invalid_input', 'The deck has no slides to draw its card from')
         }
         return {
-          thumbnailUrl: `https://img.test/insecure/decks/${args.deckId}/thumb.png?v=1`,
+          thumbnailUrl: `https://img.test/insecure/decks/${args.target.deckId}/thumb-x.png?v=1`,
           updatedAt: T0,
         }
       },
       async look(args) {
         rRender('look', args)
-        const sheet = 'sheet' in args.view
+        const { view } = args
+        // The real service's refusals (services/render.ts stateBeforeRun).
+        if ('compare' in view) {
+          const before = view.runId === null ? null : runs.stateBefore(view.runId)
+          if (before === null) {
+            throw new CommandError(
+              'invalid_input',
+              'Nothing to compare yet: your current run has not changed this deck (or its history is gone)',
+            )
+          }
+          if (before.document.kind !== 'deck' || before.document.deckId !== args.deckId) {
+            throw new CommandError(
+              'invalid_input',
+              'Your current run changed another document, not this deck',
+            )
+          }
+        }
         const chosen = pickRenderSlides(
           args.deckId,
-          'sheet' in args.view ? args.view.sheet : [args.view.slide],
+          'sheet' in view ? view.sheet : 'compare' in view ? [view.compare] : [view.slide],
         )
-        const region = 'slide' in args.view ? args.view.region : undefined
+        const mode =
+          'sheet' in view
+            ? 'sheet'
+            : 'compare' in view
+              ? 'compare'
+              : view.region !== undefined
+                ? 'region'
+                : 'slide'
         return {
-          mode: sheet ? 'sheet' : region !== undefined ? 'region' : 'slide',
-          width: 1430,
-          height: 804,
+          mode,
+          width: mode === 'compare' ? 1568 : 1430,
+          height: mode === 'compare' ? 450 : 804,
           slides: chosen.map(({ id, index }) => ({ slideId: id, index, failedLoads: 0 })),
+          overflow: [],
           failedFonts: [],
           image: {
             mimeType: 'image/png',

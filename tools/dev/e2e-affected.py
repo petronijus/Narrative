@@ -133,7 +133,13 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/components/presentStartSlide.ts", PRESENT),
     ("apps/web/src/pages/DeckPresent.tsx", PRESENT),
     # render-export reaches __narrativeRenderShow (the worker's slide switch).
-    ("apps/web/src/pages/DeckRender.tsx", ["render-page", "render-export", "query-render"]),
+    ("apps/web/src/pages/DeckRender.tsx", ["render-page", "render-export", "query-render", "deck-card"]),
+    # A component master's render page (its card, A3.5).
+    ("apps/web/src/pages/ComponentRender.tsx", ["deck-card"]),
+    # Text boxes that overflow, measured on the render page (A3.6).
+    ("apps/web/src/pages/textFit.ts", ["query-render"]),
+    # The frozen render page of a compare's "before" (A3.6).
+    ("apps/web/src/state/frozenRenderDoc.ts", ["query-render"]),
     ("apps/web/src/pages/renderLook.ts", ["query-render", "deck-card"]),
     ("apps/web/src/pages/renderSlide.ts", ["render-page"]),
     # The toolbar's PowerPoint download goes through it too.
@@ -229,7 +235,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/state/editorShow.ts", AGENT),
     ("apps/web/src/state/editorNotice.ts", AGENT),
     ("apps/web/src/state/*Component*", COMPONENTS),
-    ("apps/web/src/state/componentDocCache.ts", COMPONENTS),
+    ("apps/web/src/state/componentDocCache.ts", COMPONENTS + ["deck-card"]),
     ("apps/web/src/state/readMasterDoc.ts", COMPONENTS),
     ("apps/web/src/state/useStampComponent.ts", COMPONENTS),
     ("apps/web/src/state/promoteSelectionToComponent.ts", COMPONENTS),
@@ -311,6 +317,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/render-worker/*", ["render-export", "render-page", "query-render"]),
     ("apps/server/src/services/render.ts", ["render-export", "query-render", "deck-card"]),
     ("apps/server/src/render/*", ["render-export", "query-render", "deck-card"]),
+    # The sweep of export and card renders (exports/ under decks and components).
+    ("apps/server/src/services/exportSweep.ts", ["render-export", "deck-card"]),
     # The deck's card on the folder page, drawn by the render worker (A3.5).
     ("apps/server/src/services/deckThumbnail*", ["deck-card"]),
     ("apps/server/src/mcp/results.ts", ["query-render"]),

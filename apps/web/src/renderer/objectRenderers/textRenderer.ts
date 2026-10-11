@@ -499,6 +499,22 @@ function getTextNode(node: Container): HTMLText | undefined {
   return asAny(node)[TEXT_TAG] as HTMLText | undefined
 }
 
+/**
+ * Where the laid-out lines end, in the box's own space (slide px from its
+ * top): the block of line boxes the browser measured, placed by the vertical
+ * alignment. The node itself sits lower or higher by the PowerPoint line
+ * offset (`applyVerticalAlign`), which moves the glyphs within their lines,
+ * not the lines: it is taken back out, so a box sized exactly to its text
+ * at 150% or 80% spacing fits. Null until the first raster has landed (the
+ * height is 0 before) or for a container that is not a text box.
+ */
+export function laidOutTextBottom(container: Container, data: TextObject): number | null {
+  const node = getTextNode(container)
+  if (node === undefined || node.height <= 0) return null
+  const lineOffset = powerpointLineOffsetPx(data, firstLineFontSizePx(data))
+  return node.y - lineOffset + node.height
+}
+
 function getMask(node: Container): Graphics | undefined {
   return asAny(node)[MASK_TAG] as Graphics | undefined
 }

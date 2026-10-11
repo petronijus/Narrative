@@ -6,6 +6,42 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+A3 close — master cards, before/after, text that fits. Agentic phase A3
+(the render worker): A3.5b, A3.6 and A3.7, built together; to be tested as
+one before it ships (as 0.10.30).
+
+### Added
+
+- **Component masters get their card from the render worker too**, as decks
+  do: a master changed while nobody has it open (an agent, a stamp's
+  promotion) shows its current first slide in the folder's component list.
+  `deck.refreshThumbnail` redraws a master's card on request
+  (`componentId`). The master's render page is
+  `/folder/:folderId/component/:componentId/render`; its render token reads
+  that master and its folder, read-only, and nothing else.
+- **Before and after.** `query.render` with `compare: "before"` shows a
+  slide as it was before the agent's current run first changed it, beside
+  how it is now ("New in this run" for a slide the run added). The run
+  keeps the document as it was at its first write while the run is open.
+- **Text that does not fit.** Every look now reports the text boxes whose
+  text, laid out with the real fonts, runs below the box (`overflow`, at
+  most 50). The playbooks tell the agent to fix what it caused — shorter
+  wording first, never smaller type than the role uses — and to look after
+  each batch of visible changes.
+- Agent eval: `compare-before-after`, `fix-text-overflow` (the grader
+  measures again), `deck-card-before-handoff`; two edit scenarios check the
+  card is not redrawn after ordinary edits.
+
+### Changed
+
+- The "before" state of a compare travels to the worker through storage (a
+  presigned download), never in the render queue; the run keeps at most
+  8 MB of it, 128 MB for all runs together, and lets a closed run's go.
+- A compare draws on a frozen page first and closes the kept page before,
+  so the worker never holds two pages at once; both sides use preview-size
+  pictures.
+- The export sweep also removes renders left under `components/<id>/exports/`.
+
 ---
 
 ## 0.10.29 — Deck cards follow agent changes (2026-10-11)

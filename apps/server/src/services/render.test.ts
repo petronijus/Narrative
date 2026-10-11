@@ -25,6 +25,7 @@ import { MAX_RENDER_SLIDES, type RenderView } from '@narrative/commands'
 vi.mock('../auth/permissions.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../auth/permissions.js')>()),
   resolveDeckAccess: vi.fn(),
+  resolveComponentAccess: vi.fn(),
 }))
 vi.mock('./liveDocs.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./liveDocs.js')>()),
@@ -52,6 +53,14 @@ vi.mock('../hocuspocus/connections.js', () => ({ closeShareTokenConnections: vi.
 vi.mock('./deckThumbnailStore.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./deckThumbnailStore.js')>()),
   storeDeckThumbnail: vi.fn(),
+  storeComponentThumbnail: vi.fn(),
+}))
+vi.mock('./components.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./components.js')>()),
+  componentRecord: vi.fn((row: { thumbnailKey: string | null; updatedAt: Date }) => ({
+    thumbnailUrl: row.thumbnailKey === null ? null : `https://img.test/${row.thumbnailKey}`,
+    updatedAt: row.updatedAt.toISOString(),
+  })),
 }))
 vi.mock('./decks.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./decks.js')>()),
@@ -61,11 +70,16 @@ vi.mock('./decks.js', async (importOriginal) => ({
   })),
 }))
 
-import { resolveDeckAccess } from '../auth/permissions.js'
+import { resolveComponentAccess, resolveDeckAccess } from '../auth/permissions.js'
 import { resolveRenderToken } from '../auth/renderTokens.js'
 import { readDocCopy } from './liveDocs.js'
 import { clearCardStateForTests } from '../render/cardState.js'
-import { storeDeckThumbnail, type DeckRow } from './deckThumbnailStore.js'
+import {
+  storeComponentThumbnail,
+  storeDeckThumbnail,
+  type ComponentRow,
+  type DeckRow,
+} from './deckThumbnailStore.js'
 import { buildS3Client } from '../media/s3Client.js'
 import {
   BACKGROUND_PRIORITY,
@@ -100,13 +114,25 @@ function deckDoc(ids: string[]): Y.Doc {
 const log = { error: vi.fn(), warn: vi.fn(), info: vi.fn() } as unknown as ServiceDeps['log']
 const NOW = 1_800_000_000_000
 
-function setup(run: RenderQueue['run'], waiting = async () => 0) {
+/** The one row a master's render reads: its folder (component 'c1' lives in folder 'f1'). */
+const componentDb = {
+  select: () => ({
+    from: () => ({ where: () => ({ limit: async () => [{ folderId: 'f1' }] }) }),
+  }),
+} as unknown as ServiceDeps['db']
+
+function setup(
+  run: RenderQueue['run'],
+  waiting = async () => 0,
+  extra: Partial<Pick<ServiceDeps, 'runs'>> = {},
+) {
   const queue = { run: vi.fn(run), waiting: vi.fn(waiting) }
   const service = createRenderService({
-    db: {} as ServiceDeps['db'],
+    db: componentDb,
     log,
     renderQueue: queue,
     now: () => NOW,
+    ...extra,
   })
   return { queue, service }
 }
@@ -142,6 +168,7 @@ const looked = (data: RenderJobData): RenderJobResult => {
       height: 804,
       sizeBytes: 4,
       slides: ids.map((slideId, i) => ({ slideId, index: i, failedLoads: 0 })),
+      overflow: [],
     },
     failedFonts: [],
   }
@@ -206,7 +233,7 @@ describe('RenderService.exportPng', () => {
     const vector = Y.decodeStateVector(Buffer.from(data.stateVector, 'base64'))
     expect(vector.size).toBe(1)
     expect([...vector.values()][0]).toBeGreaterThan(0)
-    expect(data.deckId).toBe('d1')
+    expect(data.page).toEqual({ kind: 'deck', deckId: 'd1' })
     expect(data.deadline).toBe(NOW + RENDER_WAIT_MS)
     expect(data.workBudgetMs).toBe(RENDER_WORK_BASE_MS + RENDER_WORK_PER_SLIDE_MS)
     expect(opts).toEqual({ priority: 1 })
@@ -522,7 +549,7 @@ describe('deck card pictures', () => {
   it('draws the first slide as a thumbnail look, checks it and stores it as the card (editors)', async () => {
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
     const { queue, service } = setup(async (data) => looked(data))
-    const result = await service.refreshThumbnail({ userId: 'u1', deckId: 'd1' })
+    const result = await service.refreshThumbnail({ userId: 'u1', target: { deckId: 'd1' } })
     const job = queue.run.mock.calls[0]![0]
     expect(job.kind === 'look' && job.look).toEqual({ mode: 'thumbnail', slideId: 's1' })
     expect(job.kind === 'look' && job.upload.url).toMatch(/\/exports\/[\w-]{16}\/thumb\.png\?/)
@@ -541,14 +568,20 @@ describe('deck card pictures', () => {
 
   it('lets only editors redraw the card (403), refuses a deck without slides (400) and says when the deck went away (404)', async () => {
     const { queue, service } = setup(async (data) => looked(data))
-    expect(await status(service.refreshThumbnail({ userId: 'u1', deckId: 'd1' }))).toBe(403)
+    expect(await status(service.refreshThumbnail({ userId: 'u1', target: { deckId: 'd1' } }))).toBe(
+      403,
+    )
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
     vi.mocked(readDocCopy).mockImplementation(async () => deckDoc([]))
-    expect(await status(service.refreshThumbnail({ userId: 'u1', deckId: 'd1' }))).toBe(400)
+    expect(await status(service.refreshThumbnail({ userId: 'u1', target: { deckId: 'd1' } }))).toBe(
+      400,
+    )
     expect(queue.run).not.toHaveBeenCalled()
     vi.mocked(readDocCopy).mockImplementation(async () => deckDoc(['s1']))
     vi.mocked(storeDeckThumbnail).mockResolvedValue(null)
-    expect(await status(service.refreshThumbnail({ userId: 'u1', deckId: 'd1' }))).toBe(404)
+    expect(await status(service.refreshThumbnail({ userId: 'u1', target: { deckId: 'd1' } }))).toBe(
+      404,
+    )
   })
 
   it('draws a background card behind everyone, in a lane of its own, outside the owner’s share', async () => {
@@ -562,7 +595,9 @@ describe('deck card pictures', () => {
     await vi.waitFor(() => expect(queue.run).toHaveBeenCalledTimes(MAX_IN_FLIGHT_PER_USER))
     // …and the card is drawn all the same, last in line, on a page not kept
     // warm, with a token of the background lane (its own session and budget).
-    expect(await service.backgroundThumbnail({ userId: 'u1', deckId: 'd1' })).toEqual({
+    expect(
+      await service.backgroundThumbnail({ userId: 'u1', card: { kind: 'deck', id: 'd1' } }),
+    ).toEqual({
       status: 'stored',
     })
     const [job, opts] = queue.run.mock.calls.at(-1)!
@@ -577,7 +612,8 @@ describe('deck card pictures', () => {
   it('draws a background card again only when the first slide changed — a deletion included', async () => {
     const { queue, service } = setup(async (data) => looked(data))
     const doc = liveDoc(['s1', 's2'])
-    const background = () => service.backgroundThumbnail({ userId: 'u1', deckId: 'd1' })
+    const background = () =>
+      service.backgroundThumbnail({ userId: 'u1', card: { kind: 'deck', id: 'd1' } })
     expect(await background()).toEqual({ status: 'stored' })
     expect(await background()).toEqual({ status: 'unchanged' })
     // Slide 2 changes: the card does not.
@@ -602,8 +638,10 @@ describe('deck card pictures', () => {
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
     const { queue, service } = setup(async (data) => looked(data))
     liveDoc(['s1'])
-    await service.refreshThumbnail({ userId: 'u1', deckId: 'd1' })
-    expect(await service.backgroundThumbnail({ userId: 'owner', deckId: 'd1' })).toEqual({
+    await service.refreshThumbnail({ userId: 'u1', target: { deckId: 'd1' } })
+    expect(
+      await service.backgroundThumbnail({ userId: 'owner', card: { kind: 'deck', id: 'd1' } }),
+    ).toEqual({
       status: 'unchanged',
     })
     expect(queue.run).toHaveBeenCalledTimes(1)
@@ -613,15 +651,23 @@ describe('deck card pictures', () => {
     const { queue, service } = setup(async (data) => looked(data))
     liveDoc(['s1'])
     expect(
-      await service.backgroundThumbnail({ userId: 'u1', deckId: 'd1', stillWanted: () => false }),
+      await service.backgroundThumbnail({
+        userId: 'u1',
+        card: { kind: 'deck', id: 'd1' },
+        stillWanted: () => false,
+      }),
     ).toEqual({ status: 'superseded' })
     expect(storeDeckThumbnail).not.toHaveBeenCalled()
     // Not stored, so not drawn: the next try draws it.
-    expect(await service.backgroundThumbnail({ userId: 'u1', deckId: 'd1' })).toEqual({
+    expect(
+      await service.backgroundThumbnail({ userId: 'u1', card: { kind: 'deck', id: 'd1' } }),
+    ).toEqual({
       status: 'stored',
     })
     vi.mocked(readDocCopy).mockImplementation(async () => deckDoc([]))
-    expect(await service.backgroundThumbnail({ userId: 'u1', deckId: 'd1' })).toEqual({
+    expect(
+      await service.backgroundThumbnail({ userId: 'u1', card: { kind: 'deck', id: 'd1' } }),
+    ).toEqual({
       status: 'no-slides',
     })
     expect(queue.run).toHaveBeenCalledTimes(2)
@@ -633,26 +679,26 @@ describe('deck card pictures', () => {
       async () => MAX_WAITING_JOBS,
     )
     await expect(
-      full.service.backgroundThumbnail({ userId: 'u1', deckId: 'd1' }),
+      full.service.backgroundThumbnail({ userId: 'u1', card: { kind: 'deck', id: 'd1' } }),
     ).rejects.toBeInstanceOf(RendererBusyError)
     const late = setup(async () => {
       throw new Error(renderFailureMessage('late', 'nobody waits'))
     })
     await expect(
-      late.service.backgroundThumbnail({ userId: 'u1', deckId: 'd1' }),
+      late.service.backgroundThumbnail({ userId: 'u1', card: { kind: 'deck', id: 'd1' } }),
     ).rejects.toBeInstanceOf(RendererBusyError)
     const queued = setup(async () => {
       throw new RenderTimeoutError(false)
     })
-    await expect(queued.service.backgroundThumbnail({ userId: 'u1', deckId: 'd1' })).rejects.toBeInstanceOf(
-      RendererBusyError,
-    )
+    await expect(
+      queued.service.backgroundThumbnail({ userId: 'u1', card: { kind: 'deck', id: 'd1' } }),
+    ).rejects.toBeInstanceOf(RendererBusyError)
     // Started and not finished in time: the slide itself is slow — not busy.
     const slow = setup(async () => {
       throw new RenderTimeoutError(true)
     })
     const slowErr = await slow.service
-      .backgroundThumbnail({ userId: 'u1', deckId: 'd1' })
+      .backgroundThumbnail({ userId: 'u1', card: { kind: 'deck', id: 'd1' } })
       .catch((e: unknown) => e)
     expect(slowErr).toBeInstanceOf(ServiceError)
     expect(slowErr).not.toBeInstanceOf(RendererBusyError)
@@ -660,9 +706,182 @@ describe('deck card pictures', () => {
       throw new Error(renderFailureMessage('browser', 'the page crashed'))
     })
     const err = await crashed.service
-      .backgroundThumbnail({ userId: 'u1', deckId: 'd1' })
+      .backgroundThumbnail({ userId: 'u1', card: { kind: 'deck', id: 'd1' } })
       .catch((e: unknown) => e)
     expect(err).toBeInstanceOf(ServiceError)
     expect(err).not.toBeInstanceOf(RendererBusyError)
+  })
+})
+
+describe('a component master’s card', () => {
+  const master = {
+    thumbnailKey: 'components/c1/thumb-abc.png',
+    updatedAt: new Date(NOW),
+  } as ComponentRow
+
+  beforeEach(() => {
+    clearCardStateForTests()
+    vi.mocked(storeComponentThumbnail).mockReset()
+    vi.mocked(storeComponentThumbnail).mockResolvedValue(master)
+    vi.mocked(resolveComponentAccess).mockResolvedValue({ role: 'editor', reason: 'folder' })
+    vi.mocked(readDocCopy).mockImplementation(async () => deckDoc(['master']))
+  })
+
+  it('is drawn on the master’s own render page, with a token for that master, and stored as its card', async () => {
+    const { queue, service } = setup(async (data) => looked(data))
+    const result = await service.refreshThumbnail({ userId: 'u1', target: { componentId: 'c1' } })
+    const [job] = queue.run.mock.calls[0]!
+    expect(job.page).toEqual({ kind: 'component', componentId: 'c1', folderId: 'f1' })
+    expect(job.kind === 'look' && job.look).toEqual({ mode: 'thumbnail', slideId: 'master' })
+    expect(job.kind === 'look' && job.upload.url).toMatch(
+      /components\/c1\/exports\/[\w-]{16}\/thumb\.png\?/,
+    )
+    expect(resolveRenderToken(job.token)?.target).toEqual({ kind: 'component', id: 'c1' })
+    expect(vi.mocked(readDocCopy).mock.calls.at(-1)!.slice(1)).toEqual(['component', 'c1'])
+    expect(vi.mocked(storeComponentThumbnail).mock.calls.at(-1)!.slice(1, 2)).toEqual(['c1'])
+    expect(result).toEqual({
+      thumbnailUrl: 'https://img.test/components/c1/thumb-abc.png',
+      updatedAt: new Date(NOW).toISOString(),
+    })
+  })
+
+  it('is redrawn only by the folder’s editors, and refused to anyone outside it', async () => {
+    const { queue, service } = setup(async (data) => looked(data))
+    vi.mocked(resolveComponentAccess).mockResolvedValueOnce({ role: 'viewer', reason: 'folder' })
+    expect(
+      await status(service.refreshThumbnail({ userId: 'u1', target: { componentId: 'c1' } })),
+    ).toBe(403)
+    vi.mocked(resolveComponentAccess).mockResolvedValueOnce(null)
+    expect(
+      await status(service.refreshThumbnail({ userId: 'u1', target: { componentId: 'c1' } })),
+    ).toBe(403)
+    expect(queue.run).not.toHaveBeenCalled()
+  })
+
+  it('is drawn in the background as the folder’s owner, once per change of the master', async () => {
+    const { queue, service } = setup(async (data) => looked(data))
+    const update = Y.encodeStateAsUpdate(deckDoc(['master']))
+    vi.mocked(readDocCopy).mockImplementation(async () => {
+      const copy = new Y.Doc()
+      Y.applyUpdate(copy, update)
+      return copy
+    })
+    const card = { kind: 'component', id: 'c1' } as const
+    expect(await service.backgroundThumbnail({ userId: 'folder-owner', card })).toEqual({
+      status: 'stored',
+    })
+    expect(await service.backgroundThumbnail({ userId: 'folder-owner', card })).toEqual({
+      status: 'unchanged',
+    })
+    expect(resolveRenderToken(queue.run.mock.calls[0]![0].token)).toMatchObject({
+      requestedBy: 'folder-owner',
+      lane: 'background',
+    })
+  })
+})
+
+describe('compare: a slide before the agent run and now', () => {
+  const before = Y.encodeStateAsUpdate(deckDoc(['s1']))
+  const runs = (
+    state: {
+      document: { kind: 'deck'; deckId: string } | { kind: 'component'; componentId: string }
+    } | null,
+  ) =>
+    ({
+      stateBefore: vi.fn((runId: string) =>
+        runId === 'r1' && state !== null ? { ...state, update: before } : null,
+      ),
+    }) as unknown as NonNullable<ServiceDeps['runs']>
+
+  it('hands the worker the deck as it was at the start of the run, weighed as two pages', async () => {
+    const { queue, service } = setup(
+      async (data) => looked(data),
+      async () => 0,
+      {
+        runs: runs({ document: { kind: 'deck', deckId: 'd1' } }),
+      },
+    )
+    const out = await service.look({
+      userId: 'u1',
+      deckId: 'd1',
+      view: { compare: { index: 1 }, runId: 'r1' },
+    })
+    const [job] = queue.run.mock.calls[0]!
+    // The state waits in storage for the worker (a presigned GET), never in the queue.
+    expect(job.kind === 'look' && job.look).toEqual({
+      mode: 'compare',
+      slideId: 's2',
+      before: { url: expect.stringMatching(/\/get\/decks\/d1\/exports\/[\w-]{16}\/before\.bin\?/) },
+    })
+    expect(job.workBudgetMs).toBe(RENDER_WORK_BASE_MS + RENDER_WORK_PER_SLIDE_MS * 4)
+    expect(out.mode).toBe('compare')
+  })
+
+  it('refuses without a run that changed this deck, before anything renders', async () => {
+    for (const [runId, state] of [
+      [null, { document: { kind: 'deck', deckId: 'd1' } }],
+      ['r1', null],
+      ['r1', { document: { kind: 'deck', deckId: 'other' } }],
+      ['r1', { document: { kind: 'component', componentId: 'c1' } }],
+    ] as const) {
+      const { queue, service } = setup(
+        async (data) => looked(data),
+        async () => 0,
+        {
+          runs: runs(state),
+        },
+      )
+      expect(
+        await status(
+          service.look({ userId: 'u1', deckId: 'd1', view: { compare: { index: 0 }, runId } }),
+        ),
+      ).toBe(400)
+      expect(queue.run).not.toHaveBeenCalled()
+    }
+  })
+
+  it('says when the slide is new in the run, and maps each overflowing text box to its slide', async () => {
+    const { service } = setup(
+      async (data) => {
+        const result = looked(data)
+        if (result.kind !== 'look') return result
+        return {
+          ...result,
+          look: {
+            ...result.look,
+            newSlide: true,
+            overflow: [{ slideId: 's3', objectId: 'title', boxHeight: 100, textHeight: 162 }],
+          },
+        }
+      },
+      async () => 0,
+      { runs: runs({ document: { kind: 'deck', deckId: 'd1' } }) },
+    )
+    const out = await service.look({
+      userId: 'u1',
+      deckId: 'd1',
+      view: { compare: { index: 2 }, runId: 'r1' },
+    })
+    expect(out.newSlide).toBe(true)
+    expect(out.overflow).toEqual([
+      { slideId: 's3', index: 2, objectId: 'title', boxHeight: 100, textHeight: 162 },
+    ])
+  })
+
+  it('reports at most 50 overflowing boxes, and says when there were more', async () => {
+    const { service } = setup(async (data) => {
+      const result = looked(data)
+      if (result.kind !== 'look') return result
+      const overflow = Array.from({ length: 60 }, (_, i) => ({
+        slideId: 's1',
+        objectId: `t${i}`,
+        boxHeight: 10,
+        textHeight: 20,
+      }))
+      return { ...result, look: { ...result.look, overflow } }
+    })
+    const out = await service.look({ userId: 'u1', deckId: 'd1', view: { slide: { index: 0 } } })
+    expect(out.overflow).toHaveLength(50)
+    expect(out.overflowTruncated).toBe(true)
   })
 })

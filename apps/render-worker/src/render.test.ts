@@ -6,7 +6,7 @@ describe('renderPageUrl', () => {
     const url = renderPageUrl(
       'https://narrative.example.com',
       {
-        deckId: 'd 1',
+        page: { kind: 'deck', deckId: 'd 1' },
         token: `nrr_${'a'.repeat(43)}`,
       },
       's1',
@@ -17,13 +17,28 @@ describe('renderPageUrl', () => {
     expect(parsed.searchParams.get('slide')).toBe('s1')
     expect(parsed.searchParams.get('paint')).toBe('off')
     expect(parsed.searchParams.get('share_token')).toBe(`nrr_${'a'.repeat(43)}`)
+    expect(parsed.searchParams.has('frozen')).toBe(false)
+  })
+
+  it('opens a component master’s render page in its folder, and a frozen page when asked', () => {
+    const url = new URL(
+      renderPageUrl(
+        'https://narrative.example.com',
+        { page: { kind: 'component', componentId: 'c1', folderId: 'f1' }, token: 'nrr_x' },
+        'master',
+        { frozen: true },
+      ),
+    )
+    expect(url.pathname).toBe('/folder/f1/component/c1/render')
+    expect(url.searchParams.get('slide')).toBe('master')
+    expect(url.searchParams.get('frozen')).toBe('1')
   })
 })
 
 describe('refuseLate', () => {
   const job = (deadline: number) => ({
     kind: 'export' as const,
-    deckId: 'd',
+    page: { kind: 'deck' as const, deckId: 'd' },
     uploads: [],
     token: 'nrr_x',
     stateVector: '',

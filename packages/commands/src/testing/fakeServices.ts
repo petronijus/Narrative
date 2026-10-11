@@ -105,6 +105,16 @@ function fakeRuns(
         .map((r) => r.summary)
         .slice(0, args.limit)
     },
+    // A read the render service makes, not a call a command makes: not recorded.
+    stateBefore(runId) {
+      const entry = runs.get(runId)
+      if (entry === undefined) return null
+      const document: RunDocument = entry.document.startsWith('component:')
+        ? { kind: 'component', componentId: entry.document.slice('component:'.length) }
+        : { kind: 'deck', deckId: entry.document.slice('deck:'.length) }
+      // An empty document: everything the fixture deck holds came after.
+      return { document, update: new Uint8Array([0, 0]) }
+    },
     async revertRun(args): Promise<RevertRunResult> {
       record('revertRun', args)
       const entry = runs.get(args.runId)
@@ -163,6 +173,7 @@ export function createFakeServices(): FakeServices {
   const { snapshot: domainSnapshot, ...domain } = createDomainFakes(
     { deckId: FIXTURE_DECK_ID, folderId: FIXTURE_FOLDER_ID, userId: 'u1' },
     recorder,
+    runs,
   )
   return {
     calls,

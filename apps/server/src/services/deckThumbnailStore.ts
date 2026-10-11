@@ -1,13 +1,14 @@
 /**
  * services/deckThumbnailStore.ts — a deck's card picture (what the folder
- * page shows for it) put in storage and on the deck row.
+ * page shows for it), or a component master's (the folder's component
+ * list and picker), put in storage and on its row.
  *
  * Two writers: the editor uploads the first slide it rendered
  * (`PUT /decks/:id/thumbnail`, routes/decks.ts), and the render worker draws
  * it for a deck nobody has open (services/deckThumbnails.ts) or on request
  * (`deck.refreshThumbnail`, services/render.ts).
  *
- * Every picture gets a key of its own (`decks/<id>/thumb-<random>.<ext>`):
+ * Every picture gets a key of its own (`decks/<id>/thumb-<random>.<ext>`, `components/<id>/…`):
  *   - writers racing each other cannot delete what the row points at — the
  *     row is swapped under a row lock, and nothing the row names, nothing
  *     it named just before and nothing younger than `REPLACED_GRACE_MS` is
@@ -23,7 +24,7 @@ import { DeleteObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aw
 import { eq } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import type { Database } from '../db/client.js'
-import { decks } from '../db/schema.js'
+import { components, decks } from '../db/schema.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 
 export type DeckRow = typeof decks.$inferSelect
@@ -52,6 +53,14 @@ async function deleteObject(key: string): Promise<void> {
     .catch(() => undefined)
 }
 
+/** Whose card: a deck's, or a component master's. */
+export type CardRef = { kind: 'deck'; id: string } | { kind: 'component'; id: string }
+
+export type ComponentRow = typeof components.$inferSelect
+
+const prefixOf = (card: CardRef): string =>
+  `${card.kind === 'deck' ? 'decks' : 'components'}/${card.id}/`
+
 /**
  * Store `picture` as the deck's card picture. Returns the updated deck row,
  * or null when the deck no longer exists (nothing is left in storage then).
@@ -64,13 +73,37 @@ export async function storeDeckThumbnail(
   picture: { bytes: Uint8Array; mime: 'image/png' | 'image/jpeg' },
   opts: { graceMs?: number; now?: () => number } = {},
 ): Promise<DeckRow | null> {
+  return (await storeCardPicture(db, { kind: 'deck', id: deckId }, picture, opts)) as DeckRow | null
+}
+
+/** The same for a component master's card (`components/<id>/thumb-…`). */
+export async function storeComponentThumbnail(
+  db: Database,
+  componentId: string,
+  picture: { bytes: Uint8Array; mime: 'image/png' | 'image/jpeg' },
+  opts: { graceMs?: number; now?: () => number } = {},
+): Promise<ComponentRow | null> {
+  return (await storeCardPicture(
+    db,
+    { kind: 'component', id: componentId },
+    picture,
+    opts,
+  )) as ComponentRow | null
+}
+
+async function storeCardPicture(
+  db: Database,
+  card: CardRef,
+  picture: { bytes: Uint8Array; mime: 'image/png' | 'image/jpeg' },
+  opts: { graceMs?: number; now?: () => number },
+): Promise<DeckRow | ComponentRow | null> {
   if (!hasImageSignature(picture.bytes, picture.mime)) {
     throw new ThumbnailFormatError(
       `the picture is not a ${picture.mime === 'image/png' ? 'PNG' : 'JPEG'}`,
     )
   }
   const ext = picture.mime === 'image/png' ? 'png' : 'jpg'
-  const storageKey = `decks/${deckId}/thumb-${nanoid(12)}.${ext}`
+  const storageKey = `${prefixOf(card)}thumb-${nanoid(12)}.${ext}`
   try {
     await buildS3Client().send(
       new PutObjectCommand({
@@ -86,17 +119,31 @@ export async function storeDeckThumbnail(
   }
 
   const swapped = await db.transaction(async (tx) => {
+    const now = new Date()
+    if (card.kind === 'deck') {
+      const [before] = await tx
+        .select({ thumbnailKey: decks.thumbnailKey })
+        .from(decks)
+        .where(eq(decks.id, card.id))
+        .for('update')
+      if (before === undefined) return null
+      const [row] = await tx
+        .update(decks)
+        .set({ thumbnailKey: storageKey, thumbnailUpdatedAt: now, updatedAt: now })
+        .where(eq(decks.id, card.id))
+        .returning()
+      return { row: row!, previousKey: before.thumbnailKey }
+    }
     const [before] = await tx
-      .select({ thumbnailKey: decks.thumbnailKey })
-      .from(decks)
-      .where(eq(decks.id, deckId))
+      .select({ thumbnailKey: components.thumbnailKey })
+      .from(components)
+      .where(eq(components.id, card.id))
       .for('update')
     if (before === undefined) return null
-    const now = new Date()
     const [row] = await tx
-      .update(decks)
-      .set({ thumbnailKey: storageKey, thumbnailUpdatedAt: now, updatedAt: now })
-      .where(eq(decks.id, deckId))
+      .update(components)
+      .set({ thumbnailKey: storageKey, updatedAt: now })
+      .where(eq(components.id, card.id))
       .returning()
     return { row: row!, previousKey: before.thumbnailKey }
   })
@@ -104,7 +151,7 @@ export async function storeDeckThumbnail(
     await deleteObject(storageKey)
     return null
   }
-  await dropReplaced(deckId, new Set([storageKey, swapped.previousKey]), {
+  await dropReplaced(card, new Set([storageKey, swapped.previousKey]), {
     graceMs: opts.graceMs ?? REPLACED_GRACE_MS,
     now: opts.now ?? Date.now,
   })
@@ -112,19 +159,19 @@ export async function storeDeckThumbnail(
 }
 
 /**
- * Delete the deck's earlier card pictures (the legacy fixed `thumb.<ext>`
+ * Delete the card's earlier pictures (the legacy fixed `thumb.<ext>`
  * included) except `keep` and those stored within `graceMs` — a writer
  * racing this one may have just stored the picture its row swap will name.
  */
 async function dropReplaced(
-  deckId: string,
+  card: CardRef,
   keep: Set<string | null>,
   opts: { graceMs: number; now: () => number },
 ): Promise<void> {
   let listed
   try {
     listed = await buildS3Client().send(
-      new ListObjectsV2Command({ Bucket: MEDIA_BUCKET, Prefix: `decks/${deckId}/thumb` }),
+      new ListObjectsV2Command({ Bucket: MEDIA_BUCKET, Prefix: `${prefixOf(card)}thumb` }),
     )
   } catch {
     return // Best effort: what is left goes with the deck, or at the next store.

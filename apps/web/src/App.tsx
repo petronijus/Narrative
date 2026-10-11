@@ -62,6 +62,11 @@ const DeckRender = lazyRoute(
   () => import('./pages/DeckRender.js'),
   (m) => m.DeckRender,
 )
+// A component master's render page: DeckRender in the master's providers.
+const ComponentRenderShell = lazyRoute(
+  () => import('./pages/ComponentRender.js'),
+  (m) => m.ComponentRenderShell,
+)
 // Account settings: small, rarely visited — kept off the dashboard chunk.
 const AccessTokens = lazyRoute(
   () => import('./pages/AccessTokens.js'),
@@ -106,6 +111,12 @@ export function App() {
                       path="/folder/:folderId/component/:componentId"
                       element={<ComponentMasterEditor />}
                     />
+                    <Route
+                      path="/folder/:folderId/component/:componentId/render"
+                      element={<ComponentRenderShell />}
+                    >
+                      <Route index element={<DeckRender />} />
+                    </Route>
                     <Route path="/deck/:id" element={<DeckShell />}>
                       <Route index element={<DeckEditor />} />
                       <Route path="present" element={<DeckPresent />} />

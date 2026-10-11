@@ -1,6 +1,10 @@
 # Agentic Narrative: every capability callable by an agent, plus Woodgrove style packs
 
-Status: **accepted**, 2026-09-26. **A0, A1 and A2 done**: A0 on
+Status: **accepted**, 2026-09-26. **A0–A3 done**: A3 (the render
+worker: the agent sees slides, PNG export, server cards, before/after and
+text-fit measurement) closed on 2026-10-11 — handoff
+[A3](../handoff/A3-render-worker.md), step log in
+[`a3-render-worker.md`](./a3-render-worker.md). Next: A4. Before A3: A0 on
 2026-09-26 and A1 on 2026-09-27 (released together as 0.10.0), A2 closed
 on 2026-09-30 with A2.13 (A2.1–A2.12a released in 0.10.2–0.10.14; A2.12b
 and A2.13 uncommitted on 2026-09-30, to ship as 0.10.15). Handoffs:

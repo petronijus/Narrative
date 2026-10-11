@@ -437,8 +437,11 @@
       "id": "deck.refreshThumbnail",
       "domain": "deck",
       "title": "Redraw the deck card",
-      "description": "Redraw the deck’s card picture — what the folder page shows for it — from its first slide, now. The card follows changes by itself: from the editor while someone has the deck open, else about 15 s after the last change (once a minute at most); call this only when it must be right at once (before sending someone to the folder). Returns the new picture’s URL. Takes a few seconds. Editors of the deck.",
+      "description": "Redraw the card picture — what the folder page shows for the deck, or for a component master (componentId) in its component list — from the first slide, now. The card follows changes by itself: from the editor while someone has the deck open, else about 15 s after the last change (once a minute at most); call this only when it must be right at once (before sending someone to the folder). Returns the new picture’s URL. Takes a few seconds. Editors of the deck (a master: of its folder).",
       "role": "editor",
+      "roleOn": {
+        "component": "editor"
+      },
       "effects": ["server"],
       "undo": "n/a",
       "confirm": "never",
@@ -447,6 +450,10 @@
         {
           "method": "PUT",
           "path": "/decks/:id/thumbnail"
+        },
+        {
+          "method": "PUT",
+          "path": "/components/:id/thumbnail"
         }
       ]
     },
@@ -1231,7 +1238,7 @@
       "id": "query.render",
       "domain": "query",
       "title": "Look at slides",
-      "description": "See slides as they really look — the image comes back to you (fonts, pictures, layout, as the editor draws them, seconds-old edits included). Look after every visible change before you report it done. `slide`: the whole slide (1430×804). `slide` + `region` (slide px, 1920×1080 space): that part at full resolution, for small type, a table or an alignment. `slides` (\"all\" or a list, at most 20): one contact sheet, each slide numbered, for pacing and repetition across the deck. `failedLoads` counts missing pictures per slide; `failedFonts` names fonts that fell back. A few seconds the first time on a deck, about a second after. Files for the user are deck.exportPng. Any reader of the deck.",
+      "description": "See slides as they really look — the image comes back to you (fonts, pictures, layout, as the editor draws them, seconds-old edits included). Look after every visible change before you report it done. `slide`: the whole slide (1430×804). `slide` + `region` (slide px, 1920×1080 space): that part at full resolution, for small type, a table or an alignment. `slides` (\"all\" or a list, at most 20): one contact sheet, each slide numbered, for pacing and repetition across the deck. `slide` + `compare: \"before\"`: the slide before your current run first changed it, beside it now (`newSlide`: your run added it). `overflow`: text boxes whose text runs below the box with the real fonts — fix those you caused. `failedLoads` counts missing pictures per slide; `failedFonts` names fonts that fell back. A few seconds the first time on a deck, about a second after. Files for the user are deck.exportPng. Any reader of the deck.",
       "role": "viewer",
       "effects": [],
       "undo": "n/a",
@@ -1924,19 +1931,6 @@
     }
   ],
   "knownMissing": [
-    {
-      "capability": "component.refreshThumbnail",
-      "phase": "A3",
-      "source": "web",
-      "where": "apps/web/src/pages/ComponentMasterEditor.tsx",
-      "routes": [
-        {
-          "method": "PUT",
-          "path": "/components/:id/thumbnail"
-        }
-      ],
-      "note": "the master editor renders the thumbnail and uploads it; the render worker takes over in A3"
-    },
     {
       "capability": "component.create",
       "phase": "A4",

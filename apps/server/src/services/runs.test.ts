@@ -247,6 +247,58 @@ describe('revert', () => {
   })
 })
 
+describe('the state before a run (query.render compare)', () => {
+  beforeEach(() => setup())
+
+  it('is the document as it was just before the run first wrote it, kept with the history', async () => {
+    // The fixture's r1 is 0x4060e0 (the revert tests restore it).
+    const first = await must({ invocation: update('r1', { fill: '#ff0000' }) })
+    await must({ invocation: update('r2', { opacity: 0.5 }) })
+    const before = world.runtime.runs.stateBefore(first.runId!)
+    expect(before?.document).toEqual({ kind: 'deck', deckId: 'deck1' })
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, before!.update)
+    // Neither of the run's writes: the first one's state, not the second's.
+    expect(prop(doc, 'r1', 'fill')).toBe(0x4060e0)
+    expect(prop(doc, 'r2', 'opacity')).toBe(1)
+    // A run that wrote nothing, or an unknown one, has none.
+    expect(world.runtime.runs.stateBefore('no-such-run')).toBeNull()
+  })
+
+  it('is let go when the run closes (only the current run is compared with)', async () => {
+    const first = await must({ invocation: update('r1', { fill: '#ff0000' }) })
+    expect(world.runtime.runs.stateBefore(first.runId!)).not.toBeNull()
+    await must({ invocation: { command: 'agent.startRun', input: { request: 'next' } } })
+    expect(world.runtime.runs.stateBefore(first.runId!)).toBeNull()
+  })
+
+  it('lets the oldest go past the process-wide budget, and keeps none over 8 MB', async () => {
+    await world.destroy()
+    await setup({ beforeStatesBudgetBytes: 1 })
+    world.createDeck('deck2')
+    world.grant('deck2', 'ed', 'editor')
+    const first = await must({ invocation: update('r1', { fill: '#ff0000' }) })
+    expect(world.runtime.runs.stateBefore(first.runId!)).not.toBeNull()
+    // A second deck's run: within a 1-byte budget only the newest is kept.
+    const second = await must({
+      target: { deckId: 'deck2' },
+      invocation: update('r1', { fill: '#00ff00' }),
+    })
+    expect(world.runtime.runs.stateBefore(second.runId!)).not.toBeNull()
+    expect(world.runtime.runs.stateBefore(first.runId!)).toBeNull()
+  })
+
+  it('goes with the history when the run is reverted', async () => {
+    const first = await must({ invocation: update('r1', { fill: '#ff0000' }) })
+    await world.runtime.runs.revertRun({
+      userId: 'ed',
+      target: { kind: 'deck', deckId: 'deck1' },
+      runId: first.runId!,
+    })
+    expect(world.runtime.runs.stateBefore(first.runId!)).toBeNull()
+  })
+})
+
 describe('after a revert of a deck', () => {
   it('catches up old folder media once the revert changed the deck; a failure leaves the revert standing', async () => {
     // A revert can bring back pictures of a folder the deck has left since

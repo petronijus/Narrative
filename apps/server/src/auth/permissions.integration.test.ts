@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { inArray } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { db, pool } from '../db/client.js'
+import { mintRenderToken, revokeRenderToken } from './renderTokens.js'
 import {
   components,
   deckPermissions,
@@ -218,6 +219,73 @@ describe('resolveComponentAccess', () => {
     expect(await role(viewer)).toBe('viewer')
     expect(await role(guest)).toBeNull()
     expect(await role(stranger)).toBeNull()
+  })
+})
+
+describe('a component master’s render token (agentic A3.5)', () => {
+  it('reads that master and its folder, read-only, only while its requester can', async () => {
+    const token = mintRenderToken({ kind: 'component', id: component }, viewer)
+    try {
+      expect(
+        await resolveComponentAccess(db, {
+          componentId: component,
+          userId: null,
+          shareToken: token,
+        }),
+      ).toEqual({ role: 'viewer', reason: 'render' })
+      expect(
+        await resolveFolderContentAccess(db, { folderId: folder, userId: null, shareToken: token }),
+      ).toEqual({ role: 'viewer', via: 'render' })
+      // Nothing else: another folder, any deck — it is no share link.
+      expect(
+        await resolveFolderContentAccess(db, {
+          folderId: otherFolder,
+          userId: null,
+          shareToken: token,
+        }),
+      ).toBeNull()
+      expect(
+        await resolveDeckAccess(db, { deckId: deck, userId: null, shareToken: token }),
+      ).toBeNull()
+    } finally {
+      revokeRenderToken(token)
+    }
+  })
+
+  it('opens nothing once revoked, nor for a requester outside the folder', async () => {
+    const outsider = mintRenderToken({ kind: 'component', id: component }, guest)
+    const ended = mintRenderToken({ kind: 'component', id: component }, editor)
+    revokeRenderToken(ended)
+    try {
+      for (const token of [outsider, ended]) {
+        expect(
+          await resolveComponentAccess(db, {
+            componentId: component,
+            userId: null,
+            shareToken: token,
+          }),
+        ).toBeNull()
+        expect(
+          await resolveFolderContentAccess(db, {
+            folderId: folder,
+            userId: null,
+            shareToken: token,
+          }),
+        ).toBeNull()
+      }
+      // A deck's render token never reaches a master.
+      const deckToken = mintRenderToken({ kind: 'deck', id: deck }, owner)
+      expect(
+        await resolveComponentAccess(db, {
+          componentId: component,
+          userId: null,
+          shareToken: deckToken,
+        }),
+      ).toBeNull()
+      revokeRenderToken(deckToken)
+    } finally {
+      revokeRenderToken(outsider)
+    }
   })
 })
 

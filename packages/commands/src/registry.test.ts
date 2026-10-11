@@ -203,7 +203,6 @@ describe('commandTargetProblems', () => {
       'deck.get',
       'deck.insertFrom',
       'deck.moveToFolder',
-      'deck.refreshThumbnail',
       'deck.rename',
       'editor.context',
       'editor.present.link',

@@ -6,7 +6,9 @@
  * render worker: a slide downscaled to what a model reads, a region at full
  * resolution, a numbered contact sheet, and a look right after an edit
  * showing that edit (the worker's page waits for the live state, also when
- * it is a page kept from the previous look). Needs the whole dev stack, the
+ * it is a page kept from the previous look); a compare of a slide before
+ * the run that changed it and now (A3.6: the "before" drawn on a frozen
+ * page); the text boxes whose text overflows, measured with the real fonts. Needs the whole dev stack, the
  * render worker included (`just dev`).
  */
 
@@ -41,6 +43,14 @@ interface Look {
   width: number
   height: number
   slides: Array<{ slideId: string; index: number; failedLoads: number }>
+  overflow: Array<{
+    slideId: string
+    index: number
+    objectId: string
+    boxHeight: number
+    textHeight: number
+  }>
+  newSlide?: boolean
   failedFonts: string[]
   image: { mimeType: string; base64: string }
 }
@@ -147,6 +157,71 @@ test('a look right after an edit shows the edit, also on the page kept from the 
   await command(request, 'slide.add', {})
   const third = await look(request, { slide: { index: 2 } })
   expect(third.out.slides[0]!.index).toBe(2)
+})
+
+test('a compare shows the slide before this run changed it and now, side by side', async ({
+  request,
+}) => {
+  test.setTimeout(150_000)
+  // The seeding writes are this API session's run on the deck: "before" is
+  // the deck at its first write — slide 1 without its block.
+  await seedDeck(request)
+  const { out, png } = await look(request, { slide: { index: 0 }, compare: 'before' })
+  expect(out.mode).toBe('compare')
+  expect(out.newSlide).toBeUndefined()
+  expect(out.width).toBeLessThanOrEqual(1568)
+  // Two tiles side by side (compareLayout): the block (200,200 400×200) is
+  // in "Now" on the right, not in "Before" on the left.
+  const tileW = (out.width - 24) / 2
+  const s = tileW / 1920
+  const atBlock = (left: number) => pixelOf(png, left + 400 * s, 8 + 300 * s)
+  expect(near(atBlock(8), { r: 255, g: 255, b: 255 })).toBe(true)
+  expect(near(atBlock(16 + tileW), RED)).toBe(true)
+  // A slide this run added has no "before".
+  const added = await look(request, { slide: { index: 1 }, compare: 'before' })
+  expect(added.out.newSlide).toBe(true)
+})
+
+test('reports text boxes whose text runs below them, with the real fonts', async ({ request }) => {
+  test.setTimeout(120_000)
+  await seedDeck(request)
+  await command(request, 'object.create', {
+    slide: { index: 0 },
+    id: 'cramped',
+    object: {
+      type: 'text',
+      x: 200,
+      y: 600,
+      width: 500,
+      height: 60,
+      text: 'A sentence far too long for a box this small, set large',
+      fontSize: 64,
+    },
+  })
+  // A box with room to spare at 150% line spacing, its text at the bottom:
+  // the line offset and the alignment move glyphs, they do not overflow.
+  await command(request, 'object.create', {
+    slide: { index: 0 },
+    id: 'roomy',
+    object: {
+      type: 'text',
+      x: 1000,
+      y: 600,
+      width: 700,
+      height: 160,
+      text: 'Fits',
+      fontSize: 40,
+      lineSpacing: 1.5,
+      vAlign: 'bottom',
+    },
+  })
+  const { out } = await look(request, { slide: { index: 0 } })
+  expect(out.overflow).toHaveLength(1)
+  expect(out.overflow[0]).toMatchObject({ index: 0, objectId: 'cramped', boxHeight: 60 })
+  expect(out.overflow[0]!.textHeight).toBeGreaterThan(150)
+  // The second slide's text fits its box.
+  const second = await look(request, { slide: { index: 1 } })
+  expect(second.out.overflow).toEqual([])
 })
 
 test('refuses a slide that does not exist', async ({ request }) => {

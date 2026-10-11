@@ -74,19 +74,21 @@ afterEach(() => {
 
 describe('render tokens', () => {
   it('mints a 256-bit nrr_ token that resolves to its deck and requester', () => {
-    const token = mintRenderToken('deck-a', 'alice')
+    const token = mintRenderToken({ kind: 'deck', id: 'deck-a' }, 'alice')
     expect(token).toMatch(/^nrr_[A-Za-z0-9_-]{43}$/)
     expect(isRenderToken(token)).toBe(true)
     // A person's render unless the server mints it for its own background work.
     expect(resolveRenderToken(token)).toEqual({
-      deckId: 'deck-a',
+      target: { kind: 'deck', id: 'deck-a' },
       requestedBy: 'alice',
       lane: 'person',
     })
   })
 
   it('mints a different token every time', () => {
-    expect(mintRenderToken('deck-a', 'alice')).not.toBe(mintRenderToken('deck-a', 'alice'))
+    expect(mintRenderToken({ kind: 'deck', id: 'deck-a' }, 'alice')).not.toBe(
+      mintRenderToken({ kind: 'deck', id: 'deck-a' }, 'alice'),
+    )
   })
 
   it('knows a token by its full shape, so a share link id starting with nrr_ stays a share link', () => {
@@ -97,11 +99,11 @@ describe('render tokens', () => {
   it('expires after the TTL and closes the page connections then', () => {
     vi.useFakeTimers()
     const now = Date.now()
-    const token = mintRenderToken('deck-a', 'alice', now)
+    const token = mintRenderToken({ kind: 'deck', id: 'deck-a' }, 'alice', now)
     expect(resolveRenderToken(token, now + RENDER_TOKEN_TTL_MS - 1)).not.toBeNull()
     expect(resolveRenderToken(token, now + RENDER_TOKEN_TTL_MS)).toBeNull()
 
-    const live = mintRenderToken('deck-a', 'alice')
+    const live = mintRenderToken({ kind: 'deck', id: 'deck-a' }, 'alice')
     vi.advanceTimersByTime(RENDER_TOKEN_TTL_MS)
     expect(closeShareTokenConnections).toHaveBeenCalledWith(live)
     expect(resolveRenderToken(live)).toBeNull()
@@ -109,14 +111,14 @@ describe('render tokens', () => {
 
   it("lives as long as its job asks (the job's deadline plus a margin)", () => {
     const now = 2_000_000
-    const token = mintRenderToken('deck-a', 'alice', now, 90_000)
+    const token = mintRenderToken({ kind: 'deck', id: 'deck-a' }, 'alice', now, 90_000)
     expect(resolveRenderToken(token, now + 89_999)).not.toBeNull()
     expect(resolveRenderToken(token, now + 90_000)).toBeNull()
   })
 
   it('goes on while its render session is extended, and ends when that stops', () => {
     vi.useFakeTimers()
-    const token = mintRenderToken('deck-a', 'alice', Date.now(), 1_000)
+    const token = mintRenderToken({ kind: 'deck', id: 'deck-a' }, 'alice', Date.now(), 1_000)
     vi.advanceTimersByTime(900)
     expect(extendRenderToken(token, 1_000)).toBe(true)
     vi.advanceTimersByTime(900)
@@ -131,7 +133,7 @@ describe('render tokens', () => {
   })
 
   it('stops working when revoked, and closes the page connections', () => {
-    const token = mintRenderToken('deck-a', 'alice')
+    const token = mintRenderToken({ kind: 'deck', id: 'deck-a' }, 'alice')
     revokeRenderToken(token)
     expect(resolveRenderToken(token)).toBeNull()
     expect(closeShareTokenConnections).toHaveBeenCalledWith(token)
@@ -144,7 +146,7 @@ describe('render tokens', () => {
   })
 
   it('is a credential: masked in logs and audit', () => {
-    const token = mintRenderToken('deck-a', 'alice')
+    const token = mintRenderToken({ kind: 'deck', id: 'deck-a' }, 'alice')
     expect(looksLikeNarrativeCredential(token)).toBe(true)
     expect(maskCredentials(`GET /deck/deck-a/render?share_token=${token}`, '***')).toBe(
       'GET /deck/deck-a/render?share_token=nrr_***',
@@ -154,13 +156,13 @@ describe('render tokens', () => {
 
 describe('a render token as a share link', () => {
   it('resolves to viewer access to its deck', async () => {
-    const token = mintRenderToken('deck-a', 'alice')
+    const token = mintRenderToken({ kind: 'deck', id: 'deck-a' }, 'alice')
     await expect(findShareLink(noDb, token)).resolves.toEqual({ deckId: 'deck-a', role: 'viewer' })
   })
 
   it('opens its own deck read-only and no other deck', async () => {
     readers.set('deck-b', new Set(['alice']))
-    const token = mintRenderToken('deck-a', 'alice')
+    const token = mintRenderToken({ kind: 'deck', id: 'deck-a' }, 'alice')
     await expect(
       resolveDeckAccess(noDb, { deckId: 'deck-a', userId: null, shareToken: token }),
     ).resolves.toEqual({ role: 'viewer', reason: 'share-link' })
@@ -170,7 +172,7 @@ describe('a render token as a share link', () => {
   })
 
   it('stops reading the deck the moment its requester cannot (lost access, deleted deck)', async () => {
-    const token = mintRenderToken('deck-a', 'alice')
+    const token = mintRenderToken({ kind: 'deck', id: 'deck-a' }, 'alice')
     readers.get('deck-a')!.delete('alice')
     await expect(findShareLink(noDb, token)).resolves.toBeNull()
     await expect(
@@ -179,7 +181,7 @@ describe('a render token as a share link', () => {
   })
 
   it('opens nothing once revoked', async () => {
-    const token = mintRenderToken('deck-a', 'alice')
+    const token = mintRenderToken({ kind: 'deck', id: 'deck-a' }, 'alice')
     revokeRenderToken(token)
     await expect(findShareLink(noDb, token)).resolves.toBeNull()
   })

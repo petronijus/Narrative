@@ -20,13 +20,37 @@ const APP = 'https://narrative.test'
 const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=='
 
-/** The render page's job hooks, faked: slide "bad" is refused as not settled. */
+/**
+ * The render page's job hooks, faked: slide "bad" is refused as not settled;
+ * a compare's "before" picture comes back as the overflow's object id, so the
+ * test sees what the live page was handed.
+ */
 const PAGE = `<!doctype html><html><body><script>
   window.__narrativeRender = { status: 'ready', slideId: 's1', slideIndex: 0, failedLoads: 0 }
   window.__narrativeRenderLook = async (spec) => {
     if (spec.slideId === 'bad') return { ok: false, reason: 'not-settled', detail: 'slide bad' }
+    const before = spec.mode === 'compare' ? String(spec.beforePng) : 'none'
     return { ok: true, value: { base64: '${PNG_BASE64}', width: 1, height: 1,
-      slides: [{ slideId: spec.slideId, index: 0, failedLoads: 0 }], failedFonts: [] } }
+      slides: [{ slideId: spec.slideId, index: 0, failedLoads: 0 }], failedFonts: [],
+      overflow: [{ slideId: spec.slideId, objectId: before, boxHeight: 1, textHeight: 2 }] } }
+  }
+</script></body></html>`
+
+/**
+ * A frozen page (`?frozen=1`): nothing until the worker hands it a state; then
+ * the slide's "picture" is that state, and a state named "missing" has no
+ * such slide.
+ */
+const FROZEN = `<!doctype html><html><body><script>
+  window.__narrativeRenderFreeze = (encoded) => {
+    const state = atob(encoded)
+    window.__narrativeRender = { status: 'ready', slideId: 's1', slideIndex: 0, failedLoads: 0 }
+    window.__narrativeRenderLook = async () => ({ ok: false, reason: 'not-ready', detail: 'frozen' })
+    window.__narrativeRenderSlidePng = async (slideId) =>
+      state === 'missing'
+        ? { ok: false, reason: 'slide-not-found', detail: slideId }
+        : { ok: true, value: { base64: 'before-of-' + state, slideIndex: 0, failedLoads: 0,
+            failedFonts: [] } }
   }
 </script></body></html>`
 
@@ -34,6 +58,8 @@ let server: Server
 let upstream = ''
 let pageLoads = 0
 let uploads = 0
+/** The pages opened, in order: 'live' or 'frozen'. */
+const opened: string[] = []
 const holder = new BrowserHolder({
   idleMs: 60_000,
   chromeExecutable: null,
@@ -48,8 +74,14 @@ beforeAll(async () => {
     req.on('end', () => {
       if (req.url?.startsWith('/deck/')) {
         pageLoads += 1
+        const frozen = new URL(req.url, APP).searchParams.get('frozen') === '1'
+        opened.push(frozen ? 'frozen' : 'live')
         res.writeHead(200, { 'content-type': 'text/html' })
-        res.end(PAGE)
+        res.end(frozen ? FROZEN : PAGE)
+      } else if (req.method === 'GET' && req.url?.startsWith('/storage/before/')) {
+        // A compare's stored "before" state (here: its name).
+        res.writeHead(200, { 'content-type': 'application/octet-stream' })
+        res.end(req.url.slice('/storage/before/'.length))
       } else if (req.method === 'PUT') {
         uploads += 1
         res.writeHead(200)
@@ -78,7 +110,7 @@ afterAll(async () => {
 
 const job = (token: string, slideId: string): RenderLookJob => ({
   kind: 'look',
-  deckId: 'd1',
+  page: { kind: 'deck', deckId: 'd1' },
   token,
   stateVector: '',
   deadline: Date.now() + 30_000,
@@ -125,6 +157,42 @@ describe('renderJob and the session page', () => {
       const before = warm.size
       await renderJob(browser!, { ...job('nrr_c', 's1'), keepPage: false }, deps)
       expect([pageLoads, warm.size]).toEqual([4, before])
+    } finally {
+      warm.closeAll('test')
+    }
+  })
+
+  it('draws a compare’s "before" on a frozen page first, closes it, and hands the picture to the live page', async (ctx) => {
+    if (browser === null) ctx.skip()
+    const config: RenderWorkerConfig = {
+      redisUrl: 'redis://unused',
+      appOrigin: APP,
+      upstream,
+      idleMs: 60_000,
+      warmPages: 1,
+      chromeExecutable: null,
+      requireSandbox: false,
+    }
+    const warm = new WarmPages({ max: 1, idleMs: 60_000, log: () => undefined })
+    const deps = { config, log: () => undefined, warm }
+    const compare = (state: string): RenderLookJob => ({
+      ...job('nrr_cmp', 's1'),
+      look: { mode: 'compare', slideId: 's1', before: { url: `${APP}/storage/before/${state}` } },
+    })
+    try {
+      opened.length = 0
+      const result = await renderJob(browser!, compare('v1'), deps)
+      expect(opened).toEqual(['frozen', 'live'])
+      expect(result.kind === 'look' && result.look.overflow[0]?.objectId).toBe('before-of-v1')
+      expect(result.kind === 'look' && result.look.newSlide).toBeUndefined()
+      // The live page is kept; the frozen one is not. The next compare closes
+      // the kept page before the frozen one opens (never two at once).
+      expect(warm.size).toBe(1)
+      opened.length = 0
+      const added = await renderJob(browser!, compare('missing'), deps)
+      expect(opened).toEqual(['frozen', 'live'])
+      expect(added.kind === 'look' && added.look.newSlide).toBe(true)
+      expect(added.kind === 'look' && added.look.overflow[0]?.objectId).toBe('null')
     } finally {
       warm.closeAll('test')
     }

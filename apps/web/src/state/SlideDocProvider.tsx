@@ -104,6 +104,12 @@ interface SlideDocProviderProps {
    */
   presence?: boolean
   /**
+   * With `doc`: the server refused the connection that fills it (the render
+   * page of a master's card whose token ended) — reported like a refused
+   * WebSocket of the provider's own.
+   */
+  refused?: boolean
+  /**
    * Seed an empty deck with its first slide once synced (default true). The
    * render page passes false: it shows the deck as the server holds it and
    * reports an empty deck as such, never a slide it made up.
@@ -116,12 +122,13 @@ export function SlideDocProvider({
   deckId,
   doc: externalDoc,
   presence = true,
+  refused = false,
   hydrate = true,
   children,
 }: SlideDocProviderProps) {
   if (externalDoc !== undefined) {
     return (
-      <ExternalDocSlideProvider deckId={deckId} doc={externalDoc}>
+      <ExternalDocSlideProvider deckId={deckId} doc={externalDoc} refused={refused}>
         {children}
       </ExternalDocSlideProvider>
     )
@@ -427,6 +434,7 @@ function HocuspocusSlideProvider({
 interface ExternalDocSlideProviderProps {
   deckId: string
   doc: Y.Doc
+  refused: boolean
   children: React.ReactNode
 }
 
@@ -452,7 +460,12 @@ function componentIdOf(documentKey: string): string {
   return documentKey.startsWith('component:') ? documentKey.slice('component:'.length) : documentKey
 }
 
-function ExternalDocSlideProvider({ deckId, doc, children }: ExternalDocSlideProviderProps) {
+function ExternalDocSlideProvider({
+  deckId,
+  doc,
+  refused,
+  children,
+}: ExternalDocSlideProviderProps) {
   const { user } = useAuth()
 
   const profileName = user?.name
@@ -461,7 +474,7 @@ function ExternalDocSlideProvider({ deckId, doc, children }: ExternalDocSlidePro
     [profileName],
   )
 
-  const value = useMemo<SlideDocContextValue>(() => {
+  const base = useMemo<SlideDocContextValue>(() => {
     const slides = doc.getArray('slides') as SlideMutationContext['slides']
     const deckCtx: SlideMutationContext = { doc, slides }
     const undoManager = createUndoManager(deckCtx)
@@ -484,6 +497,7 @@ function ExternalDocSlideProvider({ deckId, doc, children }: ExternalDocSlidePro
       refused: false,
     }
   }, [deckId, doc, localUser])
+  const value = useMemo(() => (refused ? { ...base, refused } : base), [base, refused])
 
   // We deliberately do NOT call hydrateSlideDoc here. The server writes the
   // master doc's single slide, id 'master', when it creates the component

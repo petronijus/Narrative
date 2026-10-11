@@ -36,17 +36,40 @@ export type PngExportResult =
       failedFonts: string[]
     }
 
-/** What `query.render` looks at: a slide, a region of one (slide px), or a sheet of slides. */
+/**
+ * What `query.render` looks at: a slide, a region of one (slide px), a sheet
+ * of slides, or a slide before and after the agent run `runId` changed it.
+ */
 export type RenderView =
   | { slide: RenderSlideRef; region?: { x: number; y: number; width: number; height: number } }
   | { sheet: RenderSlideRef[] | 'all' }
+  | { compare: RenderSlideRef; runId: string | null }
+
+/**
+ * A text box whose text, laid out with the real fonts, runs below its box
+ * (slide px) — it overflows on the slide as people see it.
+ */
+export interface TextOverflowInfo {
+  slideId: string
+  /** 0-based position in the deck. */
+  index: number
+  objectId: string
+  boxHeight: number
+  textHeight: number
+}
 
 export interface RenderLookResult {
-  mode: 'slide' | 'region' | 'sheet'
+  mode: 'slide' | 'region' | 'sheet' | 'compare'
   width: number
   height: number
   /** The slides in the picture, in the order shown. */
   slides: Array<{ slideId: string; index: number; failedLoads: number }>
+  /** Text boxes of those slides whose text overflows (a compare: the slide now), at most 50. */
+  overflow: TextOverflowInfo[]
+  /** More boxes overflow than `overflow` lists. */
+  overflowTruncated?: boolean
+  /** A compare of a slide the run added: there is no "before". */
+  newSlide?: boolean
   failedFonts: string[]
   /** The picture; an MCP client gets it as image content, not as text. */
   image: { mimeType: 'image/png'; base64: string }
@@ -70,11 +93,12 @@ export interface RenderService {
    */
   look(args: { userId: string; deckId: string; view: RenderView }): Promise<RenderLookResult>
   /**
-   * Redraw the deck's card picture from its first slide now (editors of the
-   * deck); bad_request for a deck without slides.
+   * Redraw a card picture from the first slide now (editors of the deck,
+   * or of a master's folder); bad_request for a deck without slides.
    */
   refreshThumbnail(args: {
     userId: string
-    deckId: string
+    /** A deck's card, or a component master's (folder editors). */
+    target: { deckId: string } | { componentId: string }
   }): Promise<{ thumbnailUrl: string; updatedAt: string }>
 }

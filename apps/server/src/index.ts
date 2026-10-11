@@ -270,8 +270,8 @@ const principalKeys = createAgentPrincipalKeys(
   agentPrincipalKeySecretFromEnv(process.env, { isProd }),
 )
 
-// A deck nobody has open keeps a current card on the folder page: after its
-// changes are stored, the render worker draws it (services/deckThumbnails.ts).
+// A deck or a component master nobody has open keeps a current card: after
+// its changes are stored, the render worker draws it (services/deckThumbnails.ts).
 const deckThumbnails = createDeckThumbnailScheduler({
   db,
   log: app.log,
@@ -292,7 +292,10 @@ const hocuspocus = createHocuspocusServer({
       { db, log: app.log, bypass: bypassAuth, hocuspocus: () => hocuspocus },
       deckId,
     )
-    deckThumbnails.deckStored(deckId)
+    deckThumbnails.cardChanged({ kind: 'deck', id: deckId })
+  },
+  onComponentStored: (componentId) => {
+    deckThumbnails.cardChanged({ kind: 'component', id: componentId })
   },
 })
 

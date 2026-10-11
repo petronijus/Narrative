@@ -45,6 +45,7 @@ import { markDeckLoadStart } from '../state/loadTimings.js'
 import { useParams, useMatch, useLocation, Navigate, Outlet } from 'react-router-dom'
 import { shareTokenFrom } from '../state/hocuspocusAuth.js'
 import { SlideDocProvider } from '../state/SlideDocProvider.js'
+import { useFrozenRenderDoc } from '../state/frozenRenderDoc.js'
 import { ActiveSlideProvider } from '../state/ActiveSlideContext.js'
 import { CanvasInstanceContext } from '../renderer/CanvasInstanceContext.js'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
@@ -124,6 +125,10 @@ export function DeckShell() {
   const { search } = useLocation()
   const shareToken = shareTokenFrom(search)
   const isRenderWorker = isRender && shareToken !== null && shareToken.startsWith('nrr_')
+  // A frozen render page (a compare's "before"): the state the worker hands
+  // it, no live document (state/frozenRenderDoc.ts).
+  const frozen = isRender && new URLSearchParams(search).get('frozen') === '1'
+  const frozenDoc = useFrozenRenderDoc(frozen)
 
   // P12d: stamp t0 for the perf HUD's load-time breakdown. Re-stamps
   // whenever the deckId changes so each navigation gets a fresh
@@ -148,23 +153,30 @@ export function DeckShell() {
       <DeckRoleProvider deckId={id}>
         <DeckFontsProvider deckId={id}>
           <FolderDocGate>
-            <SlideDocProvider deckId={id} presence={!isRenderWorker} hydrate={!isRender}>
-              <ActiveSlideProvider>
-                <MediaUploadProvider deckId={id}>
-                  <RulersProvider>
-                    <SnappingProvider>
-                      <CanvasInstanceContext value={canvasInstance}>
-                        <Outlet
-                          context={
-                            { onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue
-                          }
-                        />
-                      </CanvasInstanceContext>
-                    </SnappingProvider>
-                  </RulersProvider>
-                </MediaUploadProvider>
-              </ActiveSlideProvider>
-            </SlideDocProvider>
+            {frozen && frozenDoc === null ? null : (
+              <SlideDocProvider
+                deckId={id}
+                presence={!isRenderWorker}
+                hydrate={!isRender}
+                {...(frozenDoc !== null ? { doc: frozenDoc } : {})}
+              >
+                <ActiveSlideProvider>
+                  <MediaUploadProvider deckId={id}>
+                    <RulersProvider>
+                      <SnappingProvider>
+                        <CanvasInstanceContext value={canvasInstance}>
+                          <Outlet
+                            context={
+                              { onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue
+                            }
+                          />
+                        </CanvasInstanceContext>
+                      </SnappingProvider>
+                    </RulersProvider>
+                  </MediaUploadProvider>
+                </ActiveSlideProvider>
+              </SlideDocProvider>
+            )}
           </FolderDocGate>
         </DeckFontsProvider>
       </DeckRoleProvider>

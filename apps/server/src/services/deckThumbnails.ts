@@ -10,7 +10,8 @@
  *
  *   - a signed-in editor has it open → nothing (their browser uploads it);
  *   - otherwise the render worker draws the first slide as the card
- *     (services/render.ts `backgroundThumbnail`): as the deck's owner, in a
+ *     (services/render.ts `backgroundThumbnail`): as the deck's owner (a
+ *     master: an owner of its folder), in a
  *     render lane of its own (its own render session and request budget,
  *     and a page it does not keep warm), behind every person's job and
  *     outside anyone's in-flight share — unless the first slide is as it was
@@ -26,9 +27,10 @@
  * page is logged and waits for the deck's next change.
  */
 
-import { eq } from 'drizzle-orm'
-import { decks } from '../db/schema.js'
-import { deckHasSignedInEditor } from '../hocuspocus/connections.js'
+import { and, asc, eq } from 'drizzle-orm'
+import { components, decks, folderPermissions } from '../db/schema.js'
+import { hasSignedInEditor as liveEditorOn } from '../hocuspocus/connections.js'
+import type { CardRef } from './deckThumbnailStore.js'
 import { createRenderService, RendererBusyError, type RenderServiceDeps } from './render.js'
 
 export const THUMBNAIL_QUIET_MS = 10_000
@@ -41,8 +43,8 @@ const MAX_ATTEMPTS = 3
 const MAX_REMEMBERED = 2_000
 
 export interface DeckThumbnailScheduler {
-  /** A snapshot of the deck was stored. */
-  deckStored(deckId: string): void
+  /** A snapshot of the deck's or the master's document was stored. */
+  cardChanged(card: CardRef): void
   /** Forget every pending card (shutdown, tests). */
   stop(): void
   /** Test helper: until nothing is pending or drawing. */
@@ -54,11 +56,14 @@ export interface DeckThumbnailSchedulerDeps extends RenderServiceDeps {
   retryMs?: number
   minIntervalMs?: number
   /** Defaults to the live sync server's connections. */
-  hasSignedInEditor?: (deckId: string) => boolean
+  hasSignedInEditor?: (card: CardRef) => boolean
   /** Defaults to the render service built from these deps. */
   render?: Pick<ReturnType<typeof createRenderService>, 'backgroundThumbnail'>
-  /** The deck's owner, or null for a deck that is gone (defaults to the deck row). */
-  ownerOf?: (deckId: string) => Promise<string | null>
+  /**
+   * Whom the card is drawn as: the deck's owner, the master's folder's owner;
+   * null for one that is gone (defaults to the rows).
+   */
+  ownerOf?: (card: CardRef) => Promise<string | null>
 }
 
 export function createDeckThumbnailScheduler(
@@ -68,17 +73,40 @@ export function createDeckThumbnailScheduler(
   const retryMs = deps.retryMs ?? THUMBNAIL_RETRY_MS
   const minIntervalMs = deps.minIntervalMs ?? MIN_INTERVAL_MS
   const now = deps.now ?? Date.now
-  const hasSignedInEditor = deps.hasSignedInEditor ?? deckHasSignedInEditor
+  const hasSignedInEditor = deps.hasSignedInEditor ?? liveEditorOn
   const render = deps.render ?? createRenderService(deps)
   const ownerOf =
     deps.ownerOf ??
-    (async (deckId: string) => {
-      const [deck] = await deps.db
-        .select({ ownerUserId: decks.ownerUserId })
-        .from(decks)
-        .where(eq(decks.id, deckId))
-      return deck?.ownerUserId ?? null
+    (async (card: CardRef) => {
+      if (card.kind === 'deck') {
+        const [deck] = await deps.db
+          .select({ ownerUserId: decks.ownerUserId })
+          .from(decks)
+          .where(eq(decks.id, card.id))
+        return deck?.ownerUserId ?? null
+      }
+      // An owner of the folder now (its creator may have been removed).
+      const [row] = await deps.db
+        .select({ userId: folderPermissions.userId })
+        .from(components)
+        .innerJoin(
+          folderPermissions,
+          and(
+            eq(folderPermissions.folderId, components.folderId),
+            eq(folderPermissions.role, 'owner'),
+          ),
+        )
+        .where(eq(components.id, card.id))
+        .orderBy(asc(folderPermissions.userId))
+        .limit(1)
+      return row?.userId ?? null
     })
+  /** The maps below are keyed `deck:<id>` / `component:<id>`. */
+  const keyOf = (card: CardRef): string => `${card.kind}:${card.id}`
+  const cardOf = (key: string): CardRef =>
+    key.startsWith('deck:')
+      ? { kind: 'deck', id: key.slice('deck:'.length) }
+      : { kind: 'component', id: key.slice('component:'.length) }
 
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   /** Decks waiting for their turn, by owner (owners in turn order), with their attempt. */
@@ -86,89 +114,90 @@ export function createDeckThumbnailScheduler(
   /** When each deck's card was last drawn. */
   const drawnAt = new Map<string, number>()
   let drawing: Promise<void> | null = null
-  /** The deck being drawn now. */
-  let drawingDeck: string | null = null
+  /** The card being drawn now. */
+  let drawingKey: string | null = null
   /** Decks gone quiet whose owner is being looked up (queued once it is known). */
   const enqueuing = new Set<Promise<void>>()
   let stopped = false
 
-  function arm(deckId: string, delayMs: number, attempt: number): void {
-    const previous = timers.get(deckId)
+  function arm(key: string, delayMs: number, attempt: number): void {
+    const previous = timers.get(key)
     if (previous !== undefined) clearTimeout(previous)
     const timer = setTimeout(() => {
-      timers.delete(deckId)
-      const queued = enqueue(deckId, attempt).finally(() => enqueuing.delete(queued))
+      timers.delete(key)
+      const queued = enqueue(key, attempt).finally(() => enqueuing.delete(queued))
       enqueuing.add(queued)
     }, delayMs)
     timer.unref?.()
-    timers.set(deckId, timer)
+    timers.set(key, timer)
   }
 
-  async function enqueue(deckId: string, attempt: number): Promise<void> {
+  async function enqueue(key: string, attempt: number): Promise<void> {
     // Changed again while its card is being drawn: it waits its interval too.
-    if (deckId === drawingDeck) {
-      arm(deckId, minIntervalMs, attempt)
+    if (key === drawingKey) {
+      arm(key, minIntervalMs, attempt)
       return
     }
-    const last = drawnAt.get(deckId)
+    const last = drawnAt.get(key)
     if (last !== undefined && now() - last < minIntervalMs) {
-      arm(deckId, last + minIntervalMs - now(), attempt)
+      arm(key, last + minIntervalMs - now(), attempt)
       return
     }
     let owner: string | null
     try {
-      owner = await ownerOf(deckId)
+      owner = await ownerOf(cardOf(key))
     } catch (err) {
       deps.log.warn(
-        { deckId, err: err instanceof Error ? err.message : String(err) },
-        'deck card: owner lookup failed',
+        { card: key, err: err instanceof Error ? err.message : String(err) },
+        'card: owner lookup failed',
       )
       owner = null
     }
     if (owner === null || stopped) return
     const queue = pending.get(owner) ?? new Map<string, number>()
-    if (!queue.has(deckId) && queue.size >= MAX_PENDING_PER_OWNER) {
-      deps.log.warn({ deckId, owner }, 'deck card: too many waiting for this owner; skipped')
+    if (!queue.has(key) && queue.size >= MAX_PENDING_PER_OWNER) {
+      deps.log.warn({ card: key, owner }, 'card: too many waiting for this owner; skipped')
       return
     }
-    queue.set(deckId, attempt)
+    queue.set(key, attempt)
     pending.set(owner, queue)
     pump()
   }
 
   /** The next deck: the first waiting of the owner whose turn it is (who then goes last). */
-  function takeNext(): { owner: string; deckId: string; attempt: number } | null {
+  function takeNext(): { owner: string; key: string; attempt: number } | null {
     const first = pending.entries().next()
     if (first.done === true) return null
     const [owner, queue] = first.value
-    const [deckId, attempt] = queue.entries().next().value!
-    queue.delete(deckId)
+    const [key, attempt] = queue.entries().next().value!
+    queue.delete(key)
     pending.delete(owner)
     if (queue.size > 0) pending.set(owner, queue)
-    return { owner, deckId, attempt }
+    return { owner, key, attempt }
   }
 
-  async function draw(owner: string, deckId: string, attempt: number): Promise<void> {
-    if (hasSignedInEditor(deckId)) return
+  async function draw(owner: string, key: string, attempt: number): Promise<void> {
+    const card = cardOf(key)
+    if (hasSignedInEditor(card)) return
     try {
       const outcome = await render.backgroundThumbnail({
         userId: owner,
-        deckId,
-        stillWanted: () => !hasSignedInEditor(deckId),
+        card,
+        stillWanted: () => !hasSignedInEditor(card),
       })
       if (outcome.status === 'stored') {
-        drawnAt.delete(deckId)
-        drawnAt.set(deckId, now())
+        drawnAt.delete(key)
+        drawnAt.set(key, now())
         if (drawnAt.size > MAX_REMEMBERED) drawnAt.delete(drawnAt.keys().next().value!)
       }
     } catch (err) {
       const retry = err instanceof RendererBusyError && attempt < MAX_ATTEMPTS
       deps.log.warn(
-        { deckId, attempt, err: err instanceof Error ? err.message : String(err), retry },
-        'deck card: drawing failed',
+        { card: key, attempt, err: err instanceof Error ? err.message : String(err), retry },
+        'card: drawing failed',
       )
       // A change meanwhile has armed its own timer; that one wins.
-      if (retry && !stopped && !timers.has(deckId)) arm(deckId, retryMs, attempt + 1)
+      if (retry && !stopped && !timers.has(key)) arm(key, retryMs, attempt + 1)
     }
   }
 
@@ -176,25 +205,25 @@ export function createDeckThumbnailScheduler(
     if (drawing !== null || stopped) return
     const next = takeNext()
     if (next === null) return
-    drawingDeck = next.deckId
-    drawing = draw(next.owner, next.deckId, next.attempt)
+    drawingKey = next.key
+    drawing = draw(next.owner, next.key, next.attempt)
       .catch((err: unknown) => {
         deps.log.error(
-          { deckId: next.deckId, err: err instanceof Error ? err.message : String(err) },
-          'deck card: unexpected failure',
+          { card: next.key, err: err instanceof Error ? err.message : String(err) },
+          'card: unexpected failure',
         )
       })
       .finally(() => {
         drawing = null
-        drawingDeck = null
+        drawingKey = null
         pump()
       })
   }
 
   return {
-    deckStored(deckId) {
+    cardChanged(card) {
       if (stopped) return
-      arm(deckId, quietMs, 1)
+      arm(keyOf(card), quietMs, 1)
     },
     stop() {
       stopped = true

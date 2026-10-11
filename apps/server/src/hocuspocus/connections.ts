@@ -110,15 +110,20 @@ export function closeConnectionsWhere(
 }
 
 /**
- * Has a signed-in editor (or owner) the deck open? Such an editor's browser
- * keeps the deck's card picture current itself (SlidesPanel uploads it);
- * viewers, share-link visitors and render pages do not. Read-only.
+ * Has a signed-in editor (or owner) the deck — or the component master —
+ * open? Such an editor's browser keeps the card picture current itself
+ * (SlidesPanel, the master editor upload it); viewers, share-link visitors
+ * and render pages do not. Read-only.
  */
-export function deckHasSignedInEditor(deckId: string): boolean {
+export function hasSignedInEditor(card: { kind: 'deck' | 'component'; id: string }): boolean {
   const server = getHocuspocusInstance()
   if (server === null) return false
   for (const [documentName, doc] of server.documents) {
-    if (deckIdOf(documentName) !== deckId) continue
+    const matches =
+      card.kind === 'deck'
+        ? deckIdOf(documentName) === card.id
+        : documentName === `component:${card.id}`
+    if (!matches) continue
     for (const conn of doc.getConnections()) {
       const ctx = (conn.context ?? {}) as ConnContext
       if ((ctx.role === 'editor' || ctx.role === 'owner') && ctx.shareToken === undefined) {

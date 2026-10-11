@@ -40,5 +40,6 @@ The user asked: {{request}}
    - copy a slide → `slide.duplicate`; reorder → `slide.move`;
    - put another deck's slides after slide N → `deck.insertFrom`.
 4. **Check the result**: look at the changed slide with `query.render` (and
-   `query.slide` for exact values), and fix what does not match the request.
+   `query.slide` for exact values), and fix what does not match the request
+   — a text box listed in its `overflow` included.
 5. **Report** in one or two sentences what changed.

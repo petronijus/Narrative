@@ -104,8 +104,11 @@ export function createFolderSharingService(deps: ServiceDeps): FolderSharingServ
       deckIds: deckRows.map((d) => d.id),
       componentIds: componentRows.map((c) => c.id),
     })
-    // Pages kept for their render sessions read those decks too.
+    // Pages kept for their render sessions read those decks too, and the
+    // masters' card pages (every master's session of theirs: as coarse as
+    // their membership ending, never too short).
     for (const d of deckRows) endRenderSessions({ userId: memberId, deckId: d.id })
+    if (componentRows.length > 0) endRenderSessions({ userId: memberId, components: true })
   }
 
   /**

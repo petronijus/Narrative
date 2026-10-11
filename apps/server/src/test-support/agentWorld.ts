@@ -154,6 +154,7 @@ export interface AgentWorldOptions {
   documentLingerMs?: number
   runIdleMs?: number
   maxOpenRunsPerUser?: number
+  beforeStatesBudgetBytes?: number
   presenceIdleMs?: number
   /** Hocuspocus store debounce (production: 2000). */
   debounce?: number
@@ -284,6 +285,9 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
       : { urlFetchAllowedHosts: opts.urlFetchAllowedHosts }),
     documentLingerMs: opts.documentLingerMs ?? 0,
     ...(opts.runIdleMs === undefined ? {} : { runIdleMs: opts.runIdleMs }),
+    ...(opts.beforeStatesBudgetBytes === undefined
+      ? {}
+      : { beforeStatesBudgetBytes: opts.beforeStatesBudgetBytes }),
     ...(opts.maxOpenRunsPerUser === undefined
       ? {}
       : { maxOpenRunsPerUser: opts.maxOpenRunsPerUser }),

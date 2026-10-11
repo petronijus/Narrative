@@ -43,6 +43,7 @@ import {
   FIXTURE_DECK_ID,
   FIXTURE_FOLDER_ID,
   createFakeServices,
+  FIXTURE_RUN_ID,
   type FakeServices,
 } from './testing/fakeServices.js'
 import type { CommandContext, CommandTarget } from './types.js'
@@ -62,6 +63,9 @@ function ctxFor(
     target,
     services: createFakeServices(),
     session: { key: 'mcp:contract', surface: 'mcp', clientName: 'contract-suite' },
+    // The session's current run, as an agent that changed the deck has one
+    // (query.render's compare shows the deck before it).
+    run: { runId: FIXTURE_RUN_ID, surface: 'mcp' },
   }
 }
 

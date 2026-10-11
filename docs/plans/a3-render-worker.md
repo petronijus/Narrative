@@ -478,5 +478,58 @@ ordinary edits).
 The e2e suite on the Omarchy desktop had been running on the system
 Chromium 152 instead of Playwright's 148 (SETUP.md → "Target crashed").
 
-Next: A3.5b component cards (`component.refreshThumbnail`: the render page
-and render tokens for a component's master document).
+**A3.5b, A3.6, A3.7 — 0.10.30 (A3 closed, 2026-10-11).** Built together,
+then tested as one (Petr's call).
+
+- **A3.5b component cards.** `deck.refreshThumbnail` takes `componentId`
+  (`acceptsComponent`, folder editors) — no separate tool, as for every
+  document command; `component.refreshThumbnail` is removed from `knownMissing`.
+  Render tokens name a target (`RenderDoc`: deck or component); a master's
+  token is no share link — `resolveComponentAccess` and
+  `resolveFolderContentAccess` admit it for that master and its folder
+  only, while its requester can still read the master, so the page reads
+  the master document (Hocuspocus, read-only), the folder's tokens, fonts
+  and media. The page is `/folder/:f/component/:c/render`
+  (pages/ComponentRender.tsx: DeckRender in the master's providers; the
+  component doc cache connects with the page's token and no awareness).
+  Jobs name their page (`RenderPage`); card renders of masters wait under
+  `components/<id>/exports/`, which the export sweep now covers. Cards are
+  stored like deck cards (`storeComponentThumbnail`), drawn in the
+  background after `onComponentStored` as the folder's owner.
+- **A3.6 before/after.** The run records `Y.encodeStateAsUpdate` of the
+  document at its first write, beside its UndoManager and gone with it
+  (`RunManager.stateBefore`). `query.render` `{ slide, compare: "before" }`
+  carries it in the job (≤ 8 MB); the worker opens a frozen page
+  (`?frozen=1`: DeckShell mounts a local document from
+  `__narrativeRenderFreeze(state)`, nothing live), captures the slide,
+  closes it — and closes the kept page first, so two pages never hold
+  memory at once — then the live page composes before | now
+  (`compareLayout`, "New in this run" for a slide the run added). Folder
+  tokens and fonts are today's on both sides.
+- **A3.6 text fit.** After each slide settles, the page measures every text
+  box's laid-out text (`laidOutTextBottom`: the glyph block below its
+  vertical placement, what the clip mask reaches) against its box;
+  `query.render` returns `overflow: [{ slideId, index, objectId,
+boxHeight, textHeight }]`. Table cells are not measured (a cell grows its
+  row).
+- **A3.7.** Playbooks: look after every visible change, fix every overflow
+  you caused (wording first, never smaller type than the role uses), show
+  before/after with `compare`; `deck.refreshThumbnail` only before a
+  hand-off. Eval scenarios `compare-before-after`, `fix-text-overflow`
+  (the grader measures again), `deck-card-before-handoff`, and a
+  no-refresh check in two edit scenarios — all live-only (the render
+  worker draws). `FINISHED_PHASES += 'A3'`. Handoff:
+  [`A3-render-worker.md`](../handoff/A3-render-worker.md).
+
+**Not yet verified or released (2026-10-11, Petr: tests another time).**
+Done: `just check` green (one later hook run hit EDQUOT on /tmp, another
+session's 12 GB there), `just integration` 109/109, the new e2e
+(deck-card, query-render, render-page, render-export) passed in a partial
+run except the master-card test, fixed after (it looked on the wrong
+settings tab). Still to run before 0.10.30 ships: `just check`, the full
+`just e2e` on a warm dev stack, `just eval` (the three new scenarios are
+live-only), then release and deploy; an exact-fit overflow e2e (a box
+sized to its text at 150% / 80% spacing) is still to write.
+
+A3 is done in code. Next: verify and ship 0.10.30, then A4 (style packs,
+plan §7).

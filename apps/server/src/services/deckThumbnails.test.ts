@@ -24,7 +24,11 @@ import { RendererBusyError, type BackgroundThumbnailOutcome } from './render.js'
 
 const log = { error: vi.fn(), warn: vi.fn(), info: vi.fn() } as unknown as ServiceDeps['log']
 
-type DrawArgs = { userId: string; deckId: string; stillWanted?: () => boolean }
+type DrawArgs = {
+  userId: string
+  card: { kind: 'deck' | 'component'; id: string }
+  stillWanted?: () => boolean
+}
 type Draw = (args: DrawArgs) => Promise<BackgroundThumbnailOutcome>
 
 function setup(opts: { draw?: Draw; editors?: Set<string>; owners?: Map<string, string> } = {}) {
@@ -41,8 +45,8 @@ function setup(opts: { draw?: Draw; editors?: Set<string>; owners?: Map<string, 
     log,
     now: () => Date.now(),
     render: { backgroundThumbnail: draw },
-    hasSignedInEditor: (deckId) => editors.has(deckId),
-    ownerOf: async (deckId) => owners.get(deckId) ?? null,
+    hasSignedInEditor: (card) => editors.has(card.id),
+    ownerOf: async (card) => owners.get(card.id) ?? null,
   })
   return { scheduler, draw, editors }
 }
@@ -53,7 +57,7 @@ async function settle(scheduler: ReturnType<typeof setup>['scheduler'], ms: numb
 }
 
 const drawn = (draw: ReturnType<typeof setup>['draw']) =>
-  draw.mock.calls.map(([args]) => `${args.userId}:${args.deckId}`)
+  draw.mock.calls.map(([args]) => `${args.userId}:${args.card.id}`)
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
@@ -61,9 +65,9 @@ afterEach(() => vi.useRealTimers())
 describe('deck card scheduler', () => {
   it('draws a deck once it has been quiet, as its owner, however many stores came before', async () => {
     const { scheduler, draw } = setup()
-    scheduler.deckStored('d1')
+    scheduler.cardChanged({ kind: 'deck', id: 'd1' })
     await settle(scheduler, THUMBNAIL_QUIET_MS - 1_000)
-    scheduler.deckStored('d1')
+    scheduler.cardChanged({ kind: 'deck', id: 'd1' })
     await settle(scheduler, THUMBNAIL_QUIET_MS - 1_000)
     expect(draw).not.toHaveBeenCalled()
     await settle(scheduler, 1_000)
@@ -73,13 +77,13 @@ describe('deck card scheduler', () => {
 
   it('leaves the card to a signed-in editor who has the deck open, or opens it meanwhile', async () => {
     const { scheduler, draw, editors } = setup({ editors: new Set(['d1']) })
-    scheduler.deckStored('d1')
+    scheduler.cardChanged({ kind: 'deck', id: 'd1' })
     await settle(scheduler, THUMBNAIL_QUIET_MS)
     expect(draw).not.toHaveBeenCalled()
     // They left; the next change is drawn — and the render service asks
     // again before storing, in case someone opened it while it drew.
     editors.delete('d1')
-    scheduler.deckStored('d1')
+    scheduler.cardChanged({ kind: 'deck', id: 'd1' })
     await settle(scheduler, THUMBNAIL_QUIET_MS)
     const { stillWanted } = draw.mock.calls[0]![0]
     expect(stillWanted?.()).toBe(true)
@@ -90,10 +94,10 @@ describe('deck card scheduler', () => {
 
   it('draws a deck at most once per interval, however often it changes', async () => {
     const { scheduler, draw } = setup()
-    scheduler.deckStored('d1')
+    scheduler.cardChanged({ kind: 'deck', id: 'd1' })
     await settle(scheduler, THUMBNAIL_QUIET_MS)
     expect(draw).toHaveBeenCalledTimes(1)
-    scheduler.deckStored('d1')
+    scheduler.cardChanged({ kind: 'deck', id: 'd1' })
     await settle(scheduler, THUMBNAIL_QUIET_MS)
     expect(draw).toHaveBeenCalledTimes(1)
     // The first card was drawn at the first quiet; the next waits a full interval from it.
@@ -112,9 +116,9 @@ describe('deck card scheduler', () => {
         return { status: 'stored' }
       },
     })
-    scheduler.deckStored('d1')
+    scheduler.cardChanged({ kind: 'deck', id: 'd1' })
     await vi.advanceTimersByTimeAsync(THUMBNAIL_QUIET_MS)
-    scheduler.deckStored('d1')
+    scheduler.cardChanged({ kind: 'deck', id: 'd1' })
     await vi.advanceTimersByTimeAsync(THUMBNAIL_QUIET_MS)
     release()
     await scheduler.idle()
@@ -134,13 +138,14 @@ describe('deck card scheduler', () => {
         ['b1', 'bob'],
       ]),
       draw: async (args) => {
-        if (args.deckId === 'a1') await new Promise<void>((r) => (release = r))
+        if (args.card.id === 'a1') await new Promise<void>((r) => (release = r))
         return { status: 'stored' }
       },
     })
-    scheduler.deckStored('a1')
+    scheduler.cardChanged({ kind: 'deck', id: 'a1' })
     await vi.advanceTimersByTimeAsync(THUMBNAIL_QUIET_MS)
-    for (const deckId of ['a2', 'a3', 'gone', 'b1']) scheduler.deckStored(deckId)
+    for (const deckId of ['a2', 'a3', 'gone', 'b1'])
+      scheduler.cardChanged({ kind: 'deck', id: deckId })
     await vi.advanceTimersByTimeAsync(THUMBNAIL_QUIET_MS)
     expect(drawn(draw)).toEqual(['alice:a1'])
     release()
@@ -155,13 +160,13 @@ describe('deck card scheduler', () => {
     const { scheduler, draw } = setup({
       owners: new Map([['busy', 'mallory'], ...ids.map((id) => [id, 'mallory'] as const)]),
       draw: async (args) => {
-        if (args.deckId === 'busy') await new Promise<void>((r) => (release = r))
+        if (args.card.id === 'busy') await new Promise<void>((r) => (release = r))
         return { status: 'stored' }
       },
     })
-    scheduler.deckStored('busy')
+    scheduler.cardChanged({ kind: 'deck', id: 'busy' })
     await vi.advanceTimersByTimeAsync(THUMBNAIL_QUIET_MS)
-    for (const id of ids) scheduler.deckStored(id)
+    for (const id of ids) scheduler.cardChanged({ kind: 'deck', id })
     await vi.advanceTimersByTimeAsync(THUMBNAIL_QUIET_MS)
     release()
     await scheduler.idle()
@@ -175,7 +180,7 @@ describe('deck card scheduler', () => {
         throw new RendererBusyError('failed', 503, 'The renderer is busy right now')
       },
     })
-    busy.scheduler.deckStored('d1')
+    busy.scheduler.cardChanged({ kind: 'deck', id: 'd1' })
     await settle(busy.scheduler, THUMBNAIL_QUIET_MS)
     await settle(busy.scheduler, THUMBNAIL_RETRY_MS)
     await settle(busy.scheduler, THUMBNAIL_RETRY_MS)
@@ -187,7 +192,7 @@ describe('deck card scheduler', () => {
         throw failed('The render failed', 503)
       },
     })
-    broken.scheduler.deckStored('d1')
+    broken.scheduler.cardChanged({ kind: 'deck', id: 'd1' })
     await settle(broken.scheduler, THUMBNAIL_QUIET_MS)
     await settle(broken.scheduler, THUMBNAIL_RETRY_MS * 3)
     expect(broken.draw).toHaveBeenCalledTimes(1)
@@ -197,9 +202,9 @@ describe('deck card scheduler', () => {
 
   it('forgets every pending card when stopped', async () => {
     const { scheduler, draw } = setup()
-    scheduler.deckStored('d1')
+    scheduler.cardChanged({ kind: 'deck', id: 'd1' })
     scheduler.stop()
-    scheduler.deckStored('d2')
+    scheduler.cardChanged({ kind: 'deck', id: 'd2' })
     await settle(scheduler, THUMBNAIL_QUIET_MS * 2)
     expect(draw).not.toHaveBeenCalled()
   })

@@ -20,6 +20,9 @@ import componentMasterPicture from './componentMasterPicture.js'
 import exportPptxRoundtrip from './exportPptxRoundtrip.js'
 import exportPngSlide from './exportPngSlide.js'
 import lookAtSlide from './lookAtSlide.js'
+import compareBeforeAfter from './compareBeforeAfter.js'
+import fixTextOverflow from './fixTextOverflow.js'
+import deckCardBeforeHandoff from './deckCardBeforeHandoff.js'
 import revertLastRun from './revertLastRun.js'
 import selectedSlideContext from './selectedSlideContext.js'
 import promptInjectionShareLink from './promptInjectionShareLink.js'
@@ -75,6 +78,9 @@ export const SCENARIOS: readonly AnyScenario[] = [
   exportPptxRoundtrip,
   exportPngSlide,
   lookAtSlide,
+  compareBeforeAfter,
+  fixTextOverflow,
+  deckCardBeforeHandoff,
   revertLastRun,
   selectedSlideContext,
   promptInjectionShareLink,

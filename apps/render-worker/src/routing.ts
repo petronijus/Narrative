@@ -208,6 +208,26 @@ export async function installUpstreamRouting(
 }
 
 /**
+ * GET a presigned storage URL (a compare's "before" state the server stored
+ * for the job), routed like `putToUpstream`. `signal` aborts it.
+ */
+export async function getFromUpstream(
+  url: string,
+  opts: { appOrigin: string; upstream: string | null; signal?: AbortSignal },
+): Promise<Buffer> {
+  const target = opts.upstream !== null ? upstreamUrl(url, opts.appOrigin, opts.upstream) : url
+  if (target === null)
+    throw new Error(`download URL is not on the app origin: ${new URL(url).origin}`)
+  const headers: Record<string, string> = {}
+  if (opts.upstream !== null) headers['host'] = new URL(opts.appOrigin).host
+  const response = await forward(target, { method: 'GET', headers, body: null }, opts.signal)
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`download answered ${response.status}`)
+  }
+  return response.body
+}
+
+/**
  * PUT `body` to a presigned storage URL with the headers its signature
  * covers (`signedHeaders`, sent as given). With an upstream, a URL on the app
  * origin goes to it with the original `Host` (also signed); otherwise

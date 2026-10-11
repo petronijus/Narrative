@@ -136,8 +136,8 @@ async function resolvePrincipal(data: WsAuthPayload, deps: WsAuthDeps): Promise<
   if (shareToken) {
     // Share-token access — skip session validation entirely.
     // resolveDeckAccess validates the token; a folder doc admits it
-    // read-only when it links to a deck of the folder. Component docs do
-    // NOT support share-token access.
+    // read-only when it links to a deck of the folder. A component doc
+    // admits no share link — only a render token minted for that master.
     return { userId: null, shareToken }
   }
 
@@ -246,22 +246,24 @@ function createAuthenticate(deps: WsAuthDeps) {
     }
 
     if (documentName.startsWith('component:')) {
-      // Component doc — the folder's members with their folder role, no
-      // share-link support.
+      // Component doc — the folder's members with their folder role. No share
+      // link reaches it; the render page of the master's card does, with a
+      // render token minted for this component, read-only.
       const componentId = documentName.slice('component:'.length)
-      if (!userId) throw new Error('Forbidden')
-
-      const access = await resolveComponentAccess(db, { componentId, userId })
+      const access = await resolveComponentAccess(db, { componentId, userId, shareToken })
       if (!access) throw new Error('Forbidden')
 
-      data.context.userId = userId
+      const displayId = userId ?? shareDisplayId(shareToken)
+      data.context.userId = displayId
       data.context.componentId = componentId
       data.context.role = access.role
+      // A render token's connection ends with the token.
+      if (access.reason === 'render' && shareToken) data.context.shareToken = shareToken
 
       connection.readOnly = access.role === 'viewer'
 
       log.info(
-        { doc: documentName, user: userId, role: access.role, reason: access.reason },
+        { doc: documentName, user: displayId, role: access.role, reason: access.reason },
         'authenticate',
       )
       return

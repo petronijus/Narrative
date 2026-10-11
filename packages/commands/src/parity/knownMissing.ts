@@ -37,19 +37,8 @@ export interface KnownMissing {
 }
 
 const POST = (path: string): RouteRef => ({ method: 'POST', path })
-const PUT = (path: string): RouteRef => ({ method: 'PUT', path })
 
 export const KNOWN_MISSING: readonly KnownMissing[] = [
-  // --- A3: render worker ------------------------------------------------------
-  {
-    capability: 'component.refreshThumbnail',
-    phase: 'A3',
-    source: 'web',
-    where: 'apps/web/src/pages/ComponentMasterEditor.tsx',
-    routes: [PUT('/components/:id/thumbnail')],
-    note: 'the master editor renders the thumbnail and uploads it; the render worker takes over in A3',
-  },
-
   // --- A4: style packs compiled into Narrative components (plan §7) ----------
   {
     capability: 'component.create',
@@ -75,4 +64,4 @@ export const KNOWN_MISSING: readonly KnownMissing[] = [
 ]
 
 /** Phases already finished: their entries must be gone. Move the marker as phases close. */
-export const FINISHED_PHASES: readonly Phase[] = ['A0', 'A1', 'A2']
+export const FINISHED_PHASES: readonly Phase[] = ['A0', 'A1', 'A2', 'A3']

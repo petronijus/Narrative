@@ -272,7 +272,7 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
       }
       // The editor drew it from what it had; the server no longer knows what
       // the card shows, so the next background pass draws it again.
-      forgetCard(id)
+      forgetCard({ kind: 'deck', id })
       return reply.send(deckRecord(updated))
     },
   )

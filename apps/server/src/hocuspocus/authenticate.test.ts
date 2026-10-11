@@ -204,12 +204,19 @@ describe('browser paths', () => {
     })
     expect(folder.connection.readOnly).toBe(true)
 
+    // A component admits no share link (resolveComponentAccess: only a
+    // render token minted for that master — permissions.integration.test.ts).
+    componentAccess.mockResolvedValueOnce(null)
     await expect(
       onAuthenticate()(
         payload({ documentName: 'component:c1', params: { share_token: 'link-123' } }),
       ),
     ).rejects.toThrow('Forbidden')
-    expect(componentAccess).not.toHaveBeenCalled()
+    expect(componentAccess).toHaveBeenCalledWith(expect.anything(), {
+      componentId: 'c1',
+      userId: null,
+      shareToken: 'link-123',
+    })
   })
 
   it('resolves folder and component docs for the cookie user', async () => {

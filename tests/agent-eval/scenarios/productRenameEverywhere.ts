@@ -1,5 +1,6 @@
 import {
   Checks,
+  callsOf,
   isBoldWeight,
   norm,
   objectById,
@@ -79,7 +80,7 @@ export default defineScenario({
   steps: (fx) => [
     `The product "Acme One" has been renamed to "Acme Pro". Update every mention of it in the Narrative deck ${deckRef(fx)} — every slide, including tables — and keep the formatting of the text as it is.`,
   ],
-  async grade({ world, fixture: fx }) {
+  async grade({ world, fixture: fx, transcript }) {
     const c = new Checks()
     const s1 = await readSlide(world, { deckId: fx.deckId }, { index: 0 })
     const s2 = await readSlide(world, { deckId: fx.deckId }, { index: 1 })
@@ -116,6 +117,12 @@ export default defineScenario({
       runs.some((r) => r.text.includes('Acme Pro') && isBoldWeight(r.fontWeight)) &&
         runs.filter((r) => !r.text.includes('Acme Pro')).every((r) => !isBoldWeight(r.fontWeight)),
       JSON.stringify(runs),
+    )
+    // The deck's card follows an ordinary edit by itself (A3.5).
+    c.eq(
+      'it did not redraw the deck card after an ordinary edit',
+      callsOf(transcript, 'deck.refreshThumbnail').length,
+      0,
     )
     return c.done()
   },

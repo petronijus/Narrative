@@ -27,6 +27,7 @@ import { and, eq, inArray } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { components, deckPermissions, decks, folderPermissions } from '../db/schema.js'
 import { findShareLink } from './shareLinks.js'
+import { isRenderToken, resolveRenderToken } from './renderTokens.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -205,7 +206,8 @@ export async function resolveDeckAccess(
 
 export interface ComponentAccessResult {
   role: DeckRole
-  reason: 'folder'
+  /** `render`: the render worker's page for the master's card, read-only (auth/renderTokens.ts). */
+  reason: 'folder' | 'render'
 }
 
 /**
@@ -216,9 +218,19 @@ export interface ComponentAccessResult {
  */
 export async function resolveComponentAccess(
   db: Database,
-  args: { componentId: string; userId: string | null },
+  args: { componentId: string; userId: string | null; shareToken?: string | null },
 ): Promise<ComponentAccessResult | null> {
-  if (!args.userId) return null
+  if (!args.userId) {
+    // No share link reaches a component — only a render token minted for
+    // this master, while the person it renders for can still read it.
+    const grant = componentRenderGrant(args.shareToken)
+    if (grant === null || grant.componentId !== args.componentId) return null
+    const requester = await resolveComponentAccess(db, {
+      componentId: args.componentId,
+      userId: grant.requestedBy,
+    })
+    return requester === null ? null : { role: 'viewer', reason: 'render' }
+  }
 
   const [row] = await db
     .select({ folderId: components.folderId })
@@ -299,8 +311,12 @@ export async function resolveFolderAccess(
 /** How someone may read a folder's shared content (tokens, fonts, component media). */
 export interface FolderContentAccess {
   role: DeckRole
-  /** `folder`: a member, with their folder role; `deck`: a guest of one of its decks, read-only. */
-  via: 'folder' | 'deck'
+  /**
+   * `folder`: a member, with their folder role; `deck`: a guest of one of
+   * its decks, read-only; `render`: the render page of one of its component
+   * masters (its card), read-only.
+   */
+  via: 'folder' | 'deck' | 'render'
 }
 
 /**
@@ -346,6 +362,32 @@ export async function resolveFolderContentAccess(
         .limit(1)
       if (deck?.folderId === args.folderId) return { role: 'viewer', via: 'deck' }
     }
+    // A master's render page reads its folder's tokens, fonts and media.
+    const grant = componentRenderGrant(args.shareToken)
+    if (grant !== null) {
+      const [component] = await db
+        .select({ folderId: components.folderId })
+        .from(components)
+        .where(eq(components.id, grant.componentId))
+        .limit(1)
+      if (component?.folderId === args.folderId) {
+        const requester = await resolveFolderAccess(db, {
+          folderId: args.folderId,
+          userId: grant.requestedBy,
+        })
+        if (requester !== null) return { role: 'viewer', via: 'render' }
+      }
+    }
   }
   return null
+}
+
+/** The component a valid render token was minted for, and for whom; null for anything else. */
+function componentRenderGrant(
+  token: string | null | undefined,
+): { componentId: string; requestedBy: string } | null {
+  if (typeof token !== 'string' || !isRenderToken(token)) return null
+  const grant = resolveRenderToken(token)
+  if (grant === null || grant.target.kind !== 'component') return null
+  return { componentId: grant.target.id, requestedBy: grant.requestedBy }
 }

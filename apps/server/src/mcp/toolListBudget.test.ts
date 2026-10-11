@@ -78,8 +78,13 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * A3.5a (2026-10-11): no raise for deck.refreshThumbnail ≈ 0.7 KB (the deck's
  * card): 184,396 bytes in url mode, 138 tools — 104 bytes left, so
  * component.refreshThumbnail (A3.5b) needs a raise.
+ * A3.5b–A3.7 (2026-10-11): 184,500 → 185,500. A master's card went onto
+ * deck.refreshThumbnail (`componentId`, no tool of its own: +0.1 KB, where a
+ * component.refreshThumbnail tool would have taken ≈ 0.7 KB), query.render
+ * gained `compare` and `overflow` (≈ +0.2 KB): 184,714 bytes in url mode,
+ * 138 tools.
  */
-export const TOOL_LIST_BUDGET_BYTES = 184_500
+export const TOOL_LIST_BUDGET_BYTES = 185_500
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

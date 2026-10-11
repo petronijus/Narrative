@@ -79,11 +79,17 @@ describe('sweepExpiredExports', () => {
     bucket.put('decks/b/video/v1.mp4', 30 * EXPORT_MAX_AGE_MS)
     bucket.put('decks/c/exports/z1/deck.pptx', EXPORT_MAX_AGE_MS - 1)
     bucket.put('media/other/exports/old.pptx', 30 * EXPORT_MAX_AGE_MS)
+    // A component master's card render left behind, and its own card picture.
+    bucket.put('components/m/exports/k1/thumb.png', 2 * EXPORT_MAX_AGE_MS)
+    bucket.put('components/m/thumb-abc.png', 30 * EXPORT_MAX_AGE_MS)
 
     const result = await sweepExpiredExports({ s3: bucket, bucket: 'b', log, now: () => NOW })
 
-    expect(result).toEqual({ decks: 3, deleted: 2, failures: 0 })
+    expect(result).toEqual({ decks: 3, components: 1, deleted: 3, failures: 0 })
+    expect(bucket.objects.has('components/m/thumb-abc.png')).toBe(true)
+    expect(bucket.objects.has('components/m/exports/k1/thumb.png')).toBe(false)
     expect([...bucket.objects.keys()].sort()).toEqual([
+      'components/m/thumb-abc.png',
       'decks/a/exports/x2/deck.pptx',
       'decks/a/thumbnail.webp',
       'decks/b/video/v1.mp4',
@@ -91,10 +97,11 @@ describe('sweepExpiredExports', () => {
       'media/other/exports/old.pptx',
     ])
     // Only the exports folders were listed per deck, never whole deck prefixes.
-    expect(bucket.listed.filter((p) => p !== 'decks/')).toEqual([
+    expect(bucket.listed.filter((p) => p !== 'decks/' && p !== 'components/')).toEqual([
       'decks/a/exports/',
       'decks/b/exports/',
       'decks/c/exports/',
+      'components/m/exports/',
     ])
   })
 
@@ -105,7 +112,7 @@ describe('sweepExpiredExports', () => {
         bucket.put(`decks/d${d}/exports/e${e}/deck.pptx`, 3 * EXPORT_MAX_AGE_MS)
     }
     const result = await sweepExpiredExports({ s3: bucket, bucket: 'b', log, now: () => NOW })
-    expect(result).toEqual({ decks: 5, deleted: 25, failures: 0 })
+    expect(result).toEqual({ decks: 5, components: 0, deleted: 25, failures: 0 })
     expect(bucket.objects.size).toBe(0)
   })
 
@@ -115,7 +122,7 @@ describe('sweepExpiredExports', () => {
     bucket.put('decks/b/exports/y/deck.pptx', 3 * EXPORT_MAX_AGE_MS)
     bucket.failPrefix = 'decks/a/exports/'
     const result = await sweepExpiredExports({ s3: bucket, bucket: 'b', log, now: () => NOW })
-    expect(result).toEqual({ decks: 2, deleted: 1, failures: 1 })
+    expect(result).toEqual({ decks: 2, components: 0, deleted: 1, failures: 1 })
     expect([...bucket.objects.keys()]).toEqual(['decks/a/exports/x/deck.pptx'])
   })
 
@@ -124,6 +131,6 @@ describe('sweepExpiredExports', () => {
     bucket.failPrefix = 'decks/'
     await expect(
       sweepExpiredExports({ s3: bucket, bucket: 'b', log, now: () => NOW }),
-    ).resolves.toEqual({ decks: 0, deleted: 0, failures: 1 })
+    ).resolves.toEqual({ decks: 0, components: 0, deleted: 0, failures: 1 })
   })
 })

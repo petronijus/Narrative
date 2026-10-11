@@ -66,6 +66,8 @@ export interface HocuspocusServerOptions {
    * copies again (services/localiseMedia.ts).
    */
   onDeckStored?: (deckId: string) => void
+  /** After a component master's snapshot was stored, off the store's path (its card). */
+  onComponentStored?: (componentId: string) => void
 }
 
 export function createHocuspocusServer(opts: HocuspocusServerOptions) {
@@ -78,6 +80,9 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
       new PostgresPersistence({
         db,
         ...(opts.onDeckStored === undefined ? {} : { onDeckStored: opts.onDeckStored }),
+        ...(opts.onComponentStored === undefined
+          ? {}
+          : { onComponentStored: opts.onComponentStored }),
       }),
       // Binds awareness client ids to the connection (principal) that first
       // announced them, so editor.context never trusts a forged state (M9).

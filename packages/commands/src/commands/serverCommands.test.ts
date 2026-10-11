@@ -167,6 +167,24 @@ describe('query.render', () => {
     ])
   })
 
+  it('compares a slide with how it was before the session’s current run, and says when there is none', async () => {
+    const inRun = ctx({ run: { runId: 'run_fixture', surface: 'mcp' } })
+    const out = await runCommand(registry, inRun, 'query.render', {
+      slide: { index: 0 },
+      compare: 'before',
+    })
+    expect(callsTo(inRun, 'render')[0]?.args).toMatchObject({
+      view: { compare: { index: 0 }, runId: 'run_fixture' },
+    })
+    expect(out).toMatchObject({ mode: 'compare', overflow: [] })
+    const noRun = ctx()
+    const err = await failure(
+      runCommand(registry, noRun, 'query.render', { slide: { index: 0 }, compare: 'before' }),
+    )
+    expect(err.code).toBe('invalid_input')
+    expect(err.message).toMatch(/Nothing to compare/)
+  })
+
   it('refuses slide with slides, region without slide, and nothing at all, before calling the service', async () => {
     const c = ctx()
     for (const input of [
@@ -174,6 +192,8 @@ describe('query.render', () => {
       { slides: 'all', region: { x: 0, y: 0, width: 10, height: 10 } },
       {},
       { slide: 's1', region: { x: 0, y: 0, width: 5000, height: 10 } },
+      { slides: 'all', compare: 'before' },
+      { slide: 's1', region: { x: 0, y: 0, width: 10, height: 10 }, compare: 'before' },
     ]) {
       expect((await failure(runCommand(registry, c, 'query.render', input))).code).toBe(
         'invalid_input',
@@ -190,15 +210,33 @@ describe('deck.refreshThumbnail', () => {
     expect(callsTo(c, 'render')).toEqual([
       expect.objectContaining({
         method: 'refreshThumbnail',
-        args: { userId: 'u1', deckId: FIXTURE_DECK_ID },
+        args: { userId: 'u1', target: { deckId: FIXTURE_DECK_ID } },
       }),
     ])
-    expect(out).toEqual({ thumbnailUrl: expect.stringContaining('thumb'), updatedAt: expect.any(String) })
+    expect(out).toEqual({
+      thumbnailUrl: expect.stringContaining('thumb'),
+      updatedAt: expect.any(String),
+    })
+  })
+
+  it('redraws a component master’s card when the target is the master', async () => {
+    const c = ctx({ target: { componentId: 'cmp_headline', folderId: FIXTURE_FOLDER_ID } })
+    const out = await runCommand(registry, c, 'deck.refreshThumbnail', {})
+    expect(callsTo(c, 'render')[0]?.args).toEqual({
+      userId: 'u1',
+      target: { componentId: 'cmp_headline' },
+    })
+    expect(out).toMatchObject({ thumbnailUrl: expect.stringContaining('components/cmp_headline/') })
   })
 
   it('refuses a deck without slides, a viewer and any input', async () => {
     const empty = await failure(
-      runCommand(registry, ctx({ target: { deckId: 'deck_other', folderId: 'folder_b' } }), 'deck.refreshThumbnail', {}),
+      runCommand(
+        registry,
+        ctx({ target: { deckId: 'deck_other', folderId: 'folder_b' } }),
+        'deck.refreshThumbnail',
+        {},
+      ),
     )
     expect(empty.code).toBe('invalid_input')
     const viewer = ctx({ actor: { userId: 'u1', role: 'viewer', kind: 'agent' } })

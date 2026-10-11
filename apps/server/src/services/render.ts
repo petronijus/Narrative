@@ -39,15 +39,17 @@
  * in-flight share.
  */
 
-import { DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import { nanoid } from 'nanoid'
 import { listSlides } from '@narrative/slide-model'
 import * as Y from 'yjs'
+import { eq } from 'drizzle-orm'
 import {
   parseRenderFailure,
   type RenderJobData,
   type RenderJobResult,
   type RenderLookSpec,
+  type RenderPage,
   type RenderedSlide,
 } from '@narrative/shared'
 import { MAX_RENDER_SLIDES } from '@narrative/commands'
@@ -59,9 +61,16 @@ import type {
   RenderView,
   RenderedPngInfo,
 } from '@narrative/commands'
-import { resolveDeckAccess } from '../auth/permissions.js'
+import { resolveComponentAccess, resolveDeckAccess } from '../auth/permissions.js'
+import { components } from '../db/schema.js'
+import { componentRecord } from './components.js'
 import { deckRecord } from './decks.js'
-import { storeDeckThumbnail, ThumbnailStorageError } from './deckThumbnailStore.js'
+import {
+  storeComponentThumbnail,
+  storeDeckThumbnail,
+  ThumbnailStorageError,
+  type CardRef,
+} from './deckThumbnailStore.js'
 import { buildS3Client, MEDIA_BUCKET, presignGetUrl, presignPutUrl } from '../media/s3Client.js'
 import {
   clearRenderSessionsForTests,
@@ -79,6 +88,7 @@ import type { ServiceDeps } from './deps.js'
 import { badRequest, failed, forbidden, notFound, ServiceError, tooLarge } from './errors.js'
 import { cardDrawnFrom, cardSourceOf, noteCardDrawn } from '../render/cardState.js'
 import { readDocCopy } from './liveDocs.js'
+import { MAX_BEFORE_STATE_BYTES } from './runs.js'
 import { EXPORT_URL_TTL_SEC, MAX_INLINE_EXPORT_BYTES } from './pptx.js'
 
 /** How long a caller waits for its render, queueing included (Cloudflare gives up at 100 s). */
@@ -207,10 +217,28 @@ export type BackgroundThumbnailOutcome =
   /** The first slide is as it was when the card was last drawn (render/cardState.ts). */
   | { status: 'unchanged' }
   | { status: 'no-slides' }
-  /** The deck is gone. */
+  /** The deck or the master is gone. */
   | { status: 'gone' }
-  /** Not stored: by the time it was drawn, someone had the deck open (`stillWanted`). */
+  /** Not stored: by the time it was drawn, someone had it open (`stillWanted`). */
   | { status: 'superseded' }
+
+/** A live document the worker renders: what it holds now, and the page that shows it. */
+interface LiveDoc {
+  card: CardRef
+  page: RenderPage
+  role: 'viewer' | 'editor' | 'owner'
+  slides: Array<{ id: string }>
+  stateVector: string
+  /** What its card shows (render/cardState.ts), when asked for; null without slides. */
+  cardSource: string | null
+}
+
+/** Overflowing text boxes a look reports at most (the rest: `overflowTruncated`). */
+export const MAX_OVERFLOW_REPORTED = 50
+
+/** Where a render job's pictures wait to be read back (the export sweep removes strays). */
+const exportsPrefix = (card: CardRef): string =>
+  `${card.kind === 'deck' ? 'decks' : 'components'}/${card.id}/exports/${nanoid(16)}/`
 
 export function createRenderService(deps: RenderServiceDeps): RenderService & {
   /** Render and keep the PNGs in storage; the keys, for the editor's download route. */
@@ -220,13 +248,14 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     slides: RenderSlideRef[] | 'all'
   }): Promise<StoredRenders>
   /**
-   * The deck's card picture for a deck nobody has open, drawn as `userId`
-   * (its owner) behind everyone's jobs; skipped when its first slide is as
-   * it was drawn last, and not stored when `stillWanted` says no by then.
+   * The card picture of a deck or master nobody has open, drawn as `userId`
+   * (the deck's owner, the master's folder's owner) behind everyone's jobs;
+   * skipped when its first slide is as it was drawn last, and not stored
+   * when `stillWanted` says no by then.
    */
   backgroundThumbnail(args: {
     userId: string
-    deckId: string
+    card: CardRef
     stillWanted?: () => boolean
   }): Promise<BackgroundThumbnailOutcome>
 } {
@@ -234,31 +263,47 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
   const queue = deps.renderQueue ?? bullRenderQueue
   const now = deps.now ?? Date.now
 
-  /** The caller may read the deck; its slides and state vector, from the live document. */
-  async function liveDeck(
-    args: { userId: string; deckId: string },
-    opts: { card?: boolean } = {},
-  ): Promise<{
-    role: 'viewer' | 'editor' | 'owner'
-    slides: Array<{ id: string }>
-    stateVector: string
-    /** What the deck's card shows (render/cardState.ts), when asked for; null without slides. */
-    cardSource: string | null
-  }> {
-    const access = await resolveDeckAccess(db, { deckId: args.deckId, userId: args.userId })
-    if (!access) throw forbidden()
-    const doc = await readDocCopy(deps, 'deck', args.deckId)
+  /** The caller may read it; its slides and state vector, from the live document. */
+  async function live(
+    userId: string,
+    card: CardRef,
+    opts: { cardSource?: boolean } = {},
+  ): Promise<LiveDoc> {
+    let role: LiveDoc['role']
+    let page: RenderPage
+    if (card.kind === 'deck') {
+      const access = await resolveDeckAccess(db, { deckId: card.id, userId })
+      if (!access) throw forbidden()
+      role = access.role
+      page = { kind: 'deck', deckId: card.id }
+    } else {
+      const access = await resolveComponentAccess(db, { componentId: card.id, userId })
+      const [row] = await db
+        .select({ folderId: components.folderId })
+        .from(components)
+        .where(eq(components.id, card.id))
+        .limit(1)
+      if (!access || row === undefined) throw forbidden()
+      role = access.role
+      page = { kind: 'component', componentId: card.id, folderId: row.folderId }
+    }
+    const doc = await readDocCopy(deps, card.kind, card.id)
     try {
       return {
-        role: access.role,
+        card,
+        page,
+        role,
         slides: listSlides({ doc, slides: doc.getArray('slides') }).map((s) => ({ id: s.id })),
         stateVector: Buffer.from(Y.encodeStateVector(doc)).toString('base64'),
-        cardSource: opts.card === true ? cardSourceOf(doc) : null,
+        cardSource: opts.cardSource === true ? cardSourceOf(doc) : null,
       }
     } finally {
       doc.destroy()
     }
   }
+
+  const liveDeck = (args: { userId: string; deckId: string }) =>
+    live(args.userId, { kind: 'deck', id: args.deckId })
 
   /**
    * One job for the worker: a fair share of the queue (`slides` weighs it),
@@ -266,9 +311,9 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
    * clocks; the worker's failure mapped for the caller.
    */
   async function runJob(
-    args: { userId: string; deckId: string },
+    userId: string,
+    doc: Pick<LiveDoc, 'card' | 'page' | 'stateVector'>,
     slides: number,
-    stateVector: string,
     request: JobRequest,
     opts: { background?: boolean } = {},
   ): Promise<RenderJobResult> {
@@ -276,7 +321,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     // synchronously, so concurrent requests cannot all pass the check), and a
     // bound overall. A background job takes nobody's share and goes last.
     const background = opts.background === true
-    const mine = inFlight.get(args.userId) ?? { jobs: 0, slides: 0 }
+    const mine = inFlight.get(userId) ?? { jobs: 0, slides: 0 }
     if (
       !background &&
       mine.jobs >= (deps.bypass === true ? MAX_IN_FLIGHT_DEV : MAX_IN_FLIGHT_PER_USER)
@@ -287,7 +332,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
       )
     }
     const held = { jobs: mine.jobs + 1, slides: mine.slides + slides }
-    if (!background) inFlight.set(args.userId, held)
+    if (!background) inFlight.set(userId, held)
     try {
       let waiting: number
       try {
@@ -303,8 +348,8 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
       const uploadTtlSec = Math.ceil((RENDER_WAIT_MS + TOKEN_MARGIN_MS) / 1000)
       const target = (key: string) => presignPutUrl(key, 'image/png', uploadTtlSec)
       const base = {
-        deckId: args.deckId,
-        stateVector,
+        page: doc.page,
+        stateVector: doc.stateVector,
         deadline,
         workBudgetMs,
         // Background work leaves people's warm pages where they are.
@@ -324,7 +369,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
             }
           : { ...base, kind: 'look', look: request.look, upload: await target(request.key) }
       const token = sessionTokenFor(
-        { ...args, lane: background ? 'background' : 'person' },
+        { target: doc.card, userId, lane: background ? 'background' : 'person' },
         RENDER_WAIT_MS + TOKEN_MARGIN_MS,
         now(),
       )
@@ -334,7 +379,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
           { priority: background ? BACKGROUND_PRIORITY : held.slides },
         )
       } catch (err) {
-        const mapped = await mapFailure(err, args)
+        const mapped = await mapFailure(err, userId, doc.card)
         // The page was refused: whatever the reason, that session is over.
         if (parseRenderFailure(err instanceof Error ? err.message : '') === 'access-refused') {
           endRenderSession(token)
@@ -344,7 +389,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
         sessionJobEnded(token, now())
       }
     } finally {
-      if (!background) release(args.userId, slides)
+      if (!background) release(userId, slides)
     }
   }
 
@@ -372,9 +417,9 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
         `That is ${chosen.length} slides; one request renders at most ${MAX_RENDER_SLIDES} — ask for them in parts`,
       )
     }
-    const prefix = `decks/${args.deckId}/exports/${nanoid(16)}/`
+    const prefix = exportsPrefix(deck.card)
     const keys = new Map(chosen.map((s) => [s.id, `${prefix}slide-${s.index + 1}.png`]))
-    const result = await runJob(args, chosen.length, deck.stateVector, {
+    const result = await runJob(args.userId, deck, chosen.length, {
       kind: 'export',
       uploads: chosen.map((s) => ({ slideId: s.id, key: keys.get(s.id)! })),
     })
@@ -385,14 +430,58 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     }
   }
 
+  /**
+   * The deck as it was before run `runId` first changed it, for a compare:
+   * the caller's own run on this very deck.
+   */
+  function stateBeforeRun(deckId: string, runId: string | null): Uint8Array {
+    const before = runId === null ? null : (deps.runs?.stateBefore(runId) ?? null)
+    if (before === null) {
+      throw badRequest(
+        'Nothing to compare yet: your current run has not changed this deck (or its history is gone)',
+      )
+    }
+    if (before.document.kind !== 'deck' || before.document.deckId !== deckId) {
+      throw badRequest('Your current run changed another document, not this deck')
+    }
+    if (before.update.byteLength > MAX_BEFORE_STATE_BYTES) {
+      throw tooLarge('The deck is too large to compare with how it was')
+    }
+    return before.update
+  }
+
+  /**
+   * Store a compare's "before" state for its job, read back by the worker
+   * through a presigned GET (it never travels in the queue); the key, to
+   * delete once the job is over (the export sweep takes a stray one).
+   */
+  async function stageBefore(
+    card: CardRef,
+    update: Uint8Array,
+  ): Promise<{ key: string; url: string }> {
+    const key = `${exportsPrefix(card)}before.bin`
+    await buildS3Client().send(
+      new PutObjectCommand({
+        Bucket: MEDIA_BUCKET,
+        Key: key,
+        Body: update,
+        ContentType: 'application/octet-stream',
+        CacheControl: 'private, no-store',
+      }),
+    )
+    const ttlSec = Math.ceil((RENDER_WAIT_MS + TOKEN_MARGIN_MS) / 1000)
+    return { key, url: await presignGetUrl(key, ttlSec) }
+  }
+
   async function look(args: {
     userId: string
     deckId: string
     view: RenderView
   }): Promise<RenderLookResult> {
     const deck = await liveDeck(args)
-    let spec: RenderLookSpec
+    let spec: Exclude<RenderLookSpec, { mode: 'thumbnail' }>
     let weight: number
+    let staged: string | null = null
     if ('sheet' in args.view) {
       const chosen = pickSlides(deck.slides, args.view.sheet)
       if (chosen.length === 0) throw badRequest('The deck has no slides to look at')
@@ -403,6 +492,14 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
       }
       spec = { mode: 'sheet', slideIds: chosen.map((s) => s.id) }
       weight = chosen.length
+    } else if ('compare' in args.view) {
+      const [one] = pickSlides(deck.slides, [args.view.compare])
+      if (one === undefined) throw badRequest('The deck has no slides to look at')
+      const before = await stageBefore(deck.card, stateBeforeRun(args.deckId, args.view.runId))
+      staged = before.key
+      spec = { mode: 'compare', slideId: one.id, before: { url: before.url } }
+      // Two pages and two slides: the frozen "before" page, then the live one.
+      weight = 4
     } else {
       const [one] = pickSlides(deck.slides, [args.view.slide])
       if (one === undefined) throw badRequest('The deck has no slides to look at')
@@ -412,84 +509,141 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
           : { mode: 'region', slideId: one.id, region: args.view.region }
       weight = 1
     }
-    const key = `decks/${args.deckId}/exports/${nanoid(16)}/look.png`
-    const result = await runJob(args, weight, deck.stateVector, { kind: 'look', look: spec, key })
+    const key = `${exportsPrefix(deck.card)}look.png`
+    let result: RenderJobResult
+    try {
+      result = await runJob(args.userId, deck, weight, { kind: 'look', look: spec, key })
+    } finally {
+      if (staged !== null) {
+        const stale = staged
+        void buildS3Client()
+          .send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: stale }))
+          .catch(() => undefined)
+      }
+    }
     if (result.kind !== 'look') throw failed('The renderer answered another job', 503)
     const bytes = await readStoredPng(key, MAX_LOOK_BYTES)
+    const indexOf = new Map(deck.slides.map((s, i) => [s.id, i]))
+    const overflow = result.look.overflow ?? []
     return {
       mode: spec.mode,
       width: result.look.width,
       height: result.look.height,
       slides: result.look.slides,
+      // A bounded answer for the model, however many boxes a sheet holds.
+      overflow: overflow.slice(0, MAX_OVERFLOW_REPORTED).map((o) => ({
+        slideId: o.slideId,
+        index: indexOf.get(o.slideId) ?? -1,
+        objectId: o.objectId,
+        boxHeight: o.boxHeight,
+        textHeight: o.textHeight,
+      })),
+      ...(overflow.length > MAX_OVERFLOW_REPORTED ? { overflowTruncated: true } : {}),
+      ...(result.look.newSlide === true ? { newSlide: true } : {}),
       failedFonts: result.failedFonts,
       image: { mimeType: 'image/png', base64: Buffer.from(bytes).toString('base64') },
     }
   }
 
   /**
-   * Draw the first slide as the deck's card picture and store it; the deck
-   * row after, or null when the deck was deleted meanwhile.
+   * Draw the first slide as the card picture and store it; the card's URL and
+   * time after, or why it was not stored.
    */
-  async function drawThumbnail(
-    args: { userId: string; deckId: string },
-    deck: { slides: Array<{ id: string }>; stateVector: string; cardSource: string | null },
+  async function drawCard(
+    userId: string,
+    doc: LiveDoc,
     opts: { background: boolean; stillWanted?: () => boolean },
-  ): Promise<{ status: 'stored'; record: ReturnType<typeof deckRecord> } | { status: 'gone' | 'superseded' }> {
-    const first = deck.slides[0]!
-    const key = `decks/${args.deckId}/exports/${nanoid(16)}/thumb.png`
+  ): Promise<
+    | { status: 'stored'; thumbnailUrl: string; updatedAt: string }
+    | { status: 'gone' | 'superseded' }
+  > {
+    const first = doc.slides[0]!
+    const key = `${exportsPrefix(doc.card)}thumb.png`
     const result = await runJob(
-      args,
+      userId,
+      doc,
       1,
-      deck.stateVector,
       { kind: 'look', look: { mode: 'thumbnail', slideId: first.id }, key },
       { background: opts.background },
     )
     if (result.kind !== 'look') throw failed('The renderer answered another job', 503)
     const bytes = await readStoredPng(key, MAX_THUMBNAIL_BYTES)
-    // A background card may have waited a while: someone who opened the
-    // deck meanwhile uploads a newer one, which this must not replace.
+    // A background card may have waited a while: someone who opened it
+    // meanwhile uploads a newer one, which this must not replace.
     if (opts.stillWanted?.() === false) return { status: 'superseded' }
-    let row
+    const picture = { bytes, mime: 'image/png' } as const
+    let stored: { thumbnailUrl: string | null; updatedAt: string | null } | null
     try {
-      row = await storeDeckThumbnail(db, args.deckId, { bytes, mime: 'image/png' })
+      if (doc.card.kind === 'deck') {
+        const row = await storeDeckThumbnail(db, doc.card.id, picture)
+        const record = row === null ? null : deckRecord(row)
+        stored =
+          record === null
+            ? null
+            : { thumbnailUrl: record.thumbnailUrl, updatedAt: record.thumbnailUpdatedAt }
+      } else {
+        const row = await storeComponentThumbnail(db, doc.card.id, picture)
+        const record = row === null ? null : componentRecord(row)
+        stored =
+          record === null
+            ? null
+            : { thumbnailUrl: record.thumbnailUrl, updatedAt: record.updatedAt }
+      }
     } catch (err) {
       if (!(err instanceof ThumbnailStorageError)) throw err
-      deps.log.error({ deckId: args.deckId, err: err.message }, 'render: storing the card failed')
+      deps.log.error(
+        { card: `${doc.card.kind}:${doc.card.id}`, err: err.message },
+        'render: storing the card failed',
+      )
       throw failed('Storing the card picture failed; try again shortly', 503)
     }
-    if (row === null) return { status: 'gone' }
-    if (deck.cardSource !== null) noteCardDrawn(args.deckId, deck.cardSource)
-    return { status: 'stored', record: deckRecord(row) }
+    if (stored === null || stored.thumbnailUrl === null || stored.updatedAt === null) {
+      return { status: 'gone' }
+    }
+    if (doc.cardSource !== null) noteCardDrawn(doc.card, doc.cardSource)
+    return { status: 'stored', thumbnailUrl: stored.thumbnailUrl, updatedAt: stored.updatedAt }
   }
 
   async function refreshThumbnail(args: {
     userId: string
-    deckId: string
+    target: { deckId: string } | { componentId: string }
   }): Promise<{ thumbnailUrl: string; updatedAt: string }> {
-    const deck = await liveDeck(args, { card: true })
-    // The card is the deck's face on the folder page: its editors redraw it.
-    if (deck.role === 'viewer') throw forbidden('Only editors of the deck can redraw its card')
-    if (deck.slides.length === 0) throw badRequest('The deck has no slides to draw its card from')
-    const drawn = await drawThumbnail(args, deck, { background: false })
-    if (
-      drawn.status !== 'stored' ||
-      drawn.record.thumbnailUrl === null ||
-      drawn.record.thumbnailUpdatedAt === null
-    ) {
-      throw notFound('The deck was deleted')
+    const card: CardRef =
+      'deckId' in args.target
+        ? { kind: 'deck', id: args.target.deckId }
+        : { kind: 'component', id: args.target.componentId }
+    const doc = await live(args.userId, card, { cardSource: true })
+    // The card is its face on the folder page: its editors redraw it.
+    if (doc.role === 'viewer') {
+      throw forbidden(
+        card.kind === 'deck'
+          ? 'Only editors of the deck can redraw its card'
+          : 'Only editors of the folder can redraw a master’s card',
+      )
     }
-    return { thumbnailUrl: drawn.record.thumbnailUrl, updatedAt: drawn.record.thumbnailUpdatedAt }
+    if (doc.slides.length === 0) {
+      throw badRequest(
+        card.kind === 'deck'
+          ? 'The deck has no slides to draw its card from'
+          : 'The master has no slide to draw its card from',
+      )
+    }
+    const drawn = await drawCard(args.userId, doc, { background: false })
+    if (drawn.status !== 'stored') {
+      throw notFound(card.kind === 'deck' ? 'The deck was deleted' : 'The component was deleted')
+    }
+    return { thumbnailUrl: drawn.thumbnailUrl, updatedAt: drawn.updatedAt }
   }
 
   async function backgroundThumbnail(args: {
     userId: string
-    deckId: string
+    card: CardRef
     stillWanted?: () => boolean
   }): Promise<BackgroundThumbnailOutcome> {
-    const deck = await liveDeck(args, { card: true })
-    if (deck.cardSource === null) return { status: 'no-slides' }
-    if (cardDrawnFrom(args.deckId) === deck.cardSource) return { status: 'unchanged' }
-    const drawn = await drawThumbnail(args, deck, {
+    const doc = await live(args.userId, args.card, { cardSource: true })
+    if (doc.cardSource === null) return { status: 'no-slides' }
+    if (cardDrawnFrom(args.card) === doc.cardSource) return { status: 'unchanged' }
+    const drawn = await drawCard(args.userId, doc, {
       background: true,
       ...(args.stillWanted !== undefined ? { stillWanted: args.stillWanted } : {}),
     })
@@ -497,10 +651,8 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
   }
 
   /** What the caller hears when a job fails. */
-  async function mapFailure(
-    err: unknown,
-    args: { userId: string; deckId: string },
-  ): Promise<Error> {
+  async function mapFailure(err: unknown, userId: string, card: CardRef): Promise<Error> {
+    const where = { [card.kind === 'deck' ? 'deckId' : 'componentId']: card.id }
     if (err instanceof RenderTimeoutError) {
       // Still waiting for its turn: busy. Started and not done: the slide is slow.
       return err.started
@@ -508,7 +660,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
         : busy('The render did not finish in time', 504)
     }
     if (err instanceof RenderUnavailableError) {
-      deps.log.warn({ deckId: args.deckId, err: err.message }, 'render: queue unavailable')
+      deps.log.warn({ ...where, err: err.message }, 'render: queue unavailable')
       return busy('The renderer is unavailable right now; try again shortly', 503)
     }
     const message = err instanceof Error ? err.message : String(err)
@@ -521,9 +673,12 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
       case 'access-refused': {
         // Refused for real (the caller lost access during the job), or a
         // renderer-side problem with the token: only the first is a 403.
-        const still = await resolveDeckAccess(db, { deckId: args.deckId, userId: args.userId })
+        const still =
+          card.kind === 'deck'
+            ? await resolveDeckAccess(db, { deckId: card.id, userId })
+            : await resolveComponentAccess(db, { componentId: card.id, userId })
         if (!still) return forbidden()
-        deps.log.error({ deckId: args.deckId, err: message }, 'render: the page was refused')
+        deps.log.error({ ...where, err: message }, 'render: the page was refused')
         return failed('The render failed', 503)
       }
       // It waited too long for its turn.
@@ -532,7 +687,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
       case 'deadline':
         return failed('The render did not finish in time', 504)
       default:
-        deps.log.error({ deckId: args.deckId, err: message }, 'render: job failed')
+        deps.log.error({ ...where, err: message }, 'render: job failed')
         return failed('The render failed', 503)
     }
   }

@@ -34,8 +34,28 @@ export interface RenderUpload extends RenderTarget {
   slideId: string
 }
 
+/**
+ * The render page a job opens: a deck's (`/deck/:id/render`), or a component
+ * master's (`/folder/:f/component/:c/render`, for the master's card).
+ */
+export type RenderPage =
+  | { kind: 'deck'; deckId: string }
+  | { kind: 'component'; componentId: string; folderId: string }
+
+/** The page's path (no query). */
+export function renderPagePath(page: RenderPage): string {
+  return page.kind === 'deck'
+    ? `/deck/${encodeURIComponent(page.deckId)}/render`
+    : `/folder/${encodeURIComponent(page.folderId)}/component/${encodeURIComponent(page.componentId)}/render`
+}
+
+/** A short name of the page's document, for logs and keys (`deck:<id>`, `component:<id>`). */
+export function renderPageName(page: RenderPage): string {
+  return page.kind === 'deck' ? `deck:${page.deckId}` : `component:${page.componentId}`
+}
+
 interface RenderJobBase {
-  deckId: string
+  page: RenderPage
   /**
    * A render token (`nrr_…`, apps/server/src/auth/renderTokens.ts): the page
    * opens with it as `share_token`. The server keeps one per person and deck
@@ -105,6 +125,25 @@ export type RenderLookSpec =
   | { mode: 'sheet'; slideIds: string[] }
   /** A slide as the deck's card picture, `THUMBNAIL_WIDTH`×`THUMBNAIL_HEIGHT`. */
   | { mode: 'thumbnail'; slideId: string }
+  /**
+   * A slide before and after, side by side, within `LOOK_MAX_EDGE`. `before`
+   * is where the server stored the whole document as it was at the start of
+   * the current agent run (`Y.encodeStateAsUpdate`, a presigned GET — the
+   * state never travels in the queue): the worker fetches it, draws the
+   * slide on a page of its own that holds that state and nothing live, then
+   * hands the picture to the live page, which draws the slide as it is now
+   * beside it.
+   */
+  | { mode: 'compare'; slideId: string; before: { url: string } }
+
+/**
+ * A look as the render page takes it (`__narrativeRenderLook`): a compare
+ * carries the "before" picture the worker drew on the frozen page (base64
+ * PNG; null when the slide did not exist then), not the document state.
+ */
+export type RenderPageLookSpec =
+  | Exclude<RenderLookSpec, { mode: 'compare' }>
+  | { mode: 'compare'; slideId: string; beforePng: string | null }
 
 export interface RenderLookJob extends RenderJobBase {
   kind: 'look'
@@ -130,12 +169,27 @@ export interface RenderedSlide {
   failedLoads: number
 }
 
+/**
+ * A text box whose laid-out text — measured on the page, with the real fonts
+ * — runs below its box (slide px).
+ */
+export interface TextOverflow {
+  slideId: string
+  objectId: string
+  boxHeight: number
+  textHeight: number
+}
+
 export interface RenderedLook {
   width: number
   height: number
   sizeBytes: number
   /** The slides in it, in the order shown, with their position and failed loads. */
   slides: Array<{ slideId: string; index: number; failedLoads: number }>
+  /** Its slides' text boxes that overflow (a compare: the slide now, not before). */
+  overflow: TextOverflow[]
+  /** A compare whose slide did not exist at the start of the run: its "before" side is empty. */
+  newSlide?: boolean
 }
 
 /**

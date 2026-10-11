@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { clampRegion, fitScale, SHEET_GAP, sheetLayout } from './renderLook'
+import { LOOK_MAX_EDGE, LOOK_MAX_PIXELS } from '@narrative/shared'
+import { clampRegion, compareLayout, fitScale, SHEET_GAP, sheetLayout } from './renderLook'
 
 describe('clampRegion', () => {
   it('keeps a region inside the slide, in whole pixels, never empty', () => {
@@ -48,5 +49,26 @@ describe('sheetLayout', () => {
     expect(sheetLayout(12, 1568, 1_150_000)).toMatchObject({ cols: 3, rows: 4 })
     expect(sheetLayout(20, 1568, 1_150_000)).toMatchObject({ cols: 4, rows: 5, tileWidth: 306 })
     expect(sheetLayout(1, 1568, 1_150_000).cols).toBe(1)
+  })
+})
+
+describe('compareLayout', () => {
+  it('puts two 16:9 tiles side by side as large as the look limits allow', () => {
+    const { tileWidth, tileHeight } = compareLayout(LOOK_MAX_EDGE, LOOK_MAX_PIXELS)
+    const width = 2 * tileWidth + 3 * SHEET_GAP
+    const height = tileHeight + 2 * SHEET_GAP
+    expect(width).toBeLessThanOrEqual(LOOK_MAX_EDGE)
+    expect(width * height).toBeLessThanOrEqual(LOOK_MAX_PIXELS)
+    // One pixel wider would break the edge limit: as large as allowed.
+    expect(2 * (tileWidth + 1) + 3 * SHEET_GAP).toBeGreaterThan(LOOK_MAX_EDGE)
+    expect(Math.abs(tileWidth / tileHeight - 16 / 9)).toBeLessThan(0.01)
+  })
+
+  it('shrinks the tiles when the pixel limit is the tighter one', () => {
+    const { tileWidth, tileHeight } = compareLayout(LOOK_MAX_EDGE, 200_000)
+    expect((2 * tileWidth + 3 * SHEET_GAP) * (tileHeight + 2 * SHEET_GAP)).toBeLessThanOrEqual(
+      200_000,
+    )
+    expect(tileWidth).toBeLessThan(compareLayout(LOOK_MAX_EDGE, LOOK_MAX_PIXELS).tileWidth)
   })
 })

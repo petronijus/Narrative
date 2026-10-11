@@ -1,5 +1,6 @@
 /**
- * render/cardState.ts — what each deck's card picture was last drawn from,
+ * render/cardState.ts — what each card picture (a deck's, a component
+ * master's) was last drawn from,
  * so the background scheduler (services/deckThumbnails.ts) does not draw the
  * same card twice, whoever drew it last (services/render.ts: the scheduler,
  * or `deck.refreshThumbnail`).
@@ -17,6 +18,9 @@
 
 import { createHash } from 'node:crypto'
 import * as Y from 'yjs'
+import type { CardRef } from '../services/deckThumbnailStore.js'
+
+const keyOf = (card: CardRef): string => `${card.kind}:${card.id}`
 
 const MAX_REMEMBERED = 2_000
 
@@ -26,7 +30,9 @@ const drawnFrom = new Map<string, string>()
 export function cardSourceOf(doc: Y.Doc): string | null {
   const slides = doc.getArray<unknown>('slides')
   if (slides.length === 0) return null
-  return createHash('sha256').update(canonical(slides.get(0))).digest('base64url')
+  return createHash('sha256')
+    .update(canonical(slides.get(0)))
+    .digest('base64url')
 }
 
 /**
@@ -45,19 +51,20 @@ function canonical(value: unknown): string {
   return JSON.stringify(value) ?? 'null'
 }
 
-/** The source the deck's card was last drawn from in this process, if any. */
-export function cardDrawnFrom(deckId: string): string | undefined {
-  return drawnFrom.get(deckId)
+/** The source the card was last drawn from in this process, if any. */
+export function cardDrawnFrom(card: CardRef): string | undefined {
+  return drawnFrom.get(keyOf(card))
 }
 
-export function noteCardDrawn(deckId: string, source: string): void {
-  drawnFrom.delete(deckId)
-  drawnFrom.set(deckId, source)
+export function noteCardDrawn(card: CardRef, source: string): void {
+  const key = keyOf(card)
+  drawnFrom.delete(key)
+  drawnFrom.set(key, source)
   if (drawnFrom.size > MAX_REMEMBERED) drawnFrom.delete(drawnFrom.keys().next().value!)
 }
 
-export function forgetCard(deckId: string): void {
-  drawnFrom.delete(deckId)
+export function forgetCard(card: CardRef): void {
+  drawnFrom.delete(keyOf(card))
 }
 
 /** Test helper. */

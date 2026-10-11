@@ -166,6 +166,8 @@ export interface AgentRuntimeOptions {
   documentLingerMs?: number
   runIdleMs?: number
   maxOpenRunsPerUser?: number
+  /** The kept "before" states of runs together (tests; default BEFORE_STATES_BUDGET_BYTES). */
+  beforeStatesBudgetBytes?: number
   presenceIdleMs?: number
   now?: () => Date
   /**
@@ -243,6 +245,9 @@ export async function createAgentRuntime(opts: AgentRuntimeOptions): Promise<Age
     log: opts.log,
     ...(opts.now === undefined ? {} : { now: opts.now }),
     ...(opts.runIdleMs === undefined ? {} : { idleMs: opts.runIdleMs }),
+    ...(opts.beforeStatesBudgetBytes === undefined
+      ? {}
+      : { beforeStatesBudgetBytes: opts.beforeStatesBudgetBytes }),
     ...(opts.maxOpenRunsPerUser === undefined
       ? {}
       : { maxOpenRunsPerUser: opts.maxOpenRunsPerUser }),
