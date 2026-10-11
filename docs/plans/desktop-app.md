@@ -177,18 +177,25 @@ Each phase ships on its own and is useful without the next.
   desktop app is just another Hocuspocus client.
 - All UI strings, menus and installer texts in English.
 
-## Open decisions for Petr
+## Decisions (Petr, 2026-10-11)
 
-1. **Code signing.** macOS without a Developer ID (99 USD/year) means a
-   Gatekeeper warning and no notarisation; Windows without a certificate
-   means a SmartScreen warning. Personal use only → unsigned is acceptable
-   at first.
-2. **Offline in the browser too**, or only in the desktop app? The plan
-   builds it into the web app (it costs nothing extra); the question is
-   whether the browser shows the "Available offline" control.
-3. **Videos in pinned decks**: download whole (size) or posters only.
-4. **Servers the app may connect to**: production only, or also dev/local
-   (useful for testing the shell against `just dev`).
+Recorded in [ADR 0014](../adr/0014-desktop-shell-loads-server-origin.md).
+
+1. **Code signing.** macOS builds are signed with an Apple Developer ID and
+   notarized, and update themselves; Windows builds stay unsigned. Petr
+   enrolls in the Apple Developer Program before the first macOS release.
+2. **Update signing key**: a dedicated 1Password SSH key, "Narrative
+   desktop update signing key" (Ed25519, created 2026-10-11, fingerprint
+   `SHA256:ch7b+l0HM2Kzfg2P3O9HKlXsgIITn72RP+1y4zpgr/8`), used through the
+   1Password SSH agent; no existing key is reused.
+3. **Presenting on a chosen display is a web-app feature** (Window
+   Management API), which the shell reuses.
+4. **Servers**: production by default; a dev server or a custom URL can be
+   chosen for testing.
+
+Still open, decided before D1: whether the browser shows the "Available
+offline" control too, and whether pinned decks download whole videos or
+posters only.
 
 ## How the branch lives
 

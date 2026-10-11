@@ -1069,42 +1069,11 @@ _electron.launch({
   - Hyprland and GNOME placement;
   - on petronijus-PC, `chrome://gpu` in the shell shows hardware acceleration on the RTX 5090 and not a software fallback (the Quadro's nodes are EACCES by design).
 
-## 9. ADR 0014 outline: "The desktop app is a shell that loads the server's origin; offline is a web-app feature"
+## 9. ADR 0014
 
-1. **Context.** The desktop app should work offline (plan). Google refuses OAuth in embedded user agents. The server has versioned the editor since A3.1.
-2. **Decision.**
-   - **(a)** Electron loads the configured server origin (option A). B is rejected: a second auth model, a second CSP, and a compatibility contract with every installed client.
-   - **(b)** Offline work (D1–D3) goes into the web app.
-   - **(c)** One versioned bridge with roles (main and audience), whose contract lives in `packages/shared/src/desktop.ts`. <!-- docs-check: ignore -->
-   - **(d)** Sign-in runs in the system browser and ends with a one-time, 60 s, PKCE-bound `ndt_` ticket plus a shell `state` nonce. A hidden window redeems it with a POST navigation. Tickets live in process memory. The custom-scheme target is a server constant.
-   - **(e)** Security baseline: OS sandbox required (packaged builds refuse `--no-sandbox` and remote debugging), context isolation, origin-pinned navigation, two permissions, fuses, IPC sender and role checks.
-   - **(f)** Packaging and updates: electron-builder with a generic feed under `/desktop/` (Caddy, `/opt/narrative/desktop-feed`), written only by `just desktop-publish` from a tagged, clean build. Every artefact is SSH-signed (SSHSIG, Ed25519) by a key that lives only in 1Password, and the shell verifies it before installing. macOS builds are Developer ID signed and notarized and update through Squirrel.Mac; Windows builds are unsigned. NSIS is per-user and built on Linux. <!-- docs-check: ignore -->
-   - **(g)** Native menus come from a web-owned model that names catalog actions. Items with a shortcut dispatch the chord itself, so a menu item does exactly what its key does.
-   - **(h)** Device-local capabilities sit in the parity allowlist.
-3. **Consequences.**
-   - Losing the API process loses in-flight tickets.
-   - Losing the update signing key means existing installs can only be updated by a manual reinstall carrying the new public key.
-   - macOS updates are manual downloads, the browser download is checked against a displayed SHA-512 only by hand, and each update brings a Keychain prompt.
-   - Wayland cannot choose the presentation display except on Hyprland.
-   - Deb updates ask for the password.
-   - Cookie encryption is permanent.
-   - The AppImage is unsupported on Ubuntu.
-   - Asar integrity checking protects the signed macOS bundle; in the unsigned Windows build it catches only accidental corruption, and it does nothing on Linux.
-   - The dev Electron binary on Ubuntu needs a one-time AppArmor profile.
-4. **Alternatives considered:**
-   - bundling `apps/web/dist` (`app://`);
-   - in-window sign-in (blocked by Google);
-   - a JSON fetch redeem from main;
-   - `session.cookies.set`;
-   - a database table for tickets (the claim in `apps/server/src/mcp/oauth/store.ts:360-372` if the API scales out);
-   - Forge;
-   - trusting HTTPS plus the yml sha512 for updates (rejected: VM or Cloudflare compromise would mean code execution on every client);
-   - per-scope menu actions instead of chord dispatch.
-5. **Revisit when:**
-   - a Developer ID or Authenticode certificate is bought;
-   - the API runs as more than one process;
-   - Electron exposes display-targeted fullscreen on Wayland;
-   - electron-builder ships signed feed manifests as stable.
+Written in step 1: [ADR 0014](../adr/0014-desktop-shell-loads-server-origin.md)
+(the shell loads the server's origin; offline is a web-app feature), with
+Petr's decisions of revision 3.
 
 ## 10. Implementation steps (each verifiable on its own)
 
