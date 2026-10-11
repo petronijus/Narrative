@@ -1,9 +1,8 @@
 # Handoff A3 — the render worker: the server can see a slide
 
-**Status:** done in code; A3.5b–A3.7 (2026-10-11) are uncommitted and not
-yet tested as a whole — see "Not yet verified" in the plan's "Where we
-stand" — to ship as **0.10.30**. A3.1–A3.5a are released
-(0.10.20–0.10.29).
+**Status:** done. A3.5b–A3.7 shipped as **0.10.30** on 2026-10-11 (the
+verification is in the plan's "Where we stand"); A3.1–A3.5a in
+0.10.20–0.10.29.
 **Date:** 2026-10-11
 
 Plan: [`docs/plans/a3-render-worker.md`](../plans/a3-render-worker.md)

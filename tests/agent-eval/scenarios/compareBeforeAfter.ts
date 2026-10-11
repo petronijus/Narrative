@@ -49,15 +49,14 @@ export default defineScenario({
     const c = new Checks()
     const slide = await readSlide(world, { deckId: fx.deckId }, fx.budgetSlideId)
     const title = objectById(slide, fx.titleId)
+    // What shows: each run's own colour where it has one, else the box's.
+    const runs = title === undefined ? [] : paragraphsOf(title).flatMap((p) => p.runs ?? [])
     const colors =
       title === undefined
         ? []
-        : [
-            title['color'],
-            ...paragraphsOf(title).flatMap((p) =>
-              (p.runs ?? []).map((r) => r.color ?? title['color']),
-            ),
-          ]
+        : runs.length > 0
+          ? runs.map((r) => r.color ?? title['color'])
+          : [title['color']]
     c.ok(
       'the Budget title is red',
       colors.length > 0 && colors.every(isRed),

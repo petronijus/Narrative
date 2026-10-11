@@ -6,9 +6,12 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
-A3 close — master cards, before/after, text that fits. Agentic phase A3
-(the render worker): A3.5b, A3.6 and A3.7, built together; to be tested as
-one before it ships (as 0.10.30).
+---
+
+## 0.10.30 — A3 done: master cards, before/after, text that fits (2026-10-11)
+
+Agentic phase A3 (the render worker) is complete: A3.5b, A3.6 and A3.7,
+built together and tested as one.
 
 ### Added
 

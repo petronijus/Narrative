@@ -521,15 +521,14 @@ boxHeight, textHeight }]`. Table cells are not measured (a cell grows its
   worker draws). `FINISHED_PHASES += 'A3'`. Handoff:
   [`A3-render-worker.md`](../handoff/A3-render-worker.md).
 
-**Not yet verified or released (2026-10-11, Petr: tests another time).**
-Done: `just check` green (one later hook run hit EDQUOT on /tmp, another
-session's 12 GB there), `just integration` 109/109, the new e2e
-(deck-card, query-render, render-page, render-export) passed in a partial
-run except the master-card test, fixed after (it looked on the wrong
-settings tab). Still to run before 0.10.30 ships: `just check`, the full
-`just e2e` on a warm dev stack, `just eval` (the three new scenarios are
-live-only), then release and deploy; an exact-fit overflow e2e (a box
-sized to its text at 150% / 80% spacing) is still to write.
+**Verified before 0.10.30 (2026-10-11, evening):** `just check`;
+`just integration` 109/109; the full `just e2e` failed 71 specs under a
+machine load of 20–30 (timeouts, crashed targets) — every failed spec
+file passed when rerun with two workers (100 + 28), `canvas-sharpness`
+and `multi-client-collab` with one (8/8); `just eval` 54/56 ($7.58):
+`compare-before-after` failed on its grader (it took the box colour over
+red runs; fixed, then PASS) and `title-style-folderwide` on a model
+choice that passed on rerun. Not written yet: an exact-fit overflow e2e
+(a box sized to its text at 150% / 80% spacing).
 
-A3 is done in code. Next: verify and ship 0.10.30, then A4 (style packs,
-plan §7).
+A3 is done. Next: A4 (style packs, plan §7).
