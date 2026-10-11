@@ -88,8 +88,9 @@ describe('the desktop menu', () => {
 
   it('has a binding for every item, which prevents the default of a menu key', () => {
     const all = bindings()
+    // A shell item (the file dialog) runs in the shell, not through a binding.
     const missing = items
-      .filter((i) => !all.some((b) => b.action === i.action))
+      .filter((i) => i.shell === undefined && !all.some((b) => b.action === i.action))
       .map((i) => i.action)
     expect(missing).toEqual([])
     const keyed = new Set(items.filter((i) => i.accelerator !== undefined).map((i) => i.action))

@@ -32,6 +32,7 @@ import { ImportPptxDialog } from './ImportPptxDialog.js'
 import { importPptxViaTus } from '../state/importPptxViaTus.js'
 import type { FolderSummary, ImportPptxResult } from '../api/client.js'
 import { PPTX_MIME, pptxRejectionReason } from '../lib/pptxFiles.js'
+import { useDesktopOpenedFiles } from '../desktop/useDesktopOpenedFiles.js'
 
 export interface UsePptxImportOptions {
   /** Folders the file may be imported into. The first is preselected. */
@@ -100,6 +101,9 @@ export function usePptxImport({
     },
     [onError],
   )
+
+  // Inside the desktop app: files opened from the OS arrive here too.
+  useDesktopOpenedFiles(accept, onError)
 
   const dropHandlers = {
     onDragEnter: (e: React.DragEvent) => {

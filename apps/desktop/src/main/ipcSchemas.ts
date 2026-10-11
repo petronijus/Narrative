@@ -10,6 +10,7 @@ import {
   DESKTOP_MENU_ACCELERATORS,
   DESKTOP_MENU_LABEL_MAX,
   DESKTOP_MENU_MAX_ITEMS,
+  DESKTOP_OPEN_FILE_CHUNK,
 } from '@narrative/shared'
 import { z } from 'zod'
 
@@ -73,3 +74,17 @@ export type MenuSections = z.infer<typeof setMenuRequest>
 export const menuActionResult = z
   .object({ seq: z.number().int().nonnegative(), handled: z.boolean() })
   .strict()
+
+const fileId = z.string().uuid()
+
+/** `openFileRead`: a chunk of a waiting file. */
+export const openFileReadRequest = z
+  .object({
+    id: fileId,
+    offset: z.number().int().nonnegative(),
+    length: z.number().int().min(1).max(DESKTOP_OPEN_FILE_CHUNK),
+  })
+  .strict()
+
+/** `openFileConsumed`: the page is done with a file. */
+export const openFileConsumedRequest = z.object({ id: fileId }).strict()

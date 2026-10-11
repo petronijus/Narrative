@@ -28,6 +28,12 @@ function item(action: ActionId, menuLabel?: string): DesktopMenuItem {
 
 export const DESKTOP_MENU: readonly DesktopMenuSection[] = [
   {
+    id: 'file',
+    label: 'File',
+    // The shell opens its file dialog for this item; the import is the page's.
+    items: [{ ...item('deck.importPptx', 'Import PowerPoint…'), shell: 'openPptx' }],
+  },
+  {
     id: 'edit',
     label: 'Edit',
     items: [

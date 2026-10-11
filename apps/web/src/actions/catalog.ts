@@ -156,6 +156,7 @@ export const USER_ACTIONS = {
   'deck.moveToFolder': { label: 'Move deck to…', commands: ['deck.moveToFolder'] },
   'deck.delete': { label: 'Delete deck', commands: ['deck.delete'] },
   'deck.exportPptx': { label: 'Export to PowerPoint', commands: ['deck.exportPptx'] },
+  'deck.importPptx': { label: 'Import PowerPoint', commands: ['deck.importPptx'] },
   'deck.backToList': { label: 'Back to deck list', editorOnly: NAVIGATION },
   'deck.backToPresentation': { label: 'Back to presentation', editorOnly: NAVIGATION },
 

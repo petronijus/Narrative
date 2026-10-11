@@ -10,6 +10,7 @@
 
 import { app, dialog, Menu, session, shell, type BrowserWindow, type WebContents } from 'electron'
 import { DESKTOP_IPC } from '@narrative/shared'
+import path from 'node:path'
 import {
   capLaunchPayload,
   parseLaunchArgs,
@@ -18,10 +19,19 @@ import {
 } from './deepLinks.js'
 import { applyWebContentsGuards, createPresenterWindow } from './guards.js'
 import { IpcRegistry, registerCoreIpc } from './ipc.js'
-import { menuActionResult, setMenuRequest, signInRequest, type MenuSections } from './ipcSchemas.js'
+import {
+  menuActionResult,
+  noPayload,
+  openFileConsumedRequest,
+  openFileReadRequest,
+  setMenuRequest,
+  signInRequest,
+  type MenuSections,
+} from './ipcSchemas.js'
 import { createLogger, type Logger } from './log.js'
 import { buildApplicationMenu } from './menu.js'
 import { MenuRouter } from './menuRouting.js'
+import { OpenedFiles } from './openFiles.js'
 import { installPermissionHandlers } from './permissions.js'
 import { activeScheme, canReceiveLinks, registerScheme } from './protocol.js'
 import { redeemInHiddenWindow } from './redeemWindow.js'
@@ -73,6 +83,10 @@ app.on('open-url', (event, url) => {
   event.preventDefault()
   handleLaunch({ deepLink: url, files: [] })
 })
+app.on('open-file', (event, file) => {
+  event.preventDefault()
+  handleLaunch({ deepLink: null, files: [file] })
+})
 
 // 6. What this launch carries on its command line.
 const launch = parseLaunchArgs(process.argv, app.getAppPath(), process.cwd(), scheme)
@@ -108,6 +122,41 @@ const presenterWindows = new Set<BrowserWindow>()
 // main window navigates, so a page that left never leaves its items behind.
 let webSections: MenuSections = []
 const menuRouter = new MenuRouter(log)
+// PowerPoint files waiting for the editor; the page subscribes once it can
+// import them and is told of every file from then on.
+const openedFiles = new OpenedFiles()
+let filesSubscribed = false
+
+/** Check and queue a file the OS or the file dialog handed over. */
+async function openFile(file: string): Promise<void> {
+  const result = await openedFiles.enqueue(file)
+  if (!result.ok) {
+    log.warn('opened file refused', { reason: result.reason })
+    await dialog.showMessageBox({
+      type: 'warning',
+      title: 'Narrative',
+      message: `Narrative cannot import “${path.basename(file)}”.`,
+      detail: result.reason,
+      buttons: ['OK'],
+    })
+    return
+  }
+  const win = ensureMainWindow()
+  if (win === null) return
+  win.show()
+  win.focus()
+  if (filesSubscribed) win.webContents.send(DESKTOP_IPC.openFile, result.file)
+}
+
+async function chooseFilesToImport(): Promise<void> {
+  const result = await dialog.showOpenDialog({
+    title: 'Import PowerPoint',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'PowerPoint', extensions: ['pptx'] }],
+  })
+  if (result.canceled) return
+  for (const file of result.filePaths) await openFile(file)
+}
 
 const signIn = new SignInController({
   now: () => Date.now(),
@@ -143,6 +192,7 @@ function handleLaunch(payload: LaunchPayload): void {
     return
   }
   if (payload.deepLink !== null) void signIn.complete(payload.deepLink)
+  for (const file of payload.files) void openFile(file)
 }
 // True while the main window is replaced for another server, so closing the
 // old one does not quit the app.
@@ -174,6 +224,7 @@ function ensureMainWindow(): BrowserWindow | null {
   })
   win.webContents.on('did-navigate', () => {
     webSections = []
+    filesSubscribed = false
     applyMenu()
   })
   win.on('closed', () => {
@@ -218,6 +269,10 @@ function applyMenu(): void {
         },
         webSections,
         runWebItem: (item) => {
+          if (item.shell === 'openPptx') {
+            void chooseFilesToImport()
+            return
+          }
           // Always the main window, never the focused one (the presenter popup).
           if (mainWindow !== null && !mainWindow.isDestroyed()) {
             menuRouter.dispatch(mainWindow.webContents, item)
@@ -341,6 +396,14 @@ void app.whenReady().then(async () => {
   ipc.on(DESKTOP_IPC.menuActionResult, menuActionResult, ({ seq, handled }) =>
     menuRouter.answer(seq, handled),
   )
+  ipc.on(DESKTOP_IPC.openFileSubscribe, noPayload, (_payload, event) => {
+    filesSubscribed = true
+    for (const file of openedFiles.waiting()) event.sender.send(DESKTOP_IPC.openFile, file)
+  })
+  ipc.handle(DESKTOP_IPC.openFileRead, openFileReadRequest, ({ id, offset, length }) =>
+    openedFiles.read(id, offset, length),
+  )
+  ipc.on(DESKTOP_IPC.openFileConsumed, openFileConsumedRequest, ({ id }) => openedFiles.consume(id))
   ipc.handle(DESKTOP_IPC.signIn, signInRequest, async ({ returnTo }) => {
     if (!canReceiveLinks()) {
       await dialog.showMessageBox({
