@@ -8,6 +8,41 @@ production bundle reaches the server through relative `/api` and `/ws`
 (`apps/web/src/lib/endpoints.ts`), which is exactly what a shell that loads
 the server's origin needs.
 
+## Where we stand (2026-10-11)
+
+D0 is built on `feat/desktop` (pushed to `origin`): steps 1–8, 10–15 and 17
+of [`desktop-d0-spec.md`](./desktop-d0-spec.md) are done, the code and
+security reviews of the whole branch are fixed. Not done: the e2e specs are
+committed but have **never run** (step 9), and the phase gate (step 18).
+Petr takes the branch over.
+
+### To finish D0 and merge it
+
+1. Once: `omarchy pkg add xorg-server-xvfb` (Ubuntu: `sudo apt install xvfb`)
+   — the `electron` Playwright project runs the shell on a virtual display.
+2. In the worktree `../Narrative-desktop`: `git merge main`, set
+   `apps/desktop/package.json`'s version to the root's (the version test
+   fails otherwise), `just check`.
+3. Without a dev stack: `just e2e --project=electron -g "desktop-shell|desktop-sign-in"`
+   (stub server). Expect small fixes: these specs never ran.
+4. With `just dev` running **from the worktree** (stop the main tree's first —
+   same ports, same database): `just e2e --project=electron`,
+   `just e2e -g "keyboard-shortcuts|destructive-flows|object-context-menu|present-layout"`,
+   `just e2e-smoke`.
+5. By hand, the real sign-in against the dev stack with Google: step 8 of the
+   spec (`BYPASS_AUTH=false`, `VITE_BYPASS_AUTH=false`, `just desktop dev`,
+   sign in in the browser, the app comes back signed in).
+6. Merge `feat/desktop` into `main` while the main tree is clean, then the
+   usual release (`just bump`, CHANGELOG, tag, push, `just deploy`): the
+   desktop sign-in routes and the `/desktop/` feed reach production only
+   with it.
+7. After the release: `just desktop-dist` + `just desktop-publish linux`,
+   `just desktop-dist win` + `just desktop-publish win`; on the MacBook,
+   after the Apple Developer ID, `just desktop-dist mac` +
+   `just desktop-publish mac` ([`docs/desktop.md`](../desktop.md)); the
+   per-machine checks in `HANDOVER.md`, with an AI-handover Todoist task per
+   machine.
+
 ## What Petr asked for
 
 - A desktop app of Narrative, built on **Electron**.
