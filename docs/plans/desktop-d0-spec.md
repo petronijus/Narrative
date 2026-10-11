@@ -600,6 +600,8 @@ second store.
 
 The feed is code delivery. Only `just desktop-publish` writes to it (§6), and only tagged builds are signed. <!-- docs-check: ignore -->
 
+**As built (step 15):** one gate for every platform, `updateVerify.ts` on `update-downloaded`, before the Restart Now / Later dialog. electron-updater's Windows hook (`verifyUpdateCodeSignature`) is not used: `NsisUpdater` calls it only when the build carries an Authenticode `publisherName`, so for the unsigned build it would never run. A download that fails the gate is deleted and never offered; with `autoInstallOnAppQuit` off nothing installs on quit. The feed lives in `/opt/narrative/desktop-feed` on the VM (created by `deploy.sh`, excluded from the release `rsync --delete`), served by Caddy at `/desktop/` with `no-cache` and a sandbox CSP. Verified locally on Omarchy with AppImages 0.10.25 and 0.10.26 against a local feed and a throwaway key: an unsigned feed and a tampered file with recomputed `latest-linux.yml` were refused, the signed one was offered and installed and relaunched on Restart Now. `extraMetadata.name` names the updater cache `narrative-updater`.
+
 ### 3.12 `electron-builder.config.cjs`
 
 ```js

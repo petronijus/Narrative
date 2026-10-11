@@ -8,7 +8,16 @@
  * of debugging switches in a packaged one, and the single-instance lock.
  */
 
-import { app, dialog, Menu, session, shell, type BrowserWindow, type WebContents } from 'electron'
+import {
+  app,
+  dialog,
+  Menu,
+  net,
+  session,
+  shell,
+  type BrowserWindow,
+  type WebContents,
+} from 'electron'
 import { DESKTOP_IPC } from '@narrative/shared'
 import path from 'node:path'
 import {
@@ -37,9 +46,18 @@ import { installPermissionHandlers } from './permissions.js'
 import { activeScheme, canReceiveLinks, registerScheme } from './protocol.js'
 import { redeemInHiddenWindow } from './redeemWindow.js'
 import { chooseCustomServer } from './serverDialog.js'
-import { apiUrl, parseServerArg, partitionFor, serverOrigin, type ServerTarget } from './servers.js'
+import {
+  apiUrl,
+  feedBase,
+  updatePublicKey,
+  parseServerArg,
+  partitionFor,
+  serverOrigin,
+  type ServerTarget,
+} from './servers.js'
 import { loadSettings, saveSettings, type Settings } from './settings.js'
 import { SignInController } from './signIn.js'
+import { Updates } from './updates.js'
 import { createMainWindow } from './window.js'
 
 // 1. Every renderer runs in the OS sandbox.
@@ -186,6 +204,45 @@ const signIn = new SignInController({
   log,
 })
 
+const updates = new Updates({
+  packaged: app.isPackaged,
+  currentVersion: app.getVersion(),
+  log,
+  feedBase: feedBase(),
+  publicKey: updatePublicKey(),
+  fetchText: async (url) => {
+    try {
+      const res = await net.fetch(url, { cache: 'no-store' })
+      return res.ok ? await res.text() : null
+    } catch {
+      return null
+    }
+  },
+  offerRestart: async (version) => {
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      title: 'Narrative',
+      message: `Narrative ${version} is ready.`,
+      detail:
+        process.platform === 'linux' && !process.env['APPIMAGE']
+          ? 'Installing asks for your password (system package).'
+          : 'Restart Narrative to use it.',
+      buttons: ['Restart Now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    })
+    return response === 0
+  },
+  report: (message, detail) => {
+    void dialog.showMessageBox({
+      type: 'info',
+      title: 'Narrative',
+      message,
+      ...(detail !== undefined ? { detail } : {}),
+    })
+  },
+})
+
 /** A link or files the OS handed over; queued until the app is ready. */
 function handleLaunch(payload: LaunchPayload): void {
   if (!launchReady) {
@@ -268,6 +325,7 @@ function applyMenu(): void {
         openLogsFolder: () => {
           void shell.openPath(app.getPath('logs'))
         },
+        checkForUpdates: () => updates.check(true),
         webSections,
         runWebItem: (item) => {
           if (item.shell === 'openPptx') {
@@ -424,6 +482,8 @@ void app.whenReady().then(async () => {
   registerScheme(log)
   applyMenu()
   ensureMainWindow()
+
+  updates.start()
 
   launchReady = true
   for (const payload of [launch, ...launchQueue.splice(0)]) handleLaunch(payload)

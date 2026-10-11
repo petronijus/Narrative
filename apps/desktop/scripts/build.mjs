@@ -18,6 +18,10 @@
  *                        was dirty and whether servers.json is the committed
  *                        default (a release refuses anything else).
  *
+ * DESKTOP_SERVERS_JSON=<file> builds against another servers.json (a local
+ * update feed for testing); build-info records it, and `desktop-publish`
+ * refuses such a build.
+ *
  * `node scripts/build.mjs [--out <dir>]` from apps/desktop (default dist/);
  * `just desktop` runs it, the build test writes to a temporary directory.
  */
@@ -56,6 +60,22 @@ const preloadImportGuard = {
       }
       return undefined
     })
+  },
+}
+
+const serversOverride = process.env['DESKTOP_SERVERS_JSON']
+  ? path.resolve(process.env['DESKTOP_SERVERS_JSON'])
+  : null
+
+/**
+ * servers.json from DESKTOP_SERVERS_JSON when it is set.
+ * @type {import('esbuild').Plugin}
+ */
+const serversJson = {
+  name: 'servers-json',
+  setup(b) {
+    if (serversOverride === null) return
+    b.onResolve({ filter: /servers\.json$/ }, () => ({ path: serversOverride }))
   },
 }
 
@@ -115,6 +135,7 @@ await Promise.all([
     platform: 'node',
     target: 'node24',
     external: ['electron'],
+    plugins: [serversJson],
   }),
   build({
     ...common,
@@ -132,6 +153,7 @@ const info = {
   commit: git(['rev-parse', 'HEAD']),
   dirty: git(['status', '--porcelain']) !== '',
   serversJsonDefault:
+    serversOverride === null &&
     git(['status', '--porcelain', '--', 'servers.json']) === '' &&
     git(['ls-files', '--error-unmatch', 'servers.json']) !== '',
 }

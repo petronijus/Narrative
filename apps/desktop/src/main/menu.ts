@@ -30,6 +30,7 @@ export interface MenuContext {
   chooseCustomServer(): void
   showAbout(): void
   openLogsFolder(): void
+  checkForUpdates(): void
   /** The editor's sections, as its page last sent them (empty: the shell's own menu). */
   webSections: MenuSections
   /** A click on one of the editor's items. */
@@ -160,6 +161,11 @@ export function buildApplicationMenu(ctx: MenuContext): MenuItemConstructorOptio
         label: ctx.appName,
         submenu: [
           { label: `About ${ctx.appName}`, click: () => ctx.showAbout() },
+          {
+            id: 'app.checkForUpdates',
+            label: 'Check for Updates…',
+            click: () => ctx.checkForUpdates(),
+          },
           serverMenu(ctx),
           { type: 'separator' },
           { role: 'hide' },
@@ -178,7 +184,16 @@ export function buildApplicationMenu(ctx: MenuContext): MenuItemConstructorOptio
     ]
   }
   return [
-    ...fileMenu(ctx, [serverMenu(ctx), { type: 'separator' }, { role: 'quit' }]),
+    ...fileMenu(ctx, [
+      serverMenu(ctx),
+      {
+        id: 'app.checkForUpdates',
+        label: 'Check for Updates…',
+        click: () => ctx.checkForUpdates(),
+      },
+      { type: 'separator' },
+      { role: 'quit' },
+    ]),
     editMenu(ctx),
     viewMenu(ctx),
     ...editorMenus(ctx),

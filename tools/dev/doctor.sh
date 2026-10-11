@@ -138,5 +138,18 @@ if [[ -x node_modules/electron/dist/electron ]]; then
     warn "desktop Electron has no AppArmor profile (Ubuntu restricts user namespaces)" "just desktop-apparmor"
   fi
 fi
+# Publishing desktop releases signs through the 1Password SSH agent with the
+# key pinned in apps/desktop/servers.json (just desktop-publish).
+case "$(uname)" in
+  Darwin) op_agent="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock" ;;
+  *) op_agent="$HOME/.1password/agent.sock" ;;
+esac
+update_key="$(sed -n 's/.*"updatePublicKey": "\(ssh-ed25519 [^"]*\)".*/\1/p' apps/desktop/servers.json)"
+if [[ -S "$op_agent" ]] && SSH_AUTH_SOCK="$op_agent" ssh-add -L 2>/dev/null | grep -qF "${update_key#ssh-ed25519 }"; then
+  ok "desktop update signing key offered by the 1Password SSH agent"
+else
+  warn "1Password's SSH agent does not offer the desktop update signing key (needed only to publish desktop releases)" \
+    "1Password → Settings → Developer → SSH agent; the key is \"Narrative desktop update signing key\""
+fi
 
 exit $fail

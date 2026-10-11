@@ -25,6 +25,8 @@ describe('electron-builder config', () => {
     // and the app kept its data in ~/.config/@narrative/desktop.
     expect(pkg.productName).toBe('Narrative')
     expect(config.productName).toBe(pkg.productName)
+    // …and the updater's cache directory (~/.cache/narrative-updater).
+    expect(config.extraMetadata).toEqual({ name: 'narrative' })
   })
 
   it('flips every fuse the shell relies on', () => {

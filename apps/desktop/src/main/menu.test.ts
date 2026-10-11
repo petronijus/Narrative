@@ -13,6 +13,7 @@ function ctx(overrides: Partial<MenuContext> = {}): MenuContext {
     chooseCustomServer: vi.fn(),
     showAbout: vi.fn(),
     openLogsFolder: vi.fn(),
+    checkForUpdates: vi.fn(),
     webSections: [],
     runWebItem: vi.fn(),
     ...overrides,
@@ -98,6 +99,14 @@ describe('application menu', () => {
     const mac = buildApplicationMenu(ctx({ platform: 'darwin' }))
     expect(mac[0]!.label).toBe('Narrative')
     expect(find([mac[0]!], 'Server')).toBeDefined()
+  })
+
+  it('offers a check for updates on every platform', () => {
+    for (const platform of ['linux', 'darwin', 'win32'] as const) {
+      const c = ctx({ platform })
+      click(find(buildApplicationMenu(c), 'Check for Updates…'))
+      expect(c.checkForUpdates).toHaveBeenCalledOnce()
+    }
   })
 
   it('offers developer tools only in an unpackaged build', () => {

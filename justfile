@@ -169,6 +169,10 @@ desktop-dist target="linux":
     node scripts/build.mjs
     exec ../../node_modules/.bin/electron-builder --config electron-builder.config.cjs "$flag" --publish never
 
+# Put a released desktop build into the production update feed (signs through 1Password; linux|mac|win)
+desktop-publish target:
+    infra/scripts/desktop-publish.sh "{{ target }}"
+
 # Ubuntu 26.04 only: the AppArmor profile that lets this checkout's Electron use its sandbox (asks for sudo)
 desktop-apparmor:
     tools/dev/desktop-apparmor.sh

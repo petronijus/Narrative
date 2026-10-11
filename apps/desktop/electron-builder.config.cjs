@@ -16,12 +16,17 @@
  * `just desktop-dist [linux|mac|win]` builds; it never publishes.
  */
 
-const servers = require('./servers.json')
+// The same servers.json the bundle was built with (scripts/build.mjs).
+const servers = require(process.env.DESKTOP_SERVERS_JSON || './servers.json')
 
 /** @type {import('electron-builder').Configuration} */
 module.exports = {
   appId: 'com.bastla.narrative',
   productName: 'Narrative',
+  // The packaged package.json's name names the updater's cache directory
+  // (~/.cache/narrative-updater); the workspace name @narrative/desktop
+  // would make it ~/.cache/@narrativedesktop-updater.
+  extraMetadata: { name: 'narrative' },
   electronVersion: '44.7.0',
   directories: { output: 'release', buildResources: 'resources' },
   files: ['dist/**', '!dist/**/*.map', 'package.json'],

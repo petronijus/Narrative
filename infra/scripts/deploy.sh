@@ -64,6 +64,12 @@ if [[ "${USE_SHARED_TUNNEL:-0}" == "1" ]]; then
 fi
 COMPOSE="docker compose ${COMPOSE_FILES} --env-file .env.prod"
 
+# The desktop app's update feed (ADR 0014): written over SSH by
+# `just desktop-publish` as this user, served read-only by Caddy at /desktop/.
+# Created here so it belongs to this user — a bind mount Docker creates would
+# be root's, and the publish could not write to it.
+mkdir -p "${INFRA_DIR}/../desktop-feed"
+
 log "Deploy prostředí: ${ENV}"
 log "Doména: ${DOMAIN}"
 

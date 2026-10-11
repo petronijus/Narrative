@@ -176,6 +176,9 @@ services:
       - caddy_config:/config
       # Static web files — build pipeline copies them here (see deploy.sh)
       - web_static:/srv/web:ro
+      # The desktop app's update feed (Caddyfile /desktop/*), written by
+      # `just desktop-publish`; deploy.sh creates the directory.
+      - ../desktop-feed:/srv/desktop-feed:ro
     environment:
       DOMAIN: ${DOMAIN:?DOMAIN env var is required}
       # Peers whose CF-Connecting-IP header Caddy passes through (Caddyfile,

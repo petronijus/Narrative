@@ -71,14 +71,14 @@ domain="${DOMAIN:-$(setting DOMAIN)}"
 ssh_vm=(ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
 
 # The VM gets the tagged tree itself (git archive: no worktree metadata, no
-# gitignored files). --delete spares what lives only on the VM: its env files
-# and the backups.
+# gitignored files). --delete spares what lives only on the VM: its env files,
+# the backups and the desktop app's update feed.
 tree="$(mktemp -d)"
 trap 'rm -rf "$tree"' EXIT
 git -C "$repo" archive "$tag_commit" | tar -x -C "$tree"
 echo "→ Syncing ${tag} to ${vm}:/opt/narrative"
 rsync -az --delete -e "${ssh_vm[*]}" \
-  --exclude /.env --exclude infra/.env.prod --exclude backups/ \
+  --exclude /.env --exclude infra/.env.prod --exclude backups/ --exclude /desktop-feed/ \
   "${tree}/" "${vm}:/opt/narrative/"
 
 echo "→ Deploying ${tag} on ${vm}"
