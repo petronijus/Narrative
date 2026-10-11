@@ -257,34 +257,39 @@ function isInputElement(el: EventTarget | null): boolean {
 // Global document listener
 // ---------------------------------------------------------------------------
 
-function handleKeyDown(e: KeyboardEvent): void {
-  // When the event target has no `data-shortcut-scope` ancestor (typical
-  // case: focus on <body> after the user clicked the canvas to select an
-  // object — Pixi canvas isn't focusable, so focus stays on body) we treat
-  // canvas as the ambient default. Otherwise arrow-key nudge / Delete
-  // would silently no-op because `detectedScope === null` matches no scope.
-  // slidePanel + timeline still require explicit focus inside their scope
-  // containers — they don't claim ambient input.
-  const rawScope = detectScope(e.target)
-  const inputFocused = isInputElement(e.target)
-  // Scope chain (priority order) for non-global bindings:
-  //   1. Explicit DOM scope (target inside data-shortcut-scope) → only that scope.
-  //   2. Sticky pointer scope (e.g. slidePanel after a thumbnail click) →
-  //      try that scope first, then fall through to canvas. This lets
-  //      e.g. Mod+V paste objects on canvas when the slide-panel binding
-  //      opts out via canHandle (no slide clipboard).
-  //   3. Otherwise, canvas as ambient default.
-  // Inputs always block scoped bindings — let the user type.
-  let scopeChain: string[]
-  if (inputFocused) {
-    scopeChain = []
-  } else if (rawScope !== null) {
-    scopeChain = [rawScope]
-  } else if (pointerActiveScope !== null && pointerActiveScope !== 'canvas') {
-    scopeChain = [pointerActiveScope, 'canvas']
-  } else {
-    scopeChain = ['canvas']
+/**
+ * The scopes a key on `target` tries, in order, for non-global bindings.
+ *
+ * When the target has no `data-shortcut-scope` ancestor (typical case:
+ * focus on <body> after the user clicked the canvas to select an object —
+ * Pixi canvas isn't focusable, so focus stays on body) canvas is the ambient
+ * default; otherwise arrow-key nudge / Delete would silently no-op.
+ * slidePanel + timeline still require explicit focus inside their scope
+ * containers — they don't claim ambient input.
+ *   1. Explicit DOM scope (target inside data-shortcut-scope) → only that scope.
+ *   2. Sticky pointer scope (e.g. slidePanel after a thumbnail click) →
+ *      try that scope first, then fall through to canvas. This lets
+ *      e.g. Mod+V paste objects on canvas when the slide-panel binding
+ *      opts out via canHandle (no slide clipboard).
+ *   3. Otherwise, canvas as ambient default.
+ * Inputs always block scoped bindings — let the user type.
+ */
+function scopeChainFor(target: EventTarget | null): string[] {
+  if (isInputElement(target)) return []
+  const rawScope = detectScope(target)
+  if (rawScope !== null) return [rawScope]
+  if (pointerActiveScope !== null && pointerActiveScope !== 'canvas') {
+    return [pointerActiveScope, 'canvas']
   }
+  return ['canvas']
+}
+
+/** Key events a binding handled (`runChord` reports them, prevented or not). */
+const handledEvents = new WeakSet<KeyboardEvent>()
+
+function handleKeyDown(e: KeyboardEvent): void {
+  const inputFocused = isInputElement(e.target)
+  const scopeChain = scopeChainFor(e.target)
 
   let scopedFired = false
   for (const tryScope of scopeChain) {
@@ -296,6 +301,7 @@ function handleKeyDown(e: KeyboardEvent): void {
       if (bindings.canHandle !== undefined && !bindings.canHandle()) continue
       if (bindings.preventDefault === true) e.preventDefault()
       handlerRef.current(e)
+      handledEvents.add(e)
       scopedFired = true
     }
     if (scopedFired) break
@@ -309,7 +315,69 @@ function handleKeyDown(e: KeyboardEvent): void {
     if (bindings.canHandle !== undefined && !bindings.canHandle()) continue
     if (bindings.preventDefault === true) e.preventDefault()
     handlerRef.current(e)
+    handledEvents.add(e)
   }
+}
+
+// ---------------------------------------------------------------------------
+// Running a shortcut without its key (the desktop app's menu)
+// ---------------------------------------------------------------------------
+
+/**
+ * The keydown init of an Electron accelerator (`CmdOrCtrl+Z`,
+ * `Shift+CmdOrCtrl+G`, `Delete`, `=`), with `CmdOrCtrl` as this platform's
+ * Mod key. Null for a chord this editor's keys cannot express.
+ */
+export function chordToInit(accelerator: string): KeyboardEventInit | null {
+  const parts = accelerator.split('+')
+  const key = parts.pop()
+  if (key === undefined || key === '') return null
+  const init: KeyboardEventInit = { key: key.length === 1 ? key.toLowerCase() : key }
+  for (const part of parts) {
+    if (part === 'CmdOrCtrl' || part === 'CommandOrControl') {
+      if (IS_MAC) init.metaKey = true
+      else init.ctrlKey = true
+    } else if (part === 'Shift') init.shiftKey = true
+    else if (part === 'Alt' || part === 'Option') init.altKey = true
+    else if (part === 'Ctrl' || part === 'Control') init.ctrlKey = true
+    else return null
+  }
+  return init
+}
+
+/**
+ * Press `accelerator` on the focused element, exactly as the key would: the
+ * synthetic keydown bubbles through the element's own listeners (a
+ * ProseMirror keymap, the notes editor's undo) and then the document
+ * listener with its scope chain. Whether anything handled it — a binding
+ * fired, or a listener prevented the default.
+ */
+export function runChord(accelerator: string): boolean {
+  const init = chordToInit(accelerator)
+  if (init === null) return false
+  const target = document.activeElement ?? document.body
+  const e = new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true })
+  target.dispatchEvent(e)
+  return e.defaultPrevented || handledEvents.has(e)
+}
+
+/**
+ * Run the binding of `action` that the focused element's scope chain
+ * reaches (for menu items without a key). False inside a text field, or
+ * when no binding of the action is registered or ready.
+ */
+export function runAction(action: ActionId): boolean {
+  const target = document.activeElement
+  if (isInputElement(target)) return false
+  for (const scope of [...scopeChainFor(target), 'global']) {
+    for (const entry of registry.values()) {
+      if (entry.bindings.action !== action || entry.scope !== scope) continue
+      if (entry.bindings.canHandle !== undefined && !entry.bindings.canHandle()) continue
+      entry.handlerRef.current(new KeyboardEvent('keydown', { cancelable: true }))
+      return true
+    }
+  }
+  return false
 }
 
 function ensureListener(): void {

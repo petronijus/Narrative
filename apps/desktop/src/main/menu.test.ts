@@ -13,6 +13,8 @@ function ctx(overrides: Partial<MenuContext> = {}): MenuContext {
     chooseCustomServer: vi.fn(),
     showAbout: vi.fn(),
     openLogsFolder: vi.fn(),
+    webSections: [],
+    runWebItem: vi.fn(),
     ...overrides,
   }
 }
@@ -33,7 +35,41 @@ function find(
 
 const click = (item: MenuItemConstructorOptions | undefined): void => (item?.click as () => void)()
 
+const EDITOR: MenuContext['webSections'] = [
+  {
+    id: 'edit',
+    label: 'Edit',
+    items: [
+      { action: 'history.undo', label: 'Undo', accelerator: 'CmdOrCtrl+Z', nativeFallback: 'undo' },
+      'separator',
+      { action: 'object.delete', label: 'Delete' },
+    ],
+  },
+  { id: 'arrange', label: 'Arrange', items: [{ action: 'object.group', label: 'Group' }] },
+]
+
 describe('application menu', () => {
+  it('uses the edit roles until the editor sends its menu, then the editor items', () => {
+    expect(JSON.stringify(buildApplicationMenu(ctx()))).toContain('"role":"undo"')
+    expect(find(buildApplicationMenu(ctx()), 'Arrange')).toBeUndefined()
+    const c = ctx({ webSections: EDITOR })
+    const menu = buildApplicationMenu(c)
+    expect(JSON.stringify(menu)).not.toContain('"role":"undo"')
+    expect(find(menu, 'Arrange')).toBeDefined()
+    click(find(menu, 'Undo'))
+    expect(c.runWebItem).toHaveBeenCalledWith(EDITOR[0]!.items[0])
+  })
+
+  it('registers editor keys only on macOS, where they are key equivalents', () => {
+    const linux = find(buildApplicationMenu(ctx({ webSections: EDITOR })), 'Undo')
+    expect(linux).toMatchObject({ accelerator: 'CmdOrCtrl+Z', registerAccelerator: false })
+    const mac = find(buildApplicationMenu(ctx({ platform: 'darwin', webSections: EDITOR })), 'Undo')
+    expect(mac).toMatchObject({ accelerator: 'CmdOrCtrl+Z', registerAccelerator: true })
+    expect(
+      find(buildApplicationMenu(ctx({ webSections: EDITOR })), 'Delete')?.accelerator,
+    ).toBeUndefined()
+  })
+
   it('offers the servers with the current one checked', () => {
     const c = ctx({
       server: { kind: 'custom', origin: 'https://narrative.example.com' },

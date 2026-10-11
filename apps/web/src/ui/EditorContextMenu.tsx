@@ -41,6 +41,7 @@ import {
 import { getTableMergeInfo, isMaskableShape, type LayerMove } from '@narrative/slide-model'
 import { useCommand } from '../state/useCommand.js'
 import { promoteSelectionToComponent } from '../state/promoteSelectionToComponent.js'
+import { cutSelection } from '../state/cutSelection.js'
 import { useObjectClipboard } from '../state/useObjectClipboard.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useSelection } from '../state/SelectionContext.js'
@@ -263,17 +264,14 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   }
 
   const handleCut = (): void => {
-    const targets = resolveTargets()
-    if (targets.length === 0) return
-    if (
-      !objectClipboard.copy(
-        targets.map((o) => o.id),
-        { cut: true },
-      )
-    )
-      return
-    deleteUnlocked(targets)
-    clear()
+    cutSelection(resolveTargets(), {
+      copy: (ids, opts) => objectClipboard.copy(ids, opts),
+      remove: (ids) => {
+        if (activeSlideId !== null)
+          command.tryRun('object.delete', { slide: activeSlideId, objects: ids })
+      },
+      clear,
+    })
   }
 
   const handleCopy = (): void => {

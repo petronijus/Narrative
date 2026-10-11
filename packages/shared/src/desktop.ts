@@ -72,6 +72,35 @@ export interface DesktopMenuItem {
 
 export type DesktopMenuEntry = DesktopMenuItem | 'separator'
 
+/**
+ * The keys the editor's menu items may show, per catalog action, and the
+ * native edit the shell runs when the page leaves the key unhandled (a text
+ * field). One table for both sides: the editor builds its menu from it, the
+ * shell refuses any other chord (it never lets a page bind its own keys,
+ * Quit or Reload). Every chord carries CmdOrCtrl: on macOS a menu key is a
+ * live key equivalent, and a bare key (`=`, `Delete`) would compete with
+ * typing, so those items have no key in the menu and run by action.
+ */
+export const DESKTOP_MENU_ACCELERATORS: Readonly<
+  Record<string, { accelerator: string; nativeFallback?: DesktopNativeEdit }>
+> = {
+  'history.undo': { accelerator: 'CmdOrCtrl+Z', nativeFallback: 'undo' },
+  'history.redo': { accelerator: 'Shift+CmdOrCtrl+Z', nativeFallback: 'redo' },
+  'object.cut': { accelerator: 'CmdOrCtrl+X', nativeFallback: 'cut' },
+  'object.copy': { accelerator: 'CmdOrCtrl+C', nativeFallback: 'copy' },
+  'object.paste': { accelerator: 'CmdOrCtrl+V', nativeFallback: 'paste' },
+  'object.duplicate': { accelerator: 'CmdOrCtrl+D' },
+  'selection.all': { accelerator: 'CmdOrCtrl+A', nativeFallback: 'selectAll' },
+  'view.resetZoom': { accelerator: 'CmdOrCtrl+0' },
+  'view.shortcuts': { accelerator: 'CmdOrCtrl+/' },
+  'object.group': { accelerator: 'CmdOrCtrl+G' },
+  'object.ungroup': { accelerator: 'Shift+CmdOrCtrl+G' },
+  'present.start': { accelerator: 'CmdOrCtrl+Enter' },
+}
+
+/** The largest menu the shell accepts from a page. */
+export const DESKTOP_MENU_MAX_ITEMS = 40
+
 export interface DesktopMenuSection {
   id: 'file' | 'edit' | 'view' | 'arrange' | 'present'
   label: string

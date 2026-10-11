@@ -857,7 +857,9 @@ export function runAction(id: ActionId): boolean {
 | `DesktopBridge.tsx`        | `null` without a **main** bridge. Otherwise: `setMenu(DESKTOP_MENU)` on mount and after every route change (main resets on navigation); `onMenuAction(dispatchMenuAction)`; `onOpenFile` → queue, and `navigate('/')` when no consumer is mounted; `onPresentationEnded(deckId)` → `navigate('/deck/<deckId>')` if the path starts with `/deck/<deckId>/present`; `setMenu([])` on unmount |
 | `menu.test.ts`             | §8.1                                                                                                                                                                                                                                                                                                                                                                                       |
 
-**`DESKTOP_MENU` (D0).** Every accelerator here equals the entry in main's `MENU_ACCELERATORS` (§3.3). `menu.test.ts` (desktop) compares the two tables.
+**As built (step 10):** one table, `DESKTOP_MENU_ACCELERATORS` in `packages/shared/src/desktop.ts`, gives every key and native fallback: the editor builds its menu from it and the shell's `setMenu` schema refuses anything else, so the two cannot drift. Every key carries `CmdOrCtrl`: View ▸ Zoom In/Out and Edit ▸ Delete have **no key in the menu** (they run by action), because on macOS a bare `=`, `-` or `Delete` as a menu key equivalent would compete with typing. `runChord` reports a key as handled when a binding fired or a listener prevented it. The File section (Import PowerPoint…) and the `deck.importPptx` catalog entry land with opened files (step 11).
+
+**`DESKTOP_MENU` (D0, as planned).** Every accelerator here equals the entry in main's `MENU_ACCELERATORS` (§3.3). `menu.test.ts` (desktop) compares the two tables.
 
 | Section     | Item                  | `menuLabel`        | Accelerator         | `nativeFallback` / `shell` |
 | ----------- | --------------------- | ------------------ | ------------------- | -------------------------- |

@@ -18,9 +18,10 @@ import {
 } from './deepLinks.js'
 import { applyWebContentsGuards, createPresenterWindow } from './guards.js'
 import { IpcRegistry, registerCoreIpc } from './ipc.js'
-import { signInRequest } from './ipcSchemas.js'
+import { menuActionResult, setMenuRequest, signInRequest, type MenuSections } from './ipcSchemas.js'
 import { createLogger, type Logger } from './log.js'
 import { buildApplicationMenu } from './menu.js'
+import { MenuRouter } from './menuRouting.js'
 import { installPermissionHandlers } from './permissions.js'
 import { activeScheme, canReceiveLinks, registerScheme } from './protocol.js'
 import { redeemInHiddenWindow } from './redeemWindow.js'
@@ -103,6 +104,10 @@ let settings: Settings
 let target: ServerTarget | null = null
 let mainWindow: BrowserWindow | null = null
 const presenterWindows = new Set<BrowserWindow>()
+// The editor's menu sections, as its page last sent them; reset whenever the
+// main window navigates, so a page that left never leaves its items behind.
+let webSections: MenuSections = []
+const menuRouter = new MenuRouter(log)
 
 const signIn = new SignInController({
   now: () => Date.now(),
@@ -167,6 +172,10 @@ function ensureMainWindow(): BrowserWindow | null {
     devTools: !app.isPackaged,
     onBoundsSaved: (window) => persist({ ...settings, window }),
   })
+  win.webContents.on('did-navigate', () => {
+    webSections = []
+    applyMenu()
+  })
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
     for (const presenter of presenterWindows) presenter.close()
@@ -206,6 +215,13 @@ function applyMenu(): void {
         },
         openLogsFolder: () => {
           void shell.openPath(app.getPath('logs'))
+        },
+        webSections,
+        runWebItem: (item) => {
+          // Always the main window, never the focused one (the presenter popup).
+          if (mainWindow !== null && !mainWindow.isDestroyed()) {
+            menuRouter.dispatch(mainWindow.webContents, item)
+          }
         },
       }),
     ),
@@ -318,6 +334,13 @@ void app.whenReady().then(async () => {
     log,
   })
   registerCoreIpc(ipc)
+  ipc.on(DESKTOP_IPC.setMenu, setMenuRequest, (sections) => {
+    webSections = sections
+    applyMenu()
+  })
+  ipc.on(DESKTOP_IPC.menuActionResult, menuActionResult, ({ seq, handled }) =>
+    menuRouter.answer(seq, handled),
+  )
   ipc.handle(DESKTOP_IPC.signIn, signInRequest, async ({ returnTo }) => {
     if (!canReceiveLinks()) {
       await dialog.showMessageBox({

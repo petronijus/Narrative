@@ -24,6 +24,7 @@
 import { Suspense } from 'react'
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { AuthProvider } from './state/AuthContext.js'
+import { DesktopBridge } from './desktop/DesktopBridge.js'
 import { ThemeProvider } from './state/ThemeContext.js'
 import { PerfHudProvider } from './state/PerfHudContext.js'
 import { FoldersHome } from './pages/FoldersHome.js'
@@ -121,6 +122,8 @@ export function App() {
                 view must stay clean. */}
             <GlobalChrome />
             <PerfHud />
+            {/* Inside the desktop app: its menu and menu clicks (ADR 0014). */}
+            <DesktopBridge />
           </AuthProvider>
         </PerfHudProvider>
       </ThemeProvider>

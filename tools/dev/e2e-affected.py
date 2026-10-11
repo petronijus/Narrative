@@ -155,6 +155,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/ui/LineEndpointHandles.tsx", ["path-editing"]),
     ("apps/web/src/ui/ZoomControl.tsx", ["fit-to-screen", "zoom-text-probe"]),
     ("apps/web/src/ui/EditorContextMenu.tsx", ["object-context-menu"]),
+    # Cut, shared by the context menu and the Mod+X shortcut.
+    ("apps/web/src/state/cutSelection.ts", ["object-context-menu", "keyboard-shortcuts"]),
     ("apps/web/src/ui/CropOverlay.tsx", MEDIA + ["fill-mode-switch"]),
     ("apps/web/src/ui/Table*", ["table-commands"]),
     ("apps/web/src/ui/TextEditOverlay.tsx", TEXT),

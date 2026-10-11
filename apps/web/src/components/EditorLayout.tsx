@@ -53,6 +53,7 @@ import { useAwarenessUpdater } from '../state/useAwarenessUpdater.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { yMapToPlainObject } from '@narrative/slide-model'
 import { useObjectClipboard } from '../state/useObjectClipboard.js'
+import { cutSelection } from '../state/cutSelection.js'
 import { EditorNotice } from '../ui/EditorNotice.js'
 import { regularPolygonVertices, triangleVertices } from '@narrative/shared'
 import type { SlideObject, SlideObjectType, PathAnchor, TableObject } from '@narrative/shared'
@@ -2007,6 +2008,9 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     {
       keys: ['Delete', 'Backspace'],
       scope: 'canvas',
+      // The desktop app's Edit ▸ Delete runs this key; handled keys are
+      // prevented so macOS's menu key equivalent does not run it twice.
+      preventDefault: true,
       action: 'object.delete',
       description: 'Delete selected object(s)',
       handler: () => {
@@ -2032,8 +2036,30 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       },
     },
     {
+      keys: 'Mod+x',
+      scope: 'canvas',
+      preventDefault: true,
+      action: 'object.cut',
+      description: 'Cut selected object(s)',
+      handler: () => {
+        const targets = [...selectedIds]
+          .map((id) => objects.find((o) => o.id === id))
+          .filter((o): o is SlideObject => o !== undefined)
+        cutSelection(targets, {
+          copy: (ids, opts) => objectClipboard.copy(ids, opts),
+          remove: (ids) => {
+            if (activeSlideId !== null) {
+              command.tryRun('object.delete', { slide: activeSlideId, objects: ids })
+            }
+          },
+          clear,
+        })
+      },
+    },
+    {
       keys: 'Mod+c',
       scope: 'canvas',
+      preventDefault: true,
       action: 'object.copy',
       description: 'Copy selected object(s)',
       handler: () => {

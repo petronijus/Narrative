@@ -13,7 +13,11 @@
  */
 
 import type { MenuItemConstructorOptions } from 'electron'
+import type { MenuSections } from './ipcSchemas.js'
 import type { ServerTarget } from './servers.js'
+
+type WebSection = MenuSections[number]
+export type WebMenuItem = Exclude<WebSection['items'][number], 'separator'>
 
 export interface MenuContext {
   platform: NodeJS.Platform
@@ -26,6 +30,47 @@ export interface MenuContext {
   chooseCustomServer(): void
   showAbout(): void
   openLogsFolder(): void
+  /** The editor's sections, as its page last sent them (empty: the shell's own menu). */
+  webSections: MenuSections
+  /** A click on one of the editor's items. */
+  runWebItem(item: WebMenuItem): void
+}
+
+/**
+ * The editor's items. On Linux and Windows a key is shown but not
+ * registered, so keys reach only the page; on macOS a menu key is a key
+ * equivalent, which fires when the page did not prevent the key.
+ */
+function webItems(section: WebSection | undefined, ctx: MenuContext): MenuItemConstructorOptions[] {
+  if (section === undefined) return []
+  return section.items.map((entry): MenuItemConstructorOptions => {
+    if (entry === 'separator') return { type: 'separator' }
+    return {
+      id: `web.${entry.action}`,
+      label: entry.label,
+      ...(entry.accelerator !== undefined
+        ? { accelerator: entry.accelerator, registerAccelerator: ctx.platform === 'darwin' }
+        : {}),
+      click: () => ctx.runWebItem(entry),
+    }
+  })
+}
+
+function section(ctx: MenuContext, id: WebSection['id']): WebSection | undefined {
+  return ctx.webSections.find((s) => s.id === id)
+}
+
+/** A web section with the shell's own items appended after a separator. */
+function withShellItems(
+  label: string,
+  web: MenuItemConstructorOptions[],
+  shell: MenuItemConstructorOptions[],
+): MenuItemConstructorOptions {
+  const submenu =
+    web.length > 0 && shell.length > 0
+      ? [...web, { type: 'separator' as const }, ...shell]
+      : [...web, ...shell]
+  return { label, submenu }
 }
 
 function serverMenu(ctx: MenuContext): MenuItemConstructorOptions {
@@ -76,10 +121,34 @@ function viewMenu(ctx: MenuContext): MenuItemConstructorOptions {
   const items: MenuItemConstructorOptions[] = [{ role: 'reload' }]
   if (!ctx.packaged) items.push({ role: 'toggleDevTools' })
   items.push({ type: 'separator' }, { role: 'togglefullscreen' })
-  return { label: 'View', submenu: items }
+  return withShellItems('View', webItems(section(ctx, 'view'), ctx), items)
 }
 
-/** The shell's menu template (before the editor sends its sections). */
+/** Edit: the editor's items once it sent them, the standard roles before (and on any other page). */
+function editMenu(ctx: MenuContext): MenuItemConstructorOptions {
+  const web = webItems(section(ctx, 'edit'), ctx)
+  return { label: 'Edit', submenu: web.length > 0 ? web : editRoles }
+}
+
+/** Arrange and Present, present only while the editor sends them. */
+function editorMenus(ctx: MenuContext): MenuItemConstructorOptions[] {
+  return (['arrange', 'present'] as const).flatMap((id) => {
+    const s = section(ctx, id)
+    return s === undefined ? [] : [{ label: s.label, submenu: webItems(s, ctx) }]
+  })
+}
+
+/** File: the editor's items, then the shell's (none on macOS, where they live in the app menu). */
+function fileMenu(
+  ctx: MenuContext,
+  shell: MenuItemConstructorOptions[],
+): MenuItemConstructorOptions[] {
+  const web = webItems(section(ctx, 'file'), ctx)
+  if (web.length === 0 && shell.length === 0) return []
+  return [withShellItems('File', web, shell)]
+}
+
+/** The application menu: the shell's items with the editor's sections merged in. */
 export function buildApplicationMenu(ctx: MenuContext): MenuItemConstructorOptions[] {
   const logs: MenuItemConstructorOptions = {
     label: 'Open Logs Folder',
@@ -100,16 +169,19 @@ export function buildApplicationMenu(ctx: MenuContext): MenuItemConstructorOptio
           { role: 'quit' },
         ],
       },
-      { label: 'Edit', submenu: editRoles },
+      ...fileMenu(ctx, []),
+      editMenu(ctx),
       viewMenu(ctx),
+      ...editorMenus(ctx),
       { role: 'windowMenu' },
       { label: 'Help', submenu: [logs] },
     ]
   }
   return [
-    { label: 'File', submenu: [serverMenu(ctx), { type: 'separator' }, { role: 'quit' }] },
-    { label: 'Edit', submenu: editRoles },
+    ...fileMenu(ctx, [serverMenu(ctx), { type: 'separator' }, { role: 'quit' }]),
+    editMenu(ctx),
     viewMenu(ctx),
+    ...editorMenus(ctx),
     {
       label: 'Help',
       submenu: [{ label: `About ${ctx.appName}`, click: () => ctx.showAbout() }, logs],
