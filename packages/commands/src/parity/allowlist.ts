@@ -54,9 +54,11 @@ export const AGENT_ALLOWLIST: readonly AllowlistEntry[] = [
   },
   { capability: 'FPS overlay', reason: 'Developer diagnostics overlay with no document effect.' },
   {
-    capability: 'Present-mode navigation, fullscreen, presenter window',
+    capability:
+      'Present-mode navigation, fullscreen, presenter window, the display fullscreen goes on',
     reason:
-      'Human presentation runtime, not document state; agents get editor.present.link to open a deck at a slide.',
+      'Human presentation runtime, not document state; agents get editor.present.link to open a deck at a slide. ' +
+      'The presentation display is a setting of one computer (Window Management API); an agent has no device.',
   },
   {
     capability:
@@ -75,8 +77,7 @@ export const AGENT_ALLOWLIST: readonly AllowlistEntry[] = [
   },
   {
     capability:
-      'Desktop app shell: native menu, presenting on a chosen display, opening .pptx files from the OS, server ' +
-      'choice, app updates',
+      'Desktop app shell: native menu, opening .pptx files from the OS, server choice, app updates',
     reason:
       'Device-local behaviour of one installed app with no document effect (ADR 0014); an agent has no device. The ' +
       'import an opened file starts runs deck.importPptx, and the menu items run existing catalog actions.',

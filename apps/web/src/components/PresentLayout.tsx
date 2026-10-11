@@ -59,6 +59,8 @@ import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { VideoObject } from '@narrative/shared'
 import { sanitizeHref } from '@narrative/shared'
 import { presentStartSlideId } from './presentStartSlide.js'
+import { PresentDisplayPicker } from '../present/PresentDisplayPicker.js'
+import { requestPresentationFullscreen } from '../present/presentScreen.js'
 
 /** Vypočte scale-to-fit pro slide do daného viewportu při zachování aspect ratio. */
 function computeScale(viewportW: number, viewportH: number): number {
@@ -243,7 +245,8 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   const toggleFullscreen = useCallback(async () => {
     if (document.fullscreenElement === null) {
       try {
-        await document.documentElement.requestFullscreen()
+        // On the display chosen under "Display", when there is one.
+        await requestPresentationFullscreen(document.documentElement)
       } catch {
         // Fullscreen odmítnut (embedded context apod.) — ignoruj
       }
@@ -749,6 +752,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
           >
             Pop out
           </button>
+          <PresentDisplayPicker />
         </div>
       </div>
 

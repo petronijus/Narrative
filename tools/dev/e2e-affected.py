@@ -320,6 +320,8 @@ AREAS: list[tuple[str, list[str]]] = [
     # The editor's side of the bridge: inert in a browser (no
     # window.narrativeDesktop), so only the shell's own specs exercise it.
     ("apps/web/src/desktop/*", []),
+    # Presenting on a chosen display (Window Management API).
+    ("apps/web/src/present/*", PRESENT),
     # Browser and desktop sign-in; the MCP OAuth pages share the page headers
     # and the strict form parser.
     ("apps/server/src/routes/auth.ts", ACCESS),

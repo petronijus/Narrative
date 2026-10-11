@@ -187,6 +187,10 @@ export const USER_ACTIONS = {
     editorOnly: 'steps through a presentation someone is watching',
   },
   'present.fullscreen': { label: 'Toggle fullscreen', editorOnly: 'a browser display mode' },
+  'present.chooseDisplay': {
+    label: 'Choose the presentation display',
+    editorOnly: "picks which of this computer's displays fullscreen uses; a device-local setting",
+  },
   'present.presenterView': {
     label: 'Toggle presenter view',
     editorOnly: "switches the presenter's own screen layout",
