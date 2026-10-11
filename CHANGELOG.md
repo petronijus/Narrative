@@ -6,6 +6,30 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+### Added
+
+- **The Narrative desktop app** (`apps/desktop`, ADR 0014, `docs/desktop.md`).
+  An Electron shell around the editor the server serves: sign-in through the
+  system browser with a one-time ticket, a native menu that runs the
+  editor's own shortcuts, PowerPoint files opened from the operating system,
+  a server choice (production, the dev stack, a custom server), packages for
+  Linux (deb, AppImage), macOS (signed, notarized) and Windows, and
+  self-updates that install only what the release key signed. Online only
+  for now; offline work follows (`docs/plans/desktop-app.md`).
+- **Present on a chosen display.** Where the browser can place windows
+  (Chrome, Edge, the desktop app), the presentation's Display choice puts
+  fullscreen on the projector while the presenter view stays on the laptop.
+- **Mod+X cuts objects on the canvas**, as the context menu's Cut does.
+
+### Changed
+
+- **Delete/Backspace and Mod+C on the canvas** now prevent the key's
+  default, as every keyed menu action must.
+- **The editor checks for a new build when its window regains focus**, not
+  only when it becomes visible again.
+- **Sign-in's `returnTo`** refuses backslashes and control characters, and
+  error reports mask PKCE verifiers.
+
 ---
 
 ## 0.10.25 — Looks at photo-heavy decks no longer come back blank (2026-10-11)

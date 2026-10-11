@@ -175,6 +175,13 @@ Dev notes:
 - `claude -p` runs headless and dismisses every confirmation question, so an
   irreversible call from it always goes through that page.
 
+## 10. Optional: the desktop app
+
+`just desktop` runs the Electron desktop app against the dev stack (`just
+desktop prod` against production). On Ubuntu 26.04 run `just
+desktop-apparmor` once first. Packaging, sign-in and updates:
+[docs/desktop.md](docs/desktop.md).
+
 ## Verifying everything works
 
 | Check                                                                                                      | Pass                           |

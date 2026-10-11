@@ -288,6 +288,17 @@ to look at a slide twice within a minute and check the log: only the first
 job is followed by `browser started` / a page load, and the second comes
 back in about a second.
 
+## The desktop app's update feed
+
+Since the desktop app (ADR 0014), Caddy serves `/opt/narrative/desktop-feed`
+on the VM at `https://<domain>/desktop/` (`infra/caddy/Caddyfile`, mounted
+read-only). `deploy.sh` creates the directory as the deploy user, and the
+release sync (`remote-release.sh`) leaves it alone. Only `just
+desktop-publish <linux|mac|win>` writes to it, after a release is deployed:
+signed through the 1Password SSH agent, files first, `latest*.yml` last,
+three versions kept per platform. The steps are in
+[docs/desktop.md](./desktop.md#releasing-the-desktop-app).
+
 ## Releasing the MinIO image switch
 
 The first release after `infra/docker-compose.yml` moved MinIO from
