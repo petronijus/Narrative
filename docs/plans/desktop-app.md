@@ -212,6 +212,10 @@ the main worktree; the desktop work runs beside it in `../Narrative-desktop`.
 
 ## Work order
 
+The D0 implementation spec (versions, layout, sign-in flow, tests, steps)
+is `docs/plans/desktop-d0-spec.md`, revision 2 after security, invariants
+and platform reviews (2026-10-11).
+
 1. ADR 0014 (desktop shell loads the server origin; offline is a web-app
    feature) and Petr's answers to the open decisions.
 2. D0; security review of the sign-in ticket flow.
