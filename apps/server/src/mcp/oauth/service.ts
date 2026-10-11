@@ -80,6 +80,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { nanoid } from 'nanoid'
 import { sanitizePeerLabel } from '@narrative/shared'
+import { PKCE_CHALLENGE, PKCE_VERIFIER, s256Matches } from '../../auth/pkce.js'
 import type { McpPublicConfig } from '../config.js'
 import {
   ClientMetadataError,
@@ -137,8 +138,6 @@ const MAX_REDIRECT_URIS = 10
 const MAX_CLIENT_NAME = 100
 const UNNAMED_CLIENT = 'Unnamed MCP client'
 const MAX_STATE = 1024
-const PKCE_VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/
-const PKCE_CHALLENGE = /^[A-Za-z0-9_-]{43}$/
 
 /** An OAuth error as the spec names it; `status` for the token/registration endpoints. */
 export class OAuthError extends Error {
@@ -1038,8 +1037,7 @@ export class McpOAuthService {
     if (typeof redirectUri === 'string' && redirectUri !== claimed.redirectUri) {
       throw new OAuthError('invalid_grant', 'redirect_uri does not match the authorization request')
     }
-    const challenge = createHash('sha256').update(verifier, 'ascii').digest('base64url')
-    if (!hashesEqual(challenge, claimed.codeChallenge))
+    if (!s256Matches(verifier, claimed.codeChallenge))
       throw new OAuthError('invalid_grant', 'PKCE verification failed')
     const resource = form['resource']
     if (

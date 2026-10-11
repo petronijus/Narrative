@@ -35,6 +35,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { authPreHandler, resolveFastifyIdentity } from '../../auth/fastifyAuth.js'
 import { clientIpFromHeaders } from '../../http/clientIp.js'
+import { htmlHeaders, noStore } from '../../http/htmlHeaders.js'
 import { pathWithoutLeadingSlash } from '../config.js'
 import { consentPage, errorPage, signInPage } from './pages.js'
 import {
@@ -72,41 +73,11 @@ export const OAUTH_RATE_LIMITS = {
   revoke: { max: 120, timeWindow: MINUTE_MS },
 } as const
 
-function noStore(reply: FastifyReply): FastifyReply {
-  return reply.header('cache-control', 'no-store').header('pragma', 'no-cache')
-}
-
 function sendOAuthError(reply: FastifyReply, e: OAuthError, basicChallenge = false): FastifyReply {
   noStore(reply).status(e.status)
   if (e.status === 401 && basicChallenge)
     reply.header('www-authenticate', 'Basic realm="narrative-oauth"')
   return reply.send({ error: e.error, error_description: e.description })
-}
-
-/**
- * Headers of the server-rendered OAuth pages. `formTargets` are where the
- * page's form may post; a page with a form gets `same-origin` as its
- * referrer policy, not `no-referrer` (see pages.ts `PageReferrerPolicy`:
- * under `no-referrer` the page's own form posts with `Origin: null`, which
- * the decision endpoint refuses). The page's `<meta name="referrer">` says
- * the same — it overrides this header, which is how the first fix, header
- * only, missed.
- */
-function htmlHeaders(reply: FastifyReply, formTargets: readonly string[]): FastifyReply {
-  return noStore(reply)
-    .type('text/html; charset=utf-8')
-    .header('x-frame-options', 'DENY')
-    .header('referrer-policy', formTargets.length > 0 ? 'same-origin' : 'no-referrer')
-    .header(
-      'content-security-policy',
-      [
-        "default-src 'none'",
-        "style-src 'unsafe-inline'",
-        `form-action ${formTargets.length > 0 ? formTargets.join(' ') : "'none'"}`,
-        "frame-ancestors 'none'",
-        "base-uri 'none'",
-      ].join('; '),
-    )
 }
 
 /** Client credentials from HTTP Basic (RFC 6749 §2.3.1) or the form body. */
