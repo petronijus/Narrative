@@ -36,6 +36,22 @@ export type PngExportResult =
       failedFonts: string[]
     }
 
+/** What `query.render` looks at: a slide, a region of one (slide px), or a sheet of slides. */
+export type RenderView =
+  | { slide: RenderSlideRef; region?: { x: number; y: number; width: number; height: number } }
+  | { sheet: RenderSlideRef[] | 'all' }
+
+export interface RenderLookResult {
+  mode: 'slide' | 'region' | 'sheet'
+  width: number
+  height: number
+  /** The slides in the picture, in the order shown. */
+  slides: Array<{ slideId: string; index: number; failedLoads: number }>
+  failedFonts: string[]
+  /** The picture; an MCP client gets it as image content, not as text. */
+  image: { mimeType: 'image/png'; base64: string }
+}
+
 export interface RenderService {
   /**
    * PNGs (1920×1080) of slides of the live deck (any reader of the deck).
@@ -48,4 +64,9 @@ export interface RenderService {
     slides: RenderSlideRef[] | 'all'
     delivery: 'url' | 'base64'
   }): Promise<PngExportResult>
+  /**
+   * A picture of the live deck for the model to look at (any reader of the
+   * deck): a slide, a region at full resolution, or a numbered sheet.
+   */
+  look(args: { userId: string; deckId: string; view: RenderView }): Promise<RenderLookResult>
 }

@@ -75,7 +75,7 @@ export const AGENT_ALLOWLIST: readonly AllowlistEntry[] = [
     reason:
       'POST /dev/render-token exists only with BYPASS_AUTH (refused in production) so the e2e suite can open the ' +
       'render page as the render worker does. Render tokens are credentials only the server mints for its own ' +
-      'render jobs; an agent asks for a render (query.render, A3) and never holds one.',
+      'render jobs; an agent asks for a render (query.render, deck.exportPng) and never holds one.',
     routes: [{ method: 'POST', path: '/dev/render-token' }],
   },
   {

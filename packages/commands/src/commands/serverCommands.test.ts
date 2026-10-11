@@ -151,6 +151,38 @@ describe('deck.*', () => {
   })
 })
 
+describe('query.render', () => {
+  it('asks the render service for a slide, a region of it, or a sheet', async () => {
+    const c = ctx()
+    await runCommand(registry, c, 'query.render', { slide: { index: 1 } })
+    await runCommand(registry, c, 'query.render', {
+      slide: 's1',
+      region: { x: 0, y: 900, width: 1920, height: 180 },
+    })
+    await runCommand(registry, c, 'query.render', { slides: 'all' })
+    expect(callsTo(c, 'render').map((x) => (x.args as { view: unknown }).view)).toEqual([
+      { slide: { index: 1 } },
+      { slide: { id: 's1' }, region: { x: 0, y: 900, width: 1920, height: 180 } },
+      { sheet: 'all' },
+    ])
+  })
+
+  it('refuses slide with slides, region without slide, and nothing at all, before calling the service', async () => {
+    const c = ctx()
+    for (const input of [
+      { slide: 's1', slides: 'all' },
+      { slides: 'all', region: { x: 0, y: 0, width: 10, height: 10 } },
+      {},
+      { slide: 's1', region: { x: 0, y: 0, width: 5000, height: 10 } },
+    ]) {
+      expect((await failure(runCommand(registry, c, 'query.render', input))).code).toBe(
+        'invalid_input',
+      )
+    }
+    expect(callsTo(c, 'render')).toEqual([])
+  })
+})
+
 describe('media.* and share.*', () => {
   it('media commands pin the asset to the target deck (no reaching into another deck)', async () => {
     const c = ctx()

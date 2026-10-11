@@ -12,8 +12,10 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
-import type { RenderJobData, RenderJobResult } from '@narrative/shared'
-import { MAX_RENDER_SLIDES } from '@narrative/commands'
+import type { RenderExportJob, RenderJobData, RenderJobResult } from '@narrative/shared'
+
+type RenderExportResult = Extract<RenderJobResult, { kind: 'export' }>
+import { MAX_RENDER_SLIDES, type RenderView } from '@narrative/commands'
 
 vi.mock('../auth/permissions.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../auth/permissions.js')>()),
@@ -27,7 +29,12 @@ vi.mock('../media/s3Client.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../media/s3Client.js')>()),
   buildS3Client: vi.fn(() => ({
     send: vi.fn(async () => ({
-      Body: { transformToByteArray: async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]) },
+      ContentLength: 8,
+      // A PNG's signature: the service checks what the worker stored.
+      Body: {
+        transformToByteArray: async () =>
+          new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      },
     })),
   })),
   presignGetUrl: vi.fn(async (key: string) => `https://storage.test/get/${key}?sig`),
@@ -41,6 +48,7 @@ vi.mock('../hocuspocus/connections.js', () => ({ closeShareTokenConnections: vi.
 import { resolveDeckAccess } from '../auth/permissions.js'
 import { resolveRenderToken } from '../auth/renderTokens.js'
 import { readDocCopy } from './liveDocs.js'
+import { buildS3Client } from '../media/s3Client.js'
 import {
   clearRenderInFlightForTests,
   createRenderService,
@@ -52,6 +60,7 @@ import {
   RENDER_WORK_PER_SLIDE_MS,
 } from './render.js'
 import { RenderTimeoutError, RenderUnavailableError, type RenderQueue } from '../render/queue.js'
+import { SESSION_MAX_MS } from '../render/sessions.js'
 import type { ServiceDeps } from './deps.js'
 import { ServiceError } from './errors.js'
 
@@ -82,9 +91,16 @@ function setup(run: RenderQueue['run'], waiting = async () => 0) {
   return { queue, service }
 }
 
-/** What a successful job returns for the slides it was given. */
-const rendered = (data: RenderJobData): RenderJobResult => ({
-  slides: data.uploads.map(({ slideId }, i) => ({
+/** An export job (the tests that render PNGs give the worker nothing else). */
+function exportJob(data: RenderJobData): RenderExportJob {
+  if (data.kind !== 'export') throw new Error(`expected an export job, got ${data.kind}`)
+  return data
+}
+
+/** What a successful export returns for the slides it was given. */
+const rendered = (data: RenderJobData): RenderExportResult => ({
+  kind: 'export',
+  slides: exportJob(data).uploads.map(({ slideId }, i) => ({
     slideId,
     index: i,
     width: 1920,
@@ -94,6 +110,22 @@ const rendered = (data: RenderJobData): RenderJobResult => ({
   })),
   failedFonts: [],
 })
+
+/** What a successful look returns. */
+const looked = (data: RenderJobData): RenderJobResult => {
+  if (data.kind !== 'look') throw new Error(`expected a look, got ${data.kind}`)
+  const ids = data.look.mode === 'sheet' ? data.look.slideIds : [data.look.slideId]
+  return {
+    kind: 'look',
+    look: {
+      width: 1430,
+      height: 804,
+      sizeBytes: 4,
+      slides: ids.map((slideId, i) => ({ slideId, index: i, failedLoads: 0 })),
+    },
+    failedFonts: [],
+  }
+}
 
 const ask = (
   service: ReturnType<typeof setup>['service'],
@@ -145,10 +177,15 @@ describe('pickSlides', () => {
 })
 
 describe('RenderService.exportPng', () => {
-  it('gives the worker the slides, a deck token, one upload each, a deadline and a work budget, then ends the token', async () => {
+  it('gives the worker the slides, a deck token, one upload each, the live state, a deadline and a work budget', async () => {
     const { queue, service } = setup(async (data) => rendered(data))
     const out = await ask(service, { slides: [{ index: 1 }] })
-    const [data, opts] = queue.run.mock.calls[0]!
+    const [job, opts] = queue.run.mock.calls[0]!
+    const data = exportJob(job)
+    // What the live document held when the job was made: its one writer's clock.
+    const vector = Y.decodeStateVector(Buffer.from(data.stateVector, 'base64'))
+    expect(vector.size).toBe(1)
+    expect([...vector.values()][0]).toBeGreaterThan(0)
     expect(data.deckId).toBe('d1')
     expect(data.deadline).toBe(NOW + RENDER_WAIT_MS)
     expect(data.workBudgetMs).toBe(RENDER_WORK_BASE_MS + RENDER_WORK_PER_SLIDE_MS)
@@ -164,8 +201,8 @@ describe('RenderService.exportPng', () => {
       'cache-control': 'private, no-store',
     })
     expect(data.token).toMatch(/^nrr_/)
-    // The token read the deck during the job and is dead now.
-    expect(resolveRenderToken(data.token)).toBeNull()
+    // The token goes on for the render session (the worker keeps its page).
+    expect(resolveRenderToken(data.token)).not.toBeNull()
     expect(out).toMatchObject({
       delivery: 'url',
       slides: [{ slideId: 's2', index: 0, width: 1920, height: 1080 }],
@@ -310,7 +347,8 @@ describe('RenderService.exportPng', () => {
     expect(await status(ask(failing(new Error('render failed (late): nobody waits'))))).toBe(504)
     expect(await status(ask(failing(new RenderTimeoutError())))).toBe(504)
     expect(await status(ask(failing(new RenderUnavailableError('redis down'))))).toBe(503)
-    for (const token of tokens) expect(resolveRenderToken(token)).toBeNull()
+    // A failure of the renderer's own does not end the session.
+    for (const token of tokens) expect(resolveRenderToken(token)).not.toBeNull()
   })
 
   it('answers a refused page with 403 only when the caller really lost access', async () => {
@@ -333,5 +371,110 @@ describe('RenderService.exportPng', () => {
       slides: rendered(data).slides.map((s) => ({ ...s, sizeBytes: 3 * 1024 * 1024 })),
     }))
     expect(await status(ask(service, { delivery: 'base64' }))).toBe(413)
+  })
+})
+
+describe('render sessions', () => {
+  it('reuses one token per person and deck while the session lasts, so the worker keeps its page', async () => {
+    const { queue, service } = setup(async (data) => rendered(data))
+    await ask(service)
+    await ask(service)
+    await ask(service, { userId: 'u2' })
+    await ask(service, { deckId: 'd2' })
+    const [a, b, other, otherDeck] = queue.run.mock.calls.map(([job]) => job.token)
+    expect(b).toBe(a)
+    expect(other).not.toBe(a)
+    expect(otherDeck).not.toBe(a)
+  })
+
+  it('ends the session when its person lost access, and starts a new one after', async () => {
+    const results: Array<() => Promise<RenderJobResult>> = [
+      async () => {
+        throw new Error('render failed (access-refused): slide s1')
+      },
+    ]
+    const { queue, service } = setup((data) => (results.shift() ?? (async () => rendered(data)))())
+    vi.mocked(resolveDeckAccess)
+      .mockResolvedValueOnce({ role: 'viewer', reason: 'direct' })
+      .mockResolvedValueOnce(null)
+    expect(await status(ask(service))).toBe(403)
+    const ended = queue.run.mock.calls[0]![0].token
+    expect(resolveRenderToken(ended)).toBeNull()
+    await ask(service)
+    expect(queue.run.mock.calls[1]![0].token).not.toBe(ended)
+  })
+
+  it('starts a new session past SESSION_MAX_MS', async () => {
+    let clock = NOW
+    const queue = {
+      run: vi.fn(async (data: RenderJobData) => rendered(data)),
+      waiting: vi.fn(async () => 0),
+    }
+    const service = createRenderService({
+      db: {} as ServiceDeps['db'],
+      log,
+      renderQueue: queue,
+      now: () => clock,
+    })
+    await ask(service as ReturnType<typeof setup>['service'])
+    clock += SESSION_MAX_MS - RENDER_WAIT_MS
+    await ask(service as ReturnType<typeof setup>['service'])
+    const [first, second] = queue.run.mock.calls.map(([job]) => job.token)
+    expect(second).not.toBe(first)
+  })
+})
+
+describe('RenderService.look', () => {
+  const view = (service: ReturnType<typeof setup>['service'], v: RenderView) =>
+    service.look({ userId: 'u1', deckId: 'd1', view: v })
+
+  it('asks the worker for one slide, a region of it, or a sheet, and hands back the picture', async () => {
+    const { queue, service } = setup(async (data) => looked(data))
+    const one = await view(service, { slide: { index: 1 } })
+    await view(service, { slide: { id: 's3' }, region: { x: 0, y: 900, width: 1920, height: 180 } })
+    await view(service, { sheet: 'all' })
+    const specs = queue.run.mock.calls.map(([job]) => (job.kind === 'look' ? job.look : null))
+    expect(specs).toEqual([
+      { mode: 'slide', slideId: 's2' },
+      { mode: 'region', slideId: 's3', region: { x: 0, y: 900, width: 1920, height: 180 } },
+      { mode: 'sheet', slideIds: ['s1', 's2', 's3'] },
+    ])
+    // A sheet weighs as many slides as it shows.
+    expect(queue.run.mock.calls.map(([, opts]) => opts.priority)).toEqual([1, 1, 3])
+    const job = queue.run.mock.calls[0]![0]
+    expect(job.kind === 'look' && job.upload.url).toMatch(/\/exports\/[\w-]{16}\/look\.png\?/)
+    expect(one).toMatchObject({
+      mode: 'slide',
+      width: 1430,
+      height: 804,
+      slides: [{ slideId: 's2', index: 0, failedLoads: 0 }],
+      image: { mimeType: 'image/png' },
+    })
+    expect(Buffer.from(one.image.base64, 'base64').subarray(1, 4).toString()).toBe('PNG')
+  })
+
+  it('does not pass on what the worker stored unless it is a PNG of a sane size (503)', async () => {
+    const { service } = setup(async (data) => looked(data))
+    const stored = (body: Uint8Array, length = body.byteLength) =>
+      ({
+        send: vi.fn(async () => ({
+          ContentLength: length,
+          Body: { transformToByteArray: async () => body },
+        })),
+      }) as unknown as ReturnType<typeof buildS3Client>
+    vi.mocked(buildS3Client).mockReturnValueOnce(stored(new TextEncoder().encode('<html>')))
+    expect(await status(view(service, { slide: { index: 0 } }))).toBe(503)
+    vi.mocked(buildS3Client).mockReturnValueOnce(stored(new Uint8Array(8), 50_000_000))
+    expect(await status(view(service, { slide: { index: 0 } }))).toBe(503)
+  })
+
+  it('refuses a missing slide (404) and a sheet over the limit (413) before anything renders', async () => {
+    const { queue, service } = setup(async (data) => looked(data))
+    expect(await status(view(service, { slide: { id: 'zz' } }))).toBe(404)
+    vi.mocked(readDocCopy).mockImplementation(async () =>
+      deckDoc(Array.from({ length: MAX_RENDER_SLIDES + 1 }, (_, i) => `s${i}`)),
+    )
+    expect(await status(view(service, { sheet: 'all' }))).toBe(413)
+    expect(queue.run).not.toHaveBeenCalled()
   })
 })

@@ -34,9 +34,11 @@ describe('bullRenderQueue with Redis down', () => {
     await expect(
       bullRenderQueue.run(
         {
+          kind: 'export',
           deckId: 'd',
           uploads: [],
           token: 'nrr_x',
+          stateVector: '',
           deadline: Date.now() + 90_000,
           workBudgetMs: 20_000,
         },

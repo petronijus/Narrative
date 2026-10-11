@@ -133,7 +133,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/components/presentStartSlide.ts", PRESENT),
     ("apps/web/src/pages/DeckPresent.tsx", PRESENT),
     # render-export reaches __narrativeRenderShow (the worker's slide switch).
-    ("apps/web/src/pages/DeckRender.tsx", ["render-page", "render-export"]),
+    ("apps/web/src/pages/DeckRender.tsx", ["render-page", "render-export", "query-render"]),
+    ("apps/web/src/pages/renderLook.ts", ["query-render"]),
     ("apps/web/src/pages/renderSlide.ts", ["render-page"]),
     # The toolbar's PowerPoint download goes through it too.
     ("apps/web/src/lib/download.ts", ["render-export", "pptx-roundtrip"] + SLIDES_PANEL),
@@ -307,9 +308,10 @@ AREAS: list[tuple[str, list[str]]] = [
     # The service set every command and route is built from.
     ("apps/server/src/services/index.ts", AGENT + ACCESS),
     ("apps/video-worker/src/*", MEDIA),
-    ("apps/render-worker/*", ["render-export", "render-page"]),
-    ("apps/server/src/services/render.ts", ["render-export"]),
-    ("apps/server/src/render/*", ["render-export"]),
+    ("apps/render-worker/*", ["render-export", "render-page", "query-render"]),
+    ("apps/server/src/services/render.ts", ["render-export", "query-render"]),
+    ("apps/server/src/render/*", ["render-export", "query-render"]),
+    ("apps/server/src/mcp/results.ts", ["query-render"]),
     ("apps/server/src/routes/pngExport.ts", ["render-export"]),
     # ── packages ──────────────────────────────────────────────────────────
     ("packages/animation/src/*", PRESENT),

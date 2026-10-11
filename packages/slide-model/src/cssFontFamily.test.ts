@@ -21,7 +21,9 @@ describe('quoteCssFamilyName', () => {
     expect(quoteCssFamilyName("O'Hare Sans", "'")).toBe("'O\\'Hare Sans'")
     expect(quoteCssFamilyName('line\nbreak')).toBe('"line\\a break"')
     // Inside a <style> set through innerHTML: no `</style>` can survive.
-    expect(quoteCssFamilyName('X</style><img src=x>')).toBe('"X\\3c /style\\3e \\3c img src=x\\3e "')
+    expect(quoteCssFamilyName('X</style><img src=x>')).toBe(
+      '"X\\3c /style\\3e \\3c img src=x\\3e "',
+    )
   })
 })
 

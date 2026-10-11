@@ -151,7 +151,7 @@ export const mediaUrl = defineCommand({
     'A signed URL of an image the deck (or the targeted master) shows — its own, or one it links from its ' +
     "folder (a stamped component's, the folder's own) — in a size variant: thumb (small), preview, display (default, " +
     'slide size) or original. Use it to look at an image a slide shows, or to hand it to the user. For videos use ' +
-    'media.status; slide screenshots are query.render (planned, not available yet).',
+    'media.status; to see a whole slide as it looks, query.render.',
   input: z.strictObject({
     assetId: AssetIdSchema,
     variant: z

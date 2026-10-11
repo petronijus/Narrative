@@ -41,7 +41,6 @@ The user asked: <request>
      occurrence;
    - copy a slide → `slide_duplicate`; reorder → `slide_move`;
    - put another deck's slides after slide N → `deck_insertFrom`.
-4. **Check the result** (`query_slide`, and a screenshot once `query_render`
-   (planned, not available yet) exists) and fix what does not match the
-   request.
+4. **Check the result**: look at the changed slide with `query_render` (and
+   `query_slide` for exact values), and fix what does not match the request.
 5. **Report** in one or two sentences what changed.

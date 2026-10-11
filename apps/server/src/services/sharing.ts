@@ -26,6 +26,7 @@ import {
 } from '../auth/permissions.js'
 import { createShareLink, listShareLinks, revokeShareLink } from '../auth/shareLinks.js'
 import { closeDeckConnections, closeUserConnectionsOnDocument } from '../hocuspocus/connections.js'
+import { endRenderSessions } from '../render/sessions.js'
 import { createInvite, listPendingInvitesForDeck, revokeInvite } from '../auth/invites.js'
 import { getUserByEmail, getUserBySub, listUsersBySubs } from '../auth/users.js'
 import { sendEmail } from '../email/client.js'
@@ -218,8 +219,10 @@ export function createSharingService(deps: ServiceDeps): SharingService {
     }
     await revokePermission(db, { deckId, userId })
     // CONN-1: kick the revoked user's live connections on this deck, and on
-    // its folder's token document when this deck was what let them read it.
+    // its folder's token document when this deck was what let them read it —
+    // and their render sessions' pages (render/sessions.ts).
     closeDeckConnections(deckId, { userId })
+    endRenderSessions({ userId, deckId })
     const [deck] = await db
       .select({ folderId: decks.folderId })
       .from(decks)

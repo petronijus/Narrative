@@ -123,6 +123,13 @@ export {
   type RenderedSlide,
   type RenderFailureReason,
   type RenderUpload,
+  type RenderTarget,
+  type RenderExportJob,
+  type RenderLookJob,
+  type RenderLookSpec,
+  type RenderedLook,
+  LOOK_MAX_EDGE,
+  LOOK_MAX_PIXELS,
 } from './render-queue.js'
 
 export * from './schema/index.js'

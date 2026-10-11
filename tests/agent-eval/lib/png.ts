@@ -34,22 +34,22 @@ function chunk(type: string, data: Uint8Array): Uint8Array {
   return out
 }
 
-/**
- * An RGB PNG of `width` x `height` with a diagonal two-colour gradient and a
- * grid, so a crop offset is visible when someone looks at the deck.
- */
-export function gradientPng(width: number, height: number): Uint8Array {
+/** An RGB PNG of `width` x `height` whose pixels `colour(x, y)` gives. */
+function rgbPng(
+  width: number,
+  height: number,
+  colour: (x: number, y: number) => readonly [number, number, number],
+): Uint8Array {
   const stride = width * 3 + 1
   const raw = new Uint8Array(stride * height)
   for (let y = 0; y < height; y++) {
     raw[y * stride] = 0 // filter: none
     for (let x = 0; x < width; x++) {
-      const t = (x / width + y / height) / 2
-      const grid = x % 50 === 0 || y % 50 === 0
+      const [r, g, b] = colour(x, y)
       const i = y * stride + 1 + x * 3
-      raw[i] = grid ? 255 : Math.round(30 + 200 * t)
-      raw[i + 1] = grid ? 255 : Math.round(90 + 60 * (1 - t))
-      raw[i + 2] = grid ? 255 : Math.round(200 - 150 * t)
+      raw[i] = r
+      raw[i + 1] = g
+      raw[i + 2] = b
     }
   }
   const header = new Uint8Array(13)
@@ -72,4 +72,25 @@ export function gradientPng(width: number, height: number): Uint8Array {
     at += p.length
   }
   return out
+}
+
+/**
+ * An RGB PNG of `width` x `height` with a diagonal two-colour gradient and a
+ * grid, so a crop offset is visible when someone looks at the deck.
+ */
+export function gradientPng(width: number, height: number): Uint8Array {
+  return rgbPng(width, height, (x, y) => {
+    const t = (x / width + y / height) / 2
+    if (x % 50 === 0 || y % 50 === 0) return [255, 255, 255]
+    return [Math.round(30 + 200 * t), Math.round(90 + 60 * (1 - t)), Math.round(200 - 150 * t)]
+  })
+}
+
+/** An RGB PNG of one colour — a fact only someone who looks at the picture can tell. */
+export function solidPng(
+  width: number,
+  height: number,
+  rgb: readonly [number, number, number],
+): Uint8Array {
+  return rgbPng(width, height, () => rgb)
 }

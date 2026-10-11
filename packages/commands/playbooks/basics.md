@@ -122,9 +122,10 @@ design.
 
 ## After a change
 
-- Look at what you did. `query.render` (planned, not available yet) will
-  return a screenshot of the slide; until then re-read the slide with
-  `query.slide` and check positions, sizes and text against your intent.
+- Look at what you did: `query.render` shows you the slide as it really
+  looks (a region of it at full resolution for small type; a numbered
+  sheet for several slides). Check it against your intent, fix what is
+  off, and look again. `query.slide` gives the exact values behind it.
 - Report briefly: what changed, on which slides, and anything you could not
   do and why.
 - If the user dislikes the result, `agent.revert` undoes your run (or its

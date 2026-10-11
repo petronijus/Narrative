@@ -49,8 +49,7 @@ export function quoteCssFamilyName(raw: string, quote: '"' | "'" = '"'): string 
   // A CSS identifier: a letter or underscore, then letters, digits, hyphens
   // and underscores. Anything else is quoted.
   if (!quoted && /^[A-Za-z_][A-Za-z0-9_-]*$/.test(name)) return name
-  const special =
-    quote === '"' ? /[\\"<>&\u0000-\u001f\u007f]/g : /[\\'<>&\u0000-\u001f\u007f]/g
+  const special = quote === '"' ? /[\\"<>&\u0000-\u001f\u007f]/g : /[\\'<>&\u0000-\u001f\u007f]/g
   const escaped = name.replace(special, (c) =>
     c === '\\' || c === quote ? `\\${c}` : `\\${c.charCodeAt(0).toString(16)} `,
   )

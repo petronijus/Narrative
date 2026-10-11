@@ -4,12 +4,14 @@
  *
  * For one request: check the caller may read the deck, pick the slides from
  * the LIVE document (what open editors see now), and give the worker one job
- * with everything it may use and nothing more — a render token for this deck
- * (auth/renderTokens.ts: the page reads the deck with it, as the caller's
- * guest), valid until the job's deadline plus a margin, and one presigned PUT
- * URL per slide (it holds no storage credentials; the URL signs the object's
- * type and caching too). Then wait until the deadline, and end the token
- * whatever happened. The PNGs land under
+ * with everything it may use and nothing more — the render session's token
+ * for this person and deck (render/sessions.ts, auth/renderTokens.ts: the page
+ * reads the deck with it, as the caller's guest, and the worker keeps that
+ * page for the session's next job), the live document's state vector (the
+ * page draws once it holds those edits), and one presigned PUT URL per
+ * picture (it holds no storage credentials; the URL signs the object's type
+ * and caching too). Then wait until the deadline; what comes back is checked
+ * to be a PNG before it is passed on. The PNGs land under
  * `decks/<id>/exports/<job>/`, where the export sweep (services/exportSweep.ts)
  * removes them after a day; a caller gets them as presigned links (15
  * minutes), inline, or — the editor's download — as the stored object.
@@ -33,17 +35,31 @@
 import { GetObjectCommand } from '@aws-sdk/client-s3'
 import { nanoid } from 'nanoid'
 import { listSlides } from '@narrative/slide-model'
-import { parseRenderFailure, type RenderJobResult, type RenderedSlide } from '@narrative/shared'
+import * as Y from 'yjs'
+import {
+  parseRenderFailure,
+  type RenderJobData,
+  type RenderJobResult,
+  type RenderLookSpec,
+  type RenderedSlide,
+} from '@narrative/shared'
 import { MAX_RENDER_SLIDES } from '@narrative/commands'
 import type {
   PngExportResult,
+  RenderLookResult,
   RenderService,
   RenderSlideRef,
+  RenderView,
   RenderedPngInfo,
 } from '@narrative/commands'
 import { resolveDeckAccess } from '../auth/permissions.js'
-import { mintRenderToken, revokeRenderToken } from '../auth/renderTokens.js'
 import { buildS3Client, MEDIA_BUCKET, presignGetUrl, presignPutUrl } from '../media/s3Client.js'
+import {
+  clearRenderSessionsForTests,
+  endRenderSession,
+  sessionJobEnded,
+  sessionTokenFor,
+} from '../render/sessions.js'
 import {
   bullRenderQueue,
   RenderTimeoutError,
@@ -124,6 +140,38 @@ export function pickSlides(
   return picked
 }
 
+/** The largest look the render page composes (pages/renderLook.ts MAX_LOOK_BYTES), with slack. */
+const MAX_LOOK_BYTES = 4_000_000
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+/**
+ * A PNG the worker stored, read back — refused when it is larger than
+ * `maxBytes` or not a PNG: the presigned upload signs the type, not the
+ * bytes, so the server does not take the worker's word for what it holds
+ * before passing it on as an image.
+ */
+async function readStoredPng(key: string, maxBytes: number): Promise<Uint8Array> {
+  const object = await buildS3Client().send(
+    new GetObjectCommand({ Bucket: MEDIA_BUCKET, Key: key }),
+  )
+  if (object.ContentLength !== undefined && object.ContentLength > maxBytes) {
+    throw failed('The renderer returned an image that is too large', 503)
+  }
+  const bytes = await object.Body!.transformToByteArray()
+  if (bytes.byteLength > maxBytes || !PNG_SIGNATURE.equals(Buffer.from(bytes.subarray(0, 8)))) {
+    throw failed('The renderer returned something that is not a PNG', 503)
+  }
+  return bytes
+}
+
+/** A job before its render session's token is added (distributed over the job kinds). */
+type JobWithoutToken<T> = T extends unknown ? Omit<T, 'token'> : never
+
+/** What one job asks of the worker, before the slot, the session and the clocks are added. */
+type JobRequest =
+  | { kind: 'export'; uploads: Array<{ slideId: string; key: string }> }
+  | { kind: 'look'; look: RenderLookSpec; key: string }
+
 export function createRenderService(deps: RenderServiceDeps): RenderService & {
   /** Render and keep the PNGs in storage; the keys, for the editor's download route. */
   renderStored(args: {
@@ -136,28 +184,35 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
   const queue = deps.renderQueue ?? bullRenderQueue
   const now = deps.now ?? Date.now
 
-  async function renderStored(args: {
-    userId: string
-    deckId: string
-    slides: RenderSlideRef[] | 'all'
-  }): Promise<StoredRenders> {
+  /** The caller may read the deck; its slides and state vector, from the live document. */
+  async function liveDeck(args: { userId: string; deckId: string }): Promise<{
+    slides: Array<{ id: string }>
+    stateVector: string
+  }> {
     const access = await resolveDeckAccess(db, { deckId: args.deckId, userId: args.userId })
     if (!access) throw forbidden()
-
     const doc = await readDocCopy(deps, 'deck', args.deckId)
-    let chosen: Array<{ id: string; index: number }>
     try {
-      chosen = pickSlides(listSlides({ doc, slides: doc.getArray('slides') }), args.slides)
+      return {
+        slides: listSlides({ doc, slides: doc.getArray('slides') }).map((s) => ({ id: s.id })),
+        stateVector: Buffer.from(Y.encodeStateVector(doc)).toString('base64'),
+      }
     } finally {
       doc.destroy()
     }
-    if (chosen.length === 0) throw badRequest('The deck has no slides to render')
-    if (chosen.length > MAX_RENDER_SLIDES) {
-      throw tooLarge(
-        `That is ${chosen.length} slides; one request renders at most ${MAX_RENDER_SLIDES} — ask for them in parts`,
-      )
-    }
+  }
 
+  /**
+   * One job for the worker: a fair share of the queue (`slides` weighs it),
+   * presigned uploads, the session's token, the live state vector and both
+   * clocks; the worker's failure mapped for the caller.
+   */
+  async function runJob(
+    args: { userId: string; deckId: string },
+    slides: number,
+    stateVector: string,
+    request: JobRequest,
+  ): Promise<RenderJobResult> {
     // The shared queue: a fair share per person (the slot is taken here,
     // synchronously, so concurrent requests cannot all pass the check), and a
     // bound overall.
@@ -168,63 +223,129 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
         429,
       )
     }
-    const held = { jobs: mine.jobs + 1, slides: mine.slides + chosen.length }
+    const held = { jobs: mine.jobs + 1, slides: mine.slides + slides }
     inFlight.set(args.userId, held)
     try {
-      return await renderInSlot(args, chosen, held.slides)
+      let waiting: number
+      try {
+        waiting = await queue.waiting()
+      } catch {
+        throw failed('The renderer is unavailable right now; try again shortly', 503)
+      }
+      if (waiting >= MAX_WAITING_JOBS) {
+        throw failed('The renderer is busy right now; try again in a minute', 503)
+      }
+      const deadline = now() + RENDER_WAIT_MS
+      const workBudgetMs = RENDER_WORK_BASE_MS + RENDER_WORK_PER_SLIDE_MS * slides
+      const uploadTtlSec = Math.ceil((RENDER_WAIT_MS + TOKEN_MARGIN_MS) / 1000)
+      const target = (key: string) => presignPutUrl(key, 'image/png', uploadTtlSec)
+      const base = {
+        deckId: args.deckId,
+        stateVector,
+        deadline,
+        workBudgetMs,
+      }
+      const job: JobWithoutToken<RenderJobData> =
+        request.kind === 'export'
+          ? {
+              ...base,
+              kind: 'export',
+              uploads: await Promise.all(
+                request.uploads.map(async (u) => ({
+                  slideId: u.slideId,
+                  ...(await target(u.key)),
+                })),
+              ),
+            }
+          : { ...base, kind: 'look', look: request.look, upload: await target(request.key) }
+      const token = sessionTokenFor(args, RENDER_WAIT_MS + TOKEN_MARGIN_MS, now())
+      try {
+        return await queue.run({ ...job, token }, { priority: held.slides })
+      } catch (err) {
+        const mapped = await mapFailure(err, args)
+        // The page was refused: whatever the reason, that session is over.
+        if (parseRenderFailure(err instanceof Error ? err.message : '') === 'access-refused') {
+          endRenderSession(token)
+        }
+        throw mapped
+      } finally {
+        sessionJobEnded(token, now())
+      }
     } finally {
       const current = inFlight.get(args.userId)
       const left = {
         jobs: (current?.jobs ?? 1) - 1,
-        slides: (current?.slides ?? chosen.length) - chosen.length,
+        slides: (current?.slides ?? slides) - slides,
       }
       if (left.jobs > 0) inFlight.set(args.userId, left)
       else inFlight.delete(args.userId)
     }
   }
 
-  async function renderInSlot(
-    args: { userId: string; deckId: string },
-    chosen: Array<{ id: string; index: number }>,
-    priority: number,
-  ): Promise<StoredRenders> {
-    let waiting: number
-    try {
-      waiting = await queue.waiting()
-    } catch {
-      throw failed('The renderer is unavailable right now; try again shortly', 503)
+  async function renderStored(args: {
+    userId: string
+    deckId: string
+    slides: RenderSlideRef[] | 'all'
+  }): Promise<StoredRenders> {
+    const deck = await liveDeck(args)
+    const chosen = pickSlides(deck.slides, args.slides)
+    if (chosen.length === 0) throw badRequest('The deck has no slides to render')
+    if (chosen.length > MAX_RENDER_SLIDES) {
+      throw tooLarge(
+        `That is ${chosen.length} slides; one request renders at most ${MAX_RENDER_SLIDES} — ask for them in parts`,
+      )
     }
-    if (waiting >= MAX_WAITING_JOBS) {
-      throw failed('The renderer is busy right now; try again in a minute', 503)
-    }
-
-    const deadline = now() + RENDER_WAIT_MS
-    const workBudgetMs = RENDER_WORK_BASE_MS + RENDER_WORK_PER_SLIDE_MS * chosen.length
     const prefix = `decks/${args.deckId}/exports/${nanoid(16)}/`
     const keys = new Map(chosen.map((s) => [s.id, `${prefix}slide-${s.index + 1}.png`]))
-    const uploadTtlSec = Math.ceil((RENDER_WAIT_MS + TOKEN_MARGIN_MS) / 1000)
-    const uploads = await Promise.all(
-      chosen.map(async (s) => ({
-        slideId: s.id,
-        ...(await presignPutUrl(keys.get(s.id)!, 'image/png', uploadTtlSec)),
-      })),
-    )
-    const token = mintRenderToken(args.deckId, args.userId, now(), RENDER_WAIT_MS + TOKEN_MARGIN_MS)
-
-    let result: RenderJobResult
-    try {
-      result = await queue.run(
-        { deckId: args.deckId, uploads, token, deadline, workBudgetMs },
-        { priority },
-      )
-    } catch (err) {
-      throw await mapFailure(err, args)
-    } finally {
-      revokeRenderToken(token)
-    }
+    const result = await runJob(args, chosen.length, deck.stateVector, {
+      kind: 'export',
+      uploads: chosen.map((s) => ({ slideId: s.id, key: keys.get(s.id)! })),
+    })
+    if (result.kind !== 'export') throw failed('The renderer answered another job', 503)
     return {
       slides: result.slides.map((s) => ({ ...s, key: keys.get(s.slideId)! })),
       failedFonts: result.failedFonts,
+    }
+  }
+
+  async function look(args: {
+    userId: string
+    deckId: string
+    view: RenderView
+  }): Promise<RenderLookResult> {
+    const deck = await liveDeck(args)
+    let spec: RenderLookSpec
+    let weight: number
+    if ('sheet' in args.view) {
+      const chosen = pickSlides(deck.slides, args.view.sheet)
+      if (chosen.length === 0) throw badRequest('The deck has no slides to look at')
+      if (chosen.length > MAX_RENDER_SLIDES) {
+        throw tooLarge(
+          `That is ${chosen.length} slides; a sheet shows at most ${MAX_RENDER_SLIDES} — ask for them in parts`,
+        )
+      }
+      spec = { mode: 'sheet', slideIds: chosen.map((s) => s.id) }
+      weight = chosen.length
+    } else {
+      const [one] = pickSlides(deck.slides, [args.view.slide])
+      if (one === undefined) throw badRequest('The deck has no slides to look at')
+      spec =
+        args.view.region === undefined
+          ? { mode: 'slide', slideId: one.id }
+          : { mode: 'region', slideId: one.id, region: args.view.region }
+      weight = 1
+    }
+    const key = `decks/${args.deckId}/exports/${nanoid(16)}/look.png`
+    const result = await runJob(args, weight, deck.stateVector, { kind: 'look', look: spec, key })
+    if (result.kind !== 'look') throw failed('The renderer answered another job', 503)
+    const bytes = await readStoredPng(key, MAX_LOOK_BYTES)
+    return {
+      mode: spec.mode,
+      width: result.look.width,
+      height: result.look.height,
+      slides: result.look.slides,
+      failedFonts: result.failedFonts,
+      image: { mimeType: 'image/png', base64: Buffer.from(bytes).toString('base64') },
     }
   }
 
@@ -286,11 +407,9 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
             'use delivery "url" or fewer slides',
         )
       }
-      const s3 = buildS3Client()
       const slides = await Promise.all(
         rendered.map(async (s) => {
-          const object = await s3.send(new GetObjectCommand({ Bucket: MEDIA_BUCKET, Key: s.key }))
-          const bytes = await object.Body!.transformToByteArray()
+          const bytes = await readStoredPng(s.key, MAX_INLINE_EXPORT_BYTES)
           return { ...info(s), base64: Buffer.from(bytes).toString('base64') }
         }),
       )
@@ -306,10 +425,11 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     return { delivery: 'url', slides, expiresAt, failedFonts }
   }
 
-  return { exportPng, renderStored }
+  return { exportPng, renderStored, look }
 }
 
 /** Test helper: forget the in-flight counts. */
 export function clearRenderInFlightForTests(): void {
   inFlight.clear()
+  clearRenderSessionsForTests()
 }

@@ -46,6 +46,7 @@ import {
   mintRenderToken,
   resolveRenderToken,
   revokeRenderToken,
+  extendRenderToken,
 } from './renderTokens.js'
 import { findShareLink } from './shareLinks.js'
 import { resolveDeckAccess } from './permissions.js'
@@ -106,6 +107,22 @@ describe('render tokens', () => {
     const token = mintRenderToken('deck-a', 'alice', now, 90_000)
     expect(resolveRenderToken(token, now + 89_999)).not.toBeNull()
     expect(resolveRenderToken(token, now + 90_000)).toBeNull()
+  })
+
+  it('goes on while its render session is extended, and ends when that stops', () => {
+    vi.useFakeTimers()
+    const token = mintRenderToken('deck-a', 'alice', Date.now(), 1_000)
+    vi.advanceTimersByTime(900)
+    expect(extendRenderToken(token, 1_000)).toBe(true)
+    vi.advanceTimersByTime(900)
+    // Past the first expiry, still live: the timer moved with it.
+    expect(resolveRenderToken(token)).not.toBeNull()
+    expect(closeShareTokenConnections).not.toHaveBeenCalledWith(token)
+    vi.advanceTimersByTime(100)
+    expect(resolveRenderToken(token)).toBeNull()
+    expect(closeShareTokenConnections).toHaveBeenCalledWith(token)
+    // An ended token is not brought back.
+    expect(extendRenderToken(token, 1_000)).toBe(false)
   })
 
   it('stops working when revoked, and closes the page connections', () => {

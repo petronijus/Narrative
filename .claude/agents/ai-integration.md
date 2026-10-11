@@ -22,7 +22,8 @@ deferred in-app agent),
 ## What you own
 
 _As of the end of A1 (2026-09-27, unreleased) all of the paths below exist
-except style packs as resources (A4) and `query.render` (A3). Handoff:
+except style packs as resources (A4); `query.render` (the agent looks at
+slides, MCP image content) came with A3.4 (2026-10-11). Handoff:
 [`docs/handoff/A1-mcp-and-server-host.md`](../../docs/handoff/A1-mcp-and-server-host.md);
 reference: [`docs/mcp.md`](../../docs/mcp.md). (At the end of A0 none of
 them existed.)_

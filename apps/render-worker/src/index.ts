@@ -15,6 +15,7 @@ import IORedisModule from 'ioredis'
 import { RENDER_QUEUE, type RenderJobData, type RenderJobResult } from '@narrative/shared'
 import { readConfig } from './config.js'
 import { BrowserHolder } from './browser.js'
+import { WarmPages } from './warmPages.js'
 import { left, maskTokens, refuseLate, renderJob, RenderJobError } from './render.js'
 
 const { Worker } = bullmq
@@ -30,6 +31,8 @@ const holder = new BrowserHolder({
   requireSandbox: config.requireSandbox,
   log,
 })
+/** Pages kept for render sessions (they go with the browser). */
+const warm = new WarmPages({ max: config.warmPages, idleMs: config.idleMs, log })
 
 /**
  * Run one job; after a browser-side fault the next job gets a fresh Chromium.
@@ -38,11 +41,14 @@ const holder = new BrowserHolder({
 async function processJob(data: RenderJobData): Promise<RenderJobResult> {
   refuseLate(data)
   try {
-    return await holder.use((browser) => renderJob(browser, data, { config, log }), {
+    return await holder.use((browser) => renderJob(browser, data, { config, log, warm }), {
       launchTimeoutMs: left(data.deadline),
     })
   } catch (err) {
-    if (!(err instanceof RenderJobError) || err.browserSuspect) await holder.close('failed job')
+    if (!(err instanceof RenderJobError) || err.browserSuspect) {
+      warm.closeAll('failed job')
+      await holder.close('failed job')
+    }
     throw err
   }
 }
@@ -72,10 +78,15 @@ worker.on('ready', () => {
   log(`ready — queue="${RENDER_QUEUE}" app=${config.appOrigin}${via}${sandbox}`)
 })
 worker.on('active', (job) => {
-  log(`job=${job.id} deck=${job.data.deckId} slides=${job.data.uploads.length} started`)
+  const what =
+    job.data.kind === 'export'
+      ? `export of ${job.data.uploads.length} slide(s)`
+      : `look (${job.data.look.mode})`
+  log(`job=${job.id} deck=${job.data.deckId} ${what} started`)
 })
 worker.on('completed', (job, result) => {
-  log(`job=${job.id} deck=${job.data.deckId} rendered ${result.slides.length} slide(s)`)
+  const done = result.kind === 'export' ? `${result.slides.length} slide(s)` : 'look'
+  log(`job=${job.id} deck=${job.data.deckId} rendered ${done} (warm pages: ${warm.size})`)
 })
 worker.on('failed', (job, err) => {
   log(`job=${job?.id} deck=${job?.data.deckId} failed: ${maskTokens(err.message)}`)
@@ -87,6 +98,7 @@ worker.on('error', (err) => {
 async function shutdown(signal: string): Promise<void> {
   log(`${signal} — closing`)
   await worker.close()
+  warm.closeAll('shutdown')
   await holder.close('shutdown')
   await connection.quit()
   process.exit(0)

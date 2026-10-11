@@ -280,6 +280,14 @@ few seconds, and the log shows `browser started: Playwright headless shell …`
 `docker stats narrative-render-worker` falls back to ~100 MiB a minute
 later.
 
+**0.10.24 (A3.4):** the worker keeps the page of the last render session
+open for `RENDER_IDLE_MS` (60 s) after its job — `RENDER_WARM_PAGES`, default
+1 (0 opens a page per job; more costs a page's memory each, beside the
+900 MB limit). Nothing to configure for the release; after it, ask an agent
+to look at a slide twice within a minute and check the log: only the first
+job is followed by `browser started` / a page load, and the second comes
+back in about a second.
+
 ## Releasing the MinIO image switch
 
 The first release after `infra/docker-compose.yml` moved MinIO from

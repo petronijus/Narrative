@@ -54,6 +54,7 @@ import {
 } from '../auth/invites.js'
 import { getUserByEmail, getUserBySub } from '../auth/users.js'
 import { closeUserFolderConnections } from '../hocuspocus/connections.js'
+import { endRenderSessions } from '../render/sessions.js'
 import { sendEmail } from '../email/client.js'
 import { renderFolderInviteEmail } from '../email/templates/deckInvite.js'
 import type { ServiceDeps } from './deps.js'
@@ -103,6 +104,8 @@ export function createFolderSharingService(deps: ServiceDeps): FolderSharingServ
       deckIds: deckRows.map((d) => d.id),
       componentIds: componentRows.map((c) => c.id),
     })
+    // Pages kept for their render sessions read those decks too.
+    for (const d of deckRows) endRenderSessions({ userId: memberId, deckId: d.id })
   }
 
   /**

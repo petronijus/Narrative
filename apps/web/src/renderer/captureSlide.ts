@@ -14,21 +14,29 @@ import { Rectangle } from 'pixi.js'
 import { SLIDE_HEIGHT, SLIDE_WIDTH } from './constants.js'
 import type { SceneGraph } from './SceneGraph.js'
 
-export async function captureSlidePng(sceneGraph: SceneGraph): Promise<Blob> {
-  const renderer = sceneGraph.getApp().renderer
+/** The slide as a canvas of the slide's own size (1920×1080), at resolution 1. */
+export function captureSlideCanvas(sceneGraph: SceneGraph): HTMLCanvasElement | OffscreenCanvas {
   // The slide root's own space is slide space: its background and objects
   // from (0, 0) to the slide's size, whatever origin the canvas gave it.
-  const canvas = renderer.extract.canvas({
+  return sceneGraph.getApp().renderer.extract.canvas({
     target: sceneGraph.getRoot(),
     frame: new Rectangle(0, 0, SLIDE_WIDTH, SLIDE_HEIGHT),
     resolution: 1,
   }) as HTMLCanvasElement | OffscreenCanvas
+}
+
+/** A canvas as a PNG. */
+export function canvasToPng(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<Blob> {
   if ('convertToBlob' in canvas) return canvas.convertToBlob({ type: 'image/png' })
   return new Promise((resolve, reject) => {
     canvas.toBlob(
       (blob) =>
-        blob !== null ? resolve(blob) : reject(new Error('the slide could not be encoded')),
+        blob !== null ? resolve(blob) : reject(new Error('the picture could not be encoded')),
       'image/png',
     )
   })
+}
+
+export async function captureSlidePng(sceneGraph: SceneGraph): Promise<Blob> {
+  return canvasToPng(captureSlideCanvas(sceneGraph))
 }

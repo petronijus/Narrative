@@ -7,7 +7,8 @@
  * Kept in @narrative/shared so neither app depends on the other.
  *
  * The worker holds no storage credentials: the server hands it one presigned
- * PUT URL per slide, so it can write exactly those objects and nothing else.
+ * PUT URL per picture, so it can write exactly those objects and nothing
+ * else.
  *
  * Two clocks bound a job: `deadline`, when its caller stops waiting (the same
  * for every request, under Cloudflare's 100 s), and `workBudgetMs`, how long
@@ -18,9 +19,8 @@
 
 export const RENDER_QUEUE = 'render'
 
-export interface RenderUpload {
-  slideId: string
-  /** Presigned PUT to the slide's object; expires with the job. */
+/** Where one picture goes: a presigned PUT of `image/png`, expiring with the job. */
+export interface RenderTarget {
   url: string
   /**
    * Headers the PUT must send exactly as given: they are part of the
@@ -30,16 +30,27 @@ export interface RenderUpload {
   headers: Record<string, string>
 }
 
-export interface RenderJobData {
+export interface RenderUpload extends RenderTarget {
+  slideId: string
+}
+
+interface RenderJobBase {
   deckId: string
-  /** The slides to render, in the order the result lists them, each with where its PNG goes. */
-  uploads: RenderUpload[]
   /**
    * A render token (`nrr_…`, apps/server/src/auth/renderTokens.ts): the page
-   * opens with it as `share_token`. Minted for this job, valid until a little
-   * after `deadline`; never logged.
+   * opens with it as `share_token`. The server keeps one per person and deck
+   * for a few minutes (a render session) and the worker keeps the page it
+   * opened with it, switching slides in place, so the next job for that deck
+   * skips loading the app. Never logged.
    */
   token: string
+  /**
+   * Base64 of Y.encodeStateVector of the live deck when the job was made:
+   * the page draws only once its own copy holds those edits, so a job right
+   * after a command shows that command — a page kept from an earlier job
+   * included.
+   */
+  stateVector: string
   /**
    * Epoch milliseconds after which nobody waits for this job: the worker does
    * not start it, and stops it (closing its page) if it is still running.
@@ -48,6 +59,43 @@ export interface RenderJobData {
   /** Milliseconds the worker may spend on the job from its start (stopped like at the deadline). */
   workBudgetMs: number
 }
+
+/** PNGs of slides at their own size (1920×1080), one upload each: the PNG export. */
+export interface RenderExportJob extends RenderJobBase {
+  kind: 'export'
+  /** The slides to render, in the order the result lists them, each with where its PNG goes. */
+  uploads: RenderUpload[]
+}
+
+/**
+ * A look's size limits — what a model reads of an image without scaling it
+ * down first (Claude: 1568 px on the long edge, about 1.15 megapixels;
+ * agentic-layer §4.6). A slide comes out at 1430×804.
+ */
+export const LOOK_MAX_EDGE = 1568
+export const LOOK_MAX_PIXELS = 1_150_000
+
+/** What an agent looks at (`query.render`): one picture, composed in the page. */
+export type RenderLookSpec =
+  /** A slide, downscaled to `LOOK_MAX_EDGE` on its long edge. */
+  | { mode: 'slide'; slideId: string }
+  /** A region of a slide (slide px) at full resolution, downscaled only past `LOOK_MAX_EDGE`. */
+  | {
+      mode: 'region'
+      slideId: string
+      region: { x: number; y: number; width: number; height: number }
+    }
+  /** Many slides in a grid, each labelled with its number, within `LOOK_MAX_EDGE`. */
+  | { mode: 'sheet'; slideIds: string[] }
+
+export interface RenderLookJob extends RenderJobBase {
+  kind: 'look'
+  look: RenderLookSpec
+  /** Where the picture goes. */
+  upload: RenderTarget
+}
+
+export type RenderJobData = RenderExportJob | RenderLookJob
 
 /** Every slide renders at its own size (agentic A3: 1920×1080, no other scale). */
 export const RENDER_WIDTH = 1920
@@ -64,15 +112,22 @@ export interface RenderedSlide {
   failedLoads: number
 }
 
-export interface RenderJobResult {
-  slides: RenderedSlide[]
-  /**
-   * Font families with a face that failed to load: text in them shows a
-   * fallback face. Fonts load once for the page, so this is the job's, not a
-   * slide's.
-   */
-  failedFonts: string[]
+export interface RenderedLook {
+  width: number
+  height: number
+  sizeBytes: number
+  /** The slides in it, in the order shown, with their position and failed loads. */
+  slides: Array<{ slideId: string; index: number; failedLoads: number }>
 }
+
+/**
+ * A job's result. `failedFonts`: font families with a face that failed to
+ * load — text in them shows a fallback face. Fonts load once for the page, so
+ * this is the job's, not a slide's.
+ */
+export type RenderJobResult =
+  | { kind: 'export'; slides: RenderedSlide[]; failedFonts: string[] }
+  | { kind: 'look'; look: RenderedLook; failedFonts: string[] }
 
 /** Why a slide could not be rendered — the render page's error reasons, and the worker's own. */
 export type RenderFailureReason =
