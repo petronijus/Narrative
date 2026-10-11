@@ -83,6 +83,21 @@ describe('ResourceManager', () => {
     expect(rm.textureCount).toBe(0)
   })
 
+  it('flushReleased unloads at once what nothing holds, and keeps what is held', async () => {
+    vi.useFakeTimers()
+    await rm.acquireTexture('https://example.com/old.png')
+    await rm.acquireTexture('https://example.com/new.png')
+    rm.releaseTexture('https://example.com/old.png')
+    rm.flushReleased()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(Assets.unload).toHaveBeenCalledWith('https://example.com/old.png')
+    expect(Assets.unload).not.toHaveBeenCalledWith('https://example.com/new.png')
+    expect(rm.textureCount).toBe(1)
+    // Its grace timer is gone with it: nothing is unloaded twice.
+    await afterGrace()
+    expect(Assets.unload).toHaveBeenCalledTimes(1)
+  })
+
   it('takes a released texture back within the grace, without loading or unloading it', async () => {
     vi.useFakeTimers()
     const t1 = await rm.acquireTexture('https://example.com/img.png')

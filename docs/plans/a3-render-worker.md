@@ -102,7 +102,8 @@ Postgres:
   cost between agent sessions, warm during one;
 - `chromium-headless-shell` (no full browser UI), one page at a time
   (worker concurrency 1), Chromium's renderer-process limit 1;
-- a compose **memory limit** (`mem_limit: 900m`, `memswap_limit: 900m`),
+- a compose **memory limit** (`mem_limit` / `memswap_limit`: 900m, 1200m
+  since 0.10.25 — see "After 0.10.24"),
   so the worst case is a failed render, not an OOM-killed server.
 
 Measured 2026-10-10 on the production image (headless shell 148,
@@ -422,5 +423,17 @@ Chromium), `render/sessions.test.ts`, the stored-PNG check.
 Verified before the release: `just check`; the full e2e (202 passed, 15
 opt-in skipped); the full eval live (53/53, $7.32), `look-at-slide` and
 `export-png-slide` again after the last description change.
+
+**After 0.10.24** (production, the same day): `query.render` showed single
+slides of the Proseware deck correctly, but a sheet came back blank — six empty
+tiles, or a white picture. The kernel log showed the worker's Chromium
+OOM-killed at the 900 MB limit (one slide of that deck peaked at 899 MiB and
+stayed at ~750 MiB); a dead GPU process leaves empty canvases and no error.
+0.10.25: the render page unloads released textures at each slide switch
+(`ResourceManager.flushReleased`), composes on CPU canvases, refuses
+captures after a WebGL context loss (`watchContextLoss`, a browser fault, so
+the worker restarts Chromium), and the limit is 1200 MB (Petr). Measured
+locally first: neither a small GPU budget nor the production image alone
+reproduced it — only the production deck on the 2.9 GB VM did.
 
 Next: A3.5 server thumbnails.

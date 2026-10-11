@@ -14,6 +14,13 @@
  * Always a PNG (sharp text); one that comes out over `MAX_LOOK_BYTES` (photo
  * heavy) is composed again smaller, so it stays within what an MCP client
  * passes to a model.
+ *
+ * Every canvas here is a CPU canvas (`willReadFrequently`). Chrome keeps
+ * other 2D canvases in GPU memory — SwiftShader's, on the production VM — and
+ * drops them when its budget, sized from the machine's memory, runs out: on
+ * the 2.9 GB VM a sheet of six slides came back as six empty tiles with
+ * their numbers (0.10.24). A canvas that lost its content anyway is an error
+ * (`assertIntact`), never a blank picture.
  */
 
 import { LOOK_MAX_EDGE, LOOK_MAX_PIXELS } from '@narrative/shared'
@@ -116,7 +123,7 @@ function newCanvas(
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
-  const ctx = canvas.getContext('2d')
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
   if (ctx === null) throw new Error('no 2D canvas')
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
@@ -181,16 +188,27 @@ function composeAt(
   return canvas
 }
 
+/** Throws when a canvas has lost its content (Chrome dropped its backing store). */
+export function assertIntact(canvas: unknown, what: string): void {
+  if (typeof HTMLCanvasElement === 'undefined' || !(canvas instanceof HTMLCanvasElement)) return
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (ctx !== null && typeof ctx.isContextLost === 'function' && ctx.isContextLost()) {
+    throw new Error(`${what} lost its pixels (the browser dropped the canvas)`)
+  }
+}
+
 /** Compose the look; smaller again while its PNG is over `MAX_LOOK_BYTES`. */
 export async function composeLook(
   request: LookRequest,
   frames: LookFrame[],
 ): Promise<ComposedLook> {
   if (frames.length === 0) throw new Error('nothing to compose')
+  frames.forEach((frame, i) => assertIntact(frame.canvas, `slide ${i + 1} of the look`))
   let edge = LOOK_MAX_EDGE
   let pixels = LOOK_MAX_PIXELS
   for (;;) {
     const canvas = composeAt(request, frames, edge, pixels)
+    assertIntact(canvas, 'the look')
     const png = await canvasToPng(canvas)
     if (png.size <= MAX_LOOK_BYTES || edge <= MIN_EDGE) {
       return { png, width: canvas.width, height: canvas.height }

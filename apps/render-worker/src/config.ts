@@ -20,7 +20,7 @@
  *   RENDER_WARM_PAGES               pages kept open between jobs, one per
  *                                   render session (default 1; 0 opens a
  *                                   page per job). Each costs memory beside
- *                                   the 900 MB the container may use
+ *                                   the 1200 MB the container may use
  *   RENDER_CHROME_EXECUTABLE        a Chrome / Chromium binary to use instead
  *                                   of Playwright's headless shell (machines
  *                                   Playwright ships no build for)
