@@ -8,6 +8,23 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.26 — Contact sheets draw with preview-size pictures; render timings in the log (2026-10-11)
+
+### Changed
+
+- **A contact sheet draws its slides with preview-size pictures** (600 px)
+  instead of the 2560-px display ones: a tile is at most ~700 px wide, and
+  loading, decoding and holding full pictures for it was what made a sheet
+  of a photo-heavy deck slow on the render worker (a slide of the Proseware
+  deck took 9–15 s on production, so a sheet of two ran past its deadline).
+  Single slides and regions keep the full pictures.
+- **The render worker logs where each job's time went**: the page's steps
+  (sync, slide ready, capture, encode or compose, per slide) and the
+  slowest network loads, by path — the next step on render speed is chosen
+  from production numbers, not from the dev machine's.
+
+---
+
 ## 0.10.25 — Looks at photo-heavy decks no longer come back blank (2026-10-11)
 
 ### Fixed

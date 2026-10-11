@@ -54,7 +54,13 @@ interface RenderWindow {
     slideId: string,
     opts: { stateVector: string },
   ) => Promise<
-    PageOutcome<{ base64: string; slideIndex: number; failedLoads: number; failedFonts: string[] }>
+    PageOutcome<{
+      base64: string
+      slideIndex: number
+      failedLoads: number
+      failedFonts: string[]
+      timings?: unknown
+    }>
   >
   __narrativeRenderLook?: (
     spec: RenderLookSpec,
@@ -66,6 +72,7 @@ interface RenderWindow {
       height: number
       slides: Array<{ slideId: string; index: number; failedLoads: number }>
       failedFonts: string[]
+      timings?: unknown
     }>
   >
 }
@@ -204,11 +211,18 @@ async function upload(
   return png.byteLength
 }
 
+/** Where a page job's time went (pages/renderTimings.ts), one log line. */
+function logTimings(log: (message: string) => void, deckId: string, timings: unknown): void {
+  if (timings === undefined) return
+  log(`deck=${deckId} timings ${maskTokens(JSON.stringify(timings))}`)
+}
+
 async function runOnPage(
   page: Page,
   data: RenderJobData,
   config: RenderWorkerConfig,
   signal: AbortSignal,
+  log: (message: string) => void,
 ): Promise<RenderJobResult> {
   if (data.kind === 'export') {
     const slides: RenderedSlide[] = []
@@ -220,6 +234,7 @@ async function runOnPage(
         [target.slideId, data.stateVector] as const,
       )
       if (!outcome.ok) throw pageFailure(outcome)
+      logTimings(log, data.deckId, outcome.value.timings)
       const sizeBytes = await upload(target, outcome.value.base64, config, signal)
       slides.push({
         slideId: target.slideId,
@@ -239,6 +254,7 @@ async function runOnPage(
     [data.look, data.stateVector] as const,
   )
   if (!outcome.ok) throw pageFailure(outcome)
+  logTimings(log, data.deckId, outcome.value.timings)
   const sizeBytes = await upload(data.upload, outcome.value.base64, config, signal)
   return {
     kind: 'look',
@@ -287,7 +303,7 @@ export async function renderJob(
       })
     }
     await untilHooks(warm.page, stopAt)
-    const result = await runOnPage(warm.page, data, deps.config, stopUpload.signal)
+    const result = await runOnPage(warm.page, data, deps.config, stopUpload.signal, deps.log)
     succeeded = true
     return result
   } catch (err) {
