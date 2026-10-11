@@ -15,6 +15,8 @@ its background and shadow (crop 808 × 808 at 110,110) — into
 
 - `favicon.ico` — 16, 32 and 48 px;
 - `apple-touch-icon.png` — 180 px.
+- `apps/desktop/resources/icon.png` — 1024 px, the desktop app's icon
+  (electron-builder makes the macOS `.icns` and the Windows `.ico` from it).
 
 Regenerate them after changing the short logo:
 
@@ -22,4 +24,5 @@ Regenerate them after changing the short logo:
 magick docs/brand/narrative-logo-short.jpeg -crop 808x808+110+110 +repage -strip card.png
 magick card.png -define icon:auto-resize=48,32,16 -strip apps/web/public/favicon.ico
 magick card.png -resize 180x180 -strip apps/web/public/apple-touch-icon.png
+magick card.png -resize 1024x1024 -strip apps/desktop/resources/icon.png
 ```

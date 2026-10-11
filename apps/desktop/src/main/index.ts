@@ -19,6 +19,7 @@ import {
 } from './deepLinks.js'
 import { applyWebContentsGuards, createPresenterWindow } from './guards.js'
 import { IpcRegistry, registerCoreIpc } from './ipc.js'
+import { integrateAppImage } from './linuxIntegration.js'
 import {
   menuActionResult,
   noPayload,
@@ -418,6 +419,8 @@ void app.whenReady().then(async () => {
     return signIn.start(returnTo)
   })
 
+  // An AppImage writes its .desktop entry before the scheme points at it.
+  integrateAppImage(log, process.resourcesPath)
   registerScheme(log)
   applyMenu()
   ensureMainWindow()

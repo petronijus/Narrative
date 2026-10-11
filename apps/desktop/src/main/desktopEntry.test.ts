@@ -25,5 +25,20 @@ describe('Desktop Entry Exec quoting', () => {
     expect(text).toContain('Exec="/opt/e/electron" "/home/p/app" %U\n')
     expect(text).toContain('MimeType=x-scheme-handler/narrative-dev;\n')
     expect(text).toContain('NoDisplay=true\n')
+    expect(text).not.toContain('Icon=')
+  })
+
+  it('names the icon and categories of an entry shown in menus', () => {
+    const text = renderDesktopEntry({
+      name: 'Narrative',
+      exec: ['/home/p/Apps/Narrative.AppImage'],
+      fieldCode: '%U',
+      mimeTypes: ['x-scheme-handler/narrative'],
+      noDisplay: false,
+      icon: 'narrative',
+      categories: ['Office'],
+    })
+    expect(text).toContain('Icon=narrative\n')
+    expect(text).toContain('Categories=Office;\n')
   })
 })

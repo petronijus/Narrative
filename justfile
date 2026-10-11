@@ -158,6 +158,17 @@ desktop server="dev":
     node -e 'require("electron")' 2>/dev/null || pnpm --filter @narrative/desktop run electron:install
     exec node_modules/.bin/electron apps/desktop "--server={{ server }}"
 
+# Package the desktop app into apps/desktop/release/: `just desktop-dist` (Linux deb + AppImage),
+# `just desktop-dist mac` (on the MacBook: signed + notarized), `just desktop-dist win` (NSIS, built here)
+desktop-dist target="linux":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{ target }}" in linux) flag=--linux ;; mac) flag=--mac ;; win) flag=--win ;; *) echo "desktop-dist: linux, mac or win" >&2; exit 1 ;; esac
+    if [[ "{{ target }}" == mac && "$(uname)" != Darwin ]]; then echo "desktop-dist: macOS builds run on the MacBook" >&2; exit 1; fi
+    cd apps/desktop
+    node scripts/build.mjs
+    exec ../../node_modules/.bin/electron-builder --config electron-builder.config.cjs "$flag" --publish never
+
 # Ubuntu 26.04 only: the AppArmor profile that lets this checkout's Electron use its sandbox (asks for sudo)
 desktop-apparmor:
     tools/dev/desktop-apparmor.sh

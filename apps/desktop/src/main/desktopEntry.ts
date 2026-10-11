@@ -21,6 +21,9 @@ export interface DesktopEntry {
   fieldCode: '%U' | '%u' | '%F' | '%f'
   mimeTypes: readonly string[]
   noDisplay: boolean
+  /** An icon name from the icon theme, or an absolute path. */
+  icon?: string
+  categories?: readonly string[]
 }
 
 export function renderDesktopEntry(entry: DesktopEntry): string {
@@ -30,6 +33,10 @@ export function renderDesktopEntry(entry: DesktopEntry): string {
     'Type=Application',
     `Name=${entry.name.replace(/[\r\n]/g, ' ')}`,
     `Exec=${exec}`,
+    ...(entry.icon !== undefined ? [`Icon=${entry.icon.replace(/[\r\n]/g, '')}`] : []),
+    ...(entry.categories !== undefined
+      ? [`Categories=${entry.categories.map((c) => `${c};`).join('')}`]
+      : []),
     'Terminal=false',
     `NoDisplay=${entry.noDisplay ? 'true' : 'false'}`,
     `MimeType=${entry.mimeTypes.map((m) => `${m};`).join('')}`,

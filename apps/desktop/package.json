@@ -1,5 +1,6 @@
 {
   "name": "@narrative/desktop",
+  "productName": "Narrative",
   "version": "0.10.25",
   "private": true,
   "type": "module",
@@ -11,15 +12,22 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src scripts",
     "test": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts",
-    "electron:install": "install-electron"
+    "electron:install": "install-electron",
+    "dist": "node scripts/build.mjs && electron-builder --config electron-builder.config.cjs --publish never"
   },
   "devDependencies": {
     "@narrative/shared": "workspace:*",
     "@types/node": "^24.19.1",
     "electron": "44.7.0",
+    "electron-builder": "26.17.0",
     "esbuild": "0.27.7",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7",
     "zod": "^4.6.5"
-  }
+  },
+  "author": {
+    "name": "Petr Parkan Janda",
+    "email": "petronijus@bastla.com"
+  },
+  "homepage": "https://narrative.bastla.com"
 }
