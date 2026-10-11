@@ -10,7 +10,7 @@ import { defineCommand } from '../registry.js'
 import { requireServices } from '../services.js'
 import { SlideRefSchema, type SlideRef } from '../refs.js'
 import type { RenderSlideRef } from '../services/render.js'
-import { GET, serverCommand, targetDeckId } from './serverShared.js'
+import { GET, PUT, serverCommand, targetDeckId } from './serverShared.js'
 
 /**
  * Slides one call renders at most: a slide with fresh pictures costs up to
@@ -168,4 +168,34 @@ export const queryRender = defineCommand({
   },
 })
 
-export const renderCommands = [deckExportPng, queryRender]
+export const deckRefreshThumbnail = defineCommand({
+  ...serverCommand,
+  id: 'deck.refreshThumbnail',
+  domain: 'deck',
+  title: 'Redraw the deck card',
+  description:
+    'Redraw the deck’s card picture — what the folder page shows for it — from its first slide, now. The ' +
+    'card follows changes by itself: from the editor while someone has the deck open, else about 15 s after ' +
+    'the last change (once a minute at most); call this only when it must be right at once (before sending ' +
+    'someone to the folder). Returns the new picture’s URL. Takes a few seconds. Editors of the deck.',
+  input: z.strictObject({}),
+  output: z.object({
+    thumbnailUrl: z.string(),
+    updatedAt: z.string().describe('ISO 8601 timestamp'),
+  }),
+  role: 'editor',
+  scope: 'deck',
+  effects: ['server'],
+  undo: 'n/a',
+  confirm: 'never',
+  routes: [PUT('/decks/:id/thumbnail')],
+  examples: [{ title: 'Redraw the card after reworking the title slide', input: {} }],
+  async handler(ctx) {
+    return requireServices(ctx).render.refreshThumbnail({
+      userId: ctx.actor.userId,
+      deckId: targetDeckId(ctx),
+    })
+  },
+})
+
+export const renderCommands = [deckExportPng, queryRender, deckRefreshThumbnail]

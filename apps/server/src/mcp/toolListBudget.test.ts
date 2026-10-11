@@ -75,6 +75,9 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * A3.4 (2026-10-11): 182,500 → 184,500 for query.render ≈ 1.6 KB (the agent
  * looks at slides) and `failedFonts` on deck.exportPng: 183,680 bytes in url
  * mode, 137 tools.
+ * A3.5a (2026-10-11): no raise for deck.refreshThumbnail ≈ 0.7 KB (the deck's
+ * card): 184,396 bytes in url mode, 138 tools — 104 bytes left, so
+ * component.refreshThumbnail (A3.5b) needs a raise.
  */
 export const TOOL_LIST_BUDGET_BYTES = 184_500
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */

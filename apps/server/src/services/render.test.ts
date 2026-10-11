@@ -12,7 +12,12 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
-import type { RenderExportJob, RenderJobData, RenderJobResult } from '@narrative/shared'
+import {
+  renderFailureMessage,
+  type RenderExportJob,
+  type RenderJobData,
+  type RenderJobResult,
+} from '@narrative/shared'
 
 type RenderExportResult = Extract<RenderJobResult, { kind: 'export' }>
 import { MAX_RENDER_SLIDES, type RenderView } from '@narrative/commands'
@@ -44,12 +49,27 @@ vi.mock('../media/s3Client.js', async (importOriginal) => ({
   })),
 }))
 vi.mock('../hocuspocus/connections.js', () => ({ closeShareTokenConnections: vi.fn(() => 0) }))
+vi.mock('./deckThumbnailStore.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./deckThumbnailStore.js')>()),
+  storeDeckThumbnail: vi.fn(),
+}))
+vi.mock('./decks.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./decks.js')>()),
+  deckRecord: vi.fn((row: { thumbnailKey: string | null }) => ({
+    thumbnailUrl: row.thumbnailKey === null ? null : `https://img.test/${row.thumbnailKey}?v=1`,
+    thumbnailUpdatedAt: row.thumbnailKey === null ? null : '2026-10-11T18:00:00.000Z',
+  })),
+}))
 
 import { resolveDeckAccess } from '../auth/permissions.js'
 import { resolveRenderToken } from '../auth/renderTokens.js'
 import { readDocCopy } from './liveDocs.js'
+import { clearCardStateForTests } from '../render/cardState.js'
+import { storeDeckThumbnail, type DeckRow } from './deckThumbnailStore.js'
 import { buildS3Client } from '../media/s3Client.js'
 import {
+  BACKGROUND_PRIORITY,
+  RendererBusyError,
   clearRenderInFlightForTests,
   createRenderService,
   MAX_IN_FLIGHT_PER_USER,
@@ -476,5 +496,173 @@ describe('RenderService.look', () => {
     )
     expect(await status(view(service, { sheet: 'all' }))).toBe(413)
     expect(queue.run).not.toHaveBeenCalled()
+  })
+})
+
+describe('deck card pictures', () => {
+  const card = { thumbnailKey: 'decks/d1/thumb-abc.png' } as DeckRow
+
+  /** Copies of one live document, as readDocCopy hands them out; `edit` changes it. */
+  function liveDoc(ids: string[]) {
+    const doc = deckDoc(ids)
+    vi.mocked(readDocCopy).mockImplementation(async () => {
+      const copy = new Y.Doc()
+      Y.applyUpdate(copy, Y.encodeStateAsUpdate(doc))
+      return copy
+    })
+    return doc
+  }
+
+  beforeEach(() => {
+    clearCardStateForTests()
+    vi.mocked(storeDeckThumbnail).mockReset()
+    vi.mocked(storeDeckThumbnail).mockResolvedValue(card)
+  })
+
+  it('draws the first slide as a thumbnail look, checks it and stores it as the card (editors)', async () => {
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
+    const { queue, service } = setup(async (data) => looked(data))
+    const result = await service.refreshThumbnail({ userId: 'u1', deckId: 'd1' })
+    const job = queue.run.mock.calls[0]![0]
+    expect(job.kind === 'look' && job.look).toEqual({ mode: 'thumbnail', slideId: 's1' })
+    expect(job.kind === 'look' && job.upload.url).toMatch(/\/exports\/[\w-]{16}\/thumb\.png\?/)
+    // A person's job keeps its page warm; it is in their own render lane.
+    expect(job.keepPage).toBeUndefined()
+    expect(resolveRenderToken(job.token)?.lane).toBe('person')
+    expect(vi.mocked(storeDeckThumbnail).mock.calls[0]!.slice(1)).toEqual([
+      'd1',
+      { bytes: expect.any(Uint8Array), mime: 'image/png' },
+    ])
+    expect(result).toEqual({
+      thumbnailUrl: 'https://img.test/decks/d1/thumb-abc.png?v=1',
+      updatedAt: '2026-10-11T18:00:00.000Z',
+    })
+  })
+
+  it('lets only editors redraw the card (403), refuses a deck without slides (400) and says when the deck went away (404)', async () => {
+    const { queue, service } = setup(async (data) => looked(data))
+    expect(await status(service.refreshThumbnail({ userId: 'u1', deckId: 'd1' }))).toBe(403)
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
+    vi.mocked(readDocCopy).mockImplementation(async () => deckDoc([]))
+    expect(await status(service.refreshThumbnail({ userId: 'u1', deckId: 'd1' }))).toBe(400)
+    expect(queue.run).not.toHaveBeenCalled()
+    vi.mocked(readDocCopy).mockImplementation(async () => deckDoc(['s1']))
+    vi.mocked(storeDeckThumbnail).mockResolvedValue(null)
+    expect(await status(service.refreshThumbnail({ userId: 'u1', deckId: 'd1' }))).toBe(404)
+  })
+
+  it('draws a background card behind everyone, in a lane of its own, outside the owner’s share', async () => {
+    const holds: Array<() => void> = []
+    const { queue, service } = setup(async (data) => {
+      if (data.kind === 'export') await new Promise<void>((r) => holds.push(r))
+      return data.kind === 'export' ? rendered(data) : looked(data)
+    })
+    // The owner's own renders fill their share…
+    const busy = Array.from({ length: MAX_IN_FLIGHT_PER_USER }, () => ask(service))
+    await vi.waitFor(() => expect(queue.run).toHaveBeenCalledTimes(MAX_IN_FLIGHT_PER_USER))
+    // …and the card is drawn all the same, last in line, on a page not kept
+    // warm, with a token of the background lane (its own session and budget).
+    expect(await service.backgroundThumbnail({ userId: 'u1', deckId: 'd1' })).toEqual({
+      status: 'stored',
+    })
+    const [job, opts] = queue.run.mock.calls.at(-1)!
+    expect(opts).toEqual({ priority: BACKGROUND_PRIORITY })
+    expect(job.keepPage).toBe(false)
+    expect(resolveRenderToken(job.token)).toMatchObject({ requestedBy: 'u1', lane: 'background' })
+    expect(job.token).not.toBe(queue.run.mock.calls[0]![0].token)
+    for (const release of holds) release()
+    await Promise.all(busy)
+  })
+
+  it('draws a background card again only when the first slide changed — a deletion included', async () => {
+    const { queue, service } = setup(async (data) => looked(data))
+    const doc = liveDoc(['s1', 's2'])
+    const background = () => service.backgroundThumbnail({ userId: 'u1', deckId: 'd1' })
+    expect(await background()).toEqual({ status: 'stored' })
+    expect(await background()).toEqual({ status: 'unchanged' })
+    // Slide 2 changes: the card does not.
+    doc.getArray<Y.Map<unknown>>('slides').get(1).set('name', 'Second')
+    expect(await background()).toEqual({ status: 'unchanged' })
+    // An object on slide 1 is deleted: a deletion, which leaves the state
+    // vector as it was — the card is drawn again.
+    const objects = doc.getArray<Y.Map<unknown>>('slides').get(0).get('objects') as Y.Array<unknown>
+    const block = new Y.Map<unknown>()
+    block.set('id', 'block')
+    block.set('type', 'rectangle')
+    objects.push([block])
+    expect(await background()).toEqual({ status: 'stored' })
+    const before = Y.encodeStateVector(doc)
+    objects.delete(0, 1)
+    expect(Y.encodeStateVector(doc)).toEqual(before)
+    expect(await background()).toEqual({ status: 'stored' })
+    expect(queue.run).toHaveBeenCalledTimes(3)
+  })
+
+  it('counts a card the agent redrew as drawn', async () => {
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
+    const { queue, service } = setup(async (data) => looked(data))
+    liveDoc(['s1'])
+    await service.refreshThumbnail({ userId: 'u1', deckId: 'd1' })
+    expect(await service.backgroundThumbnail({ userId: 'owner', deckId: 'd1' })).toEqual({
+      status: 'unchanged',
+    })
+    expect(queue.run).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not store a background card someone opened the deck for meanwhile, nor one for a deck without slides', async () => {
+    const { queue, service } = setup(async (data) => looked(data))
+    liveDoc(['s1'])
+    expect(
+      await service.backgroundThumbnail({ userId: 'u1', deckId: 'd1', stillWanted: () => false }),
+    ).toEqual({ status: 'superseded' })
+    expect(storeDeckThumbnail).not.toHaveBeenCalled()
+    // Not stored, so not drawn: the next try draws it.
+    expect(await service.backgroundThumbnail({ userId: 'u1', deckId: 'd1' })).toEqual({
+      status: 'stored',
+    })
+    vi.mocked(readDocCopy).mockImplementation(async () => deckDoc([]))
+    expect(await service.backgroundThumbnail({ userId: 'u1', deckId: 'd1' })).toEqual({
+      status: 'no-slides',
+    })
+    expect(queue.run).toHaveBeenCalledTimes(2)
+  })
+
+  it('tells a busy renderer from a job that failed on its page', async () => {
+    const full = setup(
+      async (data) => looked(data),
+      async () => MAX_WAITING_JOBS,
+    )
+    await expect(
+      full.service.backgroundThumbnail({ userId: 'u1', deckId: 'd1' }),
+    ).rejects.toBeInstanceOf(RendererBusyError)
+    const late = setup(async () => {
+      throw new Error(renderFailureMessage('late', 'nobody waits'))
+    })
+    await expect(
+      late.service.backgroundThumbnail({ userId: 'u1', deckId: 'd1' }),
+    ).rejects.toBeInstanceOf(RendererBusyError)
+    const queued = setup(async () => {
+      throw new RenderTimeoutError(false)
+    })
+    await expect(queued.service.backgroundThumbnail({ userId: 'u1', deckId: 'd1' })).rejects.toBeInstanceOf(
+      RendererBusyError,
+    )
+    // Started and not finished in time: the slide itself is slow — not busy.
+    const slow = setup(async () => {
+      throw new RenderTimeoutError(true)
+    })
+    const slowErr = await slow.service
+      .backgroundThumbnail({ userId: 'u1', deckId: 'd1' })
+      .catch((e: unknown) => e)
+    expect(slowErr).toBeInstanceOf(ServiceError)
+    expect(slowErr).not.toBeInstanceOf(RendererBusyError)
+    const crashed = setup(async () => {
+      throw new Error(renderFailureMessage('browser', 'the page crashed'))
+    })
+    const err = await crashed.service
+      .backgroundThumbnail({ userId: 'u1', deckId: 'd1' })
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ServiceError)
+    expect(err).not.toBeInstanceOf(RendererBusyError)
   })
 })

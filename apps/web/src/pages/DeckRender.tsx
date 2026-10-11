@@ -505,8 +505,9 @@ export function DeckRender() {
         const slideIds = spec.mode === 'sheet' ? spec.slideIds : [spec.slideId]
         const frames: LookFrame[] = []
         const slides: Array<{ slideId: string; index: number; failedLoads: number }> = []
-        // A sheet's tiles are small: its slides draw with preview-size pictures.
-        if (spec.mode === 'sheet') setImageVariantCap('preview')
+        // A sheet's tiles and a card picture are small: their slides draw
+        // with preview-size pictures.
+        if (spec.mode === 'sheet' || spec.mode === 'thumbnail') setImageVariantCap('preview')
         try {
           for (const slideId of slideIds) {
             const { index } = await showAndWait(slideId)

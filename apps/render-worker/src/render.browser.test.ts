@@ -121,6 +121,10 @@ describe('renderJob and the session page', () => {
       expect(warm.size).toBe(1)
       await renderJob(browser!, job('nrr_a', 's1'), deps)
       expect(pageLoads).toBe(3)
+      // Background work closes its page: the people's warm pages stay as they were.
+      const before = warm.size
+      await renderJob(browser!, { ...job('nrr_c', 's1'), keepPage: false }, deps)
+      expect([pageLoads, warm.size]).toEqual([4, before])
     } finally {
       warm.closeAll('test')
     }

@@ -258,6 +258,11 @@ already checked. Subagents in
   # or: PLAYWRIGHT_CHROME_EXECUTABLE=/usr/bin/google-chrome PLAYWRIGHT_NO_VIDEO=1 …
   ```
   Verified on `petronijus-PC`, Ubuntu 26.04.1 LTS, 2026-09-09.
+- **Many e2e specs fail with `Target crashed` on the Omarchy desktop** — the browser log shows `Invalid message: VALIDATION_ERROR_DESERIALIZATION_FAILED` on `viz.mojom.CopyOutputResultSender`, then `GPU process exited unexpectedly`: a screenshot crashes the browser. `tools/dev/playwright-env.sh` falls back to a system browser whenever Playwright's own Chromium _at the revision its version expects_ is missing — on Arch that was `/usr/bin/chromium` 152 against Playwright 1.60 (which wants revision 1223, Chromium 148), silently, since a Playwright upgrade. Playwright's builds do run on Arch: install them and the fallback stops (`bash tools/dev/playwright-env.sh` then prints nothing):
+  ```bash
+  pnpm --filter web exec playwright install chromium chromium-headless-shell
+  ```
+  Measured on the Omarchy desktop, 2026-10-11: the full suite went from 42 failures (most of them `Target crashed`) to 13 — `canvas-sharpness-final` still crashes when its zoomed DPR-2 canvases run in parallel with other specs and passes with `--workers=1`; the rest passed on rerun. (`playwright install` also deletes revisions no installed Playwright names — another project's browser comes back with its own `playwright install`.)
 - **`pnpm lint` fails with `ERR_UNKNOWN_FILE_EXTENSION` on Ubuntu 26.04's own Node** — `TypeError [ERR_UNKNOWN_FILE_EXTENSION]: Unknown file extension ".ts" for …/packages/commands/src/parity/slideModelExports.ts`, before a single file is linted (`eslint.config.js` imports that file through `apps/web/eslint.one-door.js`). The distro package `nodejs` (`/usr/bin/node`, v22.22.1) is built without TypeScript support: `node -p process.features.typescript` prints `false`, and `node --experimental-strip-types file.ts` throws `ERR_NO_TYPESCRIPT`. That version predates the Node 24 move (2026-10-09), so `engines` and `just doctor` now refuse it outright; the entry stays for any Node build without type stripping, which `just doctor` warns about. Working around it by loading `tsx` as the loader:
   ```bash
   NODE_OPTIONS="--import=tsx" pnpm lint

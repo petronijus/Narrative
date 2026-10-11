@@ -58,6 +58,12 @@ interface RenderJobBase {
   deadline: number
   /** Milliseconds the worker may spend on the job from its start (stopped like at the deadline). */
   workBudgetMs: number
+  /**
+   * false: close the page after the job instead of keeping it warm — the
+   * server's background work (a deck's card picture), which must not push a
+   * person's warm page out. Absent means keep it.
+   */
+  keepPage?: boolean
 }
 
 /** PNGs of slides at their own size (1920×1080), one upload each: the PNG export. */
@@ -75,7 +81,17 @@ export interface RenderExportJob extends RenderJobBase {
 export const LOOK_MAX_EDGE = 1568
 export const LOOK_MAX_PIXELS = 1_150_000
 
-/** What an agent looks at (`query.render`): one picture, composed in the page. */
+/**
+ * A deck's card picture (`thumbnail` looks): the size the folder page's
+ * imgproxy `thumb` variant shows (400×225, which never enlarges).
+ */
+export const THUMBNAIL_WIDTH = 400
+export const THUMBNAIL_HEIGHT = 225
+
+/**
+ * What the render page composes from slides: what an agent looks at
+ * (`query.render`) or a deck's card — one picture, composed in the page.
+ */
 export type RenderLookSpec =
   /** A slide, downscaled to `LOOK_MAX_EDGE` on its long edge. */
   | { mode: 'slide'; slideId: string }
@@ -87,6 +103,8 @@ export type RenderLookSpec =
     }
   /** Many slides in a grid, each labelled with its number, within `LOOK_MAX_EDGE`. */
   | { mode: 'sheet'; slideIds: string[] }
+  /** A slide as the deck's card picture, `THUMBNAIL_WIDTH`×`THUMBNAIL_HEIGHT`. */
+  | { mode: 'thumbnail'; slideId: string }
 
 export interface RenderLookJob extends RenderJobBase {
   kind: 'look'

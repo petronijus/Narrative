@@ -134,7 +134,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/pages/DeckPresent.tsx", PRESENT),
     # render-export reaches __narrativeRenderShow (the worker's slide switch).
     ("apps/web/src/pages/DeckRender.tsx", ["render-page", "render-export", "query-render"]),
-    ("apps/web/src/pages/renderLook.ts", ["query-render"]),
+    ("apps/web/src/pages/renderLook.ts", ["query-render", "deck-card"]),
     ("apps/web/src/pages/renderSlide.ts", ["render-page"]),
     # The toolbar's PowerPoint download goes through it too.
     ("apps/web/src/lib/download.ts", ["render-export", "pptx-roundtrip"] + SLIDES_PANEL),
@@ -286,7 +286,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/services/decks.ts", ACCESS + ["slide-duplicate"]),
     ("apps/server/src/routes/sharing.ts", ACCESS),
     ("apps/server/src/routes/folders.ts", ACCESS),
-    ("apps/server/src/routes/decks.ts", ACCESS + SLIDES_PANEL),
+    ("apps/server/src/routes/decks.ts", ACCESS + SLIDES_PANEL + ["deck-card"]),
     ("apps/server/src/services/tokens.ts", TOKENS),
     ("apps/server/src/services/tokenRebind.ts", TOKENS),
     ("apps/server/src/routes/tokens.ts", TOKENS),
@@ -309,8 +309,10 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/services/index.ts", AGENT + ACCESS),
     ("apps/video-worker/src/*", MEDIA),
     ("apps/render-worker/*", ["render-export", "render-page", "query-render"]),
-    ("apps/server/src/services/render.ts", ["render-export", "query-render"]),
-    ("apps/server/src/render/*", ["render-export", "query-render"]),
+    ("apps/server/src/services/render.ts", ["render-export", "query-render", "deck-card"]),
+    ("apps/server/src/render/*", ["render-export", "query-render", "deck-card"]),
+    # The deck's card on the folder page, drawn by the render worker (A3.5).
+    ("apps/server/src/services/deckThumbnail*", ["deck-card"]),
     ("apps/server/src/mcp/results.ts", ["query-render"]),
     ("apps/server/src/routes/pngExport.ts", ["render-export"]),
     # ── packages ──────────────────────────────────────────────────────────

@@ -1175,6 +1175,17 @@ export function createDomainFakes(
               failedFonts: [],
             }
       },
+      async refreshThumbnail(args) {
+        rRender('refreshThumbnail', args)
+        requireDeck(args.deckId)
+        if (args.deckId !== world.deckId) {
+          throw new CommandError('invalid_input', 'The deck has no slides to draw its card from')
+        }
+        return {
+          thumbnailUrl: `https://img.test/insecure/decks/${args.deckId}/thumb.png?v=1`,
+          updatedAt: T0,
+        }
+      },
       async look(args) {
         rRender('look', args)
         const sheet = 'sheet' in args.view

@@ -30,19 +30,21 @@
  */
 
 import type { FastifyInstance } from 'fastify'
-import { eq } from 'drizzle-orm'
-import { PutObjectCommand } from '@aws-sdk/client-s3'
 import type { Database } from '../db/client.js'
-import { decks } from '../db/schema.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
 import { lookupSession, SESSION_COOKIE_NAME } from '../auth/session.js'
 import { devSubFromCookieHeader } from '../auth/devIdentity.js'
-import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { parseDataUrl } from '../media/dataUrl.js'
 import { createDecksService, deckRecord } from '../services/decks.js'
 import { routeDeps } from '../services/http.js'
 import { sendServiceError } from '../services/errors.js'
 import { sendInsertObjects } from './insertObjects.js'
+import { forgetCard } from '../render/cardState.js'
+import {
+  storeDeckThumbnail,
+  ThumbnailFormatError,
+  ThumbnailStorageError,
+} from '../services/deckThumbnailStore.js'
 
 interface CreateDeckBody {
   title?: string
@@ -254,36 +256,23 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
         return reply.status(413).send({ error: 'thumbnail too large' })
       }
 
-      // The deck's MinIO key is stable per deck — overwriting the same
-      // object lets imgproxy / browser caches key on the
-      // thumbnail_updated_at timestamp returned in the deck row.
-      const ext = parsed.mime === 'image/png' ? 'png' : 'jpg'
-      const storageKey = `decks/${id}/thumb.${ext}`
-      const s3 = buildS3Client()
+      let updated
       try {
-        await s3.send(
-          new PutObjectCommand({
-            Bucket: MEDIA_BUCKET,
-            Key: storageKey,
-            Body: parsed.bytes,
-            ContentType: parsed.mime,
-            CacheControl: 'public, max-age=60',
-          }),
-        )
+        updated = await storeDeckThumbnail(db, id, { bytes: parsed.bytes, mime: parsed.mime })
       } catch (err) {
+        if (err instanceof ThumbnailFormatError) {
+          return reply.status(400).send({ error: `dataUrl: ${err.message}` })
+        }
+        if (!(err instanceof ThumbnailStorageError)) throw err
         request.log.error({ err, deckId: id }, 'thumbnail upload failed')
         return reply.status(502).send({ error: 'storage upload failed' })
       }
-
-      const now = new Date()
-      const [updated] = await db
-        .update(decks)
-        .set({ thumbnailKey: storageKey, thumbnailUpdatedAt: now, updatedAt: now })
-        .where(eq(decks.id, id))
-        .returning()
       if (!updated) {
         return reply.status(404).send({ error: 'Deck not found' })
       }
+      // The editor drew it from what it had; the server no longer knows what
+      // the card shows, so the next background pass draws it again.
+      forgetCard(id)
       return reply.send(deckRecord(updated))
     },
   )

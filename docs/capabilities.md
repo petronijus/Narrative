@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **137**. Known missing: **5**. Deliberately excluded: **21**.
+Commands: **138**. Known missing: **4**. Deliberately excluded: **21**.
 
 ## agent
 
@@ -38,21 +38,22 @@ Commands: **137**. Known missing: **5**. Deliberately excluded: **21**.
 
 ## deck
 
-| Command              | What it does                      | Role   | Undo         | Confirm                    | Hints      |
-| -------------------- | --------------------------------- | ------ | ------------ | -------------------------- | ---------- |
-| `deck.activeEditors` | Who is editing                    | viewer | n/a          | never                      | read-only  |
-| `deck.create`        | Create deck                       | owner  | undoable     | never                      |            |
-| `deck.delete`        | Delete deck                       | owner  | irreversible | always                     |            |
-| `deck.duplicate`     | Duplicate deck                    | editor | undoable     | never                      |            |
-| `deck.exportPng`     | Export slides as PNG              | viewer | n/a          | never                      |            |
-| `deck.exportPptx`    | Export PowerPoint                 | editor | n/a          | never                      |            |
-| `deck.fonts.list`    | Deck fonts                        | viewer | n/a          | never                      | read-only  |
-| `deck.get`           | Deck details                      | viewer | n/a          | never                      | read-only  |
-| `deck.importPptx`    | Import PowerPoint                 | editor | undoable     | never (asks for URL files) |            |
-| `deck.insertFrom`    | Insert slides from a file or deck | editor | undoable     | never (asks for URL files) |            |
-| `deck.list`          | List decks                        | viewer | n/a          | never                      | read-only  |
-| `deck.moveToFolder`  | Move deck to folder               | owner  | irreversible | always                     | idempotent |
-| `deck.rename`        | Rename deck                       | editor | undoable     | never                      | idempotent |
+| Command                 | What it does                      | Role   | Undo         | Confirm                    | Hints      |
+| ----------------------- | --------------------------------- | ------ | ------------ | -------------------------- | ---------- |
+| `deck.activeEditors`    | Who is editing                    | viewer | n/a          | never                      | read-only  |
+| `deck.create`           | Create deck                       | owner  | undoable     | never                      |            |
+| `deck.delete`           | Delete deck                       | owner  | irreversible | always                     |            |
+| `deck.duplicate`        | Duplicate deck                    | editor | undoable     | never                      |            |
+| `deck.exportPng`        | Export slides as PNG              | viewer | n/a          | never                      |            |
+| `deck.exportPptx`       | Export PowerPoint                 | editor | n/a          | never                      |            |
+| `deck.fonts.list`       | Deck fonts                        | viewer | n/a          | never                      | read-only  |
+| `deck.get`              | Deck details                      | viewer | n/a          | never                      | read-only  |
+| `deck.importPptx`       | Import PowerPoint                 | editor | undoable     | never (asks for URL files) |            |
+| `deck.insertFrom`       | Insert slides from a file or deck | editor | undoable     | never (asks for URL files) |            |
+| `deck.list`             | List decks                        | viewer | n/a          | never                      | read-only  |
+| `deck.moveToFolder`     | Move deck to folder               | owner  | irreversible | always                     | idempotent |
+| `deck.refreshThumbnail` | Redraw the deck card              | editor | n/a          | never                      |            |
+| `deck.rename`           | Rename deck                       | editor | undoable     | never                      | idempotent |
 
 ## editor
 
@@ -227,7 +228,6 @@ Commands: **137**. Known missing: **5**. Deliberately excluded: **21**.
 
 | Capability                   | Phase | Today in                                                                      | Note                                                                                                                                                                                                                                                                                                |
 | ---------------------------- | ----- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `deck.refreshThumbnail`      | A3    | apps/web/src/ui/SlidesPanel.tsx; `PUT /decks/:id/thumbnail`                   | the browser renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                                                                                                                                |
 | `component.refreshThumbnail` | A3    | apps/web/src/pages/ComponentMasterEditor.tsx; `PUT /components/:id/thumbnail` | the master editor renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                                                                                                                          |
 | `component.create`           | A4    | `POST /folders/:folderId/components`                                          | create a master from a spec (component.promote makes one from objects); the route makes an empty master, which the tests and the eval seed with; the pack compiler uses it only for the few recurring blocks (pagination, headline, subline, copy, a repeated column/grid) — layouts stay pack data |
 | `component.restamp`          | A4    | new                                                                           | reapply a changed master to the stamps made from it, keeping their slot content (needs component provenance)                                                                                                                                                                                        |

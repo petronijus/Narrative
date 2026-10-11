@@ -268,7 +268,11 @@ export async function rateLimitKey(
     // fall through to the IP bucket
   }
   const render = renderTokenOf(req)
-  if (render !== null) return `render:${render.grant.requestedBy}`
+  if (render !== null) {
+    // The server's background renders as an owner have a budget of their own.
+    const lane = render.grant.lane === 'background' ? 'bg:' : ''
+    return `render:${lane}${render.grant.requestedBy}`
+  }
   return `ip:${normalizeIP(clientIp(req, settings.clientIpHeader))}`
 }
 
@@ -279,7 +283,10 @@ export async function rateLimitKey(
  */
 export function renderTokenOf(
   req: FastifyRequest,
-): { hash: string; grant: { deckId: string; requestedBy: string } } | null {
+): {
+  hash: string
+  grant: { deckId: string; requestedBy: string; lane: 'person' | 'background' }
+} | null {
   const token = (req.query as Record<string, unknown> | undefined)?.['share_token']
   if (typeof token !== 'string' || !isRenderToken(token)) return null
   const grant = resolveRenderToken(token)

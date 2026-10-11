@@ -8,6 +8,35 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.29 — Deck cards follow agent changes (2026-10-11)
+
+### Added
+
+- **A deck nobody has open keeps a current card on the folder page.** An
+  agent's, an import's or any server-side change used to leave the card
+  stale (or missing) until someone opened the deck. Now, once such a deck
+  has been quiet for 10 s, the render worker draws its first slide as the
+  card (400×225, the size the folder page shows), unless a signed-in editor
+  has it open (their browser keeps it current, as before) or the first slide
+  is as it was drawn last. It runs as the deck's owner in a lane of its own
+  (its own render session and request budget, a page it does not keep
+  warm), behind every person's job; a deck is drawn at most once a minute,
+  owners take turns, and only a busy renderer is tried again.
+- **`deck.refreshThumbnail`** (agentic A3.5): an editor's agent redraws the
+  card at once, e.g. before sending someone to the folder.
+
+### Changed
+
+- **Each card picture is stored under a key of its own** and the row is
+  swapped under a lock, so two writers at once can no longer leave the card
+  pointing at a deleted picture; a replaced picture is kept for pages that
+  were just given its URL and removed later, so an old card URL stops
+  showing the deck. Only a real PNG or JPEG is accepted as a card.
+- Pictures the server reads back to hand over inline (looks, base64
+  exports) are deleted from storage right away instead of after a day.
+
+---
+
 ## 0.10.28 — The render worker draws only what it captures (2026-10-11)
 
 ### Fixed

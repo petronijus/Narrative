@@ -110,6 +110,26 @@ export function closeConnectionsWhere(
 }
 
 /**
+ * Has a signed-in editor (or owner) the deck open? Such an editor's browser
+ * keeps the deck's card picture current itself (SlidesPanel uploads it);
+ * viewers, share-link visitors and render pages do not. Read-only.
+ */
+export function deckHasSignedInEditor(deckId: string): boolean {
+  const server = getHocuspocusInstance()
+  if (server === null) return false
+  for (const [documentName, doc] of server.documents) {
+    if (deckIdOf(documentName) !== deckId) continue
+    for (const conn of doc.getConnections()) {
+      const ctx = (conn.context ?? {}) as ConnContext
+      if ((ctx.role === 'editor' || ctx.role === 'owner') && ctx.shareToken === undefined) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+/**
  * Close live connections on a deck.
  *
  * @param deckId   bare deck id (no `deck:` prefix)

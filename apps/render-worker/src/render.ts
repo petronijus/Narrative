@@ -318,8 +318,9 @@ export async function renderJob(
     throw new RenderJobError('browser', `${message}${extra}`.slice(0, 1_000))
   } finally {
     clearTimeout(deadlineTimer)
-    if (warm !== undefined && succeeded && !pastDeadline) {
-      // Kept for the session's next job only after a clean one.
+    if (warm !== undefined && succeeded && !pastDeadline && data.keepPage !== false) {
+      // Kept for the session's next job only after a clean one, and only
+      // when the job asks for it (background work does not).
       deps.warm.keep(data.token, warm)
     } else if (context !== undefined) {
       await context.close().catch(() => undefined)

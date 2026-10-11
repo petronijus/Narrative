@@ -104,6 +104,22 @@ describe('bucket keys', () => {
       remoteAddress: '203.0.113.9',
     })
     expect(res.json().key).toBe('render:alice')
+    // The server's background renders as alice have a budget of their own.
+    const background = mintRenderToken(
+      'deck-1',
+      'alice',
+      Date.now(),
+      60_000,
+      undefined,
+      'background',
+    )
+    const bg = await app.inject({
+      method: 'GET',
+      url: `/key?share_token=${background}`,
+      remoteAddress: '203.0.113.9',
+    })
+    expect(bg.json().key).toBe('render:bg:alice')
+    revokeRenderToken(background)
     // An unknown or ended token is just an anonymous request.
     revokeRenderToken(token)
     const ended = await app.inject({

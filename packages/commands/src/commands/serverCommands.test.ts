@@ -183,6 +183,34 @@ describe('query.render', () => {
   })
 })
 
+describe('deck.refreshThumbnail', () => {
+  it('asks the render service to redraw the target deck’s card and returns its URL', async () => {
+    const c = ctx()
+    const out = await runCommand(registry, c, 'deck.refreshThumbnail', {})
+    expect(callsTo(c, 'render')).toEqual([
+      expect.objectContaining({
+        method: 'refreshThumbnail',
+        args: { userId: 'u1', deckId: FIXTURE_DECK_ID },
+      }),
+    ])
+    expect(out).toEqual({ thumbnailUrl: expect.stringContaining('thumb'), updatedAt: expect.any(String) })
+  })
+
+  it('refuses a deck without slides, a viewer and any input', async () => {
+    const empty = await failure(
+      runCommand(registry, ctx({ target: { deckId: 'deck_other', folderId: 'folder_b' } }), 'deck.refreshThumbnail', {}),
+    )
+    expect(empty.code).toBe('invalid_input')
+    const viewer = ctx({ actor: { userId: 'u1', role: 'viewer', kind: 'agent' } })
+    expect((await failure(runCommand(registry, viewer, 'deck.refreshThumbnail', {}))).code).toBe(
+      'forbidden',
+    )
+    expect(
+      (await failure(runCommand(registry, ctx(), 'deck.refreshThumbnail', { slide: 1 }))).code,
+    ).toBe('invalid_input')
+  })
+})
+
 describe('media.* and share.*', () => {
   it('media commands pin the asset to the target deck (no reaching into another deck)', async () => {
     const c = ctx()

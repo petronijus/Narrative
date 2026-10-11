@@ -77,7 +77,12 @@ describe('render tokens', () => {
     const token = mintRenderToken('deck-a', 'alice')
     expect(token).toMatch(/^nrr_[A-Za-z0-9_-]{43}$/)
     expect(isRenderToken(token)).toBe(true)
-    expect(resolveRenderToken(token)).toEqual({ deckId: 'deck-a', requestedBy: 'alice' })
+    // A person's render unless the server mints it for its own background work.
+    expect(resolveRenderToken(token)).toEqual({
+      deckId: 'deck-a',
+      requestedBy: 'alice',
+      lane: 'person',
+    })
   })
 
   it('mints a different token every time', () => {

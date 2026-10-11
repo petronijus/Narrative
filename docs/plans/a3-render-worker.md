@@ -453,4 +453,30 @@ went from 7.4 s to 1.1 s on two cores. A sheet draws preview-size pictures
 (0.10.26). What remains is the one capture frame — the stencil-masked
 picture is its biggest part, if it is ever worth a cheaper clip.
 
-Next: A3.5 server thumbnails.
+**A3.5a, deck cards — 0.10.29.** `deck.refreshThumbnail` (editors) and the
+background card for decks nobody has open: services/deckThumbnails.ts
+(scheduler on PostgresPersistence `onDeckStored`: 10 s quiet, skipped while
+a signed-in editor has the deck open, at most once a minute per deck,
+owners in turn), services/render.ts (`thumbnail` look of the first slide,
+`backgroundThumbnail` / `refreshThumbnail`), render/cardState.ts (what the
+card was last drawn from: a hash of the first slide's Yjs structure — not
+the state vector, which a deletion leaves as it was), services/
+deckThumbnailStore.ts (shared with the editor's upload: a key per picture,
+the row swapped under `FOR UPDATE`, replaced pictures kept for
+`REPLACED_GRACE_MS`). Background jobs run in their own render lane
+(`RenderLane` on the token: own session, rate bucket `render:bg:<owner>`)
+with `keepPage: false`, at `BACKGROUND_PRIORITY`, outside the in-flight
+share; only `RendererBusyError` (queue full or down, waited past its time)
+is retried. Reviews: code (a blocker — the first hash walked live Y.Text
+and overflowed the stack on every slide with text; caught on re-review,
+tests now use text and a table), security (no confused deputy: the render
+token reads as a share-link viewer of that deck, whoever it is minted for),
+parity. tools/list: 184,396 bytes of 184,500 — A3.5b needs a raise. An
+eval scenario waits for A3.7 (a negative check too: no refresh after
+ordinary edits).
+
+The e2e suite on the Omarchy desktop had been running on the system
+Chromium 152 instead of Playwright's 148 (SETUP.md → "Target crashed").
+
+Next: A3.5b component cards (`component.refreshThumbnail`: the render page
+and render tokens for a component's master document).

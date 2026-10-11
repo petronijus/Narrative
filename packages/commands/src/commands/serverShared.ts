@@ -18,6 +18,7 @@ export const serverCommand = {
 
 export const GET = (path: string): RouteRef => ({ method: 'GET', path })
 export const POST = (path: string): RouteRef => ({ method: 'POST', path })
+export const PUT = (path: string): RouteRef => ({ method: 'PUT', path })
 export const PATCH = (path: string): RouteRef => ({ method: 'PATCH', path })
 export const DELETE = (path: string): RouteRef => ({ method: 'DELETE', path })
 

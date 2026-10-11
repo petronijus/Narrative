@@ -9,7 +9,9 @@
  *     limits — for small type, a table, an alignment;
  *   - `sheet`: the slides in a grid with the largest tiles the limits allow,
  *     each labelled with its number in the deck — for pacing and repetition
- *     across a deck.
+ *     across a deck;
+ *   - `thumbnail`: the slide as the deck's card picture on the folder page
+ *     (`THUMBNAIL_WIDTH`×`THUMBNAIL_HEIGHT`).
  *
  * Always a PNG (sharp text); one that comes out over `MAX_LOOK_BYTES` (photo
  * heavy) is composed again smaller, so it stays within what an MCP client
@@ -23,7 +25,7 @@
  * (`assertIntact`), never a blank picture.
  */
 
-import { LOOK_MAX_EDGE, LOOK_MAX_PIXELS } from '@narrative/shared'
+import { LOOK_MAX_EDGE, LOOK_MAX_PIXELS, THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH } from '@narrative/shared'
 import { SLIDE_HEIGHT, SLIDE_WIDTH } from '../renderer/constants.js'
 import { canvasToPng } from '../renderer/captureSlide.js'
 
@@ -40,6 +42,7 @@ export type LookRequest =
   | { mode: 'slide' }
   | { mode: 'region'; region: { x: number; y: number; width: number; height: number } }
   | { mode: 'sheet' }
+  | { mode: 'thumbnail' }
 
 export interface ComposedLook {
   png: Blob
@@ -142,6 +145,12 @@ function composeAt(
       Math.round(SLIDE_WIDTH * scale),
       Math.round(SLIDE_HEIGHT * scale),
     )
+    ctx.drawImage(frames[0]!.canvas, 0, 0, canvas.width, canvas.height)
+    return canvas
+  }
+  if (request.mode === 'thumbnail') {
+    // Fixed size: far below the limits, and a smaller retry is never needed.
+    const { canvas, ctx } = newCanvas(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT)
     ctx.drawImage(frames[0]!.canvas, 0, 0, canvas.width, canvas.height)
     return canvas
   }

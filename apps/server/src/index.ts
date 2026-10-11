@@ -32,6 +32,7 @@ import { runMigrations } from './db/runMigrations.js'
 import { runDataMigrations } from './services/dataMigrations.js'
 import { checkMovedMediaAfterStore } from './services/localiseMedia.js'
 import { createHocuspocusServer } from './hocuspocus/index.js'
+import { createDeckThumbnailScheduler } from './services/deckThumbnails.js'
 import { registerHttpRoutes } from './http/registerRoutes.js'
 import {
   createDrizzleUploadSessionStore,
@@ -269,6 +270,15 @@ const principalKeys = createAgentPrincipalKeys(
   agentPrincipalKeySecretFromEnv(process.env, { isProd }),
 )
 
+// A deck nobody has open keeps a current card on the folder page: after its
+// changes are stored, the render worker draws it (services/deckThumbnails.ts).
+const deckThumbnails = createDeckThumbnailScheduler({
+  db,
+  log: app.log,
+  bypass: bypassAuth,
+  hocuspocus: () => hocuspocus,
+})
+
 const hocuspocus = createHocuspocusServer({
   port: HOCUSPOCUS_PORT,
   db,
@@ -277,11 +287,13 @@ const hocuspocus = createHocuspocusServer({
   principalKeys,
   // An undo in an editor can bring back references to media of a folder the
   // deck has left: pointed at the deck's copies again after the store.
-  onDeckStored: (deckId) =>
+  onDeckStored: (deckId) => {
     checkMovedMediaAfterStore(
       { db, log: app.log, bypass: bypassAuth, hocuspocus: () => hocuspocus },
       deckId,
-    ),
+    )
+    deckThumbnails.deckStored(deckId)
+  },
 })
 
 // The web app's public origin: OAuth redirects back to it, and agents hand
@@ -377,6 +389,7 @@ app.log.info(
 
 const shutdown = async (signal: string) => {
   console.log(`[server] Received ${signal}, shutting down...`)
+  deckThumbnails.stop()
 
   try {
     await app.close()

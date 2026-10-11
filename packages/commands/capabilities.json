@@ -434,6 +434,23 @@
       ]
     },
     {
+      "id": "deck.refreshThumbnail",
+      "domain": "deck",
+      "title": "Redraw the deck card",
+      "description": "Redraw the deck’s card picture — what the folder page shows for it — from its first slide, now. The card follows changes by itself: from the editor while someone has the deck open, else about 15 s after the last change (once a minute at most); call this only when it must be right at once (before sending someone to the folder). Returns the new picture’s URL. Takes a few seconds. Editors of the deck.",
+      "role": "editor",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "PUT",
+          "path": "/decks/:id/thumbnail"
+        }
+      ]
+    },
+    {
       "id": "deck.rename",
       "domain": "deck",
       "title": "Rename deck",
@@ -1907,19 +1924,6 @@
     }
   ],
   "knownMissing": [
-    {
-      "capability": "deck.refreshThumbnail",
-      "phase": "A3",
-      "source": "web",
-      "where": "apps/web/src/ui/SlidesPanel.tsx",
-      "routes": [
-        {
-          "method": "PUT",
-          "path": "/decks/:id/thumbnail"
-        }
-      ],
-      "note": "the browser renders the thumbnail and uploads it; the render worker takes over in A3"
-    },
     {
       "capability": "component.refreshThumbnail",
       "phase": "A3",

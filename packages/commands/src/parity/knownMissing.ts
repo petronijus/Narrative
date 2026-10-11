@@ -42,14 +42,6 @@ const PUT = (path: string): RouteRef => ({ method: 'PUT', path })
 export const KNOWN_MISSING: readonly KnownMissing[] = [
   // --- A3: render worker ------------------------------------------------------
   {
-    capability: 'deck.refreshThumbnail',
-    phase: 'A3',
-    source: 'web',
-    where: 'apps/web/src/ui/SlidesPanel.tsx',
-    routes: [PUT('/decks/:id/thumbnail')],
-    note: 'the browser renders the thumbnail and uploads it; the render worker takes over in A3',
-  },
-  {
     capability: 'component.refreshThumbnail',
     phase: 'A3',
     source: 'web',

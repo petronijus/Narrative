@@ -24,7 +24,11 @@ const log = subsystemLogger('render-queue')
 
 /** The job did not finish before its deadline (the caller stopped waiting). */
 export class RenderTimeoutError extends Error {
-  constructor() {
+  /**
+   * @param started whether the worker had begun the job: false means it
+   *   waited in the queue the whole time (the renderer was busy).
+   */
+  constructor(readonly started = true) {
     super('the render did not finish in time')
   }
 }
@@ -160,8 +164,9 @@ export const bullRenderQueue: RenderQueue = {
       // A timer may fire a millisecond before Date.now() reaches the
       // deadline (libuv's cached loop time), so the error decides first.
       if (err instanceof RenderTimeoutError || Date.now() >= data.deadline) {
+        const state = await job.getState().catch(() => 'unknown')
         await job.remove().catch(() => undefined)
-        throw new RenderTimeoutError()
+        throw new RenderTimeoutError(!(state === 'waiting' || state === 'prioritized' || state === 'delayed'))
       }
       // A failed job's record goes too (its error is in the worker's log).
       await job.remove().catch(() => undefined)

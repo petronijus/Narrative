@@ -42,10 +42,19 @@ export const RENDER_TOKEN_TTL_MS = 5 * 60 * 1000
 const SECRET_BYTES = 32
 const RAW_TOKEN_RE = /^nrr_[A-Za-z0-9_-]{43}$/
 
+/**
+ * Whose render a token serves: a person's (their looks and exports), or the
+ * server's own background work done as the deck's owner (its card picture,
+ * services/deckThumbnails.ts) — kept apart so that work shares neither the
+ * owner's render session nor their request budget (http/rateLimit.ts).
+ */
+export type RenderLane = 'person' | 'background'
+
 interface RenderGrant {
   deckId: string
   /** Who asked for the render; the token reads the deck only while they can. */
   requestedBy: string
+  lane: RenderLane
   expiresAt: number
   expiryTimer: ReturnType<typeof setTimeout> | null
   /** Called once when the token ends (expiry or revocation). */
@@ -55,6 +64,7 @@ interface RenderGrant {
 export interface RenderTokenGrant {
   deckId: string
   requestedBy: string
+  lane: RenderLane
 }
 
 const grants = new Map<string, RenderGrant>()
@@ -89,12 +99,14 @@ export function mintRenderToken(
   now: number = Date.now(),
   ttlMs: number = RENDER_TOKEN_TTL_MS,
   onEnd?: () => void,
+  lane: RenderLane = 'person',
 ): string {
   const token = RENDER_TOKEN_PREFIX + randomBytes(SECRET_BYTES).toString('base64url')
   const hash = hashToken(token)
   grants.set(hash, {
     deckId,
     requestedBy,
+    lane,
     expiresAt: now + ttlMs,
     expiryTimer: null,
     onEnd: onEnd ?? null,
@@ -142,7 +154,7 @@ export function resolveRenderToken(
     drop(hash)
     return null
   }
-  return { deckId: grant.deckId, requestedBy: grant.requestedBy }
+  return { deckId: grant.deckId, requestedBy: grant.requestedBy, lane: grant.lane }
 }
 
 /** End a token before it expires (the job finished), closing the page's connections. */

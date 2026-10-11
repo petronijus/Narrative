@@ -129,6 +129,8 @@ export {
   type RenderLookSpec,
   type RenderedLook,
   LOOK_MAX_EDGE,
+  THUMBNAIL_HEIGHT,
+  THUMBNAIL_WIDTH,
   LOOK_MAX_PIXELS,
 } from './render-queue.js'
 

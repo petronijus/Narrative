@@ -12,7 +12,12 @@
  * (auth/renderTokens.ts); an entry goes when its token ends.
  */
 
-import { extendRenderToken, mintRenderToken, revokeRenderToken } from '../auth/renderTokens.js'
+import {
+  extendRenderToken,
+  mintRenderToken,
+  revokeRenderToken,
+  type RenderLane,
+} from '../auth/renderTokens.js'
 
 /** A session's token lives this long after its last job ends. */
 export const SESSION_IDLE_MS = 120_000
@@ -27,7 +32,9 @@ interface Session {
 }
 
 const sessions = new Map<string, Session>()
-const keyOf = (deckId: string, userId: string): string => `${deckId}\u0000${userId}`
+/** A person's session and the server's background one as them are separate. */
+const keyOf = (deckId: string, userId: string, lane: RenderLane): string =>
+  `${deckId}\u0000${userId}\u0000${lane}`
 
 /**
  * The session's token for a job that needs it for `jobMs`: the current one,
@@ -35,11 +42,12 @@ const keyOf = (deckId: string, userId: string): string => `${deckId}\u0000${user
  * it past `SESSION_MAX_MS`).
  */
 export function sessionTokenFor(
-  args: { deckId: string; userId: string },
+  args: { deckId: string; userId: string; lane?: RenderLane },
   jobMs: number,
   now: number,
 ): string {
-  const key = keyOf(args.deckId, args.userId)
+  const lane = args.lane ?? 'person'
+  const key = keyOf(args.deckId, args.userId, lane)
   const current = sessions.get(key)
   if (
     current !== undefined &&
@@ -50,9 +58,16 @@ export function sessionTokenFor(
   }
   // An old token is left to expire, not revoked: a job of it may still run.
   const session: Session = { token: '', deckId: args.deckId, userId: args.userId, startedAt: now }
-  session.token = mintRenderToken(args.deckId, args.userId, now, jobMs, () => {
-    if (sessions.get(key) === session) sessions.delete(key)
-  })
+  session.token = mintRenderToken(
+    args.deckId,
+    args.userId,
+    now,
+    jobMs,
+    () => {
+      if (sessions.get(key) === session) sessions.delete(key)
+    },
+    lane,
+  )
   sessions.set(key, session)
   return session.token
 }

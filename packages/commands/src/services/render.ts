@@ -69,4 +69,12 @@ export interface RenderService {
    * deck): a slide, a region at full resolution, or a numbered sheet.
    */
   look(args: { userId: string; deckId: string; view: RenderView }): Promise<RenderLookResult>
+  /**
+   * Redraw the deck's card picture from its first slide now (editors of the
+   * deck); bad_request for a deck without slides.
+   */
+  refreshThumbnail(args: {
+    userId: string
+    deckId: string
+  }): Promise<{ thumbnailUrl: string; updatedAt: string }>
 }

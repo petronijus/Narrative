@@ -16,6 +16,7 @@ import {
   closeShareTokenConnections,
   closeUserConnectionsOnDocument,
   closeUserFolderConnections,
+  deckHasSignedInEditor,
 } from './connections.js'
 import { setHocuspocusInstance } from './presence.js'
 
@@ -242,5 +243,36 @@ describe('CONN-1 connection teardown helpers', () => {
     for (const c of [onFolder, onMaster, onDeck, onLegacyDeck])
       expect(c.close).toHaveBeenCalledOnce()
     for (const c of [coMember, otherFolder, otherDeck]) expect(c.close).not.toHaveBeenCalled()
+  })
+})
+
+describe('deckHasSignedInEditor', () => {
+  beforeEach(() => {
+    setHocuspocusInstance(null as never)
+  })
+
+  it('counts a signed-in editor or owner, never a viewer, a share link or a render page', () => {
+    setHocuspocusInstance(
+      fakeServer({
+        'deck:viewed': [
+          conn({ userId: 'u1', role: 'viewer' }),
+          // A share link with editor rights, and a render page (render token).
+          conn({ userId: 'share:ab', role: 'editor', shareToken: 'tok' }),
+          conn({ userId: 'share:cd', role: 'viewer', shareToken: 'nrr_x' }),
+        ],
+        'deck:edited': [conn({ userId: 'u2', role: 'editor' })],
+        // A legacy bare deck id.
+        owned: [conn({ userId: 'u3', role: 'owner' })],
+        'folder:edited': [conn({ userId: 'u4', role: 'owner' })],
+      }),
+    )
+    expect(deckHasSignedInEditor('viewed')).toBe(false)
+    expect(deckHasSignedInEditor('edited')).toBe(true)
+    expect(deckHasSignedInEditor('owned')).toBe(true)
+    expect(deckHasSignedInEditor('closed')).toBe(false)
+  })
+
+  it('is false when no Hocuspocus instance is wired', () => {
+    expect(deckHasSignedInEditor('d1')).toBe(false)
   })
 })

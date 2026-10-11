@@ -34,7 +34,13 @@ describe('render sessions', () => {
     expect(sessionTokenFor({ deckId: 'd1', userId: 'u1' }, JOB, now + 1_000)).toBe(a)
     expect(sessionTokenFor({ deckId: 'd1', userId: 'u2' }, JOB, now)).not.toBe(a)
     expect(sessionTokenFor({ deckId: 'd2', userId: 'u1' }, JOB, now)).not.toBe(a)
-    expect(renderSessionCount()).toBe(3)
+    // The server's background work as u1 has a session of its own.
+    const bg = sessionTokenFor({ deckId: 'd1', userId: 'u1', lane: 'background' }, JOB, now)
+    expect(bg).not.toBe(a)
+    expect(sessionTokenFor({ deckId: 'd1', userId: 'u1', lane: 'background' }, JOB, now)).toBe(bg)
+    expect(resolveRenderToken(bg)).toMatchObject({ requestedBy: 'u1', lane: 'background' })
+    expect(resolveRenderToken(a)?.lane).toBe('person')
+    expect(renderSessionCount()).toBe(4)
   })
 
   it('starts a new token rather than carry one past SESSION_MAX_MS', () => {
