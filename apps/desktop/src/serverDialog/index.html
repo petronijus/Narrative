@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- scripts/build.mjs puts the inline script's sha256 into script-src. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src '__SCRIPT_HASH__'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Custom Server</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font: 14px/1.45 system-ui, sans-serif;
+      }
+      body {
+        margin: 0;
+        padding: 20px 24px;
+        background: Canvas;
+        color: CanvasText;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 6px;
+      }
+      p {
+        margin: 0 0 14px;
+        opacity: 0.75;
+      }
+      input {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 7px 9px;
+        font: inherit;
+        border-radius: 6px;
+        border: 1px solid GrayText;
+        background: Field;
+        color: FieldText;
+      }
+      .error {
+        min-height: 1.4em;
+        margin: 6px 0 12px;
+        color: #dc2626;
+      }
+      .buttons {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+      button {
+        font: inherit;
+        padding: 6px 14px;
+        border-radius: 6px;
+        border: 1px solid GrayText;
+        background: ButtonFace;
+        color: ButtonText;
+      }
+      button[type='submit'] {
+        background: #2563eb;
+        border-color: #2563eb;
+        color: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <form id="form" novalidate>
+      <h1>Custom server</h1>
+      <p>
+        The address of a Narrative server, such as https://narrative.example.com. Plain http
+        works only for this computer (localhost).
+      </p>
+      <input
+        id="origin"
+        type="url"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="https://narrative.example.com"
+        aria-describedby="error"
+      />
+      <div id="error" class="error" role="alert"></div>
+      <div class="buttons">
+        <button type="button" id="cancel">Cancel</button>
+        <button type="submit">Connect</button>
+      </div>
+    </form>
+    <script>
+      __SCRIPT__
+    </script>
+  </body>
+</html>

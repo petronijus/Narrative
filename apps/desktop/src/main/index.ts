@@ -8,11 +8,13 @@
  * of debugging switches in a packaged one, and the single-instance lock.
  */
 
-import { app, dialog, session, type BrowserWindow, type WebContents } from 'electron'
+import { app, dialog, Menu, session, shell, type BrowserWindow, type WebContents } from 'electron'
 import { applyWebContentsGuards, createPresenterWindow } from './guards.js'
 import { IpcRegistry, registerCoreIpc } from './ipc.js'
 import { createLogger, type Logger } from './log.js'
+import { buildApplicationMenu } from './menu.js'
 import { installPermissionHandlers } from './permissions.js'
+import { chooseCustomServer } from './serverDialog.js'
 import { parseServerArg, partitionFor, serverOrigin, type ServerTarget } from './servers.js'
 import { loadSettings, saveSettings, type Settings } from './settings.js'
 import { createMainWindow } from './window.js'
@@ -61,6 +63,9 @@ let settings: Settings
 let target: ServerTarget | null = null
 let mainWindow: BrowserWindow | null = null
 const presenterWindows = new Set<BrowserWindow>()
+// True while the main window is replaced for another server, so closing the
+// old one does not quit the app.
+let switchingServer = false
 
 function currentOrigin(): string | null {
   return target === null ? null : serverOrigin(target)
@@ -92,6 +97,74 @@ function ensureMainWindow(): BrowserWindow | null {
   })
   mainWindow = win
   return win
+}
+
+function applyMenu(): void {
+  if (target === null) return
+  const current = target
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(
+      buildApplicationMenu({
+        platform: process.platform,
+        packaged: app.isPackaged,
+        appName: app.getName(),
+        server: current,
+        lastCustomOrigin: settings.lastCustomOrigin,
+        chooseServer: (next) => void switchServer(next),
+        chooseCustomServer: () => {
+          void chooseCustomServer(mainWindow, {
+            distDir,
+            initial: current.kind === 'custom' ? current.origin : (settings.lastCustomOrigin ?? ''),
+            devTools: !app.isPackaged,
+          }).then((origin) => {
+            if (origin !== null) void switchServer({ kind: 'custom', origin })
+          })
+        },
+        showAbout: () => {
+          void dialog.showMessageBox({
+            type: 'info',
+            title: `About ${app.getName()}`,
+            message: `${app.getName()} ${app.getVersion()}`,
+            detail: `Server: ${serverOrigin(current)}\nElectron ${process.versions.electron}, Chromium ${process.versions.chrome}`,
+          })
+        },
+        openLogsFolder: () => {
+          void shell.openPath(app.getPath('logs'))
+        },
+      }),
+    ),
+  )
+}
+
+/**
+ * Move the shell to another server: remember it, end what belonged to the
+ * old one, and open the main window again in the new server's partition.
+ */
+async function switchServer(next: ServerTarget): Promise<void> {
+  if (target !== null && serverOrigin(next) === serverOrigin(target)) return
+  log.info('switching server', { from: currentOrigin(), to: serverOrigin(next) })
+  persist({
+    ...settings,
+    server: next,
+    lastCustomOrigin: next.kind === 'custom' ? next.origin : settings.lastCustomOrigin,
+  })
+  switchingServer = true
+  try {
+    for (const presenter of presenterWindows) presenter.close()
+    const old = mainWindow
+    target = next
+    mainWindow = null
+    if (old !== null && !old.isDestroyed()) {
+      await new Promise<void>((resolve) => {
+        old.once('closed', () => resolve())
+        old.close()
+      })
+    }
+    ensureMainWindow()?.focus()
+  } finally {
+    switchingServer = false
+  }
+  applyMenu()
 }
 
 /** The partition id of a webContents the shell created. */
@@ -164,12 +237,14 @@ void app.whenReady().then(async () => {
     }),
   )
 
+  applyMenu()
   ensureMainWindow()
 })
 
 // 11. Closing the last window quits, except on macOS, where the app stays
 //     and a click on the dock icon brings the window back.
 app.on('window-all-closed', () => {
+  if (switchingServer) return
   if (process.platform !== 'darwin') app.quit()
 })
 app.on('activate', () => {

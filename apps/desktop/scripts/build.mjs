@@ -10,21 +10,30 @@
  *   dist/preload.cjs     the main window's preload — one CommonJS file whose
  *                        only require is `electron`, because a sandboxed
  *                        preload may load nothing else;
+ *   dist/serverDialog.html + dist/serverDialogPreload.cjs
+ *                        the "Custom Server…" window: its script inlined
+ *                        into the page, which admits exactly that script by
+ *                        its sha256 in the CSP;
  *   dist/build-info.json what was built: version, commit, whether the tree
  *                        was dirty and whether servers.json is the committed
  *                        default (a release refuses anything else).
  *
- * `node scripts/build.mjs` from apps/desktop; `just desktop` runs it.
+ * `node scripts/build.mjs [--out <dir>]` from apps/desktop (default dist/);
+ * `just desktop` runs it, the build test writes to a temporary directory.
  */
 
 import { build } from 'esbuild'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const dist = path.join(root, 'dist')
+const outIndex = process.argv.indexOf('--out')
+const dist =
+  outIndex === -1 ? path.join(root, 'dist') : path.resolve(process.argv[outIndex + 1] ?? '')
+const rel = (/** @type {string} */ file) => path.join(dist, file)
 
 /** @param {string[]} args */
 function git(args) {
@@ -63,11 +72,46 @@ const common = {
 rmSync(dist, { recursive: true, force: true })
 mkdirSync(dist, { recursive: true })
 
+/** The dialog page with its script inlined and admitted by hash. */
+async function buildServerDialog() {
+  const out = await build({
+    ...common,
+    entryPoints: ['src/serverDialog/dialog.ts'],
+    format: 'iife',
+    platform: 'browser',
+    target: 'chrome152',
+    sourcemap: false,
+    write: false,
+  })
+  const script = out.outputFiles?.[0]?.text
+  if (script === undefined) throw new Error('the server dialog script was not built')
+  const hash = `sha256-${createHash('sha256').update(script, 'utf8').digest('base64')}`
+  const template = readFileSync(path.join(root, 'src/serverDialog/index.html'), 'utf8')
+  const scriptTag = /<script>\s*__SCRIPT__\s*<\/script>/
+  const hashes = template.split('__SCRIPT_HASH__').length - 1
+  if (!scriptTag.test(template) || hashes !== 1) {
+    throw new Error('serverDialog/index.html lost its __SCRIPT__ or __SCRIPT_HASH__ placeholder')
+  }
+  const html = template
+    .replace('__SCRIPT_HASH__', hash)
+    .replace(scriptTag, () => `<script>${script}</script>`)
+  writeFileSync(path.join(dist, 'serverDialog.html'), html)
+}
+
 await Promise.all([
+  buildServerDialog(),
+  build({
+    ...common,
+    entryPoints: ['src/serverDialog/preload.ts'],
+    outfile: rel('serverDialogPreload.cjs'),
+    platform: 'browser',
+    target: 'chrome152',
+    plugins: [preloadImportGuard],
+  }),
   build({
     ...common,
     entryPoints: ['src/main/index.ts'],
-    outfile: 'dist/main.cjs',
+    outfile: rel('main.cjs'),
     platform: 'node',
     target: 'node24',
     external: ['electron'],
@@ -75,7 +119,7 @@ await Promise.all([
   build({
     ...common,
     entryPoints: ['src/preload/index.ts'],
-    outfile: 'dist/preload.cjs',
+    outfile: rel('preload.cjs'),
     platform: 'browser',
     target: 'chrome152',
     plugins: [preloadImportGuard],

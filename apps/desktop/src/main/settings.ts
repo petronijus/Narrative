@@ -2,8 +2,9 @@
  * main/settings.ts
  *
  * The shell's own settings in `<userData>/settings.json`
- * (docs/plans/desktop-d0-spec.md §3.8): which server, the window size, and
- * whether the plaintext-storage warning was shown. Validated on every load;
+ * (docs/plans/desktop-d0-spec.md §3.8): which server (and the custom one
+ * last used), the window size, and whether the plaintext-storage warning was
+ * shown. Validated on every load;
  * an invalid file is set aside (renamed, never deleted) and the defaults
  * apply; a save goes through a temporary file and a rename, so a crash never
  * leaves half a file. Pure Node: no Electron here.
@@ -37,6 +38,11 @@ const settingsSchema = z
       })
       .strict(),
     warnedPlaintextStorage: z.boolean(),
+    /** The custom server last chosen, offered again under Server ▸. */
+    lastCustomOrigin: z
+      .string()
+      .refine((o) => normalizeCustomOrigin(o) === o, 'not a custom origin')
+      .nullable(),
   })
   .strict()
 
@@ -47,6 +53,7 @@ export const DEFAULT_SETTINGS: Settings = {
   server: { kind: 'production' },
   window: { width: 1600, height: 1000, maximized: false },
   warnedPlaintextStorage: false,
+  lastCustomOrigin: null,
 }
 
 export const SETTINGS_FILE = 'settings.json'
