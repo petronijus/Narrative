@@ -8,6 +8,19 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.27 — Render timings break down the settle (2026-10-11)
+
+### Changed
+
+- **The render worker's timings say where a slide's settle goes**: waiting
+  for loads and fonts, waiting for text rasters (and how many), drawing
+  frames, waiting for animation frames — and the capture separately. On
+  production a slide of the Proseware deck spent 9–12 s settling and capturing
+  after its pictures had loaded in under a second (0.10.26 timings); this
+  names the part to make faster.
+
+---
+
 ## 0.10.26 — Contact sheets draw with preview-size pictures; render timings in the log (2026-10-11)
 
 ### Changed

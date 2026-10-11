@@ -52,7 +52,7 @@ import { getDefaultResourceManager } from '../renderer/ResourceManager.js'
 import { setImageVariantCap } from '../renderer/imageUrl.js'
 import type { RenderLookSpec } from '@narrative/shared'
 import { blobToBase64, composeLook, shrinkForSheet, type LookFrame } from './renderLook.js'
-import { startJobTimer, type JobTimings } from './renderTimings.js'
+import { startJobTimer, type JobTimer, type JobTimings } from './renderTimings.js'
 import { decodeBase64, untilCoversStateVector } from '../lib/stateVector.js'
 import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
@@ -398,7 +398,9 @@ export function DeckRender() {
      * waited for among them) may have started loads and rasters — and
      * capture it, with the loads that failed for it since it was shown.
      */
-    const settleAndCapture = async (): Promise<{
+    const settleAndCapture = async (
+      timer?: JobTimer,
+    ): Promise<{
       canvas: HTMLCanvasElement | OffscreenCanvas
       failedLoads: number
     }> => {
@@ -410,11 +412,12 @@ export function DeckRender() {
         renderNow: () => scheduler.renderNow(),
         timeoutMs: SETTLE_TIMEOUT_MS,
       })
+      timer?.mark('settle')
+      timer?.settled(settle.phases)
       if (!settle.settled) throw new PageJobError('not-settled', 'the slide did not finish drawing')
-      return {
-        canvas: captureSlideCanvas(sceneGraph),
-        failedLoads: settle.failedLoads - (failureBaseline.current ?? 0),
-      }
+      const canvas = captureSlideCanvas(sceneGraph)
+      timer?.mark('extract')
+      return { canvas, failedLoads: settle.failedLoads - (failureBaseline.current ?? 0) }
     }
     /**
      * Show `slideId` and wait until the page calls it ready; a refusal throws
@@ -474,8 +477,7 @@ export function DeckRender() {
         timer.mark('sync')
         const { index } = await showAndWait(slideId)
         timer.mark('ready')
-        const shot = await settleAndCapture()
-        timer.mark('capture')
+        const shot = await settleAndCapture(timer)
         const base64 = await blobToBase64(await canvasToPng(shot.canvas))
         timer.mark('encode')
         return {
@@ -500,8 +502,7 @@ export function DeckRender() {
           for (const slideId of slideIds) {
             const { index } = await showAndWait(slideId)
             timer.mark('ready')
-            const shot = await settleAndCapture()
-            timer.mark('capture')
+            const shot = await settleAndCapture(timer)
             // A sheet keeps only its tile of each slide, not 20 full captures.
             const canvas =
               spec.mode === 'sheet' ? shrinkForSheet(shot.canvas, slideIds.length) : shot.canvas

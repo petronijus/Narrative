@@ -46,6 +46,19 @@ export interface SettleResult {
   /** Tracked loads that failed since the page loaded. */
   failedLoads: number
   elapsedMs: number
+  /**
+   * Where the time went, in milliseconds: waiting for loads and fonts,
+   * waiting for text rasters (and how many), drawing frames synchronously,
+   * waiting for animation frames; and how many passes it took.
+   */
+  phases: {
+    loadsMs: number
+    rastersMs: number
+    rasters: number
+    drawMs: number
+    framesMs: number
+    passes: number
+  }
 }
 
 const TIMEOUT = Symbol('timeout')
@@ -54,6 +67,20 @@ export async function settleScene(scene: SettleScene, opts: SettleOptions): Prom
   const started = performance.now()
   const deadline = started + opts.timeoutMs
   const drawn = new WeakSet<Promise<unknown>>()
+  const phases = { loadsMs: 0, rastersMs: 0, rasters: 0, drawMs: 0, framesMs: 0, passes: 0 }
+  const timed = async <T>(phase: 'loadsMs' | 'rastersMs' | 'framesMs', run: () => Promise<T>) => {
+    const t = performance.now()
+    try {
+      return await run()
+    } finally {
+      phases[phase] += performance.now() - t
+    }
+  }
+  const draw = (): void => {
+    const t = performance.now()
+    opts.renderNow()
+    phases.drawMs += performance.now() - t
+  }
 
   const missing = (): string[] => {
     const mounted = new Set(scene.getMountedIds())
@@ -70,6 +97,14 @@ export async function settleScene(scene: SettleScene, opts: SettleOptions): Prom
     pendingLoads: settled ? 0 : pendingRenderWork(),
     failedLoads: failedRenderWork(),
     elapsedMs: performance.now() - started,
+    phases: {
+      loadsMs: Math.round(phases.loadsMs),
+      rastersMs: Math.round(phases.rastersMs),
+      rasters: phases.rasters,
+      drawMs: Math.round(phases.drawMs),
+      framesMs: Math.round(phases.framesMs),
+      passes: phases.passes,
+    },
   })
 
   /** `promise`, or TIMEOUT once the deadline passes or the caller aborts; leaves no timer behind. */
@@ -101,32 +136,40 @@ export async function settleScene(scene: SettleScene, opts: SettleOptions): Prom
     result(false, opts.signal?.aborted === true ? 'aborted' : 'timeout')
 
   for (;;) {
+    phases.passes += 1
     // 1. The slide's objects are in the scene.
     if (missing().length > 0) {
-      if ((await bounded(nextFrame)) === TIMEOUT) return gaveUp()
+      if ((await timed('framesMs', () => bounded(nextFrame))) === TIMEOUT) return gaveUp()
       continue
     }
 
     // 2. Loads and fonts.
-    if ((await bounded((signal) => whenRenderWorkIdle(signal))) === TIMEOUT) return gaveUp()
-    if ((await bounded(() => document.fonts.ready)) === TIMEOUT) return gaveUp()
+    const loads = await timed('loadsMs', async () =>
+      (await bounded((signal) => whenRenderWorkIdle(signal))) === TIMEOUT
+        ? TIMEOUT
+        : bounded(() => document.fonts.ready),
+    )
+    if (loads === TIMEOUT) return gaveUp()
 
     // 3. Text rasters the latest frame started.
-    opts.renderNow()
+    draw()
     const fresh = freshRasters()
     if (fresh.length > 0) {
-      if ((await bounded(() => Promise.allSettled(fresh))) === TIMEOUT) return gaveUp()
+      phases.rasters += fresh.length
+      if ((await timed('rastersMs', () => bounded(() => Promise.allSettled(fresh)))) === TIMEOUT) {
+        return gaveUp()
+      }
       for (const p of fresh) drawn.add(p)
-      opts.renderNow()
+      draw()
       continue
     }
 
     // 4. Quiet for two frames.
-    if ((await bounded(nextFrame)) === TIMEOUT) return gaveUp()
-    if ((await bounded(nextFrame)) === TIMEOUT) return gaveUp()
+    if ((await timed('framesMs', () => bounded(nextFrame))) === TIMEOUT) return gaveUp()
+    if ((await timed('framesMs', () => bounded(nextFrame))) === TIMEOUT) return gaveUp()
     if (pendingRenderWork() > 0 || missing().length > 0 || freshRasters().length > 0) continue
 
-    opts.renderNow()
+    draw()
     return result(true)
   }
 }
