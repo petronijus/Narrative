@@ -134,7 +134,10 @@ services:
   # through Cloudflare and back. Memory: Chromium runs only while there are
   # jobs (it quits after RENDER_IDLE_MS); the limit keeps a runaway render from
   # starving the server or Postgres on the 3 GB VM — measured in
-  # docs/plans/a3-render-worker.md.
+  # docs/plans/a3-render-worker.md. 1200 MB since 0.10.25 (Petr, 2026-10-11):
+  # one slide of a photo-heavy deck peaked at the old 900 MB and the kernel
+  # killed Chromium's GPU process, leaving blank pictures; idle the worker
+  # holds 100–200 MB, so the rest stays with the server between renders.
   render-worker:
     restart: always
     depends_on:
@@ -143,10 +146,10 @@ services:
     environment:
       RENDER_APP_ORIGIN: https://${DOMAIN:?DOMAIN env var is required}
       RENDER_UPSTREAM: http://caddy
-    mem_limit: 900m
+    mem_limit: 1200m
     # No swap past the limit: the worst case is a failed render, not a VM
     # swapping under the server and Postgres.
-    memswap_limit: 900m
+    memswap_limit: 1200m
     # SwiftShader paints on the CPU; two of the VM's four cores at most.
     cpus: 2
 

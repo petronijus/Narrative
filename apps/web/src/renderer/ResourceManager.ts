@@ -199,6 +199,24 @@ export class ResourceManager {
   }
 
   /**
+   * Unload now every texture nothing holds any more, instead of after its
+   * grace. The render page calls it after each slide switch: it renders a
+   * deck's slides one after another in one page, and the previous slide's
+   * pictures would otherwise stay in (SwiftShader's, i.e. the CPU's) memory
+   * while the next one loads — on the render worker's memory limit a sheet
+   * of photo-heavy slides ran out (0.10.24).
+   */
+  flushReleased(): void {
+    for (const [url, entry] of [...this.textures]) {
+      if (entry.refCount > 0) continue
+      if (entry.unloadTimer !== null) clearTimeout(entry.unloadTimer)
+      entry.unloadTimer = null
+      this.textures.delete(url)
+      this.unload(url, entry)
+    }
+  }
+
+  /**
    * Zničí všechny spravované textury. Volat při unmount aplikace.
    * Po volání destroyAll() není instance použitelná.
    */

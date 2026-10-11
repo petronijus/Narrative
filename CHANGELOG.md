@@ -8,6 +8,21 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.25 — Looks at photo-heavy decks no longer come back blank (2026-10-11)
+
+### Fixed
+
+- **A contact sheet of a photo-heavy deck came back blank.** The render
+  worker's browser ran out of its 900 MB on production (one slide of the
+  Proseware deck peaked right at the limit) and the kernel killed it; the
+  picture was then empty, with no error. Now the render page frees the
+  previous slide's pictures as soon as it moves on, composes looks on CPU
+  canvases, and a lost WebGL context fails the job (the browser restarts)
+  instead of returning an empty picture. The worker may use 1.2 GB while it
+  renders (Petr, 2026-10-11); idle it still holds 100–200 MB.
+
+---
+
 ## 0.10.24 — The agent looks at slides (2026-10-11)
 
 ### Added

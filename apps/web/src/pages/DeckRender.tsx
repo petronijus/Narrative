@@ -47,7 +47,8 @@ import { getDefaultRenderScheduler } from '../renderer/RenderScheduler.js'
 import { getRenderer } from '../renderer/objectRenderers/index.js'
 import { settleScene, type SettleResult } from '../renderer/settleScene.js'
 import { failedRenderFonts, failedRenderWork } from '../renderer/renderWork.js'
-import { canvasToPng, captureSlideCanvas } from '../renderer/captureSlide.js'
+import { canvasToPng, captureSlideCanvas, watchContextLoss } from '../renderer/captureSlide.js'
+import { getDefaultResourceManager } from '../renderer/ResourceManager.js'
 import type { RenderLookSpec } from '@narrative/shared'
 import { blobToBase64, composeLook, shrinkForSheet, type LookFrame } from './renderLook.js'
 import { decodeBase64, untilCoversStateVector } from '../lib/stateVector.js'
@@ -351,6 +352,7 @@ export function DeckRender() {
   useEffect(() => {
     if (canvas === null) return
     const sceneGraph = canvas.sceneGraph
+    const stopWatching = watchContextLoss(sceneGraph)
 
     /**
      * Until this page's copy of the deck holds the edits `stateVector` names
@@ -429,6 +431,9 @@ export function DeckRender() {
       }
       const index = listSlides(deckCtx).findIndex((s) => s.id === slideId)
       if (index < 0) throw new PageJobError('slide-not-found', `slide ${slideId}`)
+      // The slides shown before let go of their pictures: free them now, not
+      // after the editor's grace — this page goes through a deck in turn.
+      getDefaultResourceManager().flushReleased()
       return { index }
     }
     /**
@@ -498,6 +503,7 @@ export function DeckRender() {
         }
       })
     return () => {
+      stopWatching()
       delete window.__narrativeRenderCapture
       delete window.__narrativeRenderSlidePng
       delete window.__narrativeRenderLook
