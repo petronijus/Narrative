@@ -38,6 +38,28 @@ export interface ResolveImageUrlOpts {
  */
 export type ImageUrlResolver = (opts: ResolveImageUrlOpts) => Promise<string>
 
+type Variant = NonNullable<ResolveImageUrlOpts['variant']>
+const VARIANT_SIZE: Record<Variant, number> = { thumb: 0, preview: 1, display: 2, original: 3 }
+
+let variantCap: Variant | null = null
+
+/**
+ * Serve no image larger than `cap` until reset (null): the render page sets
+ * 'preview' (600 px) while it draws a contact sheet, whose tiles are at most
+ * ~700 px wide — loading, decoding and keeping 2560-px pictures for them is
+ * what made a sheet of a photo-heavy deck slow and memory-hungry on the
+ * render worker. Pictures already loaded stay as they are.
+ */
+export function setImageVariantCap(cap: Variant | null): void {
+  variantCap = cap
+}
+
+function capped(variant: Variant): Variant {
+  return variantCap !== null && VARIANT_SIZE[variant] > VARIANT_SIZE[variantCap]
+    ? variantCap
+    : variant
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -54,7 +76,7 @@ export function createImageUrlResolver(apiBaseUrl: string): ImageUrlResolver {
   const cache = new Map<string, Promise<string>>()
 
   return function resolveImageUrl(opts: ResolveImageUrlOpts): Promise<string> {
-    const variant = opts.variant ?? 'display'
+    const variant = capped(opts.variant ?? 'display')
     const cacheKey = `${opts.assetId}:${variant}`
 
     const cached = cache.get(cacheKey)

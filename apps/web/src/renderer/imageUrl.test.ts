@@ -21,6 +21,7 @@ import {
   setDefaultImageUrlResolver,
   getDefaultImageUrlResolver,
   _resetDefaultImageUrlResolver,
+  setImageVariantCap,
 } from './imageUrl'
 
 // ---------------------------------------------------------------------------
@@ -181,5 +182,29 @@ describe('default resolver lifecycle', () => {
     setDefaultImageUrlResolver(r1)
     setDefaultImageUrlResolver(r2)
     expect(getDefaultImageUrlResolver()).toBe(r2)
+  })
+})
+
+describe('setImageVariantCap', () => {
+  it('serves nothing larger than the cap while it is set, and the asked variant after', async () => {
+    const fetchMock = makeFetch({ url: 'https://img.example/x' })
+    vi.stubGlobal('fetch', fetchMock)
+    const resolve = createImageUrlResolver('https://api.example.com')
+    setImageVariantCap('preview')
+    try {
+      await resolve({ assetId: 'a1' })
+      await resolve({ assetId: 'a1', variant: 'original' })
+      await resolve({ assetId: 'a1', variant: 'thumb' })
+    } finally {
+      setImageVariantCap(null)
+    }
+    await resolve({ assetId: 'a1' })
+    const asked = fetchMock.mock.calls.map(([url]) =>
+      new URL(String(url)).searchParams.get('variant'),
+    )
+    // display and original both came as preview (one fetch, cached), thumb
+    // stayed thumb, and display is display again once the cap is gone.
+    expect(asked).toEqual(['preview', 'thumb', 'display'])
+    vi.unstubAllGlobals()
   })
 })

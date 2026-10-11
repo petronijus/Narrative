@@ -49,8 +49,10 @@ import { settleScene, type SettleResult } from '../renderer/settleScene.js'
 import { failedRenderFonts, failedRenderWork } from '../renderer/renderWork.js'
 import { canvasToPng, captureSlideCanvas, watchContextLoss } from '../renderer/captureSlide.js'
 import { getDefaultResourceManager } from '../renderer/ResourceManager.js'
+import { setImageVariantCap } from '../renderer/imageUrl.js'
 import type { RenderLookSpec } from '@narrative/shared'
 import { blobToBase64, composeLook, shrinkForSheet, type LookFrame } from './renderLook.js'
+import { startJobTimer, type JobTimings } from './renderTimings.js'
 import { decodeBase64, untilCoversStateVector } from '../lib/stateVector.js'
 import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
@@ -127,6 +129,7 @@ declare global {
         slideIndex: number
         failedLoads: number
         failedFonts: string[]
+        timings: JobTimings
       }>
     >
     /**
@@ -143,6 +146,7 @@ declare global {
         height: number
         slides: Array<{ slideId: string; index: number; failedLoads: number }>
         failedFonts: string[]
+        timings: JobTimings
       }>
     >
   }
@@ -465,41 +469,61 @@ export function DeckRender() {
     }
     window.__narrativeRenderSlidePng = (slideId, opts) =>
       outcome(async () => {
+        const timer = startJobTimer()
         await syncTo(opts.stateVector)
+        timer.mark('sync')
         const { index } = await showAndWait(slideId)
+        timer.mark('ready')
         const shot = await settleAndCapture()
+        timer.mark('capture')
+        const base64 = await blobToBase64(await canvasToPng(shot.canvas))
+        timer.mark('encode')
         return {
-          base64: await blobToBase64(await canvasToPng(shot.canvas)),
+          base64,
           slideIndex: index,
           failedLoads: shot.failedLoads,
           failedFonts: failedRenderFonts(),
+          timings: timer.done(),
         }
       })
     window.__narrativeRenderLook = (spec, opts) =>
       outcome(async () => {
+        const timer = startJobTimer()
         await syncTo(opts.stateVector)
+        timer.mark('sync')
         const slideIds = spec.mode === 'sheet' ? spec.slideIds : [spec.slideId]
         const frames: LookFrame[] = []
         const slides: Array<{ slideId: string; index: number; failedLoads: number }> = []
-        for (const slideId of slideIds) {
-          const { index } = await showAndWait(slideId)
-          const shot = await settleAndCapture()
-          // A sheet keeps only its tile of each slide, not 20 full captures.
-          const canvas =
-            spec.mode === 'sheet' ? shrinkForSheet(shot.canvas, slideIds.length) : shot.canvas
-          frames.push({ canvas, index })
-          slides.push({ slideId, index, failedLoads: shot.failedLoads })
+        // A sheet's tiles are small: its slides draw with preview-size pictures.
+        if (spec.mode === 'sheet') setImageVariantCap('preview')
+        try {
+          for (const slideId of slideIds) {
+            const { index } = await showAndWait(slideId)
+            timer.mark('ready')
+            const shot = await settleAndCapture()
+            timer.mark('capture')
+            // A sheet keeps only its tile of each slide, not 20 full captures.
+            const canvas =
+              spec.mode === 'sheet' ? shrinkForSheet(shot.canvas, slideIds.length) : shot.canvas
+            frames.push({ canvas, index })
+            slides.push({ slideId, index, failedLoads: shot.failedLoads })
+          }
+        } finally {
+          setImageVariantCap(null)
         }
         const look = await composeLook(
           spec.mode === 'region' ? { mode: 'region', region: spec.region } : { mode: spec.mode },
           frames,
         )
+        const base64 = await blobToBase64(look.png)
+        timer.mark('compose')
         return {
-          base64: await blobToBase64(look.png),
+          base64,
           width: look.width,
           height: look.height,
           slides,
           failedFonts: failedRenderFonts(),
+          timings: timer.done(),
         }
       })
     return () => {
