@@ -1982,6 +1982,18 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     },
   ])
 
+  // `canHandle` is read when a key arrives, long after this render; the ref
+  // gives it the selection of that moment.
+  const selectedIdsRef = useRef(selectedIds)
+  selectedIdsRef.current = selectedIds
+  /**
+   * Whether Mod+C / Mod+X are the canvas's: objects are selected and no text
+   * on the page is. Otherwise the key copies the selected text as usual (and
+   * in the desktop app the menu's native copy runs).
+   */
+  const canvasClipboardKey = (): boolean =>
+    selectedIdsRef.current.size > 0 && (window.getSelection()?.isCollapsed ?? true)
+
   /** The selected objects a person may change: locks are an editor-only guard. */
   const unlockedSelection = (): string[] =>
     [...selectedIds].filter((id) => objects.find((o) => o.id === id)?.locked !== true)
@@ -2039,6 +2051,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: 'Mod+x',
       scope: 'canvas',
       preventDefault: true,
+      canHandle: canvasClipboardKey,
       action: 'object.cut',
       description: 'Cut selected object(s)',
       handler: () => {
@@ -2060,6 +2073,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: 'Mod+c',
       scope: 'canvas',
       preventDefault: true,
+      canHandle: canvasClipboardKey,
       action: 'object.copy',
       description: 'Copy selected object(s)',
       handler: () => {

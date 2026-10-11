@@ -7,7 +7,7 @@ const edit = {
   items: [
     { action: 'history.undo', label: 'Undo', accelerator: 'CmdOrCtrl+Z', nativeFallback: 'undo' },
     'separator',
-    { action: 'object.delete', label: 'Delete' },
+    { action: 'object.delete', label: 'Delete', chord: 'Delete', nativeFallback: 'delete' },
   ],
 }
 
@@ -27,6 +27,11 @@ describe('IPC payloads', () => {
     ['a malformed action', { action: 'Undo', label: 'Undo' }],
     ['a long label', { action: 'history.undo', label: 'x'.repeat(65) }],
     ['an unknown field', { action: 'object.delete', label: 'Delete', role: 'quit' }],
+    ['a chord the table does not give', { action: 'object.copy', label: 'Copy', chord: 'Delete' }],
+    [
+      'the file dialog on another action',
+      { action: 'view.zoomIn', label: 'Zoom In', chord: '=', shell: 'openPptx' },
+    ],
   ])('refuses %s', (_label, item) => {
     expect(setMenuRequest.safeParse([{ ...edit, items: [item] }]).success).toBe(false)
   })

@@ -50,10 +50,11 @@ describe('Hyprland placement', () => {
   })
 
   it('finds its own window by process and title', () => {
+    const ws = { id: 1, name: '1' }
     const clients = [
-      { address: '0x1', pid: 10, title: 'Narrative', mapped: true },
-      { address: '0x2', pid: 20, title: 'Narrative', mapped: true },
-      { address: '0x3', pid: 20, title: 'Presenter', mapped: true },
+      { address: '0x1', pid: 10, title: 'Narrative', mapped: true, workspace: ws },
+      { address: '0x2', pid: 20, title: 'Narrative', mapped: true, workspace: ws },
+      { address: '0x3', pid: 20, title: 'Presenter', mapped: true, workspace: ws },
     ]
     expect(findWindow(clients, 20, 'Narrative')?.address).toBe('0x2')
     expect(findWindow(clients, 30, 'Narrative')).toBeNull()

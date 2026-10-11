@@ -12,6 +12,16 @@ import path from 'node:path'
 
 export const LOG_ROTATE_BYTES = 5 * 1024 * 1024
 const MASK = '***'
+/** Fields whose value is a secret whatever it looks like. */
+const SECRET_KEYS = new Set([
+  'verifier',
+  'code_verifier',
+  'ticket',
+  'state',
+  'desktop_state',
+  'cookie',
+  'authorization',
+])
 
 /** Mask Narrative credentials and sign-in parameters in `value`. */
 export function maskSecrets(value: string): string {
@@ -19,6 +29,7 @@ export function maskSecrets(value: string): string {
     value
       // Any Narrative credential by its prefix (apps/server/src/auth/credentialPatterns.ts).
       .replace(/\b(nrt|nmo|nmr|nmc|nms|nus|nrr|ndt)_[A-Za-z0-9_-]+/g, `$1_${MASK}`)
+      .replace(/(narrative_session=)[^;\s"',&]+/g, `$1${MASK}`)
       // Query or form values that are secrets without a prefix.
       .replace(
         /\b((?:code_)?verifier|state|desktop_state|ticket|share_token)=[^&#\s"']*/g,
@@ -38,7 +49,12 @@ function maskDeep(value: unknown, depth = 0): unknown {
     }
   }
   if (Array.isArray(value)) return value.map((v) => maskDeep(v, depth + 1))
-  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, maskDeep(v, depth + 1)]))
+  return Object.fromEntries(
+    Object.entries(value).map(([k, v]) => [
+      k,
+      SECRET_KEYS.has(k.toLowerCase()) ? MASK : maskDeep(v, depth + 1),
+    ]),
+  )
 }
 
 export type LogLevel = 'info' | 'warn' | 'error'

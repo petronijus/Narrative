@@ -103,7 +103,8 @@ export function usePptxImport({
   )
 
   // Inside the desktop app: files opened from the OS arrive here too.
-  useDesktopOpenedFiles(accept, onError)
+  // One at a time: the next waits until this one's dialog has closed.
+  useDesktopOpenedFiles(accept, pendingPptx !== null, onError)
 
   const dropHandlers = {
     onDragEnter: (e: React.DragEvent) => {

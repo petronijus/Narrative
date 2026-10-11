@@ -37,8 +37,8 @@ ipcRenderer.on(DESKTOP_IPC.menuAction, (_event: IpcRendererEvent, message: MenuA
   for (const handler of menuHandlers) {
     try {
       if (handler(message.action, message.accelerator)) handled = true
-    } catch (err) {
-      console.error('[narrative-desktop] menu handler failed', err)
+    } catch {
+      // A failing handler handled nothing; the shell may run the native edit.
     }
   }
   ipcRenderer.send(DESKTOP_IPC.menuActionResult, { seq: message.seq, handled })

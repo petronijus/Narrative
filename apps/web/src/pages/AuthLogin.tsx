@@ -34,7 +34,7 @@ export function AuthLogin() {
         )}
         {outcome === 'refused' && (
           <p className="mb-4 text-sm text-amber-300" role="status">
-            A sign-in was started a moment ago. Finish it in your browser, or try again shortly.
+            Narrative could not start the sign-in just now. Try again in a moment.
           </p>
         )}
         <button

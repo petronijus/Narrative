@@ -49,7 +49,7 @@ export type DesktopIpcChannel = (typeof DESKTOP_IPC)[keyof typeof DESKTOP_IPC]
 export type DesktopRole = 'main'
 
 /** Edits the shell can run natively when the page does not handle a menu item. */
-export type DesktopNativeEdit = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'selectAll'
+export type DesktopNativeEdit = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'delete' | 'selectAll'
 
 export interface DesktopInfo {
   appVersion: string
@@ -64,8 +64,10 @@ export interface DesktopMenuItem {
   /** An action id of the editor's catalog (apps/web/src/actions/catalog.ts). */
   action: string
   label: string
-  /** Electron accelerator syntax; the shell accepts only its own allowlist. */
+  /** The key shown in the menu (Electron accelerator syntax); the shell accepts only the shared table's. */
   accelerator?: string
+  /** A key the item presses without showing it (a bare key would compete with typing on macOS). */
+  chord?: string
   /** What the shell does itself when the page reports the action unhandled. */
   nativeFallback?: DesktopNativeEdit
   /** A shell-side item (the file dialog for importing PowerPoint). */
@@ -75,16 +77,17 @@ export interface DesktopMenuItem {
 export type DesktopMenuEntry = DesktopMenuItem | 'separator'
 
 /**
- * The keys the editor's menu items may show, per catalog action, and the
- * native edit the shell runs when the page leaves the key unhandled (a text
- * field). One table for both sides: the editor builds its menu from it, the
- * shell refuses any other chord (it never lets a page bind its own keys,
- * Quit or Reload). Every chord carries CmdOrCtrl: on macOS a menu key is a
- * live key equivalent, and a bare key (`=`, `Delete`) would compete with
- * typing, so those items have no key in the menu and run by action.
+ * The keys of the editor's menu items, per catalog action, and the native
+ * edit the shell runs when the page leaves the key unhandled (a text field).
+ * One table for both sides: the editor builds its menu from it, the shell
+ * refuses anything else (a page never binds its own keys, Quit or Reload).
+ * `accelerator` is shown in the menu and always carries CmdOrCtrl: on macOS a
+ * menu key is a live key equivalent, and a bare key (`=`, `Delete`) would
+ * compete with typing. Such keys are a `chord`: pressed when the item is
+ * chosen, never shown or registered.
  */
 export const DESKTOP_MENU_ACCELERATORS: Readonly<
-  Record<string, { accelerator: string; nativeFallback?: DesktopNativeEdit }>
+  Record<string, { accelerator?: string; chord?: string; nativeFallback?: DesktopNativeEdit }>
 > = {
   'history.undo': { accelerator: 'CmdOrCtrl+Z', nativeFallback: 'undo' },
   'history.redo': { accelerator: 'Shift+CmdOrCtrl+Z', nativeFallback: 'redo' },
@@ -92,6 +95,9 @@ export const DESKTOP_MENU_ACCELERATORS: Readonly<
   'object.copy': { accelerator: 'CmdOrCtrl+C', nativeFallback: 'copy' },
   'object.paste': { accelerator: 'CmdOrCtrl+V', nativeFallback: 'paste' },
   'object.duplicate': { accelerator: 'CmdOrCtrl+D' },
+  'object.delete': { chord: 'Delete', nativeFallback: 'delete' },
+  'view.zoomIn': { chord: '=' },
+  'view.zoomOut': { chord: '-' },
   'selection.all': { accelerator: 'CmdOrCtrl+A', nativeFallback: 'selectAll' },
   'view.resetZoom': { accelerator: 'CmdOrCtrl+0' },
   'view.shortcuts': { accelerator: 'CmdOrCtrl+/' },
@@ -132,7 +138,11 @@ export interface NarrativeDesktopBridge {
   readonly bridgeVersion: typeof DESKTOP_BRIDGE_VERSION
   readonly role: DesktopRole
   info(): Promise<DesktopInfo>
-  /** Start the sign-in in the system browser (ADR 0014); 'refused' while one is pending. */
+  /**
+   * Start the sign-in in the system browser (ADR 0014). 'refused' within a
+   * few seconds of the last start, or when the shell cannot take the answer
+   * (an unpackaged build on macOS); a new start replaces a pending one.
+   */
   signIn(req: { returnTo: string }): Promise<'opened' | 'refused'>
   setMenu(sections: readonly DesktopMenuSection[]): void
   /** The handler returns whether it handled the action; unhandled ones get the native fallback. */

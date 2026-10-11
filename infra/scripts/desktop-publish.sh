@@ -55,19 +55,7 @@ echo "→ Checking the ${platform} build of ${tag}"
   fail "HEAD is not ${tag}" "check out the release tag (just bump, commit, tag, push)"
 git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1 ||
   fail "${tag} is not on GitHub" "git push origin ${tag}"
-info="apps/desktop/dist/build-info.json"
-[[ -f "$info" ]] || fail "no build here" "just desktop-dist ${platform}"
-node -e '
-  const info = require(process.argv[1])
-  const [commit, version] = process.argv.slice(2)
-  const problems = []
-  if (info.commit !== commit) problems.push(`built from ${info.commit.slice(0, 7)}, not ${commit.slice(0, 7)}`)
-  if (info.version !== version) problems.push(`built as ${info.version}, not ${version}`)
-  if (info.dirty) problems.push("built from a dirty tree")
-  if (!info.serversJsonDefault) problems.push("built with a changed servers.json")
-  if (problems.length) { console.error(problems.join("; ")); process.exit(1) }
-' "$root/$info" "$(git rev-parse HEAD)" "$version" ||
-  fail "the build is not the release" "just desktop-dist ${platform} on the tag"
+[[ -f "${release}/release-info.json" ]] || fail "no packaged build here" "just desktop-dist ${platform}"
 
 [[ -f "${release}/${yml}" ]] || fail "no ${yml} in ${release}" "just desktop-dist ${platform}"
 # bash 3.2 (macOS) has no mapfile.
@@ -78,6 +66,22 @@ while IFS= read -r f; do binaries+=("$f"); done < <(find "$release" -maxdepth 1 
 blockmaps=()
 while IFS= read -r f; do blockmaps+=("$f"); done < <(find "$release" -maxdepth 1 -type f \
   -name "narrative-${version}-${platform}-*.blockmap" | sort)
+
+# The packages themselves, not just the last bundle, must be the release:
+# release-info.json binds each package's hash to the build it came from.
+build="$(node apps/desktop/scripts/release-info.mjs check "${binaries[@]}" ${blockmaps[@]+"${blockmaps[@]}"} "${release}/${yml}")" ||
+  fail "a package in ${release} is not from the last build" "just desktop-dist ${platform} on the tag"
+node -e '
+  const info = JSON.parse(process.argv[1])
+  const [commit, version] = process.argv.slice(2)
+  const problems = []
+  if (info.commit !== commit) problems.push(`built from ${info.commit.slice(0, 7)}, not ${commit.slice(0, 7)}`)
+  if (info.version !== version) problems.push(`built as ${info.version}, not ${version}`)
+  if (info.dirty) problems.push("built from a dirty tree")
+  if (!info.serversJsonDefault) problems.push("built with a changed servers.json")
+  if (problems.length) { console.error(problems.join("; ")); process.exit(1) }
+' "$build" "$(git rev-parse HEAD)" "$version" ||
+  fail "the build is not the release" "just desktop-dist ${platform} on the tag"
 
 # ── 2. Sign ──────────────────────────────────────────────────────────────────
 echo "→ Signing ${#binaries[@]} artefacts (1Password asks for each)"

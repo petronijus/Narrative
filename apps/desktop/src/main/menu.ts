@@ -84,14 +84,19 @@ function serverMenu(ctx: MenuContext): MenuItemConstructorOptions {
       checked: ctx.server.kind === 'production',
       click: () => ctx.chooseServer({ kind: 'production' }),
     },
-    {
+  ]
+  // Only a development build: in the installed app any program on this
+  // computer could listen on the dev ports and get the bridge (a loopback
+  // custom server still goes through the dialog and its warning).
+  if (!ctx.packaged) {
+    items.push({
       id: 'server.development',
       label: 'Development (this computer)',
       type: 'radio',
       checked: ctx.server.kind === 'development',
       click: () => ctx.chooseServer({ kind: 'development' }),
-    },
-  ]
+    })
+  }
   if (custom !== null) {
     items.push({
       id: 'server.custom',

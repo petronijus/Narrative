@@ -24,8 +24,26 @@ export interface GuardContext {
 /** The partition a webContents was created in (its session's storage id). */
 export type PartitionOf = (wc: WebContents) => string | null
 
+/** A page may open this many links in the system browser per window of time, no more. */
+export const EXTERNAL_OPENS_PER_WINDOW = 5
+export const EXTERNAL_OPEN_WINDOW_MS = 10_000
+const recentOpens: number[] = []
+
+/** Whether another external open fits the budget at `now` (and counts it). */
+export function allowExternalOpen(now: number, recent: number[] = recentOpens): boolean {
+  while (recent.length > 0 && now - recent[0]! >= EXTERNAL_OPEN_WINDOW_MS) recent.shift()
+  if (recent.length >= EXTERNAL_OPENS_PER_WINDOW) return false
+  recent.push(now)
+  return true
+}
+
 function openExternal(url: string, log: Logger): void {
   if (!isExternalUrl(url)) return
+  // A page that opens links in a loop must not flood the system browser.
+  if (!allowExternalOpen(Date.now())) {
+    log.warn('external open refused: too many at once')
+    return
+  }
   shell.openExternal(new URL(url).toString()).catch((err: unknown) => {
     log.warn('openExternal failed', { err })
   })

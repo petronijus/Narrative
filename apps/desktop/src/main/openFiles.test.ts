@@ -50,6 +50,25 @@ describe('opened files', () => {
     await expect(files.read(result.file.id, 0, 4)).rejects.toThrow('file_changed')
   })
 
+  it('reads the file it checked, even when the path is swapped for a link afterwards', async () => {
+    const files = new OpenedFiles()
+    const file = pptx('a.pptx', 'original')
+    const result = await files.enqueue(file)
+    if (!result.ok) throw new Error(result.reason)
+    rmSync(file)
+    writeFileSync(path.join(dir, 'secret'), 'PK\x03\x04secret!!')
+    symlinkSync(path.join(dir, 'secret'), file)
+    expect(Buffer.from(await files.read(result.file.id, 4, 8)).toString()).toBe('original')
+  })
+
+  it('forgets everything on clear', async () => {
+    const files = new OpenedFiles()
+    await files.enqueue(pptx('a.pptx'))
+    await files.enqueue(pptx('b.pptx'))
+    files.clear()
+    expect(files.waiting()).toEqual([])
+  })
+
   it('forgets a consumed file', async () => {
     const files = new OpenedFiles()
     const result = await files.enqueue(pptx('a.pptx'))

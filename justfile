@@ -167,7 +167,9 @@ desktop-dist target="linux":
     if [[ "{{ target }}" == mac && "$(uname)" != Darwin ]]; then echo "desktop-dist: macOS builds run on the MacBook" >&2; exit 1; fi
     cd apps/desktop
     node scripts/build.mjs
-    exec ../../node_modules/.bin/electron-builder --config electron-builder.config.cjs "$flag" --publish never
+    ../../node_modules/.bin/electron-builder --config electron-builder.config.cjs "$flag" --publish never
+    # What desktop-publish checks the packages against (scripts/release-info.mjs).
+    node scripts/release-info.mjs write
 
 # Put a released desktop build into the production update feed (signs through 1Password; linux|mac|win)
 desktop-publish target:

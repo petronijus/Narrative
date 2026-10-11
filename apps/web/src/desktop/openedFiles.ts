@@ -2,48 +2,65 @@
  * desktop/openedFiles.ts
  *
  * PowerPoint files the desktop app was asked to open (a file association, a
- * Dock drop, File ▸ Import PowerPoint…), on the page's side: a queue the
- * import screen drains once it is mounted (desktop/useDesktopOpenedFiles.ts).
- * The shell keeps the files themselves; the page reads them in chunks into a
- * `File`, which then goes through the same import as a dropped file.
+ * Dock drop, File ▸ Import PowerPoint…), on the page's side: a first-in,
+ * first-out queue the import screen takes one file at a time from
+ * (desktop/useDesktopOpenedFiles.ts) — the next only once the import dialog
+ * of the previous one has closed, so several files are imported in turn and
+ * none replaces another. The shell keeps the files themselves and announces
+ * every unconsumed one again when the page subscribes, so an id the page has
+ * already taken is ignored until the shell forgets it.
  */
 
 import { DESKTOP_OPEN_FILE_CHUNK, type DesktopOpenedFile } from '@narrative/shared'
 import { PPTX_MIME } from '../lib/pptxFiles.js'
 import { desktopBridge } from './bridge.js'
 
-type Consumer = (file: DesktopOpenedFile) => void
+const waiting: DesktopOpenedFile[] = []
+/** Ids taken from the queue and not yet consumed: an announcement again is a repeat. */
+const taken = new Set<string>()
+const listeners = new Set<() => void>()
+let version = 0
+let consumers = 0
 
-const waiting = new Map<string, DesktopOpenedFile>()
-let consumer: Consumer | null = null
+function changed(): void {
+  version++
+  for (const listener of listeners) listener()
+}
 
-/** The shell announced a file (again after a reload: ids make it idempotent). */
+/** The shell announced a file (again after a re-subscription: ignored then). */
 export function enqueueOpenedFile(file: DesktopOpenedFile): void {
-  if (waiting.has(file.id)) return
-  waiting.set(file.id, file)
-  if (consumer !== null) drain()
+  if (taken.has(file.id) || waiting.some((f) => f.id === file.id)) return
+  waiting.push(file)
+  changed()
+}
+
+/** For useSyncExternalStore: the queue changed. */
+export function subscribeOpenedFiles(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+export function openedFilesVersion(): number {
+  return version
+}
+
+/** The oldest waiting file, now taken; null when none waits. */
+export function takeOpenedFile(): DesktopOpenedFile | null {
+  const next = waiting.shift() ?? null
+  if (next !== null) taken.add(next.id)
+  return next
 }
 
 /** Whether a screen that can import is mounted. */
 export function hasOpenedFileConsumer(): boolean {
-  return consumer !== null
+  return consumers > 0
 }
 
-/** Become the screen that imports opened files; returns the unregister. */
-export function registerOpenedFileConsumer(next: Consumer): () => void {
-  consumer = next
-  drain()
+/** A screen that imports opened files is mounted; returns the unregister. */
+export function registerOpenedFileConsumer(): () => void {
+  consumers++
   return () => {
-    if (consumer === next) consumer = null
-  }
-}
-
-function drain(): void {
-  const take = consumer
-  if (take === null) return
-  for (const file of [...waiting.values()]) {
-    waiting.delete(file.id)
-    take(file)
+    consumers--
   }
 }
 
@@ -58,7 +75,16 @@ export async function readOpenedFile(meta: DesktopOpenedFile): Promise<File> {
   return new File(parts as BlobPart[], meta.name, { type: PPTX_MIME })
 }
 
-/** Tell the shell the page is done with a file. */
+/** Tell the shell the page is done with a file; it forgets it, and so does the page. */
 export function consumeOpenedFile(id: string): void {
   desktopBridge()?.consumeOpenFile(id)
+  taken.delete(id)
+}
+
+/** Tests only: start from an empty queue. */
+export function resetOpenedFilesForTests(): void {
+  waiting.length = 0
+  taken.clear()
+  consumers = 0
+  changed()
 }

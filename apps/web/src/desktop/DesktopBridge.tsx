@@ -9,16 +9,21 @@
  * going to the deck list, which imports them, when no import screen is open.
  */
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { desktopBridge } from './bridge.js'
-import { DESKTOP_MENU } from './menu.js'
+import { desktopMenuFor } from './menu.js'
 import { dispatchMenuAction } from './menuDispatch.js'
 import { enqueueOpenedFile, hasOpenedFileConsumer } from './openedFiles.js'
 
 export function DesktopBridge(): null {
   const location = useLocation()
+  // useNavigate() changes identity with every route; the listeners are
+  // registered once (a re-registration re-subscribes, and the shell then
+  // announces every waiting file again).
   const navigate = useNavigate()
+  const navigateRef = useRef(navigate)
+  navigateRef.current = navigate
 
   useEffect(() => {
     const bridge = desktopBridge()
@@ -26,16 +31,16 @@ export function DesktopBridge(): null {
     const offMenu = bridge.onMenuAction(dispatchMenuAction)
     const offFiles = bridge.onOpenFile((file) => {
       enqueueOpenedFile(file)
-      if (!hasOpenedFileConsumer()) void navigate('/')
+      if (!hasOpenedFileConsumer()) void navigateRef.current('/')
     })
     return () => {
       offMenu()
       offFiles()
     }
-  }, [navigate])
+  }, [])
 
   useEffect(() => {
-    desktopBridge()?.setMenu(DESKTOP_MENU)
+    desktopBridge()?.setMenu(desktopMenuFor(location.pathname))
   }, [location.pathname])
 
   useEffect(

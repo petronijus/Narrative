@@ -14,6 +14,10 @@ describe('Desktop Entry Exec quoting', () => {
     expect(quoteExecArg(arg)).toBe(quoted)
   })
 
+  it('refuses a control character, which would inject keys', () => {
+    expect(() => quoteExecArg('/tmp/x\nExec=evil')).toThrow()
+  })
+
   it('renders an entry for a URL scheme', () => {
     const text = renderDesktopEntry({
       name: 'Narrative Dev',

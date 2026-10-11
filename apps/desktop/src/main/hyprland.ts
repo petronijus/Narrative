@@ -25,6 +25,7 @@ export interface HyprClient {
   pid: number
   title: string
   mapped: boolean
+  workspace: { id: number; name: string }
 }
 
 export interface ScreenRect {

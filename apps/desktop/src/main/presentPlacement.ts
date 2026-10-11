@@ -37,12 +37,26 @@ async function json<T>(what: 'monitors' | 'clients'): Promise<T | null> {
   }
 }
 
+async function move(address: string, workspace: number): Promise<boolean> {
+  for (const args of moveWindowCommands(address, workspace)) {
+    if ((await hyprctl(args))?.trim() === 'ok') return true
+  }
+  return false
+}
+
+/** A page may ask this often at most: it spawns hyprctl and moves a window. */
+const MIN_INTERVAL_MS = 2_000
+let lastPlacement = 0
+
 export async function placeForPresentation(
   win: BrowserWindow,
   screen: ScreenRect,
   log: Logger,
+  now: number = Date.now(),
 ): Promise<boolean> {
   if (process.platform !== 'linux' || !isHyprland(process.env)) return false
+  if (now - lastPlacement < MIN_INTERVAL_MS) return false
+  lastPlacement = now
   const [monitors, clients] = await Promise.all([
     json<HyprMonitor[]>('monitors'),
     json<HyprClient[]>('clients'),
@@ -54,12 +68,19 @@ export async function placeForPresentation(
     log.warn('presentation placement: monitor or window not found')
     return false
   }
-  for (const args of moveWindowCommands(own.address, monitor.activeWorkspace.id)) {
-    if ((await hyprctl(args))?.trim() === 'ok') {
-      log.info('presentation placed', { monitor: monitor.name })
-      return true
-    }
+  if (own.workspace.id === monitor.activeWorkspace.id) return true
+  if (!(await move(own.address, monitor.activeWorkspace.id))) {
+    log.warn('presentation placement: hyprctl refused the move')
+    return false
   }
-  log.warn('presentation placement: hyprctl refused the move')
-  return false
+  log.info('presentation placed', { monitor: monitor.name })
+  // Back where it was when the presentation ends, as Chromium restores a
+  // window it placed itself.
+  const home = own.workspace.id
+  win.once('leave-html-full-screen', () => {
+    void move(own.address, home).then((ok) => {
+      if (!ok) log.warn('presentation placement: the window could not go back')
+    })
+  })
+  return true
 }

@@ -62,10 +62,9 @@ export function redeemInHiddenWindow(
       if (event.url !== redeemUrl) event.preventDefault()
     })
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-    win.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+    win.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
       // ERR_ABORTED (-3) follows our own stop() after the redirect.
       if (isMainFrame && code !== -3) finish({ kind: 'failed', reason: `network: ${description}` })
-      void url
     })
     win.webContents.on('did-finish-load', () => {
       // A page instead of a redirect: the server did not answer as expected.

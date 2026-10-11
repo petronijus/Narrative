@@ -21,7 +21,7 @@ import {
 } from '@narrative/shared'
 import { USER_ACTIONS } from '../actions/catalog'
 import { chordToInit } from '../state/useShortcuts'
-import { DESKTOP_MENU } from './menu'
+import { DESKTOP_MENU, desktopMenuFor } from './menu'
 
 const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const items = DESKTOP_MENU.flatMap((s) =>
@@ -82,6 +82,7 @@ describe('the desktop menu', () => {
     for (const item of items) {
       const keys = DESKTOP_MENU_ACCELERATORS[item.action]
       expect(item.accelerator, item.action).toBe(keys?.accelerator)
+      expect(item.chord, item.action).toBe(keys?.chord)
       expect(item.nativeFallback, item.action).toBe(keys?.nativeFallback)
     }
   })
@@ -99,13 +100,25 @@ describe('the desktop menu', () => {
   })
 
   it('turns every menu key into a key event', () => {
-    for (const { accelerator } of Object.values(DESKTOP_MENU_ACCELERATORS)) {
-      const init = chordToInit(accelerator)
-      expect(init, accelerator).not.toBeNull()
-      expect(init!.metaKey === true || init!.ctrlKey === true, accelerator).toBe(true)
+    for (const { accelerator, chord } of Object.values(DESKTOP_MENU_ACCELERATORS)) {
+      if (accelerator !== undefined) {
+        const init = chordToInit(accelerator)
+        expect(init, accelerator).not.toBeNull()
+        // Shown keys carry Mod: a bare macOS key equivalent competes with typing.
+        expect(init!.metaKey === true || init!.ctrlKey === true, accelerator).toBe(true)
+      }
+      if (chord !== undefined) expect(chordToInit(chord), chord).not.toBeNull()
     }
     expect(chordToInit('Shift+CmdOrCtrl+Z')).toMatchObject({ key: 'z', shiftKey: true })
     expect(chordToInit('CmdOrCtrl+Enter')).toMatchObject({ key: 'Enter' })
     expect(chordToInit('Super+Z')).toBeNull()
+  })
+
+  it('offers Arrange and Present only where a deck is open', () => {
+    const ids = (path: string) => desktopMenuFor(path).map((s) => s.id)
+    expect(ids('/deck/abc123')).toEqual(['file', 'edit', 'view', 'arrange', 'present'])
+    expect(ids('/deck/abc123/present')).toEqual(['file', 'edit', 'view', 'arrange', 'present'])
+    expect(ids('/')).toEqual(['file', 'edit'])
+    expect(ids('/folder/f1')).toEqual(['file', 'edit'])
   })
 })

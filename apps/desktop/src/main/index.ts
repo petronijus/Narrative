@@ -44,6 +44,7 @@ import { buildApplicationMenu } from './menu.js'
 import { MenuRouter } from './menuRouting.js'
 import { OpenedFiles } from './openFiles.js'
 import { installPermissionHandlers } from './permissions.js'
+import { refusedSwitches } from './switches.js'
 import { placeForPresentation } from './presentPlacement.js'
 import { activeScheme, canReceiveLinks, registerScheme } from './protocol.js'
 import { redeemInHiddenWindow } from './redeemWindow.js'
@@ -75,19 +76,19 @@ if (!app.isPackaged) {
 
 const log: Logger = createLogger(app.getPath('logs'), { mirror: !app.isPackaged })
 
-// 3. A packaged build refuses remote debugging (no fuse covers it) and a
-//    disabled sandbox (Ubuntu's AppImage launcher adds --no-sandbox when it
-//    cannot use user namespaces): both would hand the editor's session to
-//    anything on the machine.
-if (
-  app.isPackaged &&
-  (app.commandLine.hasSwitch('remote-debugging-port') ||
-    app.commandLine.hasSwitch('remote-debugging-pipe'))
-) {
-  log.error('refusing to start with remote debugging')
+// 3. A packaged build starts only with the switches a desktop or launcher
+//    passes (main/switches.ts): a proxy, a network log, remote debugging, a
+//    disabled sandbox or another profile would hand the editor's session to
+//    whatever started it. A disabled sandbox (Ubuntu's AppImage launcher adds
+//    --no-sandbox when it cannot use user namespaces) gets its own message.
+const sandboxDisabled = app.isPackaged && app.commandLine.hasSwitch('no-sandbox')
+const refused = app.isPackaged
+  ? refusedSwitches(process.argv).filter((s) => s !== 'no-sandbox')
+  : []
+if (refused.length > 0) {
+  log.error('refusing to start with these switches', { switches: refused })
   app.exit(1)
 }
-const sandboxDisabled = app.isPackaged && app.commandLine.hasSwitch('no-sandbox')
 
 // 4. Hyprland sets no desktop the keyring detection knows; name it.
 if ((process.env['XDG_CURRENT_DESKTOP'] ?? '').includes('Hyprland')) {
@@ -214,7 +215,8 @@ const updates = new Updates({
   publicKey: updatePublicKey(),
   fetchText: async (url) => {
     try {
-      const res = await net.fetch(url, { cache: 'no-store' })
+      // A feed that stalls the signature must not hold the gate open.
+      const res = await net.fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(10_000) })
       return res.ok ? await res.text() : null
     } catch {
       return null
@@ -359,6 +361,8 @@ async function switchServer(next: ServerTarget): Promise<void> {
   switchingServer = true
   try {
     signIn.cancel()
+    // Files opened for the old server never go to the new one.
+    openedFiles.clear()
     for (const presenter of presenterWindows) presenter.close()
     const old = mainWindow
     target = next
@@ -403,6 +407,12 @@ app.on('web-contents-created', (_event, wc) => {
       serverOrigin: currentOrigin,
       log,
       openPresenter: (url, partition) => {
+        // One presenter view: another request brings it to the front.
+        const existing = [...presenterWindows].find((w) => !w.isDestroyed())
+        if (existing !== undefined) {
+          existing.focus()
+          return
+        }
         const win = createPresenterWindow(url, partition, { devTools: !app.isPackaged })
         presenterWindows.add(win)
         win.on('closed', () => presenterWindows.delete(win))
@@ -410,6 +420,13 @@ app.on('web-contents-created', (_event, wc) => {
     },
     partitionOf,
   )
+})
+
+// A server asking for a client certificate gets none: Electron would
+// otherwise hand it the first one in the store without asking.
+app.on('select-client-certificate', (event, _wc, _url, _list, callback) => {
+  event.preventDefault()
+  callback()
 })
 
 // 10. Ready: settings, permissions, IPC, the window.

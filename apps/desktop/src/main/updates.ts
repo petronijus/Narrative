@@ -8,8 +8,15 @@
  * and the person chose Restart now. `autoInstallOnAppQuit` is off, so "Later"
  * installs nothing either; a download that failed the gate is deleted and
  * never offered. An unpackaged build never updates.
+ *
+ * What installs is what was verified (security review of D0, H1): while a
+ * verified update waits for the person's answer, no check runs and nothing
+ * downloads, so nothing can take the pending file's place, and the file is
+ * hashed again right before it installs.
  */
 
+import { createHash } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { autoUpdater, type UpdateDownloadedEvent, type UpdateInfo } from 'electron-updater'
 import type { Logger } from './log.js'
@@ -31,10 +38,22 @@ export interface UpdateDeps {
   report(message: string, detail?: string): void
 }
 
+function sha512(file: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const hash = createHash('sha512')
+    createReadStream(file)
+      .on('data', (chunk) => hash.update(chunk))
+      .on('end', () => resolve(hash.digest('hex')))
+      .on('error', () => resolve(null))
+  })
+}
+
 export class Updates {
   private manual = false
   private lastFailure: string | null = null
   private started = false
+  /** A verified update is waiting for the person's answer: no checks, no downloads. */
+  private holding = false
 
   constructor(private readonly deps: UpdateDeps) {}
 
@@ -91,6 +110,7 @@ export class Updates {
         this.deps.report('Updates come with the installed app.', 'This is a development build.')
       return
     }
+    if (this.holding) return
     this.manual = this.manual || manual
     autoUpdater.checkForUpdates().catch((err: unknown) => {
       this.deps.log.warn('update check failed', { err: String(err) })
@@ -120,6 +140,21 @@ export class Updates {
     }
     this.lastFailure = null
     this.deps.log.info('update verified', { version: event.version })
-    if (await this.deps.offerRestart(event.version)) autoUpdater.quitAndInstall(true, true)
+    const verified = await sha512(event.downloadedFile)
+    this.holding = true
+    autoUpdater.autoDownload = false
+    try {
+      if (!(await this.deps.offerRestart(event.version))) return
+      // The bytes that install are the bytes that were verified.
+      if (verified === null || (await sha512(event.downloadedFile)) !== verified) {
+        this.deps.log.error('update refused: the download changed after it was verified')
+        await rm(event.downloadedFile, { force: true }).catch(() => undefined)
+        return
+      }
+      autoUpdater.quitAndInstall(true, true)
+    } finally {
+      this.holding = false
+      autoUpdater.autoDownload = true
+    }
   }
 }

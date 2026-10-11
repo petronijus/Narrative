@@ -41,6 +41,8 @@ export interface DisplayChoice {
 }
 
 const STORAGE_KEY = 'narrative.present.display'
+/** How long fullscreen waits for the desktop shell to move the window. */
+const PLACEMENT_WAIT_MS = 1_000
 
 /** Whether this browser can put a presentation on another display. */
 export function canChooseDisplay(): boolean {
@@ -135,17 +137,22 @@ export async function requestPresentationFullscreen(element: Element): Promise<v
           : (findChosenDisplay(details.screens, choice) as (DisplayScreen & Screen) | null)
     }
   }
-  if (screen !== null) {
+  const bridge = desktopBridge()
+  if (screen !== null && bridge !== undefined) {
     // In the desktop app under Hyprland the shell moves the window there
-    // first: a Wayland page cannot place its own window.
-    await desktopBridge()
-      ?.placeForPresentation({
-        left: screen.left,
-        top: screen.top,
-        width: screen.width,
-        height: screen.height,
-      })
-      .catch(() => false)
+    // first: a Wayland page cannot place its own window. At most a second:
+    // fullscreen needs the key press's user activation, which expires.
+    await Promise.race([
+      bridge
+        .placeForPresentation({
+          left: screen.left,
+          top: screen.top,
+          width: screen.width,
+          height: screen.height,
+        })
+        .catch(() => false),
+      new Promise((resolve) => setTimeout(resolve, PLACEMENT_WAIT_MS)),
+    ])
   }
   await element.requestFullscreen(screen === null ? undefined : ({ screen } as FullscreenOptions))
 }

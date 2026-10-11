@@ -38,7 +38,10 @@ export class MenuRouter {
     contents.send(DESKTOP_IPC.menuAction, {
       seq,
       action: item.action,
-      ...(item.accelerator !== undefined ? { accelerator: item.accelerator } : {}),
+      // A shown key or an unshown chord: the page presses it either way.
+      ...((item.accelerator ?? item.chord) !== undefined
+        ? { accelerator: item.accelerator ?? item.chord }
+        : {}),
     })
   }
 
@@ -63,6 +66,8 @@ function runNativeEdit(contents: WebContents, edit: DesktopNativeEdit): void {
       return contents.copy()
     case 'paste':
       return contents.paste()
+    case 'delete':
+      return contents.delete()
     case 'selectAll':
       return contents.selectAll()
   }

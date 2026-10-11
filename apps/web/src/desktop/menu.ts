@@ -21,9 +21,16 @@ function item(action: ActionId, menuLabel?: string): DesktopMenuItem {
   return {
     action,
     label: menuLabel ?? USER_ACTIONS[action].label,
-    ...(keys !== undefined ? { accelerator: keys.accelerator } : {}),
+    ...(keys?.accelerator !== undefined ? { accelerator: keys.accelerator } : {}),
+    ...(keys?.chord !== undefined ? { chord: keys.chord } : {}),
     ...(keys?.nativeFallback !== undefined ? { nativeFallback: keys.nativeFallback } : {}),
   }
+}
+
+/** The editor's sections for `pathname`: Arrange and Present only where a deck is open. */
+export function desktopMenuFor(pathname: string): readonly DesktopMenuSection[] {
+  const deckOpen = /^\/deck\/[^/]+(\/present)?\/?$/.test(pathname)
+  return deckOpen ? DESKTOP_MENU : DESKTOP_MENU.filter((s) => s.id === 'file' || s.id === 'edit')
 }
 
 export const DESKTOP_MENU: readonly DesktopMenuSection[] = [

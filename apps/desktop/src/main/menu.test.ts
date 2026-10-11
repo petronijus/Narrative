@@ -73,6 +73,7 @@ describe('application menu', () => {
 
   it('offers the servers with the current one checked', () => {
     const c = ctx({
+      packaged: false,
       server: { kind: 'custom', origin: 'https://narrative.example.com' },
     })
     const menu = buildApplicationMenu(c)
@@ -114,5 +115,14 @@ describe('application menu', () => {
       JSON.stringify(menu.map((m) => m.submenu)).includes('toggleDevTools')
     expect(roles(buildApplicationMenu(ctx({ packaged: true })))).toBe(false)
     expect(roles(buildApplicationMenu(ctx({ packaged: false })))).toBe(true)
+  })
+
+  it('offers the dev stack only in a development build', () => {
+    expect(
+      find(buildApplicationMenu(ctx({ packaged: true })), 'Development (this computer)'),
+    ).toBeUndefined()
+    expect(
+      find(buildApplicationMenu(ctx({ packaged: false })), 'Development (this computer)'),
+    ).toBeDefined()
   })
 })

@@ -31,24 +31,32 @@ export const signInRequest = z
   .strict()
 
 const SECTION_IDS = ['file', 'edit', 'view', 'arrange', 'present'] as const
-const NATIVE_EDITS = ['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'] as const
+const NATIVE_EDITS = ['undo', 'redo', 'cut', 'copy', 'paste', 'delete', 'selectAll'] as const
 
 const menuItem = z
   .object({
     action: z.string().regex(/^[a-z][A-Za-z]*(\.[A-Za-z]+)+$/),
     label: z.string().min(1).max(DESKTOP_MENU_LABEL_MAX),
     accelerator: z.string().optional(),
+    chord: z.string().optional(),
     nativeFallback: z.enum(NATIVE_EDITS).optional(),
     shell: z.literal('openPptx').optional(),
   })
   .strict()
   // A page may show only the keys of the shared table, for exactly that
   // action — never its own chords, nor the shell's (Quit, Reload).
+  .refine((item) => {
+    const keys = DESKTOP_MENU_ACCELERATORS[item.action]
+    return (
+      item.accelerator === keys?.accelerator &&
+      item.chord === keys?.chord &&
+      item.nativeFallback === keys?.nativeFallback
+    )
+  }, 'key or native fallback not in the shared table')
+  // The file dialog belongs to Import PowerPoint only.
   .refine(
-    (item) =>
-      item.accelerator === DESKTOP_MENU_ACCELERATORS[item.action]?.accelerator &&
-      item.nativeFallback === DESKTOP_MENU_ACCELERATORS[item.action]?.nativeFallback,
-    'key or native fallback not in the shared table',
+    (item) => item.shell === undefined || item.action === 'deck.importPptx',
+    'not a shell item',
   )
 
 /** `setMenu`: the editor's sections (an empty list resets to the shell's own menu). */

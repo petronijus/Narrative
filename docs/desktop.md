@@ -32,7 +32,12 @@ scheme).
 - **Ubuntu 26.04** restricts unprivileged user namespaces, which the
   Electron sandbox needs. Run `just desktop-apparmor` once per checkout (asks
   for sudo); `just doctor` says when it is missing. The shell never runs
-  without its sandbox.
+  without its sandbox. The profile lets that checkout's
+  `node_modules/electron/dist/electron` — a file the developer can replace —
+  create user namespaces, which is what Ubuntu's restriction prevents: a
+  deliberate trade-off for a development machine (security review of D0,
+  L4). The installed app needs no such profile; its deb ships Electron's
+  root-owned sandbox helper.
 - **macOS**: an unpackaged build cannot receive `narrative-dev://` links
   (schemes come only from an app bundle's Info.plist), so signing in needs a
   packaged build.

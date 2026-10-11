@@ -90,6 +90,7 @@ ACCESS = [
     "move-deck-share-link",
     "folder-sharing",
 ]
+DESKTOP = ["desktop-shell", "desktop-sign-in", "desktop-menu", "desktop-open-file", "desktop-present"]
 TOKENS = ["folder-tokens", "share-link-folder-tokens", "folder-font-preview"]
 COMPONENTS = [
     "component-master-upload",
@@ -311,17 +312,16 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/services/index.ts", AGENT + ACCESS),
     ("apps/video-worker/src/*", MEDIA),
     ("apps/render-worker/*", ["render-export", "render-page", "query-render"]),
-    # The desktop shell (ADR 0014). Its Electron specs join with the shell's
-    # Playwright project (D0 step 9); the web e2e suite does not load it.
-    ("apps/desktop/*", []),
+    # The desktop shell (ADR 0014): the `electron` project's specs.
+    ("apps/desktop/*", DESKTOP),
     # The bridge contract: types and constants the shell and the web app's
     # desktop module share; the editor does not import it otherwise.
-    ("packages/shared/src/desktop.ts", []),
+    ("packages/shared/src/desktop.ts", DESKTOP),
     # The editor's side of the bridge: inert in a browser (no
     # window.narrativeDesktop), so only the shell's own specs exercise it.
-    ("apps/web/src/desktop/*", []),
+    ("apps/web/src/desktop/*", DESKTOP),
     # Presenting on a chosen display (Window Management API).
-    ("apps/web/src/present/*", PRESENT),
+    ("apps/web/src/present/*", PRESENT + ["desktop-present"]),
     # Browser and desktop sign-in; the MCP OAuth pages share the page headers
     # and the strict form parser.
     ("apps/server/src/routes/auth.ts", ACCESS),

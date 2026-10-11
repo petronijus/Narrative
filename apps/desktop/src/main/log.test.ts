@@ -23,6 +23,14 @@ describe('log', () => {
     expect(maskSecrets(`ticket=ndt_x&verifier=${'v'.repeat(43)}`)).toBe('ticket=***&verifier=***')
   })
 
+  it('masks secret fields by name and the session cookie', () => {
+    const log = createLogger(dir, { mirror: false })
+    log.info('x', { verifier: 'plain-value', header: 'narrative_session=abc123; Path=/' })
+    const line = JSON.parse(readFileSync(path.join(dir, 'main.log'), 'utf8').trim())
+    expect(line.verifier).toBe('***')
+    expect(line.header).toBe('narrative_session=***; Path=/')
+  })
+
   it('writes masked JSON lines, fields included', () => {
     const log = createLogger(dir, { mirror: false })
     log.warn('deep link ignored', { url: 'narrative://auth/complete?ticket=ndt_abc&state=s' })

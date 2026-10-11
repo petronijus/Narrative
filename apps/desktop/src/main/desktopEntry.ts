@@ -10,6 +10,9 @@
  */
 
 export function quoteExecArg(arg: string): string {
+  // A newline would start another key of the entry; no path has one.
+  if (/[\x00-\x1f\x7f]/.test(arg))
+    throw new Error('a control character in a Desktop Entry argument')
   const quoted = `"${arg.replace(/(["`$\\])/g, '\\$1')}"`
   return quoted.replace(/\\/g, '\\\\').replace(/%/g, '%%')
 }
