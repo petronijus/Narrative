@@ -8,7 +8,8 @@
  * showing that edit (the worker's page waits for the live state, also when
  * it is a page kept from the previous look); a compare of a slide before
  * the run that changed it and now (A3.6: the "before" drawn on a frozen
- * page); the text boxes whose text overflows, measured with the real fonts. Needs the whole dev stack, the
+ * page); the text boxes whose text overflows, measured with the real fonts, and a box sized exactly to
+ * its text (150% and 80% line spacing) reported as fitting. Needs the whole dev stack, the
  * render worker included (`just dev`).
  */
 
@@ -222,6 +223,66 @@ test('reports text boxes whose text runs below them, with the real fonts', async
   // The second slide's text fits its box.
   const second = await look(request, { slide: { index: 1 } })
   expect(second.out.overflow).toEqual([])
+})
+
+test('a box sized exactly to its text fits, at 150% and at 80% line spacing', async ({
+  request,
+}) => {
+  test.setTimeout(180_000)
+  await seedDeck(request)
+  const spacings = { loose: 1.5, tight: 0.8 } as const
+  // Three wrapped lines each; first squeezed to 20 px, so the page reports
+  // how tall the laid-out text really is.
+  for (const [id, lineSpacing] of Object.entries(spacings)) {
+    await command(request, 'object.create', {
+      slide: { index: 0 },
+      id,
+      object: {
+        type: 'text',
+        x: id === 'loose' ? 200 : 1000,
+        y: 500,
+        width: 600,
+        height: 20,
+        text: 'One line of words, then another line, then a third one',
+        fontSize: 48,
+        lineSpacing,
+      },
+    })
+  }
+  const squeezed = await look(request, { slide: { index: 0 } })
+  const measured = Object.fromEntries(squeezed.out.overflow.map((o) => [o.objectId, o.textHeight]))
+  expect(Object.keys(measured).sort()).toEqual(['loose', 'tight'])
+  // The spacing reaches the measurement: three lines at 150% stand taller than at 80%.
+  expect(measured.loose!).toBeGreaterThan(measured.tight! * 1.5)
+
+  // Sized to the measured height, top and bottom aligned: no overflow — the
+  // PowerPoint line offset and the alignment move glyphs, they add no height.
+  for (const vAlign of ['top', 'bottom'] as const) {
+    await command(request, 'object.update', {
+      slide: { index: 0 },
+      updates: Object.keys(spacings).map((id) => ({
+        object: id,
+        patch: { height: measured[id], vAlign },
+      })),
+    })
+    const exact = await look(request, { slide: { index: 0 } })
+    expect(exact.out.overflow, `vAlign ${vAlign}`).toEqual([])
+  }
+
+  // Four pixels short is reported, with the same text height.
+  await command(request, 'object.update', {
+    slide: { index: 0 },
+    updates: Object.keys(spacings).map((id) => ({
+      object: id,
+      patch: { height: measured[id]! - 4, vAlign: 'top' },
+    })),
+  })
+  const short = await look(request, { slide: { index: 0 } })
+  expect(short.out.overflow.map((o) => o.objectId).sort()).toEqual(['loose', 'tight'])
+  for (const o of short.out.overflow) {
+    expect(o.boxHeight).toBe(measured[o.objectId]! - 4)
+    expect(Math.abs(o.textHeight - measured[o.objectId]!)).toBeLessThanOrEqual(1)
+  }
 })
 
 test('refuses a slide that does not exist', async ({ request }) => {

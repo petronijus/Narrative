@@ -528,7 +528,14 @@ file passed when rerun with two workers (100 + 28), `canvas-sharpness`
 and `multi-client-collab` with one (8/8); `just eval` 54/56 ($7.58):
 `compare-before-after` failed on its grader (it took the box colour over
 red runs; fixed, then PASS) and `title-style-folderwide` on a model
-choice that passed on rerun. Not written yet: an exact-fit overflow e2e
-(a box sized to its text at 150% / 80% spacing).
+choice that passed on rerun.
+
+**The exact-fit overflow e2e — written 2026-10-12** (after 0.10.30,
+MacBook): `query-render.spec.ts` "a box sized exactly to its text fits"
+squeezes two three-line boxes (150% and 80% spacing) to read their laid-out
+height, sizes each box to it — no overflow, top and bottom aligned — then
+4 px short, reported with the same text height. It fails when
+`laidOutTextBottom` stops taking the PowerPoint line offset out (checked by
+that mutation); the spec file passed 24/24 (`--repeat-each 3`).
 
 A3 is done. Next: A4 (style packs, plan §7).
