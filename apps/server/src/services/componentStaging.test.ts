@@ -202,6 +202,33 @@ describe('promoteComponent', () => {
     await deck.disconnect()
   })
 
+  it('drops a stamp link from what becomes the master, keeping slot and role (A4.1)', async () => {
+    const doc = new Y.Doc()
+    const deck = hydrateSlideDoc(doc)
+    deck.slides.get(0).set('id', 'S1')
+    addObjects(getSlideObjectsCtx(deck, 'S1')!, [
+      rect('stamped', {
+        slot: 'pagenum',
+        role: 'furniture',
+        component: { id: 'cmp_old', objectId: 'm1', instance: 'i1', origin: { x: 0, y: 0 } },
+      }),
+    ])
+    persistence.snapshots.set('deck1', Y.encodeStateAsUpdate(doc))
+    editor = await hp.openDirectConnection('deck1')
+    const script = scriptedDb({
+      selects: [[{ folderId: 'f1' }], [sharedFolder], [{ role: 'editor' }]],
+    })
+    const out = await promoteComponent(
+      { db: script.db, log: quietLog, hocuspocus: () => hp },
+      { userId: 'u1', deckId: 'deck1', slide: 'S1', objects: ['stamped'], name: 'Pagination' },
+    )
+    const master = await hp.openDirectConnection(`component:${out.component.id}`)
+    const [obj] = objectsOfMaster(master.document!)
+    expect(obj).toMatchObject({ slot: 'pagenum', role: 'furniture' })
+    expect(obj!.component).toBeUndefined()
+    await master.disconnect()
+  })
+
   it("refuses a user who is not an editor of the deck's folder (a viewer, an outsider), before reading the deck", async () => {
     await seedDeck()
     for (const roleRows of [[{ role: 'viewer' }], []]) {
@@ -316,6 +343,10 @@ describe('prepareComponentStamp + stampComponentIntoDeck', () => {
     const stamped = slide.objects.filter((o) => out.objectIds.includes(o.id))
     expect(stamped).toHaveLength(2)
     expect((stamped.find((o) => o.type === 'image') as ImageObject).assetId).toBe('a_cmp')
+    // Every copy records the stamp it belongs to (A4.1), one instance for both.
+    expect(stamped.map((o) => o.component?.objectId)).toEqual(['pic', 'title'])
+    expect(new Set(stamped.map((o) => o.component?.instance)).size).toBe(1)
+    expect(stamped[0]!.component).toMatchObject({ id: 'cmp1', origin: { x: 100, y: 80 } })
     await deck.disconnect()
     expect(script.remaining().selects).toBe(0)
     // Settled once, after the write: the linked picture and the folder it

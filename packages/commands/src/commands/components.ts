@@ -7,10 +7,10 @@
  * recur on many slides (plan §7, decision 10); everything else is built from
  * plain objects styled with the folder's tokens.
  *
- * list / get / rename / delete call the server's ComponentService (the same
- * service GET /folders/:id/components and PATCH/DELETE /components/:id
- * call). `component.promote` makes a component from objects on a deck's
- * slide, on the server (POST /decks/:id/promote-component).
+ * list / create / get / rename / delete call the server's ComponentService
+ * (the same service GET/POST /folders/:id/components and PATCH/DELETE
+ * /components/:id call). `component.promote` makes a component from objects
+ * on a deck's slide, on the server (POST /decks/:id/promote-component).
  *
  * A component owns its pictures and videos (A2.12b): promoting copies the
  * deck's media into the component; stamping links the master's media — a
@@ -25,6 +25,12 @@
  * in the same step. The editor's stamp (POST /decks/:id/stamp-component)
  * runs the same `stampMaster` on the server.
  *
+ * Every stamped object records its provenance (`component`, A4.1), so
+ * `component.restamp` re-applies a changed master to the stamps made from
+ * it, in place — loaded like a stamp, written by slide-model's
+ * `restampComponent`, its text slots re-formatted the way a stamp fills
+ * them. A component's slots are its master objects' `slot ?? name`.
+ *
  * Editing a master needs no command of its own: the host opens
  * `component:<id>` as the target document and the ordinary document
  * commands (object.*, text.*, table.*, query.slide) work on it.
@@ -35,6 +41,8 @@ import * as Y from 'yjs'
 import {
   blockAttrsToInsertAttrs,
   getParagraphDeltas,
+  restampComponent,
+  slotNameOf,
   stampComponent,
   yMapToAnimationStep,
 } from '@narrative/slide-model'
@@ -44,6 +52,7 @@ import { CommandError } from '../errors.js'
 import {
   ObjectIdsSchema,
   SlideRefSchema,
+  animationsOf,
   objectsOf,
   requireDeck,
   requireObjects,
@@ -129,17 +138,30 @@ function masterBounds(objects: ReadonlyArray<Y.Map<unknown>>) {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
-/** Named objects act as slots (until style packs add an explicit `slot` field, plan §7.2). */
+/** A master object's slot name: its `slot`, else its `name` (masters named before A4 keep working). */
+function slotOf(o: Y.Map<unknown>): string | null {
+  return slotNameOf({ slot: o.get('slot'), name: o.get('name') })
+}
+
+/** The master's slots: every object with a slot name, in master order. */
 function slotsOf(objects: ReadonlyArray<Y.Map<unknown>>) {
-  const slots: Array<{ name: string; objectId: string; type: string; text?: string }> = []
+  const slots: Array<{
+    name: string
+    objectId: string
+    type: string
+    role?: string
+    text?: string
+  }> = []
   for (const o of objects) {
-    const name = o.get('name')
-    if (typeof name !== 'string' || name.trim() === '') continue
+    const name = slotOf(o)
+    if (name === null) continue
     const text = o.get('text')
+    const role = o.get('role')
     slots.push({
       name,
       objectId: o.get('id') as string,
       type: o.get('type') as string,
+      ...(typeof role === 'string' ? { role } : {}),
       ...(text instanceof Y.Text ? { text: displayOf(text.toString()).display } : {}),
     })
   }
@@ -150,6 +172,7 @@ const SlotOutput = z.object({
   name: z.string().describe('Slot name — pass it as a key of `slots` to component.stamp'),
   objectId: z.string().describe('The master object that is the slot'),
   type: z.string(),
+  role: z.string().optional(),
   text: z.string().optional().describe('Text slots: the placeholder text'),
 })
 
@@ -206,7 +229,8 @@ export const componentGet = defineCommand({
   title: 'Read component',
   description:
     "One component's master: its objects with every property (the shapes query.slide returns), its animations, " +
-    'its bounding box, and its slot map — every NAMED object is a slot; text slots show their placeholder text. ' +
+    'its bounding box, and its slot map — an object with a `slot` (else a name) is a slot; text slots show their ' +
+    'placeholder text. ' +
     'Read it before component.stamp to know which slot names to fill. To change the master itself, target the ' +
     'component (componentId) with the ordinary document commands. Any member of the folder.',
   input: z.strictObject({ componentId: ComponentIdSchema }),
@@ -241,6 +265,35 @@ export const componentGet = defineCommand({
     } finally {
       view.doc.destroy()
     }
+  },
+})
+
+export const componentCreate = defineCommand({
+  ...folderComponent,
+  role: 'editor',
+  id: 'component.create',
+  title: 'Create component',
+  description:
+    'Make an empty component in the folder, for a block that recurs on many slides. Fill its master with the ' +
+    'object and text commands pointed at it (componentId); from objects on a slide use component.promote. ' +
+    'Needs the editor role in the folder. Undo: component.delete.',
+  input: z.strictObject({
+    // Validated by the service (as for POST /folders/:folderId/components):
+    // trimmed, at most 200 characters, blank → "Untitled component".
+    name: z.string().optional().describe('The name the folder lists it under'),
+  }),
+  output: ComponentOutput,
+  undo: 'undoable',
+  undoneBy: 'component.delete',
+  confirm: 'never',
+  routes: [POST('/folders/:folderId/components')],
+  examples: [{ title: 'Create an empty pagination component', input: { name: 'Pagination' } }],
+  async handler(ctx, input) {
+    return requireServices(ctx).components.create({
+      userId: ctx.actor.userId,
+      folderId: targetFolderId(ctx),
+      name: input.name ?? '',
+    })
   },
 })
 
@@ -315,7 +368,23 @@ export const componentDelete = defineCommand({
  */
 function slotPlan(placeholder: Y.Text, body: TextBodyInput): BodyPlan {
   const plan = planFromBody(body)
-  if (typeof body !== 'string') return plan
+  return typeof body === 'string' ? formattedLike(placeholder, plan) : plan
+}
+
+/**
+ * The plan for a text slot a restamp keeps: its paragraphs' text, formatted
+ * like the master's placeholder exactly as `slotPlan` formats a plain string
+ * (the slot's own inline formatting gives way to the master's).
+ */
+function restampSlotPlan(placeholder: Y.Text, current: Y.Text): BodyPlan {
+  const paragraphs = getParagraphDeltas(current).map((p) => ({
+    text: p.ops.map((op) => (typeof op.insert === 'string' ? op.insert : '')).join(''),
+  }))
+  return formattedLike(placeholder, planFromBody({ paragraphs }))
+}
+
+/** `plan`'s text with the placeholder's formatting, paragraph by paragraph (see slotPlan). */
+function formattedLike(placeholder: Y.Text, plan: BodyPlan): BodyPlan {
   const template = getParagraphDeltas(placeholder)
   if (template.length === 0) return plan
   const paragraphs = plan.paragraphs.map((p, i) => {
@@ -384,7 +453,7 @@ export function stampMaster(
     const bounds = masterBounds(view.objects)
     const at = input.at ?? { x: bounds.x, y: bounds.y }
     if (wrote !== undefined) wrote.value = true
-    const ids = stampComponent(objects, view.doc, at)
+    const ids = stampComponent(objects, view.doc, at, input.componentId)
 
     // stampComponent copies the master objects in order, with the same
     // "has a type" rule openMaster applies, so ids[i] is the copy of
@@ -393,13 +462,13 @@ export function stampMaster(
     if (slotNames.length > 0 && ids.length === view.objects.length) {
       const stamped = requireObjects(objects, ids, slide.id)
       view.objects.forEach((m, i) => {
-        const name = m.get('name')
-        const body = typeof name === 'string' ? input.slots?.[name] : undefined
-        if (body === undefined) return
+        const name = slotOf(m)
+        const body = name !== null ? input.slots?.[name] : undefined
+        if (name === null || body === undefined) return
         const text = stamped.get(ids[i]!)?.get('text')
         if (!(text instanceof Y.Text)) return
         writePlan(deck.doc, text, slotPlan(text, body))
-        filled.add(name as string)
+        filled.add(name)
       })
     }
     return { objectIds: ids, filledSlots: [...filled], at }
@@ -416,9 +485,10 @@ export const componentStamp = defineCommand({
   description:
     "Place one of the deck's folder components on a slide and fill its text slots in the same step. The master's " +
     'objects are copied as ordinary objects with fresh ids — rich text, groups and table content included; the ' +
-    "master's animations are not copied — so editing the master later does not change this stamp. Without `at` " +
+    "master's animations are not copied. Each copy records its component (`component`): component.restamp " +
+    're-applies a changed master. Without `at` ' +
     'the copy lands where the master was drawn (its bounding box top-left); `at` moves that corner. `slots` maps ' +
-    'slot names (component.get lists them: the names of the master objects) to text: a plain string keeps the ' +
+    'slot names (component.get lists them) to text: a plain string keeps the ' +
     "slot's formatting, { paragraphs } sets it explicitly. The stamp shows the master's own pictures and videos " +
     "(linked, not copied: a deck may show its folder's component media). Returns the new object ids in stacking " +
     "order. Use the folder's existing components for the roles they cover; do not stamp for one-off content. " +
@@ -494,6 +564,162 @@ export const componentStamp = defineCommand({
   },
 })
 
+// ---------------------------------------------------------------------------
+// component.restamp
+// ---------------------------------------------------------------------------
+
+/** What restamping wrote on one slide: part of `component.restamp`'s output. */
+export interface RestampedSlide {
+  slide: string
+  stamps: number
+  updated: string[]
+  added: string[]
+  removed: string[]
+  removedAnimations: string[]
+}
+
+function isStampOf(m: Y.Map<unknown>, componentId: string): boolean {
+  const c = m.get('component') as { id?: unknown } | undefined
+  return typeof c === 'object' && c !== null && c.id === componentId
+}
+
+/**
+ * Re-apply `master` to its stamps on `input.slide` of `deck`, or on every
+ * slide — the body of `component.restamp`. slide-model's `restampComponent`
+ * updates each stamp in place; the text slots it kept are then given the
+ * master's formatting the way `stampMaster` fills a slot. Every check runs
+ * before the first write; `wrote.value` turns true the moment the deck is
+ * changed. Synchronous: call it inside the one transaction of the write.
+ */
+export function restampMaster(
+  deck: DeckMutationContext,
+  master: ComponentMaster,
+  input: { componentId: string; slide?: SlideRef | undefined },
+  wrote?: { value: boolean },
+): { slides: RestampedSlide[] } {
+  const slides =
+    input.slide !== undefined
+      ? [resolveSlide(deck, input.slide)]
+      : deck.slides.toArray().map((m) => resolveSlide(deck, m.get('id') as string))
+  const view = openMaster(master)
+  try {
+    if (view.objects.length === 0) {
+      throw new CommandError(
+        'conflict',
+        `component '${input.componentId}' has no objects; restamping would empty its stamps`,
+      )
+    }
+    const placeholders = new Map<string, Y.Text>()
+    for (const m of view.objects) {
+      const text = m.get('text')
+      if (text instanceof Y.Text) placeholders.set(m.get('id') as string, text)
+    }
+    const out: RestampedSlide[] = []
+    for (const slide of slides) {
+      const objects = objectsOf(deck, slide)
+      if (!objects.objects.toArray().some((m) => isStampOf(m, input.componentId))) continue
+      if (wrote !== undefined) wrote.value = true
+      const r = restampComponent(objects, animationsOf(deck, slide), view.doc, input.componentId)
+      for (const { objectId, masterObjectId } of r.textSlots) {
+        const body = objects.objects
+          .toArray()
+          .find((m) => m.get('id') === objectId)
+          ?.get('text')
+        const placeholder = placeholders.get(masterObjectId)
+        if (body instanceof Y.Text && placeholder !== undefined)
+          writePlan(deck.doc, body, restampSlotPlan(placeholder, body))
+      }
+      out.push({
+        slide: slide.id,
+        stamps: r.stamps.length,
+        updated: r.stamps.flatMap((st) => st.updated),
+        added: r.stamps.flatMap((st) => st.added),
+        removed: r.stamps.flatMap((st) => st.removed),
+        removedAnimations: r.removedAnimations,
+      })
+    }
+    return { slides: out }
+  } finally {
+    view.doc.destroy()
+  }
+}
+
+export const componentRestamp = defineCommand({
+  ...serverCommand,
+  id: 'component.restamp',
+  domain: 'component',
+  title: 'Restamp component',
+  description:
+    "Reset a component's stamps to its current master — on `slide`, or without it the whole deck — only when " +
+    'the user asks to bring them up to date: stamps are detached, a master change never reaches them by itself. ' +
+    'Change the master first (object and text commands with componentId); for a new stamp use component.stamp. ' +
+    'Each stamp is updated in place (ids, so animations, kept; where people moved it) with every master ' +
+    'property, overwriting local edits to it (colour, size, name, lock, link…), except slot content: a text slot ' +
+    'keeps its text in the master formatting, a picture slot its picture, a table slot its cells. Every master ' +
+    'object comes back, also ones deleted from the stamp; objects no longer in the master go with their ' +
+    'animations. Ask the user before restamping a whole deck. An empty master is refused. Needs the editor role ' +
+    'on the deck and a role in its folder.',
+  input: z.strictObject({
+    componentId: ComponentIdSchema,
+    slide: SlideRefSchema.optional(),
+  }),
+  output: z.object({
+    slides: z
+      .array(
+        z.object({
+          slide: z.string(),
+          stamps: z.number().describe('Stamps of the component restamped on the slide'),
+          updated: z.array(z.string()),
+          added: z
+            .array(z.string())
+            .describe('Master objects the stamps lacked (deleted, never copied or new), restored'),
+          removed: z.array(z.string()).describe('Objects no longer in the master, deleted'),
+          removedAnimations: z.array(z.string()),
+        }),
+      )
+      .describe('Slides that had stamps of the component'),
+  }),
+  role: 'editor',
+  scope: 'deck',
+  effects: ['doc', 'server'],
+  idempotent: true,
+  undo: 'undoable',
+  confirm: 'never',
+  implementedWith: [
+    'restampComponent',
+    'getParagraphDeltas',
+    'spliceRichText',
+    'applyFormat',
+    'updateParagraphsInRange',
+  ],
+  examples: [
+    {
+      title: 'Restamp the headline block on one slide',
+      input: { componentId: 'cmp_headline', slide: 's2' },
+    },
+    { title: 'Restamp it across the deck', input: { componentId: 'cmp_headline' } },
+  ],
+  async load(ctx, input): Promise<PreparedStamp> {
+    return requireServices(ctx).components.prepareStamp({
+      userId: ctx.actor.userId,
+      componentId: input.componentId,
+      deckId: targetDeckId(ctx),
+      purpose: 'restamp',
+    })
+  },
+  release: (prepared) => prepared.discard(),
+  settle: (prepared) => prepared.settle(),
+  handler(ctx, input, prepared) {
+    const wrote = { value: false }
+    try {
+      return restampMaster(requireDeck(ctx), prepared.master, input, wrote)
+    } catch (e) {
+      if (!wrote.value) void prepared.discard()
+      throw e
+    }
+  },
+})
+
 export const componentPromote = defineCommand({
   ...serverCommand,
   id: 'component.promote',
@@ -504,8 +730,9 @@ export const componentPromote = defineCommand({
     'many slides (a headline block, the pagination, a card grid) — a folder keeps only a few. The objects become ' +
     'the master as they are: a group brings its members, rich text, tables and their animations come along; the ' +
     'slide is not changed. Pictures and videos are copied into the component; links to slides are removed. ' +
-    "Named objects are the component's slots (component.stamp fills text slots by name), so name the text boxes " +
-    "(object.update name) first. Needs the editor role in the deck's folder. Undo: component.delete.",
+    "An object's `slot` (else its name) makes it a slot (component.stamp fills text slots by it), so set `slot` on " +
+    'the text boxes (object.update) first; a stamp link (`component`) is dropped. Needs the editor role in the ' +
+    "deck's folder. Undo: component.delete.",
   input: z.strictObject({
     slide: SlideRefSchema,
     objects: ObjectIdsSchema.describe('The objects to promote (a group id brings its members)'),
@@ -549,9 +776,11 @@ export const componentPromote = defineCommand({
 
 export const componentCommands = [
   componentList,
+  componentCreate,
   componentGet,
   componentRename,
   componentDelete,
   componentPromote,
   componentStamp,
+  componentRestamp,
 ]

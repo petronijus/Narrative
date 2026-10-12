@@ -28,7 +28,7 @@
 
 import { z } from 'zod'
 import type { SlideObjectType, TokenRef } from '../slide.js'
-import { MAX_LIST_LEVEL } from '../slide.js'
+import { MAX_LIST_LEVEL, OBJECT_ROLES } from '../slide.js'
 import { sanitizeHref } from '../sanitize.js'
 import {
   ColorInputSchema,
@@ -99,6 +99,26 @@ export const ObjectHyperlinkSchema = z.discriminatedUnion('kind', [
     target: z.enum(['_self', '_blank']).exactOptional(),
   }),
 ])
+
+/** Longest slot name (a brand's slot names are short: `title`, `bullets2`). */
+export const MAX_SLOT_NAME = 200
+
+/** `BaseSlideObject.slot` — the brand's slot name. */
+export const SlotNameSchema = z
+  .string()
+  .min(1)
+  .max(MAX_SLOT_NAME)
+  .refine((s) => s.trim() === s, 'no leading or trailing spaces')
+
+export const ObjectRoleSchema = z.enum(OBJECT_ROLES)
+
+/** `BaseSlideObject.component` — set by a stamp (see ComponentProvenance in ../slide.ts). */
+export const ComponentProvenanceSchema = z.strictObject({
+  id: IdSchema,
+  objectId: IdSchema,
+  instance: IdSchema,
+  origin: z.strictObject({ x: FiniteNumberSchema, y: FiniteNumberSchema }),
+})
 
 export const CornerRadiusSchema = z.union([
   NonNegativeNumberSchema,
@@ -266,6 +286,9 @@ function buildObjectSchemas<C extends ColorSlot, R extends RgbSlot>(color: C, rg
     aspectLocked: z.boolean().exactOptional(),
     flipH: z.boolean().exactOptional(),
     flipV: z.boolean().exactOptional(),
+    slot: SlotNameSchema.exactOptional(),
+    role: ObjectRoleSchema.exactOptional(),
+    component: ComponentProvenanceSchema.exactOptional(),
   }
   const BaseSlideObjectSchema = z.strictObject(baseShape)
 

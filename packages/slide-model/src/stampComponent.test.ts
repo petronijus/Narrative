@@ -96,7 +96,7 @@ describe('stampComponent', () => {
     const objCtx = getSlideObjectsCtx(deckCtx, slideId)!
     const masterDoc = makeMasterDoc([])
 
-    const ids = stampComponent(objCtx, masterDoc, { x: 50, y: 50 })
+    const ids = stampComponent(objCtx, masterDoc, { x: 50, y: 50 }, 'cmp')
 
     expect(ids).toEqual([])
     expect(objCtx.objects.length).toBe(0)
@@ -111,7 +111,7 @@ describe('stampComponent', () => {
       makeText('master-text-1', 120, 220, 'Hello'),
     ])
 
-    const ids = stampComponent(objCtx, masterDoc, { x: 0, y: 0 })
+    const ids = stampComponent(objCtx, masterDoc, { x: 0, y: 0 }, 'cmp')
 
     expect(ids).toHaveLength(2)
     expect(ids[0]).not.toBe('master-rect-1')
@@ -127,7 +127,7 @@ describe('stampComponent', () => {
     // Master bbox top-left is (100, 200); inner offsets 0 and 50 in x.
     const masterDoc = makeMasterDoc([makeRect('m1', 100, 200), makeRect('m2', 150, 240)])
 
-    stampComponent(objCtx, masterDoc, { x: 500, y: 600 })
+    stampComponent(objCtx, masterDoc, { x: 500, y: 600 }, 'cmp')
 
     const o1 = yMapToPlainObject<RectangleObject>(objCtx.objects.get(0))
     const o2 = yMapToPlainObject<RectangleObject>(objCtx.objects.get(1))
@@ -138,13 +138,65 @@ describe('stampComponent', () => {
     expect(o2.y).toBe(640)
   })
 
+  it('records where every stamped object came from, one instance per stamp', () => {
+    const deckCtx = makeDeckCtx()
+    const slideId = listSlides(deckCtx)[0]!.id
+    const objCtx = getSlideObjectsCtx(deckCtx, slideId)!
+    const masterDoc = makeMasterDoc([
+      makeRect('m1', 100, 200, {
+        component: { id: 'other', objectId: 'x', instance: 'y', origin: { x: 0, y: 0 } },
+      }),
+      makeRect('m2', 150, 240),
+    ])
+
+    const first = stampComponent(objCtx, masterDoc, { x: 500, y: 600 }, 'cmp')
+    const second = stampComponent(objCtx, masterDoc, { x: 0, y: 0 }, 'cmp')
+
+    const all = [...first, ...second].map((id, i) => {
+      void id
+      return yMapToPlainObject<RectangleObject>(objCtx.objects.get(i)).component!
+    })
+    expect(all[0]).toMatchObject({ id: 'cmp', objectId: 'm1', origin: { x: 100, y: 200 } })
+    expect(all[1]).toMatchObject({ id: 'cmp', objectId: 'm2', origin: { x: 150, y: 240 } })
+    expect(all[0]!.instance).toBe(all[1]!.instance)
+    expect(all[2]!.instance).toBe(all[3]!.instance)
+    expect(all[2]!.instance).not.toBe(all[0]!.instance)
+  })
+
+  it('moves a crop with its frame', () => {
+    const deckCtx = makeDeckCtx()
+    const slideId = listSlides(deckCtx)[0]!.id
+    const objCtx = getSlideObjectsCtx(deckCtx, slideId)!
+    const masterDoc = makeMasterDoc([
+      {
+        id: 'pic',
+        type: 'image',
+        assetId: 'a1',
+        x: 100,
+        y: 100,
+        width: 200,
+        height: 100,
+        rotation: 0,
+        opacity: 1,
+        imageRect: { x: 50, y: 80, width: 300, height: 150 },
+      },
+    ])
+    stampComponent(objCtx, masterDoc, { x: 400, y: 300 }, 'cmp')
+    expect(objCtx.objects.get(0).get('imageRect')).toEqual({
+      x: 350,
+      y: 280,
+      width: 300,
+      height: 150,
+    })
+  })
+
   it('does not modify the master when stamped', () => {
     const deckCtx = makeDeckCtx()
     const slideId = listSlides(deckCtx)[0]!.id
     const objCtx = getSlideObjectsCtx(deckCtx, slideId)!
     const masterDoc = makeMasterDoc([makeRect('master-rect-1', 100, 100)])
 
-    stampComponent(objCtx, masterDoc, { x: 999, y: 999 })
+    stampComponent(objCtx, masterDoc, { x: 999, y: 999 }, 'cmp')
 
     const masterSlide = masterDoc.getArray<Y.Map<unknown>>('slides').get(0)
     const masterObjs = masterSlide.get('objects') as Y.Array<Y.Map<unknown>>
@@ -164,7 +216,7 @@ describe('stampComponent', () => {
       makeRect('child', 120, 120, { groupId: 'grp' }),
     ])
 
-    const ids = stampComponent(objCtx, masterDoc, { x: 0, y: 0 })
+    const ids = stampComponent(objCtx, masterDoc, { x: 0, y: 0 }, 'cmp')
     const o0 = yMapToPlainObject<RectangleObject>(objCtx.objects.get(0))
     const o1 = yMapToPlainObject<RectangleObject>(objCtx.objects.get(1))
 
@@ -178,7 +230,7 @@ describe('stampComponent', () => {
     const objCtx = getSlideObjectsCtx(deckCtx, slideId)!
     const masterDoc = makeMasterDoc([makeRect('orphan', 100, 100, { groupId: 'foreign-id' })])
 
-    stampComponent(objCtx, masterDoc, { x: 0, y: 0 })
+    stampComponent(objCtx, masterDoc, { x: 0, y: 0 }, 'cmp')
     const o = yMapToPlainObject<RectangleObject>(objCtx.objects.get(0))
     expect(o.groupId).toBeUndefined()
   })
@@ -217,7 +269,7 @@ describe('stampComponent', () => {
       objectsArr.push([yText])
     })
 
-    const ids = stampComponent(objCtx, masterDoc, { x: 0, y: 0 })
+    const ids = stampComponent(objCtx, masterDoc, { x: 0, y: 0 }, 'cmp')
     expect(ids).toHaveLength(2)
 
     const stampedText = yMapToPlainObject<TextObject>(objCtx.objects.get(1))
@@ -333,7 +385,7 @@ describe('promote → stamp rich-text round trip', () => {
 
     const target = makeDeckCtx()
     const targetCtx = getSlideObjectsCtx(target, listSlides(target)[0]!.id)!
-    stampComponent(targetCtx, master, { x: 0, y: 0 })
+    stampComponent(targetCtx, master, { x: 0, y: 0 }, 'cmp')
     const stamped = targetCtx.objects.toArray().map((m) => yMapToPlainObject<SlideObject>(m))
     expect(bodies(stamped.find((o) => o.type === 'text')!)).toEqual(sourceText)
     expect(bodies(stamped.find((o) => o.type === 'table')!)).toEqual(sourceTable)
@@ -356,7 +408,7 @@ describe('promote → stamp rich-text round trip', () => {
     const src = masterObjects(master)
     const target = makeDeckCtx()
     const targetCtx = getSlideObjectsCtx(target, listSlides(target)[0]!.id)!
-    stampComponent(targetCtx, master, { x: 10, y: 10 })
+    stampComponent(targetCtx, master, { x: 10, y: 10 }, 'cmp')
     const stamped = targetCtx.objects.toArray().map((m) => yMapToPlainObject<SlideObject>(m))
     expect(bodies(stamped.find((o) => o.type === 'text')!)).toEqual(
       bodies(src.find((o) => o.id === textId)!),
@@ -378,8 +430,8 @@ describe('promote → stamp rich-text round trip', () => {
 
     const target = makeDeckCtx()
     const targetCtx = getSlideObjectsCtx(target, listSlides(target)[0]!.id)!
-    stampComponent(targetCtx, master, { x: 0, y: 0 })
-    stampComponent(targetCtx, master, { x: 400, y: 0 })
+    stampComponent(targetCtx, master, { x: 0, y: 0 }, 'cmp')
+    stampComponent(targetCtx, master, { x: 400, y: 0 }, 'cmp')
     const groups = targetCtx.objects
       .toArray()
       .map((m) => yMapToPlainObject<RectangleObject>(m).groupId)
@@ -397,7 +449,7 @@ describe('promote → stamp rich-text round trip', () => {
     const origins: unknown[] = []
     const onTx = (tr: Y.Transaction) => origins.push(tr.origin)
     deckCtx.doc.on('afterTransaction', onTx)
-    stampComponent(objCtx, master, { x: 0, y: 0 })
+    stampComponent(objCtx, master, { x: 0, y: 0 }, 'cmp')
     deckCtx.doc.off('afterTransaction', onTx)
     expect(origins).toEqual([LOCAL_ORIGIN])
   })

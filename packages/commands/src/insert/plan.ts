@@ -20,8 +20,10 @@ import type { SlideObject, SlideObjectType } from '@narrative/shared'
 import { objectCreateInputSchema, slideObjectSchemaFor } from '@narrative/shared'
 import {
   addObjects,
+  freshStampInstances,
   getObjectTypeDef,
   getTableCellYMap,
+  withStampInstance,
   type ObjectsMutationContext,
 } from '@narrative/slide-model'
 import { CommandError, issuesFromZod, type CommandIssue } from '../errors.js'
@@ -234,8 +236,10 @@ function num(v: unknown): number {
 /**
  * Validate and prepare `raw` objects for insertion. Groups are regrouped the
  * way a copy is: members that came in together keep a new group of their
- * own, a lone member comes out ungrouped. `offset` moves them; `at` puts the
- * centre of their combined box on a point (a crop moves with its image).
+ * own, a lone member comes out ungrouped; a stamp's objects keep their
+ * `component` link with a fresh instance per stamp they came from.
+ * `offset` moves them; `at` puts the centre of their combined box on a
+ * point (a crop moves with its image).
  */
 export function planInsert(
   raw: readonly Record<string, unknown>[],
@@ -256,6 +260,9 @@ export function planInsert(
   }
   const groups = new Map<string, string>()
   for (const [g, count] of members) if (count >= 2) groups.set(g, nanoid())
+  // A pasted stamp keeps its link to the component, as a stamp of its own:
+  // one fresh instance per stamp the objects came from (A4.1).
+  const instances = freshStampInstances(prepared.map(({ obj }) => obj['component']))
 
   let dx = placement.offset?.x ?? 0
   let dy = placement.offset?.y ?? 0
@@ -283,6 +290,11 @@ export function planInsert(
       if (to === undefined) delete obj['groupId']
       else obj['groupId'] = to
     }
+    if (obj['component'] !== undefined) {
+      const component = withStampInstance(obj['component'], instances)
+      if (component === undefined) delete obj['component']
+      else obj['component'] = component
+    }
     obj['x'] = num(obj['x']) + dx
     obj['y'] = num(obj['y']) + dy
     const crop = obj['imageRect'] as
@@ -293,6 +305,23 @@ export function planInsert(
     for (const c of cells) cellBodies.push({ objectId: obj['id'] as string, ...c })
   }
   return { objects, cellBodies }
+}
+
+/**
+ * `plan` for a component master: a master links to nothing (A4.1), so the
+ * objects leave their stamp provenance (`component`) behind; `slot` and
+ * `role` stay — on a master they name its slots.
+ */
+export function planForMaster(plan: InsertPlan): InsertPlan {
+  return {
+    ...plan,
+    objects: plan.objects.map((o) => {
+      if (o.component === undefined) return o
+      const { component: _c, ...rest } = o
+      void _c
+      return rest as SlideObject
+    }),
+  }
 }
 
 /** Add planned objects on top of a slide's stacking order; returns their ids in order. */

@@ -13,7 +13,7 @@
 import JSZip from 'jszip'
 import { describe, expect, it } from 'vitest'
 import { diffDecks, exportInMemory, formatDifferences, importInMemory } from './roundtrip.js'
-import { matrixDeck } from './roundtripMatrix.js'
+import { matrixDeck, withProvenance } from './roundtripMatrix.js'
 import { writeDeck } from './ooxml/writeDeck.js'
 
 describe('pptx round trip: model → export → import', () => {
@@ -31,6 +31,22 @@ describe('pptx round trip: model → export → import', () => {
     const second = await exportInMemory(await importInMemory(first))
     const third = await exportInMemory(await importInMemory(second))
     expect(third.equals(second)).toBe(true)
+  })
+
+  it('leaves slot, role and stamp provenance out of the file (A4.1): no noise either way', async () => {
+    const deck = await matrixDeck()
+    const stamped = withProvenance(deck)
+    const exported = await exportInMemory(stamped)
+    expect(exported.equals(await exportInMemory(deck))).toBe(true)
+    const back = await importInMemory(exported)
+    const differences = diffDecks(deck, back)
+    expect(differences, `\n${formatDifferences(differences)}\n`).toEqual([])
+    for (const slide of back.slides)
+      for (const o of slide.objects) {
+        expect(o.slot).toBeUndefined()
+        expect(o.role).toBeUndefined()
+        expect(o.component).toBeUndefined()
+      }
   })
 
   it('takes its zip entries from the package, not the clock', async () => {

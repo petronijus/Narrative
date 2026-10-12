@@ -649,6 +649,42 @@ describe('stageObjectInsert between a deck and a component master', () => {
     await sourceEditor.disconnect()
   })
 
+  it('leaves a pasted stamp’s link behind in a master, keeping its slot and role (A4.1)', async () => {
+    seedSource()
+    const sourceEditor = await hp.openDirectConnection('src')
+    const script = scriptedDb({
+      selects: [
+        [{ folderId: 'f1' }],
+        [{ folderId: 'f1' }],
+        [component('cmp1', 'f1')],
+        [{ role: 'editor' }],
+        [placed(mediaRow)],
+      ],
+    })
+    const stamped = picture().map((o) => ({
+      ...o,
+      slot: 'photo',
+      role: 'picture',
+      component: { id: 'cmp_x', objectId: 'm1', instance: 'i1', origin: { x: 0, y: 0 } },
+    }))
+    const prepared = await stageObjectInsert(
+      { db: script.db, log: quietLog, hocuspocus: () => hp },
+      {
+        userId: 'u1',
+        source: { deckId: 'src' },
+        target: { componentId: 'cmp1' },
+        plan: planInsert(stamped, {}),
+      },
+    )
+    const target = createSlideDoc()
+    const objects = getSlideObjectsCtx(target, target.slides.get(0).get('id') as string)!
+    target.doc.transact(() => prepared.apply(objects))
+    const [pasted] = listSlides(target)[0]!.objects
+    expect(pasted).toMatchObject({ slot: 'photo', role: 'picture' })
+    expect(pasted!.component).toBeUndefined()
+    await sourceEditor.disconnect()
+  })
+
   it("links a master's picture in a deck of its folder, copying nothing, for a viewer of the folder", async () => {
     // Within the folder the deck may show the master's own picture
     // (media/visibleMedia.ts): the pasted object keeps its asset id.

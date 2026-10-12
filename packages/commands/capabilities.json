@@ -120,6 +120,23 @@
       "hosts": ["browser", "server"]
     },
     {
+      "id": "component.create",
+      "domain": "component",
+      "title": "Create component",
+      "description": "Make an empty component in the folder, for a block that recurs on many slides. Fill its master with the object and text commands pointed at it (componentId); from objects on a slide use component.promote. Needs the editor role in the folder. Undo: component.delete.",
+      "role": "editor",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/folders/:folderId/components"
+        }
+      ]
+    },
+    {
       "id": "component.delete",
       "domain": "component",
       "title": "Delete component",
@@ -140,7 +157,7 @@
       "id": "component.get",
       "domain": "component",
       "title": "Read component",
-      "description": "One component's master: its objects with every property (the shapes query.slide returns), its animations, its bounding box, and its slot map — every NAMED object is a slot; text slots show their placeholder text. Read it before component.stamp to know which slot names to fill. To change the master itself, target the component (componentId) with the ordinary document commands. Any member of the folder.",
+      "description": "One component's master: its objects with every property (the shapes query.slide returns), its animations, its bounding box, and its slot map — an object with a `slot` (else a name) is a slot; text slots show their placeholder text. Read it before component.stamp to know which slot names to fill. To change the master itself, target the component (componentId) with the ordinary document commands. Any member of the folder.",
       "role": "viewer",
       "effects": ["server"],
       "undo": "n/a",
@@ -170,7 +187,7 @@
       "id": "component.promote",
       "domain": "component",
       "title": "Make component from objects",
-      "description": "Make a new component of this deck's folder from objects on one of its slides, for a block that recurs on many slides (a headline block, the pagination, a card grid) — a folder keeps only a few. The objects become the master as they are: a group brings its members, rich text, tables and their animations come along; the slide is not changed. Pictures and videos are copied into the component; links to slides are removed. Named objects are the component's slots (component.stamp fills text slots by name), so name the text boxes (object.update name) first. Needs the editor role in the deck's folder. Undo: component.delete.",
+      "description": "Make a new component of this deck's folder from objects on one of its slides, for a block that recurs on many slides (a headline block, the pagination, a card grid) — a folder keeps only a few. The objects become the master as they are: a group brings its members, rich text, tables and their animations come along; the slide is not changed. Pictures and videos are copied into the component; links to slides are removed. An object's `slot` (else its name) makes it a slot (component.stamp fills text slots by it), so set `slot` on the text boxes (object.update) first; a stamp link (`component`) is dropped. Needs the editor role in the deck's folder. Undo: component.delete.",
       "role": "editor",
       "effects": ["server"],
       "undo": "undoable",
@@ -202,10 +219,22 @@
       ]
     },
     {
+      "id": "component.restamp",
+      "domain": "component",
+      "title": "Restamp component",
+      "description": "Reset a component's stamps to its current master — on `slide`, or without it the whole deck — only when the user asks to bring them up to date: stamps are detached, a master change never reaches them by itself. Change the master first (object and text commands with componentId); for a new stamp use component.stamp. Each stamp is updated in place (ids, so animations, kept; where people moved it) with every master property, overwriting local edits to it (colour, size, name, lock, link…), except slot content: a text slot keeps its text in the master formatting, a picture slot its picture, a table slot its cells. Every master object comes back, also ones deleted from the stamp; objects no longer in the master go with their animations. Ask the user before restamping a whole deck. An empty master is refused. Needs the editor role on the deck and a role in its folder.",
+      "role": "editor",
+      "effects": ["doc", "server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "idempotent": true,
+      "hosts": ["server"]
+    },
+    {
       "id": "component.stamp",
       "domain": "component",
       "title": "Stamp component",
-      "description": "Place one of the deck's folder components on a slide and fill its text slots in the same step. The master's objects are copied as ordinary objects with fresh ids — rich text, groups and table content included; the master's animations are not copied — so editing the master later does not change this stamp. Without `at` the copy lands where the master was drawn (its bounding box top-left); `at` moves that corner. `slots` maps slot names (component.get lists them: the names of the master objects) to text: a plain string keeps the slot's formatting, { paragraphs } sets it explicitly. The stamp shows the master's own pictures and videos (linked, not copied: a deck may show its folder's component media). Returns the new object ids in stacking order. Use the folder's existing components for the roles they cover; do not stamp for one-off content. Needs the editor role on the deck and a role in its folder (the folder's components are its members').",
+      "description": "Place one of the deck's folder components on a slide and fill its text slots in the same step. The master's objects are copied as ordinary objects with fresh ids — rich text, groups and table content included; the master's animations are not copied. Each copy records its component (`component`): component.restamp re-applies a changed master. Without `at` the copy lands where the master was drawn (its bounding box top-left); `at` moves that corner. `slots` maps slot names (component.get lists them) to text: a plain string keeps the slot's formatting, { paragraphs } sets it explicitly. The stamp shows the master's own pictures and videos (linked, not copied: a deck may show its folder's component media). Returns the new object ids in stacking order. Use the folder's existing components for the roles they cover; do not stamp for one-off content. Needs the editor role on the deck and a role in its folder (the folder's components are its members').",
       "role": "editor",
       "effects": ["doc", "server"],
       "undo": "undoable",
@@ -1191,7 +1220,7 @@
       "id": "object.update",
       "domain": "object",
       "title": "Update object properties",
-      "description": "ROTATION IS IN RADIANS here (the stored unit): 90 degrees = 1.5708, 180 = 3.1416; object.rotate takes degrees. Change properties of an object — fill, stroke, opacity, font size, corner radius, shadow, name, lock, x/y/width/height, rotation, … — validated against its type before anything is written (unknown keys fail). `null` removes an optional property. Use `updates` to patch several objects on one slide in one step. Not for tables' rows/columns/cells (table.* commands) or relative moves (object.move). Raw fields do exactly what they say and no more; where the editor does more, compose it yourself: (1) Setting x/y of a cropped image moves its crop along, but width/height do NOT scale the crop (`imageRect`) — resize with object.resize, which does. (2) `flipH` / `flipV` only mirror the content without negating `rotation` as the editor's Flip does — flip with object.flip. (3) Box typography (fontFamily, fontSize, fontWeight, color, …) set here is only the default under inline formatting, leaves fontWeight as is on a family change and does not mark a linked text style overridden — use text.setBoxTypography, which does what the Inspector does. (4) `textStyleId` only links a folder text style without applying it — use text.style.apply. (5) A video's `videoTrigger` + `videoDelay` (s, >= 0) place its clip on the editor's timeline: onEnter from the slide start, withPrevious / afterPrevious from the start / end of the slide's LAST animation step; they are exported to PowerPoint, but present mode starts a video by `autoplay` / `playOnClick` only. `text` on a text box replaces the body with plain text (formatting is dropped; use text.set for formatted text, text.format for styling ranges). `locked` is an editor-only flag (it stops a person dragging, resizing or deleting the object on the canvas); it does not restrict commands, so locked objects can be changed and `locked` set or cleared like any property. Units: the slide is 1920 x 1080 px, origin top-left, y down; x/y/width/height in slide px; rotation in RADIANS (90 degrees = 1.5708); opacity and *Alpha 0..1; colours as \"#RRGGBB\", a 0xRRGGBB integer, or a colour token { \"$token\": \"colors.<id>\" }.",
+      "description": "ROTATION IS IN RADIANS here (the stored unit): 90 degrees = 1.5708, 180 = 3.1416; object.rotate takes degrees. Change properties of an object — fill, stroke, opacity, font size, corner radius, shadow, name, lock, x/y/width/height, rotation, … — validated against its type before anything is written (unknown keys fail). `null` removes an optional property. Use `updates` to patch several objects on one slide in one step. Not for tables' rows/columns/cells (table.* commands) or relative moves (object.move). Raw fields do exactly what they say and no more; where the editor does more, compose it yourself: (1) Setting x/y of a cropped image moves its crop along, but width/height do NOT scale the crop (`imageRect`) — resize with object.resize, which does. (2) `flipH` / `flipV` only mirror the content without negating `rotation` as the editor's Flip does — flip with object.flip. (3) Box typography (fontFamily, fontSize, fontWeight, color, …) set here is only the default under inline formatting, leaves fontWeight as is on a family change and does not mark a linked text style overridden — use text.setBoxTypography, which does what the Inspector does. (4) `textStyleId` only links a folder text style without applying it — use text.style.apply. (5) A video's `videoTrigger` + `videoDelay` (s, >= 0) place its clip on the editor's timeline: onEnter from the slide start, withPrevious / afterPrevious from the start / end of the slide's LAST animation step; they are exported to PowerPoint, but present mode starts a video by `autoplay` / `playOnClick` only. `text` on a text box replaces the body with plain text (formatting is dropped; use text.set for formatted text, text.format for styling ranges). `locked` is an editor-only flag (it stops a person dragging, resizing or deleting the object on the canvas); it does not restrict commands, so locked objects can be changed and `locked` set or cleared like any property. `slot` (a component or brand slot name) and `role` (title, subtitle, body, picture, chart, table, caption, footnote, furniture) say what an object is for; `component` is a stamp's link, set by component.stamp. Units: the slide is 1920 x 1080 px, origin top-left, y down; x/y/width/height in slide px; rotation in RADIANS (90 degrees = 1.5708); opacity and *Alpha 0..1; colours as \"#RRGGBB\", a 0xRRGGBB integer, or a colour token { \"$token\": \"colors.<id>\" }.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -1931,24 +1960,6 @@
     }
   ],
   "knownMissing": [
-    {
-      "capability": "component.create",
-      "phase": "A4",
-      "source": "route",
-      "routes": [
-        {
-          "method": "POST",
-          "path": "/folders/:folderId/components"
-        }
-      ],
-      "note": "create a master from a spec (component.promote makes one from objects); the route makes an empty master, which the tests and the eval seed with; the pack compiler uses it only for the few recurring blocks (pagination, headline, subline, copy, a repeated column/grid) — layouts stay pack data"
-    },
-    {
-      "capability": "component.restamp",
-      "phase": "A4",
-      "source": "new",
-      "note": "reapply a changed master to the stamps made from it, keeping their slot content (needs component provenance)"
-    },
     {
       "capability": "deck.exportPdf",
       "phase": "A5",

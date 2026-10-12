@@ -52,12 +52,14 @@ export type {
   ImageFillStyle,
   FillStyle,
   ObjectHyperlink,
+  ObjectRole,
+  ComponentProvenance,
   ImageMask,
   NormalizedPathAnchor,
 } from './slide.js'
 
 export { TEXT_STYLE_OVERRIDE_KEYS, isTextStyleOverrideKey } from './slide.js'
-export { MAX_LIST_LEVEL, MAX_PATH_ANCHORS } from './slide.js'
+export { MAX_LIST_LEVEL, MAX_PATH_ANCHORS, OBJECT_ROLES } from './slide.js'
 export { hSegKey, vSegKey, getEffectiveBorderSegment } from './slide.js'
 
 export type {

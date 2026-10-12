@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **138**. Known missing: **3**. Deliberately excluded: **21**.
+Commands: **140**. Known missing: **1**. Deliberately excluded: **21**.
 
 ## agent
 
@@ -29,11 +29,13 @@ Commands: **138**. Known missing: **3**. Deliberately excluded: **21**.
 
 | Command             | What it does                | Role   | Undo         | Confirm | Hints      |
 | ------------------- | --------------------------- | ------ | ------------ | ------- | ---------- |
+| `component.create`  | Create component            | editor | undoable     | never   |            |
 | `component.delete`  | Delete component            | editor | irreversible | always  |            |
 | `component.get`     | Read component              | viewer | n/a          | never   | read-only  |
 | `component.list`    | List components             | viewer | n/a          | never   | read-only  |
 | `component.promote` | Make component from objects | editor | undoable     | never   |            |
 | `component.rename`  | Rename component            | editor | undoable     | never   | idempotent |
+| `component.restamp` | Restamp component           | editor | undoable     | never   | idempotent |
 | `component.stamp`   | Stamp component             | editor | undoable     | never   |            |
 
 ## deck
@@ -226,11 +228,9 @@ Commands: **138**. Known missing: **3**. Deliberately excluded: **21**.
 
 ## Known missing
 
-| Capability          | Phase | Today in                             | Note                                                                                                                                                                                                                                                                                                |
-| ------------------- | ----- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `component.create`  | A4    | `POST /folders/:folderId/components` | create a master from a spec (component.promote makes one from objects); the route makes an empty master, which the tests and the eval seed with; the pack compiler uses it only for the few recurring blocks (pagination, headline, subline, copy, a repeated column/grid) — layouts stay pack data |
-| `component.restamp` | A4    | new                                  | reapply a changed master to the stamps made from it, keeping their slot content (needs component provenance)                                                                                                                                                                                        |
-| `deck.exportPdf`    | A5    | new                                  | moved out of A3 by Petr (2026-10-10): not wanted yet; the render worker (A3) makes it a raster PDF of its PNGs when it is                                                                                                                                                                           |
+| Capability       | Phase | Today in | Note                                                                                                                      |
+| ---------------- | ----- | -------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `deck.exportPdf` | A5    | new      | moved out of A3 by Petr (2026-10-10): not wanted yet; the render worker (A3) makes it a raster PDF of its PNGs when it is |
 
 ## Deliberately excluded
 

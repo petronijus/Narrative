@@ -83,8 +83,15 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * component.refreshThumbnail tool would have taken ≈ 0.7 KB), query.render
  * gained `compare` and `overflow` (≈ +0.2 KB): 184,714 bytes in url mode,
  * 138 tools.
+ * A4.1 (2026-10-12): 185,500 → 188,000 for component.restamp ≈ 1.3 KB (it
+ * says it resets stamps and overwrites local edits, and to ask before a
+ * whole deck), component.create ≈ 0.6 and the object properties `slot`,
+ * `role` and `component`, which reach object.create and object.path.create
+ * through their create schemas (≈ 0.45 KB each) and object.update's
+ * description and example (≈ 0.2): 187,928 bytes in url mode, 140 tools
+ * (descriptions trimmed once before measuring) — 72 bytes left.
  */
-export const TOOL_LIST_BUDGET_BYTES = 185_500
+export const TOOL_LIST_BUDGET_BYTES = 188_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

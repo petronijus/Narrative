@@ -75,6 +75,7 @@ export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>>
   spliceRichText: 'writer',
   splitTableCell: 'writer',
   stampComponent: 'writer',
+  restampComponent: 'writer',
   writeComponentMaster: 'writer',
   toggleListKind: 'writer',
   translateObjects: 'writer',
@@ -128,6 +129,9 @@ export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>>
   paragraphFontSizePx: 'reader',
   // A pure plan; component.promote writes it with writeComponentMaster.
   promoteToComponent: 'reader',
+  slotNameOf: 'reader',
+  freshStampInstances: 'reader',
+  withStampInstance: 'reader',
   pruneAnimationsToScope: 'reader',
   readParagraphAttrsForRange: 'reader',
   resolveTokenValue: 'reader',

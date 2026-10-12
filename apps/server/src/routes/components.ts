@@ -32,7 +32,7 @@ import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { parseDataUrl } from '../media/dataUrl.js'
 import { createComponentsService, MAX_COMPONENT_NAME } from '../services/components.js'
-import { createEmptyComponent, stampComponentIntoDeck } from '../services/componentStaging.js'
+import { stampComponentIntoDeck } from '../services/componentStaging.js'
 import { sendInsertObjects } from './insertObjects.js'
 import { forgetCard } from '../render/cardState.js'
 import {
@@ -128,8 +128,9 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
   // -------------------------------------------------------------------------
   // POST /folders/:folderId/components — create an empty component
   //
-  // Body: { name?: string }. The row and its empty master slide
-  // (services/componentStaging.ts). A component made from objects comes from
+  // Body: { name?: string }. `component.create` for the editor: the row and
+  // its empty master slide (services/componentStaging.ts, through the
+  // component service). A component made from objects comes from
   // POST /decks/:id/promote-component.
   // -------------------------------------------------------------------------
   app.post<{ Params: { folderId: string }; Body: { name?: unknown } }>(
@@ -138,7 +139,7 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
     async (request, reply) => {
       const rawName = request.body?.name
       try {
-        const created = await createEmptyComponent(routeDeps(app, db, request.log), {
+        const created = await createComponentsService(routeDeps(app, db, request.log)).create({
           userId: request.user!.sub,
           folderId: request.params.folderId,
           name: typeof rawName === 'string' ? rawName : '',

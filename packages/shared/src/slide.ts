@@ -59,6 +59,47 @@ export type ObjectHyperlink =
   | { kind: 'slide'; slideId: string }
   | { kind: 'url'; href: string; target?: '_self' | '_blank' }
 
+/**
+ * A4.1: what an object is for, small and generic on purpose — what a
+ * restyle maps by (a brand's `statement` is `body`; its page number, footer,
+ * classification and logo are `furniture`), while `slot` keeps the brand's
+ * own name.
+ */
+export const OBJECT_ROLES = [
+  'title',
+  'subtitle',
+  'body',
+  'picture',
+  'chart',
+  'table',
+  'caption',
+  'footnote',
+  'furniture',
+] as const
+
+export type ObjectRole = (typeof OBJECT_ROLES)[number]
+
+/**
+ * A4.1: where a stamped object came from (set by `component.stamp`, carried
+ * by duplicate / paste with a fresh `instance`, dropped by promote).
+ */
+export interface ComponentProvenance {
+  /** The component whose master was stamped. */
+  id: string
+  /** The master object this object copies. */
+  objectId: string
+  /**
+   * One id per stamp: two stamps of one master on a slide stay apart, as
+   * their group tokens do. Unique within a slide, like a group token.
+   */
+  instance: string
+  /**
+   * Where the master object stood when it was stamped; `x − origin.x` is the
+   * stamp's offset, so `component.restamp` puts a moved stamp where it is.
+   */
+  origin: { x: number; y: number }
+}
+
 export interface ShadowStyle {
   /** Shadow color hex or token ref. */
   color: number | TokenRef
@@ -139,6 +180,16 @@ export interface BaseSlideObject {
    * Same mechanism as `flipH` but on `scale.y`.
    */
   flipV?: boolean
+  /**
+   * A4.1: the brand's slot name (`title`, `pagenum`, `bullets2`, …). A
+   * component's slots are its master objects' `slot ?? name`, so masters
+   * named before A4 keep working.
+   */
+  slot?: string
+  /** A4.1: the object's generic role ({@link ObjectRole}). */
+  role?: ObjectRole
+  /** A4.1: the component stamp this object belongs to. Never set on a master's own objects. */
+  component?: ComponentProvenance
 }
 
 /**

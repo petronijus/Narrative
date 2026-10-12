@@ -17,6 +17,8 @@ import insertSlidesFromDeck from './insertSlidesFromDeck.js'
 import componentStampSlots from './componentStampSlots.js'
 import componentPromoteHeadline from './componentPromoteHeadline.js'
 import componentMasterPicture from './componentMasterPicture.js'
+import componentRestamp from './componentRestamp.js'
+import componentCreatePagination from './componentCreatePagination.js'
 import exportPptxRoundtrip from './exportPptxRoundtrip.js'
 import exportPngSlide from './exportPngSlide.js'
 import lookAtSlide from './lookAtSlide.js'
@@ -75,6 +77,8 @@ export const SCENARIOS: readonly AnyScenario[] = [
   componentStampSlots,
   componentPromoteHeadline,
   componentMasterPicture,
+  componentRestamp,
+  componentCreatePagination,
   exportPptxRoundtrip,
   exportPngSlide,
   lookAtSlide,

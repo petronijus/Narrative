@@ -832,3 +832,33 @@ export async function matrixDeck(): Promise<ImportedDeck> {
   const slides = listSlides(ctx)
   return { slides, assets, notes: notesOf(ctx, slides) }
 }
+
+/**
+ * `deck` with A4.1's provenance on every object — a brand slot name, a role
+ * and a stamp link. PowerPoint has no place for any of them and they are
+ * decided to stay out of PPTX (docs/plans/a4-style-packs.md, "Decided"):
+ * export writes none, import sets none. roundtrip.test.ts holds the export
+ * of this deck byte-identical to the export of `deck`, so they leave no
+ * noise in the file.
+ */
+export function withProvenance(deck: ImportedDeck): ImportedDeck {
+  return {
+    ...deck,
+    slides: deck.slides.map((slide) => ({
+      ...slide,
+      objects: slide.objects.map(
+        (o, i): SlideObject => ({
+          ...o,
+          slot: `slot-${i}`,
+          role: i % 2 === 0 ? 'body' : 'furniture',
+          component: {
+            id: 'cmp-matrix',
+            objectId: `master-${i}`,
+            instance: `stamp-${slide.id}`,
+            origin: { x: o.x - 10, y: o.y - 20 },
+          },
+        }),
+      ),
+    })),
+  }
+}

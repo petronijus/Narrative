@@ -36,24 +36,7 @@ export interface KnownMissing {
   note?: string
 }
 
-const POST = (path: string): RouteRef => ({ method: 'POST', path })
-
 export const KNOWN_MISSING: readonly KnownMissing[] = [
-  // --- A4: style packs compiled into Narrative components (plan §7) ----------
-  {
-    capability: 'component.create',
-    phase: 'A4',
-    source: 'route',
-    routes: [POST('/folders/:folderId/components')],
-    note: 'create a master from a spec (component.promote makes one from objects); the route makes an empty master, which the tests and the eval seed with; the pack compiler uses it only for the few recurring blocks (pagination, headline, subline, copy, a repeated column/grid) — layouts stay pack data',
-  },
-  {
-    capability: 'component.restamp',
-    phase: 'A4',
-    source: 'new',
-    note: 'reapply a changed master to the stamps made from it, keeping their slot content (needs component provenance)',
-  },
-
   // --- A5: deck builder (and what was moved out of A3) -----------------------
   {
     capability: 'deck.exportPdf',

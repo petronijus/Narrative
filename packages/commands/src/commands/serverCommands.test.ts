@@ -9,10 +9,13 @@ import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 import {
   LOCAL_ORIGIN,
+  addObjects,
+  createSlideDoc,
   getParagraphDeltas,
   getSlideObjectsCtx,
   listSlides,
 } from '@narrative/slide-model'
+import { stampMaster } from './components.js'
 import { createDefaultRegistry } from '../catalog.js'
 import { runCommand } from '../run.js'
 import { CommandError } from '../errors.js'
@@ -423,6 +426,7 @@ describe('every folder-scoped command', () => {
     'component.list': { role: 'viewer' },
     'component.get': { role: 'viewer' },
     'component.rename': { role: 'editor' },
+    'component.create': { role: 'editor' },
     'component.delete': { role: 'editor' },
     'deck.activeEditors': { role: 'viewer' },
     'deck.importPptx': { role: 'editor' },
@@ -678,6 +682,247 @@ describe('component.stamp', () => {
       }),
     )
     expect(err.code).toBe('not_batchable')
+  })
+})
+
+describe('component provenance and slots (A4.1)', () => {
+  it('stamp records the component on every copy and fills slots by `slot` before `name`', () => {
+    const master = createSlideDoc()
+    const masterSlide = master.slides.get(0).get('id') as string
+    addObjects(getSlideObjectsCtx(master, masterSlide)!, [
+      {
+        id: 'm_head',
+        type: 'text',
+        name: 'Big headline',
+        slot: 'title',
+        role: 'title',
+        x: 100,
+        y: 100,
+        width: 800,
+        height: 80,
+        text: 'Headline',
+        fontSize: 48,
+        fontWeight: 'normal',
+        color: 0x111111,
+        align: 'left',
+        rotation: 0,
+        opacity: 1,
+      },
+    ])
+    const deck = createFixtureDeck()
+    const out = stampMaster(
+      deck,
+      {
+        component: {
+          id: 'cmp_x',
+          folderId: FIXTURE_FOLDER_ID,
+          name: 'X',
+          thumbnailKey: null,
+          thumbnailUrl: null,
+          createdAt: '',
+          updatedAt: '',
+        },
+        state: Y.encodeStateAsUpdate(master.doc),
+      },
+      { componentId: 'cmp_x', slide: 's3', slots: { title: 'Filled' } },
+    )
+    expect(out.filledSlots).toEqual(['title'])
+    const copy = getSlideObjectsCtx(deck, 's3')!.objects.get(0)
+    expect((copy.get('text') as Y.Text).toString()).toBe('Filled')
+    expect(copy.get('slot')).toBe('title')
+    expect(copy.get('role')).toBe('title')
+    expect(copy.get('component')).toMatchObject({
+      id: 'cmp_x',
+      objectId: 'm_head',
+      origin: { x: 100, y: 100 },
+    })
+  })
+
+  it('object.update sets and clears slot, role and component', async () => {
+    const c = ctx()
+    await runCommand(registry, c, 'object.update', {
+      slide: 's1',
+      object: 't1',
+      patch: { slot: 'title', role: 'title' },
+    })
+    const t1 = () => getSlideObjectsCtx(c.deck!, 's1')!.objects.toArray()[2]!
+    expect([t1().get('slot'), t1().get('role')]).toEqual(['title', 'title'])
+    await runCommand(registry, c, 'object.update', {
+      slide: 's1',
+      object: 't1',
+      patch: { slot: null, role: null },
+    })
+    expect([t1().get('slot'), t1().get('role')]).toEqual([undefined, undefined])
+    const err = await failure(
+      runCommand(registry, c, 'object.update', {
+        slide: 's1',
+        object: 't1',
+        patch: { role: 'headline' },
+      }),
+    )
+    expect(err.code).toBe('invalid_input')
+  })
+
+  it("refuses a stamp link on a component master's objects", async () => {
+    const c = ctx({ target: { componentId: 'cmp_headline', folderId: FIXTURE_FOLDER_ID } })
+    const err = await failure(
+      runCommand(registry, c, 'object.update', {
+        slide: 's1',
+        object: 'r1',
+        patch: {
+          component: { id: 'cmp_x', objectId: 'm1', instance: 'i1', origin: { x: 0, y: 0 } },
+        },
+      }),
+    )
+    expect(err.code).toBe('invalid_input')
+  })
+
+  it('object.insert keeps a pasted stamp linked with a fresh instance; on a master it drops the link', async () => {
+    const read = (await runCommand(registry, ctx(), 'query.slide', { slide: 's2' })) as {
+      objects: Array<Record<string, unknown>>
+    }
+    const stamp = read.objects.filter((o) => o['component'] !== undefined)
+    expect(stamp).toHaveLength(3)
+
+    const c = ctx()
+    const { objectIds } = (await runCommand(registry, c, 'object.insert', {
+      slide: 's3',
+      objects: stamp,
+    })) as { objectIds: string[] }
+    const pasted = getSlideObjectsCtx(c.deck!, 's3')!
+      .objects.toArray()
+      .filter((m) => objectIds.includes(m.get('id') as string))
+      .map((m) => m.get('component') as { instance: string; objectId: string })
+    expect(pasted.map((p) => p.objectId)).toEqual(['m_bar', 'm_title', 'm_old'])
+    expect(new Set(pasted.map((p) => p.instance)).size).toBe(1)
+    expect(pasted[0]!.instance).not.toBe('stamp_headline')
+
+    const onMaster = ctx({ target: { componentId: 'cmp_headline', folderId: FIXTURE_FOLDER_ID } })
+    const second = (await runCommand(registry, onMaster, 'object.insert', {
+      slide: 's3',
+      objects: stamp,
+    })) as { objectIds: string[] }
+    const onMasterObjects = getSlideObjectsCtx(onMaster.deck!, 's3')!.objects.toArray()
+    for (const m of onMasterObjects.filter((x) => second.objectIds.includes(x.get('id') as string)))
+      expect(m.get('component')).toBeUndefined()
+  })
+})
+
+describe('component.create', () => {
+  const inFolder = () => ctx({ target: { folderId: FIXTURE_FOLDER_ID } })
+
+  it('makes an empty component in the target folder', async () => {
+    const c = inFolder()
+    const out = (await runCommand(registry, c, 'component.create', { name: '  Pagination ' })) as {
+      id: string
+      folderId: string
+      name: string
+    }
+    expect(out).toMatchObject({ folderId: FIXTURE_FOLDER_ID, name: 'Pagination' })
+    const listed = (await runCommand(registry, c, 'component.list', {})) as {
+      components: Array<{ id: string }>
+    }
+    expect(listed.components.map((x) => x.id)).toContain(out.id)
+  })
+
+  it('names a blank one "Untitled component", refuses a name too long and a viewer', async () => {
+    const blank = (await runCommand(registry, inFolder(), 'component.create', { name: ' ' })) as {
+      name: string
+    }
+    expect(blank.name).toBe('Untitled component')
+    const long = await failure(
+      runCommand(registry, inFolder(), 'component.create', { name: ` ${'x'.repeat(201)} ` }),
+    )
+    expect(long.code).toBe('invalid_input')
+    const viewer = ctx({
+      target: { folderId: FIXTURE_FOLDER_ID },
+      actor: { userId: 'u1', role: 'viewer', kind: 'agent' },
+    })
+    const refused = await failure(runCommand(registry, viewer, 'component.create', { name: 'X' }))
+    expect(refused.code).toBe('forbidden')
+  })
+})
+
+describe('component.restamp', () => {
+  function objectsOn(c: CommandContext, slideId: string) {
+    return getSlideObjectsCtx(c.deck!, slideId)!.objects.toArray()
+  }
+
+  it('updates the stamp in place, adds what the master gained and removes what it lost', async () => {
+    const c = ctx({ actor: { userId: 'u1', role: 'editor', kind: 'agent' } })
+    const out = (await runCommand(registry, c, 'component.restamp', {
+      componentId: 'cmp_headline',
+    })) as {
+      slides: Array<{
+        slide: string
+        stamps: number
+        updated: string[]
+        added: string[]
+        removed: string[]
+      }>
+    }
+    expect(out.slides).toHaveLength(1)
+    const [s2] = out.slides
+    expect(s2).toMatchObject({
+      slide: 's2',
+      stamps: 1,
+      updated: ['st_bar', 'st_title'],
+      removed: ['st_old'],
+    })
+    expect(s2!.added).toHaveLength(1)
+
+    const objects = objectsOn(c, 's2')
+    const ids = objects.map((m) => m.get('id'))
+    // The subtitle lands right above the title, as in the master.
+    expect(ids.slice(-3)).toEqual(['st_bar', 'st_title', s2!.added[0]])
+    const title = objects.find((m) => m.get('id') === 'st_title')!
+    // The slot keeps its text and takes the master's formatting (bold), at the stamp's offset.
+    expect(getParagraphDeltas(title.get('text') as Y.Text)[0]!.ops).toEqual([
+      { insert: 'Q3 revenue', attributes: { fontWeight: 700 } },
+    ])
+    expect([title.get('x'), title.get('y')]).toEqual([720, 610])
+    const subtitle = objects.find((m) => m.get('id') === s2!.added[0])!
+    expect((subtitle.get('text') as Y.Text).toString()).toBe('Subline')
+    expect([subtitle.get('x'), subtitle.get('y')]).toEqual([720, 710])
+    expect(subtitle.get('component')).toMatchObject({
+      id: 'cmp_headline',
+      objectId: 'm_subtitle',
+      instance: 'stamp_headline',
+    })
+    const [load] = callsTo(c, 'components').filter((x) => x.method === 'prepareStamp')
+    expect(load?.args).toMatchObject({ componentId: 'cmp_headline', deckId: FIXTURE_DECK_ID })
+  })
+
+  it('restamps one slide only, and a slide without stamps is a no-op', async () => {
+    const c = ctx()
+    const before = listSlides(c.deck!)
+    const out = (await runCommand(registry, c, 'component.restamp', {
+      componentId: 'cmp_headline',
+      slide: 's1',
+    })) as { slides: unknown[] }
+    expect(out.slides).toEqual([])
+    expect(listSlides(c.deck!)).toEqual(before)
+  })
+
+  it("refuses stamps of another folder's component as such", async () => {
+    const c = ctx({ target: { deckId: 'deck_other', folderId: 'folder_b' } })
+    const before = Y.encodeStateVector(c.deck!.doc)
+    const err = await failure(
+      runCommand(registry, c, 'component.restamp', { componentId: 'cmp_headline' }),
+    )
+    expect(err.code).toBe('conflict')
+    expect(err.message).toContain('another folder')
+    expect(Y.encodeStateVector(c.deck!.doc)).toEqual(before)
+  })
+
+  it('refuses an unknown slide without touching the document', async () => {
+    const c = ctx()
+    const before = Y.encodeStateVector(c.deck!.doc)
+    const err = await failure(
+      runCommand(registry, c, 'component.restamp', { componentId: 'cmp_headline', slide: 'nope' }),
+    )
+    expect(err.code).toBe('not_found')
+    expect(Y.encodeStateVector(c.deck!.doc)).toEqual(before)
   })
 })
 

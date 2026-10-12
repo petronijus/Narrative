@@ -98,6 +98,8 @@ const REPORTS_ITS_OWN_CHANGE: Readonly<Record<string, string>> = {
     '`previous` holds the value the first run set: the repeat replaced it with itself',
   'token.seedDefaults':
     '`seeded` / `migrated` are false on a repeat: nothing is left to add or bring up to date',
+  'component.restamp':
+    '`added` / `removed` are empty on a repeat: the stamps already match the master, so what the first run added is among `updated`',
 }
 
 /** Every id that exists in the fixture deck. */
@@ -120,6 +122,9 @@ const FIXTURE_IDS = new Set([
   'a1',
   'a2',
   'gd1',
+  'st_bar',
+  'st_title',
+  'st_old',
 ])
 
 /**

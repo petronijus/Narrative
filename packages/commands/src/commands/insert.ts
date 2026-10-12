@@ -15,6 +15,7 @@ import {
   InsertObjectsSchema,
   PlacementSchema,
   applyInsertPlan,
+  planForMaster,
   planInsert,
   type InsertPlan,
 } from '../insert/plan.js'
@@ -92,7 +93,9 @@ export const objectInsert = defineCommand({
     const deck = requireDeck(ctx)
     const objects = objectsOf(deck, resolveSlide(deck, input.slide))
     const plan = planInsert(input.objects, { offset: input.offset, at: input.at })
-    return { objectIds: applyInsertPlan(objects, plan) }
+    // On a component master the objects leave their stamp provenance behind.
+    const onMaster = ctx.target?.componentId !== undefined
+    return { objectIds: applyInsertPlan(objects, onMaster ? planForMaster(plan) : plan) }
   },
 })
 

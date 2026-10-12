@@ -91,8 +91,9 @@ describe('tools are generated from the registry', () => {
       if ((def.scope ?? 'deck') !== 'deck') continue
       const tool = listed.get(toolNameForCommand(def.id))!
       const props = (tool.inputSchema.properties ?? {}) as Record<string, unknown>
-      // component.stamp's own componentId is the component it stamps, not a target.
-      if (def.id === 'component.stamp') continue
+      // component.stamp's and .restamp's own componentId is the component they
+      // stamp, not a target.
+      if (def.id === 'component.stamp' || def.id === 'component.restamp') continue
       expect('componentId' in props, def.id).toBe(def.acceptsComponent === true)
     }
     // Runs work on masters (M2); sharing and the user's editors do not.

@@ -32,7 +32,7 @@ describe('query.deck', () => {
           name: 'Numbers',
           title: 'Results',
           transition: 'none',
-          objectCount: 5,
+          objectCount: 8,
           animationCount: 0,
         },
         {

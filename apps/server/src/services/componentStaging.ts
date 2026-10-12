@@ -297,6 +297,8 @@ export async function prepareComponentStamp(
     componentId: string
     deckId: string
     master: ComponentMaster
+    /** What the master is staged for (the refusal says it); default a stamp. */
+    purpose?: 'stamp' | 'restamp' | undefined
   },
 ): Promise<PreparedStamp> {
   const { db, log } = deps
@@ -311,7 +313,9 @@ export async function prepareComponentStamp(
   if (!deck) throw notFound('Deck not found')
   if (deck.folderId !== folderId) {
     throw conflict(
-      "The deck moved to another folder while the component was being stamped; stamp one of its new folder's components",
+      args.purpose === 'restamp'
+        ? "The deck moved to another folder while its stamps were being restamped; it restamps only its new folder's components"
+        : "The deck moved to another folder while the component was being stamped; stamp one of its new folder's components",
     )
   }
 

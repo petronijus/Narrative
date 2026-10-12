@@ -253,6 +253,9 @@ export interface DeckCtxForPromote {
  *
  * Pure: reads from Yjs but makes NO mutations. The caller dispatches all writes.
  *
+ * Provenance: a promoted object's `component` (it was stamped from another
+ * master) is dropped — a master links to nothing; `slot` and `role` stay.
+ *
  * Stable leaf ids guarantee:
  *   Objects in the master keep the same ids they had on the slide. This is critical
  *   for P7 override targeting — if the master uses the same id as the original
@@ -368,6 +371,9 @@ export function promoteToComponent(
         }),
       )
     }
+    // A master links to nothing: a promoted stamp leaves its provenance
+    // behind (A4.1); its `slot` and `role` stay — they name the master's slots.
+    delete clone['component']
     return clone as unknown as SlideObject
   })
 

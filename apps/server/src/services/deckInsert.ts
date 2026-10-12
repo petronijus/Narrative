@@ -57,6 +57,7 @@ import {
 } from '@narrative/slide-model'
 import {
   applyInsertPlan,
+  planForMaster,
   planInsert,
   sameDocument,
   levelOf,
@@ -557,7 +558,8 @@ export async function stageObjectInsert(
     const ctx = getSlideObjectsCtx(scratchDeck, slideId)
     if (ctx === null) throw new Error('object insert: the scratch slide has no objects')
     holder = ctx
-    applyInsertPlan(holder, plan)
+    // A master links to nothing: pasted stamps leave their provenance behind.
+    applyInsertPlan(holder, 'componentId' in target ? planForMaster(plan) : plan)
     staged = await rewriteForTarget(deps, {
       userId,
       scratch,

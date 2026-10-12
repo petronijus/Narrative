@@ -60,6 +60,8 @@ import type {
   ListNumberFormat,
   NormalizedPathAnchor,
   ObjectHyperlink,
+  ObjectRole,
+  ComponentProvenance,
   ParagraphAttrs,
   PathAnchor,
   PathObject,
@@ -159,6 +161,8 @@ export type SchemaCoverage = [
   // slide.ts sub-types
   Assert<Covers<typeof O.ShadowStyleSchema, ShadowStyle>>,
   Assert<Covers<typeof O.ObjectHyperlinkSchema, ObjectHyperlink>>,
+  Assert<Covers<typeof O.ObjectRoleSchema, ObjectRole>>,
+  Assert<Covers<typeof O.ComponentProvenanceSchema, ComponentProvenance>>,
   Assert<Covers<typeof O.BaseSlideObjectSchema, BaseSlideObject>>,
   Assert<Covers<typeof O.StrokeStyleFieldsSchema, StrokeStyleFields>>,
   Assert<Covers<typeof O.FillGradientStopSchema, FillGradientStop>>,

@@ -88,6 +88,29 @@ describe('duplicateObjects', () => {
     ).toEqual(['a', 'b'])
   })
 
+  it('keeps a stamp link with a fresh instance per copied stamp', () => {
+    const { ctx } = makeCtx()
+    const from = (objectId: string, instance: string) => ({
+      component: { id: 'cmp', objectId, instance, origin: { x: 0, y: 0 } },
+    })
+    addObjects(ctx, [
+      rect('a', 0, 0, from('m1', 'i1')),
+      rect('b', 200, 0, from('m2', 'i1')),
+      rect('c', 400, 0, from('m1', 'i2')),
+      rect('plain', 600, 0),
+    ])
+    const copies = duplicateObjects(ctx, ['a', 'b', 'c', 'plain'])
+    const [a, b, c, plain] = copies
+    expect(a!.component).toMatchObject({ id: 'cmp', objectId: 'm1', origin: { x: 0, y: 0 } })
+    expect(a!.component!.instance).not.toBe('i1')
+    expect(b!.component!.instance).toBe(a!.component!.instance)
+    expect(c!.component!.instance).not.toBe('i2')
+    expect(c!.component!.instance).not.toBe(a!.component!.instance)
+    expect(plain!.component).toBeUndefined()
+    // The originals keep theirs.
+    expect(all(ctx)[0]!.component!.instance).toBe('i1')
+  })
+
   it('drops the group of a lone member copy (a group of one means nothing)', () => {
     const { ctx } = makeCtx()
     addObjects(ctx, [rect('a', 0, 0, { groupId: 'g1' }), rect('b', 200, 0, { groupId: 'g1' })])

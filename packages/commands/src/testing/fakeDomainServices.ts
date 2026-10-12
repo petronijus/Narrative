@@ -48,7 +48,7 @@ import { InvalidTokenFields, parseNewTokenFields, parseTokenPatch } from '../com
 import { textStyleNameTaken } from '../text/textStyle.js'
 import type { TextObject, RectangleObject } from '@narrative/shared'
 import { CommandError } from '../errors.js'
-import { applyInsertPlan } from '../insert/plan.js'
+import { applyInsertPlan, planForMaster } from '../insert/plan.js'
 import { objectsOf, requireObjects, resolveSlide } from '../refs.js'
 import { createFixtureDeck, FIXTURE_SLIDE_IDS } from './fixtureDeck.js'
 import type { ServerServices } from '../services.js'
@@ -585,7 +585,10 @@ export function createDomainFakes(
         return {
           apply(objects) {
             return {
-              objectIds: applyInsertPlan(objects, args.plan),
+              objectIds: applyInsertPlan(
+                objects,
+                'componentId' in args.target ? planForMaster(args.plan) : args.plan,
+              ),
               mediaRegistered: media.length,
               skippedImages: 0,
               droppedLinks: 0,
@@ -978,6 +981,26 @@ export function createDomainFakes(
         requireFolder(args.folderId)
         return [...components.values()].filter((c) => c.folderId === args.folderId)
       },
+      async create(args) {
+        rComponents('create', args)
+        requireFolder(args.folderId)
+        // The real service's rules (services/componentStaging.ts createEmptyComponent).
+        const name = args.name.trim()
+        if (name.length > 200) {
+          throw new CommandError('invalid_input', 'name too long (max 200)')
+        }
+        const c: ComponentRecord = {
+          id: fresh('cmp'),
+          folderId: args.folderId,
+          name: name.length > 0 ? name : 'Untitled component',
+          thumbnailKey: null,
+          thumbnailUrl: null,
+          createdAt: T0,
+          updatedAt: T0,
+        }
+        components.set(c.id, c)
+        return c
+      },
       async rename(args) {
         rComponents('rename', args)
         const c = { ...requireComponent(args.componentId, args.folderId), name: args.name }
@@ -1036,6 +1059,15 @@ export function createDomainFakes(
       async prepareStamp(args) {
         rComponents('prepareStamp', args)
         const folderId = requireDeck(args.deckId).folderId ?? undefined
+        // The real service's restamp rule (services/components.ts): stamps of
+        // a component of another folder are refused as such.
+        const own = components.get(args.componentId)
+        if (args.purpose === 'restamp' && own !== undefined && own.folderId !== folderId) {
+          throw new CommandError(
+            'conflict',
+            "These stamps come from a component of another folder (the deck moved, or they were copied from a deck there); a deck restamps only its own folder's components",
+          )
+        }
         // The fixture master shows no pictures: nothing to copy or catch up.
         return {
           master: {

@@ -96,7 +96,15 @@ text.
   folder has for those roles. **Do not create a component for a one-off.**
   Suggest a new component only when the same block repeats across several
   slides, or when the user asks for one; then make it from the block with
-  `component.promote`, its text boxes named first — the names are its slots.
+  `component.promote`, after giving its text boxes a `slot` (and a `role`)
+  with `object.update` — those are its slots. `component.create` makes an
+  empty master when the user asks for one, filled with the object commands
+  given its `componentId`.
+- Stamps are detached copies: changing a master never changes slides by
+  itself. `component.restamp` resets stamps to the master — it overwrites
+  people's edits to them except the slot content — so run it only when the
+  user asks to bring stamps up to date, and ask before restamping a whole
+  deck.
 
 ## Things that are irreversible
 

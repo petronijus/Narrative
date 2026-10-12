@@ -215,6 +215,11 @@ export {
   COMPONENT_MASTER_SLIDE_ID,
 } from './stampComponent.js'
 
+// Component restamp and provenance (A4.1)
+export { restampComponent, slotNameOf } from './restampComponent.js'
+export type { RestampedStamp, RestampSlideResult } from './restampComponent.js'
+export { freshStampInstances, withStampInstance } from './mutations.js'
+
 // Shape-as-image-mask mutation (moved out of apps/web — mutations live here)
 export {
   applyShapeMask,

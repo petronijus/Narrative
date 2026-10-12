@@ -70,6 +70,21 @@ const UNITS =
   '(90 degrees = 1.5708); opacity and *Alpha 0..1; colours as "#RRGGBB", a 0xRRGGBB integer, or a colour token ' +
   '{ "$token": "colors.<id>" }.'
 
+/**
+ * A component master links to nothing (A4.1): `component` — a stamp's
+ * provenance — cannot be set on a master's objects (clearing it can).
+ */
+function refuseProvenanceOnMaster(
+  ctx: { target?: { componentId?: string | undefined } | undefined },
+  props: Record<string, unknown>,
+  at: PropertyKey[],
+): void {
+  if (ctx.target?.componentId === undefined || props['component'] === undefined) return
+  throw new CommandError('invalid_input', "a component master's objects link to no component", {
+    issues: [{ path: [...at, 'component'], message: 'not on a component master' }],
+  })
+}
+
 /** Animation steps on the slide that target any of `ids`. Reads only. */
 function stepsTargeting(anims: AnimationsMutationContext, ids: ReadonlySet<string>): string[] {
   const out: string[] = []
@@ -248,6 +263,7 @@ export const objectCreate = defineCommand({
       )
     }
     const id = input.id ?? nanoid()
+    refuseProvenanceOnMaster(ctx, o, ['object'])
     if (
       o.type === 'video' &&
       o.trimStart !== undefined &&
@@ -416,6 +432,8 @@ export const objectUpdate = defineCommand({
     'text, text.format for styling ranges). ' +
     '`locked` is an editor-only flag (it stops a person dragging, resizing or deleting the object on the canvas); ' +
     'it does not restrict commands, so locked objects can be changed and `locked` set or cleared like any property. ' +
+    '`slot` (a component or brand slot name) and `role` (title, subtitle, body, picture, chart, table, caption, ' +
+    "footnote, furniture) say what an object is for; `component` is a stamp's link, set by component.stamp. " +
     UNITS,
   input: z.union([
     z.strictObject({ slide: SlideRefSchema, object: ObjectIdSchema, patch: PatchRecord }),
@@ -453,6 +471,10 @@ export const objectUpdate = defineCommand({
       },
     },
     {
+      title: "Mark a master's text box as its title slot",
+      input: { slide: 's1', object: 't1', patch: { slot: 'title', role: 'title' } },
+    },
+    {
       title: 'Unlock the logo (`locked` is an ordinary property)',
       input: { slide: 's2', object: 'lock1', patch: { locked: false } },
     },
@@ -479,6 +501,7 @@ export const objectUpdate = defineCommand({
     }
     const maps = requireObjects(objects, ids, slide.id)
     const prepared = requested.map((r) => preparePatch(r.id, maps.get(r.id)!, r.patch, r.at))
+    requested.forEach((r, i) => refuseProvenanceOnMaster(ctx, prepared[i]!.patch, r.at))
 
     // Every check passed — write.
     const [single] = prepared

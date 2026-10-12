@@ -33,6 +33,9 @@ export const VALID_OBJECTS: { [T in SlideObjectType]: PlainSlideObjectOf<T> } = 
     aspectLocked: true,
     flipH: false,
     flipV: true,
+    slot: 'card',
+    role: 'body',
+    component: { id: 'cmp1', objectId: 'm1', instance: 'i1', origin: { x: 90, y: 70 } },
     fill: { $token: 'colors.abc1234567' },
     fillAlpha: 1,
     fillStyle: {
