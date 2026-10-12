@@ -321,4 +321,4 @@ flake once); `just pptx-roundtrip` on the Proseware deck 0 differences
 passed, $8.42, 19m46s — `component-restamp` and
 `component-create-pagination` passed on their first live run;
 `component-promote-headline` is live-only, so it has no recording to
-refresh. Committed and pushed; not released. Next: A4.2 (on the PC).
+refresh. Released as 0.10.31 (2026-10-12). Next: A4.2.

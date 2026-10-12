@@ -8,6 +8,39 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.31 — Stamps remember their master (2026-10-12)
+
+Agentic phase A4 (style packs), step A4.1.
+
+### Added
+
+- **Objects know where they come from.** Every object can carry a `slot`
+  (the brand's name for it: `title`, `pagenum`, …) and a `role` (`title`,
+  `subtitle`, `body`, `picture`, `chart`, `table`, `caption`, `footnote`,
+  `furniture`), written with `object.update`. A component's slots are its
+  objects' `slot`, or their name as before.
+- **A stamp remembers its master.** `component.stamp` records on every
+  object it places which master and master object it copies, one id per
+  stamp and where the master object stood. Duplicating, copying and pasting
+  a stamp keep the link as a new stamp; promoting objects to a master drops
+  it. PPTX import and export ignore all three properties.
+- **`component.restamp`** brings the stamps of a component on a slide, or in
+  the whole deck, back to the current master when asked: master objects
+  come back where the stamp was moved to, local edits are reset, and only
+  slot content stays — a text slot's text, a picture's or video's media and
+  crop, a table's cells with its grid. Object ids are kept, so animations
+  keep their targets; one undo step. Changing a master never touches a deck
+  by itself.
+- **`component.create`** makes an empty master in a folder, to be filled
+  with the object commands.
+- Agent eval: `component-restamp`, `component-create-pagination`.
+
+### Fixed
+
+- `just pptx-roundtrip` accepts an absolute path to the deck.
+
+---
+
 ## 0.10.30 — A3 done: master cards, before/after, text that fits (2026-10-11)
 
 Agentic phase A3 (the render worker) is complete: A3.5b, A3.6 and A3.7,
