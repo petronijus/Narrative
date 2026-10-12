@@ -18,6 +18,8 @@ import componentStampSlots from './componentStampSlots.js'
 import componentPromoteHeadline from './componentPromoteHeadline.js'
 import componentMasterPicture from './componentMasterPicture.js'
 import componentRestamp from './componentRestamp.js'
+import textAutofitGrow from './textAutofitGrow.js'
+import styleShrinkFloor from './styleShrinkFloor.js'
 import componentCreatePagination from './componentCreatePagination.js'
 import exportPptxRoundtrip from './exportPptxRoundtrip.js'
 import exportPngSlide from './exportPngSlide.js'
@@ -78,6 +80,8 @@ export const SCENARIOS: readonly AnyScenario[] = [
   componentPromoteHeadline,
   componentMasterPicture,
   componentRestamp,
+  textAutofitGrow,
+  styleShrinkFloor,
   componentCreatePagination,
   exportPptxRoundtrip,
   exportPngSlide,

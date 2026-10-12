@@ -4,7 +4,7 @@
  *
  *   tokens: Y.Map
  *     ├─ colors:       Y.Map<id → Y.Map { id, name, value: '#rrggbb' }>
- *     ├─ textStyles:   Y.Map<id → Y.Map { id, name, family?, weight?, size?,
+ *     ├─ textStyles:   Y.Map<id → Y.Map { id, name, family?, weight?, size?, minSize?,
  *     │                                   lineHeight?, letterSpacing?,
  *     │                                   paragraphSpaceBefore?, paragraphSpaceAfter?,
  *     │                                   color? ('#rrggbb' | { $token }),
@@ -81,6 +81,7 @@ function readTextStyle(id: string, m: Y.Map<unknown>): TextStyleTokenSnapshot | 
   for (const key of [
     'weight',
     'size',
+    'minSize',
     'lineHeight',
     'letterSpacing',
     'paragraphSpaceBefore',

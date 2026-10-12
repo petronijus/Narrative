@@ -42,4 +42,12 @@ describe('measureTextOverflow', () => {
     const objects = [box('shape', 10, 'rectangle'), box('missing', 10), box('pending', 10)]
     expect(measureTextOverflow(scene({ shape: 500, pending: null }), objects, 's1')).toEqual([])
   })
+
+  it('never reports a box that grows with its text; a shrinking one as it is drawn', () => {
+    const grows = { ...box('grows', 100), autofit: 'grow-down' } as SlideObject
+    const shrinks = { ...box('shrinks', 100), autofit: 'shrink' } as SlideObject
+    expect(measureTextOverflow(scene({ grows: 300, shrinks: 130 }), [grows, shrinks], 's1')).toEqual(
+      [{ slideId: 's1', objectId: 'shrinks', boxHeight: 100, textHeight: 130 }],
+    )
+  })
 })

@@ -43,6 +43,7 @@ import {
   nonNeg,
   num,
   oneOf,
+  positive,
   rect,
   str,
   table,
@@ -253,8 +254,10 @@ export function objectExtValues(
       // Only `lineHeight` is written when both are set.
       if (o.lineHeight !== undefined && o.lineSpacing !== undefined)
         ext['lineSpacing'] = o.lineSpacing
-      // The importer leaves top alignment unset.
-      if (o.vAlign === 'top') ext['vAlign'] = 'top'
+      // The importer leaves top alignment unset; a growing box is anchored
+      // at the top natively whatever it says.
+      if (o.vAlign === 'top' || (o.autofit === 'grow-down' && o.vAlign !== undefined))
+        ext['vAlign'] = o.vAlign
       if (o.colorAlpha !== undefined && o.colorAlpha >= 1) ext['colorAlpha'] = o.colorAlpha
       // Glyph outline: written only with a colour, always with a width.
       if (o.stroke === undefined) {
@@ -283,6 +286,11 @@ export function objectExtValues(
       // overrides: PowerPoint has no notion of either.
       put('textStyleId', o.textStyleId)
       put('textStyleOverrides', o.textStyleOverrides)
+      // Written natively too, but the import does not take autofit over
+      // from PowerPoint's markup (it would change how imported decks draw);
+      // the shrink floor has no native form at all.
+      put('autofit', o.autofit)
+      put('minFontSize', o.minFontSize)
       break
     }
     case 'image': {
@@ -484,6 +492,8 @@ const FIELDS: Record<SlideObject['type'], Record<string, Schema>> = {
     fontFamily: str(200),
     isSlideNumber: bool,
     listStyle: oneOf('bullet', 'numbered'),
+    autofit: oneOf('grow-down', 'shrink'),
+    minFontSize: positive,
     textStyleId: idRef(200),
     textStyleOverrides: arr(
       oneOf(
@@ -496,6 +506,7 @@ const FIELDS: Record<SlideObject['type'], Record<string, Schema>> = {
         'paragraphSpaceAfter',
         'color',
         'textTransform',
+        'minFontSize',
       ),
       16,
     ),

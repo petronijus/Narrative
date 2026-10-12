@@ -434,6 +434,8 @@ export const objectUpdate = defineCommand({
     'it does not restrict commands, so locked objects can be changed and `locked` set or cleared like any property. ' +
     '`slot` (a component or brand slot name) and `role` (title, subtitle, body, picture, chart, table, caption, ' +
     "footnote, furniture) say what an object is for; `component` is a stamp's link, set by component.stamp. " +
+    'A text box\'s `autofit`: "grow-down" = as tall as its text (`height` may lag behind your edits; look), ' +
+    '"shrink" = type scaled down to fit, not below `minFontSize`; null = fixed. ' +
     UNITS,
   input: z.union([
     z.strictObject({ slide: SlideRefSchema, object: ObjectIdSchema, patch: PatchRecord }),
@@ -469,6 +471,10 @@ export const objectUpdate = defineCommand({
           { object: 'e1', patch: { opacity: 0.5 } },
         ],
       },
+    },
+    {
+      title: 'Let a body box grow with its text',
+      input: { slide: 's1', object: 't1', patch: { autofit: 'grow-down' } },
     },
     {
       title: "Mark a master's text box as its title slot",

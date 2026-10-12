@@ -39,6 +39,7 @@ export {
   PathAnchorSchema,
   FontWeightSchema,
   TextVerticalAlignSchema,
+  TextAutofitSchema,
   TextListStyleSchema,
   ListKindSchema,
   ListNumberFormatSchema,

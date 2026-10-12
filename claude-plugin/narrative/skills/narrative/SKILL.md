@@ -171,6 +171,11 @@ design.
   fonts, runs below the box. Fix every one you caused: shorten the wording
   first, then make the box taller if the layout has room; shrink the type
   only as a last resort, never below what the deck uses for the same role.
+  A box with `autofit: "grow-down"` is as tall as its text (its `height`
+  may be stale after your edits; look): it never overflows itself, so check
+  it does not run into what is below it. One with `autofit: "shrink"`
+  shrinks its own type down to `minFontSize` and is listed only when even
+  that is not enough. Do not switch a box's autofit to hide an overflow.
 - To show the user what you changed, `query_render` with
   `compare: "before"` puts the slide as it was before your run beside it
   now.

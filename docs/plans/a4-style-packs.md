@@ -179,6 +179,25 @@ origin.x` is the stamp's offset, so a stamp people moved is restamped
 
 ### A4.2 Text and deck properties
 
+Built and released in vertical slices (2026-10-12), each from the data to
+the renderer, so no property is writable before something draws it:
+A4.2a autofit (with the text-style `minSize`); A4.2b list levels on text
+styles, `list: 'none'` and PPTX export of the resolved level; A4.2c font
+stretch; A4.2d deck meta and variant/surface colour tokens (alpha
+included); A4.2e the remaining text-style fields (`lineSpacing`, `align`)
+and compile provenance (`origin`).
+
+**Decided (Petr, 2026-10-12): a growing box is drawn at its text's height,
+and its stored height follows people.** Only a browser can lay text out.
+The renderer draws a `grow-down` box as tall as its laid-out text whatever
+`height` says (hit testing and the selection use that height); the editor
+writes it into the document after a person changed the box, in the same
+undo step. An agent's or another client's change is drawn right away but
+leaves `height` as it was until someone edits the box — so `height` can be
+stale after an agent run, and the agent is told to look (query.render).
+A4.4 closes the gap for laid-out slides: the render page then reports a
+growing box against its region, with the height it is drawn at.
+
 - **Autofit** on text boxes: `autofit?: 'grow-down' | 'fixed' | 'shrink'`
   (`fixed` = today). `grow-down` grows the box to its laid-out text (the
   measurement A3 built, `laidOutTextBottom`); `shrink` scales the type down
@@ -322,3 +341,28 @@ passed, $8.42, 19m46s — `component-restamp` and
 `component-create-pagination` passed on their first live run;
 `component-promote-headline` is live-only, so it has no recording to
 refresh. Released as 0.10.31 (2026-10-12). Next: A4.2.
+
+**A4.2a built (2026-10-12, unreleased):** `autofit` (`grow-down`,
+`shrink`) and `minFontSize` on text boxes, `minSize` on text styles
+(propagated to linked boxes, not to tables); the renderer draws a growing
+box at its laid-out height and finds a shrinking box's scale by halving
+(memoised; autofit boxes are laid out again when a webfont finishes
+loading); SceneGraph hit testing, bounds, instance leaves and snapping use
+the drawn height; the editor measures a box a person changed at once, on a
+node of its own, and writes its height in the same undo step
+(`state/autofitHeights.ts` — an undo, a peer's or an agent's change is
+never written back); the edit overlay follows both; the Inspector's
+Autofit control and shrink floor (H locked on a growing box), Folder
+Settings' "Min size"; PPTX export writes `spAutoFit` / `normAutofit`, a
+growing box anchored at the top, and the extension (import unchanged); the
+render page's `overflow` skips growing boxes and measures shrinking ones as
+drawn. Eval scenarios `text-autofit-grow` and `style-shrink-floor`
+(recorded, both passed first time). Reviewed by `agent-parity` (examples,
+command tests, scenarios added) and `code-reviewer` (the write-back moved
+from the next frame to the transaction's own tick after it split an
+Inspector click into two undo steps, webfont re-layout, snapping, the H
+field, the export anchor). tools/list 188,673 bytes (budget 189,000).
+Verified: `just check`; `text-autofit` 20/20 repeated; `just e2e` with two
+workers 207 passed, 2 failed (canvas-sharpness, htmltext-texture-isolation)
+that passed 3/3 alone — the machine was at load 62 from a kernel build;
+`just pptx-roundtrip` on the Proseware deck 0 differences.

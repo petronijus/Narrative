@@ -1534,6 +1534,27 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
           />
         </SettingsFieldRow>
 
+        {/* The floor of autofit "shrink" (A4.2): boxes of this style that
+            shrink their type to fit stop at this size. Empty = half the size. */}
+        <SettingsFieldRow label="Min size">
+          <input
+            type="number"
+            min={1}
+            value={style.minSize ?? ''}
+            placeholder={String(Math.round((style.size ?? 16) / 2))}
+            onChange={(e) => {
+              if (e.target.value === '') {
+                onUpdate({ minSize: null })
+                return
+              }
+              const n = typedNumber(e.target.value)
+              if (n !== null) onUpdate({ minSize: Math.max(1, n) })
+            }}
+            className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
+            aria-label="Smallest size when shrinking to fit"
+          />
+        </SettingsFieldRow>
+
         {/* Line height */}
         <SettingsFieldRow label="Line height">
           <input

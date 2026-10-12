@@ -489,10 +489,22 @@ export function writeTextBody(
       tIns: 0,
       rIns: 0,
       bIns: 0,
-      anchor: ANCHOR.toXml(obj.vAlign ?? 'top'),
+      // A box that grows with its text has no room to align it in: top.
+      anchor: ANCHOR.toXml(obj.autofit === 'grow-down' ? 'top' : (obj.vAlign ?? 'top')),
       rtlCol: 0,
     },
-    tag('a:noAutofit'),
+    // Autofit (A4.2) in PowerPoint's terms. A shrinking box is written
+    // without a `fontScale`: only a layout engine knows it, and PowerPoint
+    // works it out again when the text is next edited. The import reads
+    // neither back (a PowerPoint deck's own autofit is not taken over); a
+    // Narrative deck gets its autofit back from the extension.
+    tag(
+      obj.autofit === 'grow-down'
+        ? 'a:spAutoFit'
+        : obj.autofit === 'shrink'
+          ? 'a:normAutofit'
+          : 'a:noAutofit',
+    ),
   )
   const link = hyperlinkFor(obj, ctx)
   const endPara = el('a:endParaRPr', { lang: 'en-US', dirty: 0 })

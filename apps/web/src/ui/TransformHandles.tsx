@@ -266,7 +266,8 @@ export function TransformHandles({
               x: o.x,
               y: o.y,
               w: o.width,
-              h: o.height,
+              // A growing text box is as tall as it is drawn.
+              h: sceneGraph.drawnSize(id)?.height ?? o.height,
               rotation: o.rotation ?? 0,
             },
           ]
@@ -454,14 +455,32 @@ export function TransformHandles({
     }
   }, [handlePointerMove, handlePointerUp])
 
+  // A growing text box changes its drawn height without a write to the
+  // document (another line of an agent's text, a face that loaded): follow it.
+  const idsKey = objectIds.join(',')
+  useEffect(() => {
+    const ids = new Set(idsKey.split(','))
+    return sceneGraph.onTextLayout((id) => {
+      if (ids.has(id)) forceUpdate((n) => n + 1)
+    })
+  }, [sceneGraph, idsKey])
+
   if (bounds === null || objectIds.length === 0) return null
 
   // Rotation handle sits ROTATION_OFFSET slide-px above the top edge; with
   // CSS scale(zoom) that becomes ROTATION_OFFSET*zoom screen-px which stays
   // glued to the edge at low zoom. Feed inv so the on-screen gap is constant.
   const handlePoints = computeHandlePoints(bounds, inv)
+  // A box that grows with its text takes its height from the text: only its
+  // width and rotation have handles.
+  const single = isMulti ? undefined : objects.find((o) => o.id === objectIds[0])
+  const growsDown = single?.type === 'text' && single.autofit === 'grow-down'
   // Multi-select: skip rotation handle
-  const visibleHandles = isMulti ? handlePoints.filter((h) => h.kind !== 'rotate') : handlePoints
+  const visibleHandles = isMulti
+    ? handlePoints.filter((h) => h.kind !== 'rotate')
+    : growsDown
+      ? handlePoints.filter((h) => h.kind === 'ML' || h.kind === 'MR' || h.kind === 'rotate')
+      : handlePoints
 
   // Outline: SVG polygon přes 4 corners
   const [tl, tr, br, bl] = bounds.corners

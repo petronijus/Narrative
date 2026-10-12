@@ -315,9 +315,17 @@ export function htmlTextFontFamilies(data: TextObject): string[] {
  * keep the field set in one place to guarantee the two stay in sync.
  */
 
-/** Exported for the table renderer — same HTMLTextStyle options builder. */
+/**
+ * Exported for the table renderer — same HTMLTextStyle options builder.
+ *
+ * `scale` is a shrinking box's scale (`autofit: 'shrink'`, see
+ * `applyAutofit`): the text is laid out in a box `1 / scale` as wide and the
+ * node drawn at `scale`, so every size, spacing and indent shrinks together
+ * and the lines break where they would at the smaller size.
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function buildStyleOpts(data: TextObject): any {
+export function buildStyleOpts(data: TextObject, scale = 1): any {
+  const layoutWidth = data.width / scale
   // Pixi v8 HTMLText is doing two distinct things with `style.fontFamily`:
   //
   //  1. `extractFontFamilies(text, style)` reads the value and uses it
@@ -368,7 +376,7 @@ export function buildStyleOpts(data: TextObject): any {
     // `wrap: 'none'` lays each line out at its natural width; the box then
     // only anchors it (see applyHorizontalAlign) and the mask follows it.
     wordWrap: data.wrap !== 'none',
-    wordWrapWidth: data.width,
+    wordWrapWidth: layoutWidth,
     // Match the DOM textarea's `word-break: break-word`: also break
     // inside long unbroken runs (e.g. "asdasdasdasd…") at the box edge
     // so a typed character that wraps in DOM also wraps in Pixi —
@@ -410,7 +418,7 @@ export function buildStyleOpts(data: TextObject): any {
     // its own width, with no break opportunity but explicit line breaks.
     ...(data.wrap === 'none'
       ? [`white-space: pre`]
-      : [`width: ${data.width}px`, `overflow-wrap: break-word`]),
+      : [`width: ${layoutWidth}px`, `overflow-wrap: break-word`]),
     // Pixi measures the text in a div appended to the page, where the
     // app's preflight makes every element `border-box`, and rasterises it
     // in a detached SVG document where the same div is `content-box`. With
@@ -436,7 +444,8 @@ export function buildStyleOpts(data: TextObject): any {
  * offset.
  */
 export function applyVerticalAlign(textNode: HTMLText, data: TextObject): void {
-  const vAlign = data.vAlign ?? 'top'
+  // A growing box is as tall as its text: there is no room to align in.
+  const vAlign = data.autofit === 'grow-down' ? 'top' : (data.vAlign ?? 'top')
   const measured = textNode.height
   const block =
     vAlign === 'top'
@@ -447,7 +456,7 @@ export function applyVerticalAlign(textNode: HTMLText, data: TextObject): void {
   // Then place the lines inside their boxes the way PowerPoint does — spare
   // line height above the glyphs, not split around them. The block's height
   // is unchanged, so this is a translation after alignment, not part of it.
-  textNode.y = block + powerpointLineOffsetPx(data, firstLineFontSizePx(data))
+  textNode.y = block + powerpointLineOffsetPx(data, firstLineFontSizePx(data)) * textNode.scale.y
 }
 
 /**
@@ -482,12 +491,14 @@ export function applyHorizontalAlign(textNode: HTMLText, data: TextObject): void
 function applyObjectTransform(container: Container, data: TextObject): void {
   container.rotation = data.rotation
   container.alpha = data.opacity
+  // A growing box turns about the centre of the box as drawn.
+  const height = drawnHeight(container, data)
   // Pivot at the object centre so rotation matches the other renderers.
-  container.pivot.set(data.width / 2, data.height / 2)
+  container.pivot.set(data.width / 2, height / 2)
   // The object's data position is the top-left corner; pivot is centre,
   // so shift the container by half-size to put the box back where it belongs.
   container.x = data.x + data.width / 2
-  container.y = data.y + data.height / 2
+  container.y = data.y + height / 2
   applyFlip(container, data)
 }
 
@@ -511,8 +522,171 @@ function getTextNode(node: Container): HTMLText | undefined {
 export function laidOutTextBottom(container: Container, data: TextObject): number | null {
   const node = getTextNode(container)
   if (node === undefined || node.height <= 0) return null
-  const lineOffset = powerpointLineOffsetPx(data, firstLineFontSizePx(data))
+  const lineOffset = powerpointLineOffsetPx(data, firstLineFontSizePx(data)) * node.scale.y
   return node.y - lineOffset + node.height
+}
+
+// ---------------------------------------------------------------------------
+// Autofit (agentic A4.2): a box that grows with its text, or shrinks it
+// ---------------------------------------------------------------------------
+
+/** What `autofit` made of a mounted box: the height it is drawn at and its type's scale. */
+export interface TextBoxLayout {
+  /** The box's height as drawn: its laid-out text for `grow-down`, else `height`. */
+  height: number
+  /** The type's scale: below 1 only for a `shrink` box whose text did not fit. */
+  scale: number
+}
+
+/** Tag for the last {@link TextBoxLayout} published for a container. */
+const LAYOUT_TAG = Symbol('textLayout')
+/** Tag for the inputs the last shrink scale was searched for, and the scale found. */
+const SHRINK_TAG = Symbol('textShrink')
+
+type TextLayoutListener = (container: Container, layout: TextBoxLayout) => void
+const layoutListeners = new Set<TextLayoutListener>()
+
+/**
+ * Hear when a mounted text box's drawn height or type scale changes — a
+ * `grow-down` box whose text gained a line, a `shrink` box rescaled. The
+ * scene graph turns it into its own per-object notification; every text
+ * renderer of the page reports here, so a listener keeps to its containers.
+ */
+export function subscribeTextLayout(listener: TextLayoutListener): () => void {
+  layoutListeners.add(listener)
+  return () => {
+    layoutListeners.delete(listener)
+  }
+}
+
+/** The drawn height and type scale of a mounted text box (undefined before its first layout). */
+export function textBoxLayout(container: Container): TextBoxLayout | undefined {
+  return asAny(container)[LAYOUT_TAG] as TextBoxLayout | undefined
+}
+
+/** A box sized to its text by the browser fits it; rounding may not. */
+const FIT_TOLERANCE_PX = 1
+/** Halvings of the scale interval: a 1/128 step of the range is below a visible size change. */
+const SHRINK_SEARCH_STEPS = 7
+/** The scale a `shrink` box without `minFontSize` stops at. */
+const DEFAULT_MIN_SCALE = 0.5
+/**
+ * Bumped whenever measurements are void (a face installed, webfonts done
+ * loading), so a shrink scale found against a stand-in face is searched
+ * again.
+ */
+let layoutGeneration = 0
+
+function minShrinkScale(data: TextObject): number {
+  const size = data.fontSize
+  if (!(size > 0)) return 1
+  const floor = data.minFontSize !== undefined ? data.minFontSize / size : DEFAULT_MIN_SCALE
+  return Math.min(1, Math.max(0.01, floor))
+}
+
+/**
+ * Lay the text out at the scale its autofit asks for. A `shrink` box whose
+ * text is taller than the box is drawn at the largest scale (down to its
+ * minimum) at which it fits: found by halving the interval, each step a
+ * synchronous measurement of the node at that scale, and remembered for
+ * the same text, style and box so typing elsewhere does not search again.
+ * Every other box is drawn at scale 1. Leaves the node's style built for
+ * the scale chosen.
+ */
+function applyAutofit(container: Container, textNode: HTMLText, data: TextObject): void {
+  const current = textNode.scale.y
+  if (data.autofit !== 'shrink') {
+    asAny(container)[SHRINK_TAG] = undefined
+    if (current !== 1) {
+      textNode.scale.set(1)
+      textNode.style = new HTMLTextStyle(buildStyleOpts(data))
+    }
+    return
+  }
+  const key = [
+    layoutGeneration,
+    textNode.text,
+    data.width,
+    data.height,
+    data.fontSize,
+    data.fontWeight,
+    data.fontFamily,
+    data.italic,
+    data.letterSpacing,
+    data.lineHeight,
+    data.lineSpacing,
+    data.paragraphSpaceBefore,
+    data.paragraphSpaceAfter,
+    data.wrap,
+    data.minFontSize,
+  ].join('|')
+  const memo = asAny(container)[SHRINK_TAG] as { key: string; scale: number } | undefined
+  let scale: number
+  if (memo !== undefined && memo.key === key) {
+    // Nothing the search measures changed: the node already has the style
+    // for this scale (a caller that rebuilt it built it at this scale).
+    if (memo.scale === current) return
+    scale = memo.scale
+  } else {
+    textNode.scale.set(1)
+    const fits = (s: number): boolean => {
+      textNode.style = new HTMLTextStyle(buildStyleOpts(data, s))
+      return textNode.height * s <= data.height + FIT_TOLERANCE_PX
+    }
+    const min = minShrinkScale(data)
+    if (fits(1)) scale = 1
+    else if (min >= 1 || !fits(min)) scale = min
+    else {
+      let lo = min
+      let hi = 1
+      for (let i = 0; i < SHRINK_SEARCH_STEPS; i++) {
+        const mid = (lo + hi) / 2
+        if (fits(mid)) lo = mid
+        else hi = mid
+      }
+      scale = lo
+    }
+    asAny(container)[SHRINK_TAG] = { key, scale }
+  }
+  textNode.style = new HTMLTextStyle(buildStyleOpts(data, scale))
+  textNode.scale.set(scale)
+}
+
+/**
+ * How a box would be drawn, measured now on a node of its own: for the
+ * editor's write-back of a person's change (ui/AutofitHeights), which must
+ * land in the same transaction tick as the change — before the canvas has
+ * drawn it on the next frame and before a gesture closes its undo step.
+ * The same mount as the canvas's, in the faces the page has, so it agrees
+ * with what the canvas then draws.
+ */
+export function measureTextBoxLayout(data: TextObject): TextBoxLayout {
+  const container = mountTextContainer(data, { wireCatchup: false })
+  try {
+    return textBoxLayout(container) ?? { height: data.height, scale: 1 }
+  } finally {
+    textRenderer.destroy(container)
+  }
+}
+
+/** The height the box is drawn at: its laid-out text for `grow-down` (once measured), else its own. */
+function drawnHeight(container: Container, data: TextObject): number {
+  if (data.autofit !== 'grow-down') return data.height
+  const bottom = laidOutTextBottom(container, data)
+  return bottom === null ? data.height : bottom
+}
+
+/** Record what the box is drawn as, and tell the listeners when that moved. */
+function publishLayout(container: Container, data: TextObject): void {
+  const node = getTextNode(container)
+  const next: TextBoxLayout = {
+    height: drawnHeight(container, data),
+    scale: node?.scale.y ?? 1,
+  }
+  const prev = textBoxLayout(container)
+  asAny(container)[LAYOUT_TAG] = next
+  if (prev !== undefined && prev.height === next.height && prev.scale === next.scale) return
+  for (const listener of [...layoutListeners]) listener(container, next)
 }
 
 function getMask(node: Container): Graphics | undefined {
@@ -539,7 +713,10 @@ const fontMetricsCache = new Map<string, { ascent: number; descent: number }>()
 // face. Forget everything once fonts finish loading so the next mask build
 // measures the real one.
 if (typeof document !== 'undefined' && typeof document.fonts?.addEventListener === 'function') {
-  document.fonts.addEventListener('loadingdone', () => fontMetricsCache.clear())
+  document.fonts.addEventListener('loadingdone', () => {
+    fontMetricsCache.clear()
+    layoutGeneration += 1
+  })
 }
 /**
  * Drop the cached metrics of one family. The folder-font loader installs a
@@ -659,11 +836,12 @@ function applyClipMask(container: Container, data: TextObject): void {
   // `textNode.height` is 0 until the first rasterisation lands; fall back to
   // the box so a not-yet-measured node is not masked away entirely.
   const measured = node !== undefined && node.height > 0 ? node.height : 0
-  const contentHeight = Math.max(data.height, measured + (node?.y ?? 0))
+  const contentHeight = Math.max(drawnHeight(container, data), measured + (node?.y ?? 0))
   // The same allowance above and below as the texture's own padding: the
   // mask admits exactly what the texture can hold, no more (anything
   // further out is not in the texture) and no less (that was the cut).
-  const overshoot = lineOvershootFor(data)
+  // The texture is drawn at the node's scale, its padding with it.
+  const overshoot = lineOvershootFor(data) * (node?.scale.y ?? 1)
   // Line spacing below 100% moves the text up (negative PowerPoint offset),
   // so its first line can start above the box; open the mask that far too.
   const top = Math.min(0, node?.y ?? 0) - overshoot
@@ -748,12 +926,14 @@ function mountTextContainer(data: TextObject, opts: { wireCatchup: boolean }): C
     scheduleAsyncTextureCatchup(textNode as unknown as { __narrativeCatchupActive?: boolean })
   }
 
-  applyObjectTransform(container, data)
+  applyAutofit(container, textNode, data)
   applyHorizontalAlign(textNode, data)
   applyVerticalAlign(textNode, data)
+  applyObjectTransform(container, data)
   applyClipMask(container, data)
   applyFilterEffects(container, data.shadow, data.blur)
   setStoredData(container, data)
+  publishLayout(container, data)
 
   return container
 }
@@ -827,18 +1007,22 @@ export const textRenderer = {
       prev.strokeWidth !== next.strokeWidth
 
     if (styleChanged) {
-      textNode.style = new HTMLTextStyle(buildStyleOpts(next))
+      textNode.style = new HTMLTextStyle(buildStyleOpts(next, textNode.scale.y))
     }
+    applyAutofit(node, textNode, next)
 
     applyVerticalAlign(textNode, next)
     if (prev.align !== next.align || prev.width !== next.width) {
       applyHorizontalAlign(textNode, next)
     }
+    // Again, now that the text is laid out: a growing box is as tall as it.
+    applyObjectTransform(node, next)
 
     applyClipMask(node, next)
 
     applyFilterEffects(node, next.shadow, next.blur)
     setStoredData(node, next)
+    publishLayout(node, next)
   },
 
   /**
@@ -911,6 +1095,9 @@ export const textRenderer = {
       'textTransform' in patch ||
       'paragraphSpaceBefore' in patch ||
       'paragraphSpaceAfter' in patch
+    // What the autofit search measures besides the style: the box's height
+    // and the box's own settings.
+    const autofitAffected = 'autofit' in patch || 'minFontSize' in patch || 'height' in patch
 
     // Use the stored last-applied data as the merge base so non-Pixi
     // fields (vAlign, listStyle, font metadata) are preserved across
@@ -972,7 +1159,7 @@ export const textRenderer = {
     // keystroke. We now rebuild the style only when a typography field
     // actually changed; a pure text/list edit just updates `.text`.
     if (needsStyleRebuild) {
-      textNode.style = new HTMLTextStyle(buildStyleOpts(merged))
+      textNode.style = new HTMLTextStyle(buildStyleOpts(merged, textNode.scale.y))
     }
     if (textChanged || listChanged || needsStyleRebuild) {
       // The HTML always tracks the merged data — text changes,
@@ -1002,9 +1189,13 @@ export const textRenderer = {
     // whenever the text content, the box, or any typographic field
     // changed (anything that can shift the rendered block).
     const layoutAffected =
-      textChanged || listChanged || needsStyleRebuild || 'vAlign' in patch || 'height' in patch
+      textChanged || listChanged || needsStyleRebuild || autofitAffected || 'vAlign' in patch
     if (layoutAffected) {
+      applyAutofit(node, textNode, merged)
       applyVerticalAlign(textNode, merged)
+      // The box as drawn may have grown or shrunk with its text (and a
+      // `height` patch above set the pivot for the stored height).
+      applyObjectTransform(node, merged)
     }
 
     setStoredData(node, merged)
@@ -1019,6 +1210,7 @@ export const textRenderer = {
     // line-height change alone used to leave a mask sized for the old one.
     if (layoutAffected) {
       applyClipMask(node, merged)
+      publishLayout(node, merged)
     }
   },
 
@@ -1043,7 +1235,11 @@ export const textRenderer = {
     const stored = getStoredData(node)
     if (stored === undefined || stored.isSlideNumber !== true) return false
     textNode.text = buildHtmlForNode(textNode, stored)
+    applyAutofit(node, textNode, stored)
     applyVerticalAlign(textNode, stored)
+    applyObjectTransform(node, stored)
+    applyClipMask(node, stored)
+    publishLayout(node, stored)
     return true
   },
 
@@ -1058,7 +1254,7 @@ export const textRenderer = {
   repaintColours(node: Container, data: TextObject): void {
     const textNode = getTextNode(node)
     if (textNode === undefined) return
-    textNode.style = new HTMLTextStyle(buildStyleOpts(data))
+    textNode.style = new HTMLTextStyle(buildStyleOpts(data, textNode.scale.y))
     setStoredData(node, data)
   },
 
@@ -1071,6 +1267,7 @@ export const textRenderer = {
   forgetFontMetrics(family: string): void {
     forgetFontMetrics(family)
     forgetMeasuredLineHeight(family)
+    layoutGeneration += 1
   },
 
   destroy(node: Container): void {

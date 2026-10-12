@@ -128,6 +128,8 @@ export const VALID_OBJECTS: { [T in SlideObjectType]: PlainSlideObjectOf<T> } = 
     lineHeight: 1.2,
     lineSpacing: 0.9,
     wrap: 'none',
+    autofit: 'shrink',
+    minFontSize: 16,
     letterSpacing: -0.5,
     paragraphSpaceBefore: 0,
     paragraphSpaceAfter: 12,

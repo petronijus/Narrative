@@ -6,6 +6,31 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+Agentic phase A4 (style packs), step A4.2a.
+
+### Added
+
+- **Text boxes can fit their text.** A box set to grow with its text is as
+  tall as the text in it and grows downwards as you type; one set to shrink
+  its text keeps its size and scales the type down until it fits — never
+  below the minimum the box or its text style sets (half the size without
+  one). The Inspector's Typography section has the Autofit control and the
+  minimum; a folder text style has "Min size". Agents set it with
+  `object.update` (`autofit`) and `text.setBoxTypography` (`minFontSize`),
+  styles with `token.*` (`minSize`).
+- A growing box keeps its stored height current as people edit it, in the
+  same undo step; an agent's edit is drawn at once and its height written
+  the next time a person changes the box.
+- PowerPoint export writes them as "Resize shape to fit text" and "Shrink
+  text on overflow"; a PowerPoint deck's own autofit is still not taken over
+  on import.
+
+### Changed
+
+- The render page's `overflow` no longer lists a box that grows with its
+  text, and lists a shrinking box only when its text does not fit even at
+  its minimum size.
+
 ---
 
 ## 0.10.31 — Stamps remember their master (2026-10-12)

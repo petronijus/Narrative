@@ -22,6 +22,7 @@ import { useZoomLevel } from '../state/useZoomLevel.js'
 import { Button } from '@/components/ui/button'
 import { SHOW_HIGHLIGHT_MS, type PendingShow, type ShowHighlight } from './useEditorShow.js'
 import { useBoundsSettled } from './useBoundsSettled.js'
+import { useTextLayoutTick } from './useTextLayoutTick.js'
 
 /** Gap between the object and the outline, in screen pixels. */
 const OUTLINE_GAP_PX = 6
@@ -50,8 +51,10 @@ export function EditorShowHighlight({ highlight, onDone }: EditorShowHighlightPr
   const canvasInstance = useCanvasInstance()
   const { zoom } = useZoomLevel()
   // Re-render as objects change, so the outline tracks an object that moves
-  // while it is up — bounds come from the scene graph …
+  // while it is up — bounds come from the scene graph (a growing text box
+  // also changes them without a document change) …
   useSlideObjects()
+  useTextLayoutTick(canvasInstance?.sceneGraph ?? null)
   // … and once the reconciler has mounted the objects of a slide we just
   // switched to (it lags the switch; on a loading tab, by seconds).
   useBoundsSettled(

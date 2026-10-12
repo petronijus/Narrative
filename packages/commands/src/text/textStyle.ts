@@ -18,6 +18,8 @@
  *                          becomes its current value, or stays a reference
  *                          the renderer resolves when it cannot be resolved
  *   textTransform        ← textTransform (default 'none')
+ *   minFontSize          ← minSize (text boxes only: a table cell never
+ *                          shrinks its type)
  *
  * A field the style leaves unset is not written (the box keeps its own).
  */
@@ -42,6 +44,9 @@ import {
 } from '@narrative/slide-model'
 
 const HEX6 = /^#[0-9a-f]{6}$/i
+
+/** Style fields a table's defaults have no place for. */
+const TEXT_ONLY_STYLE_KEYS: ReadonlySet<TextStyleOverrideKey> = new Set(['minFontSize'])
 
 /** The text style a page-number field is meant to wear (seeded into every folder). */
 export const PAGE_NUMBER_TEXT_STYLE_NAME = 'Footnotes and pages'
@@ -78,6 +83,8 @@ export function textStyleField(
     }
     case 'textTransform':
       return style.textTransform ?? 'none'
+    case 'minFontSize':
+      return style.minSize
   }
 }
 
@@ -89,8 +96,10 @@ export function textStyleFields(
   style: TextStyleTokenSnapshot,
   tokens: FolderTokensSnapshot,
   overrides: Iterable<string> = [],
+  target: 'text' | 'table' = 'text',
 ): Record<string, unknown> {
   const skip = new Set(overrides)
+  if (target === 'table') for (const key of TEXT_ONLY_STYLE_KEYS) skip.add(key)
   const fields: Record<string, unknown> = {}
   for (const key of TEXT_STYLE_OVERRIDE_KEYS) {
     if (skip.has(key)) continue
@@ -182,7 +191,7 @@ export function propagateTextStyles(
           typeof sid === 'string' && styleIds.has(sid) ? tokens.textStyles[sid] : undefined
         if (style === undefined) continue
         const patch = differingFields(
-          textStyleFields(style, tokens, overridesOf(defaults.get('textStyleOverrides'))),
+          textStyleFields(style, tokens, overridesOf(defaults.get('textStyleOverrides')), 'table'),
           (key) => defaults.get(key),
         )
         if (Object.keys(patch).length === 0) continue
@@ -240,6 +249,7 @@ export function textStyleFieldsFromObject(obj: {
   paragraphSpaceAfter?: unknown
   color?: unknown
   textTransform?: unknown
+  minFontSize?: unknown
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (typeof obj.fontFamily === 'string' && obj.fontFamily !== '') out['family'] = obj.fontFamily
@@ -247,6 +257,7 @@ export function textStyleFieldsFromObject(obj: {
     obj.fontWeight === 'bold' ? 700 : obj.fontWeight === 'normal' ? 400 : obj.fontWeight
   if (typeof weight === 'number') out['weight'] = weight
   if (typeof obj.fontSize === 'number') out['size'] = obj.fontSize
+  if (typeof obj.minFontSize === 'number') out['minSize'] = obj.minFontSize
   if (typeof obj.lineHeight === 'number') out['lineHeight'] = obj.lineHeight
   out['letterSpacing'] = typeof obj.letterSpacing === 'number' ? obj.letterSpacing : 0
   out['paragraphSpaceBefore'] =

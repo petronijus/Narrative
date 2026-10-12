@@ -11,6 +11,12 @@
  * fonts. Groups are flat on the slide (a `groupId` on each member), so every
  * text box is a node of its own in the scene graph. Table cells are not
  * measured: a cell grows its row instead of overflowing.
+ *
+ * Autofit (A4.2): a `shrink` box is measured as drawn, at the scale the
+ * renderer shrank its type to — it overflows only when the text does not
+ * fit even at its minimum size. A `grow-down` box is as tall as its text,
+ * so it never overflows itself; whether it runs past the region its layout
+ * gives it is the brand checker's question once slides have layouts (A4.4).
  */
 
 import type { SlideObject, TextOverflow } from '@narrative/shared'
@@ -27,7 +33,7 @@ export function measureTextOverflow(
 ): TextOverflow[] {
   const out: TextOverflow[] = []
   for (const object of objects) {
-    if (object.type !== 'text') continue
+    if (object.type !== 'text' || object.autofit === 'grow-down') continue
     const node = sceneGraph.getNode(object.id)
     if (node === undefined) continue
     const bottom = laidOutTextBottom(node.container, object)

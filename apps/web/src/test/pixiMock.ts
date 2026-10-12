@@ -39,11 +39,12 @@ type AnyObj = Record<string, any>
 // Container & friends
 // ---------------------------------------------------------------------------
 
-function makePoint() {
+function makePoint(initial = 0) {
   return {
-    x: 0,
-    y: 0,
-    set: vi.fn(function (this: { x: number; y: number }, x: number, y: number) {
+    x: initial,
+    y: initial,
+    // Pixi's ObservablePoint.set(x, y = x): one argument sets both.
+    set: vi.fn(function (this: { x: number; y: number }, x: number, y: number = x) {
       this.x = x
       this.y = y
     }),
@@ -64,7 +65,8 @@ class MockContainer {
   // applyFlip / applyObjectTransform read these as ObservablePoints; a
   // {x, y, set} mock is enough — tests inspect resulting numeric values,
   // not the live ObservablePoint API surface.
-  scale = makePoint()
+  // Pixi's containers start unscaled (1, 1), not collapsed.
+  scale = makePoint(1)
   position = makePoint()
   pivot = makePoint()
   filters: unknown[] = []

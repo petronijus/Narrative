@@ -158,6 +158,8 @@ interface PackTextStyle {
   name: string
   font: Id // key of fonts
   size: Px
+  /** The floor of `autofit: 'shrink'` (A4.2a: text-style token `minSize`, a box's `minFontSize`). */
+  minSize?: Px
   weight?: number
   stretch?: number // override the face
   /** CSS, × font size (Woodgrove). Exclusive with lineSpacing. */

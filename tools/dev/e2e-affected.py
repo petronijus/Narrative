@@ -43,6 +43,7 @@ SMOKE = [
 
 RENDER = [
     "renderer-visual",
+    "text-autofit",
     "render-page",
     "render-export",
     "inspector-flows",
@@ -67,6 +68,7 @@ TEXT = [
     "text-reload-invisible",
     "typography-commands",
     "list-feature-smoke",
+    "text-autofit",
 ]
 SLIDES_PANEL = [
     "slides-panel-drag",
@@ -164,6 +166,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/ui/CropOverlay.tsx", MEDIA + ["fill-mode-switch"]),
     ("apps/web/src/ui/Table*", ["table-commands"]),
     ("apps/web/src/ui/TextEditOverlay.tsx", TEXT),
+    ("apps/web/src/ui/AutofitHeights.tsx", ["text-autofit", "text-edit-undo"]),
+    ("apps/web/src/ui/useTextLayoutTick.ts", CANVAS_TOOLS + ["text-autofit"]),
     ("apps/web/src/ui/textEditDom.ts", TEXT),
     ("apps/web/src/ui/Font*", TEXT + ["folder-font-preview"]),
     ("apps/web/src/ui/SlideNotesPanel.tsx", ["text-edit-commands"]),
@@ -345,6 +349,7 @@ NO_E2E = [
     "*.test.tsx",
     "*.bench.ts",
     "*/test-support/*",
+    "apps/web/src/test/*",
     "*/testing/*",
     "packages/commands/src/parity/*",
     "*.md",

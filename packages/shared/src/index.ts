@@ -25,6 +25,7 @@ export type {
   TextStyleOverrideKey,
   FontWeight,
   TextVerticalAlign,
+  TextAutofit,
   TextListStyle,
   ListKind,
   ListNumberFormat,

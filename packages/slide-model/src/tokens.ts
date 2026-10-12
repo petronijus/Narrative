@@ -41,6 +41,11 @@ export interface TextStyleTokenSnapshot {
   family?: string
   weight?: number
   size?: number
+  /**
+   * The smallest size, in px, a box of this style may be shrunk to when its
+   * autofit is `shrink` (A4.2); linked boxes carry it as `minFontSize`.
+   */
+  minSize?: number
   lineHeight?: number
   letterSpacing?: number
   /**

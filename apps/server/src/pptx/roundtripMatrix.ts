@@ -298,6 +298,8 @@ export async function matrixDeck(): Promise<ImportedDeck> {
       paragraphSpaceAfter: 6,
       textTransform: 'uppercase',
       wrap: 'none',
+      autofit: 'shrink',
+      minFontSize: 18,
       hyperlink: { kind: 'url', href: 'https://example.com/' },
       stroke: 0xff00ff,
       strokeWidth: 2,
@@ -323,6 +325,7 @@ export async function matrixDeck(): Promise<ImportedDeck> {
       vAlign: 'bottom',
       lineSpacing: 1.1,
       textTransform: 'capitalize',
+      autofit: 'grow-down',
       flipH: true,
     },
     {

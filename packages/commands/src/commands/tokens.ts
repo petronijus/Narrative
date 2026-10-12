@@ -66,6 +66,9 @@ const textStyleShape = {
     .describe('Font family, e.g. "Inter"'),
   weight: WEIGHT,
   size: PositiveNumberSchema.max(2000).describe('px'),
+  minSize: PositiveNumberSchema.max(2000).describe(
+    'px: the smallest size a box of this style shrinks its type to (autofit "shrink")',
+  ),
   lineHeight: PositiveNumberSchema.max(10).describe('Multiple of the size'),
   letterSpacing: FiniteNumberSchema.min(-100).max(100),
   paragraphSpaceBefore: NonNegativeNumberSchema.max(1000),
@@ -241,7 +244,8 @@ export const tokenCreate = defineCommand({
   description:
     `Add a colour or a text style to the folder, for every deck in it. A colour is { name, value }; a folder holds ` +
     `at most ${MAX_COLORS} colours. A text style names what linked text takes — family, weight, size, lineHeight ` +
-    '(multiple of the size), letterSpacing, paragraph spacing, colour (a hex or a folder colour), textTransform; ' +
+    '(multiple of the size), letterSpacing, paragraph spacing, colour (a hex or a folder colour), textTransform, ' +
+    'minSize (the floor of autofit "shrink"); ' +
     'apply it with text.style.apply; its name must be new in the folder (token.list). Returns the new id. Undo: ' +
     'token.delete. Needs the editor role in the folder.',
   input: z.discriminatedUnion('category', [
@@ -319,6 +323,10 @@ export const tokenUpdate = defineCommand({
       title: 'Change the brand colour',
       input: { category: 'colors', tokenId: 'brandBlue', value: '#0f3fb8' },
     },
+    {
+      title: 'Body text may shrink to fit, never below 18 px',
+      input: { category: 'textStyles', tokenId: 'body', minSize: 18 },
+    },
   ],
   async handler(ctx, input) {
     const { category, tokenId, ...patch } = input
@@ -393,6 +401,7 @@ const TextStyleOutput = z.object({
   family: z.string().optional(),
   weight: z.number().optional(),
   size: z.number().optional(),
+  minSize: z.number().optional(),
   lineHeight: z.number().optional(),
   letterSpacing: z.number().optional(),
   paragraphSpaceBefore: z.number().optional(),

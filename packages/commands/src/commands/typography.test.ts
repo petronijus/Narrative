@@ -3,6 +3,7 @@ import { createUndoManager, readParagraphAttrsForRange } from '@narrative/slide-
 import type { TableObject } from '@narrative/shared'
 import { harness, type Harness } from '../testing/harness.js'
 import { FIXTURE_FONT_FAMILY, FIXTURE_PAGE_NUMBER_STYLE_ID } from '../testing/fixtureTokens.js'
+import { propagateTextStyles, textStyleFieldsFromObject } from '../text/textStyle.js'
 
 /** Inline formatting of a body as [text, attributes] runs. */
 const runs = (h: Harness, slide = 's1', id = 't1') =>
@@ -162,6 +163,50 @@ describe('text.style.apply', () => {
     )
     // Unlinking needs no tokens.
     h.run('text.style.apply', { slide: 's1', objects: ['t1'], style: null })
+  })
+})
+
+describe('the shrink floor (A4.2a)', () => {
+  function withBodyFloor(h: Harness, minSize: number): void {
+    h.ctx.folderTokens!.textStyles['body']!.minSize = minSize
+  }
+
+  it("reaches a linked text box as minFontSize, never a table's defaults", () => {
+    const h = harness()
+    withBodyFloor(h, 18)
+    h.run('text.style.apply', { slide: 's1', objects: ['t1', 'tbl1'], style: 'Body' })
+    expect(h.plain('s1', 't1')).toMatchObject({ textStyleId: 'body', minFontSize: 18 })
+    const table = h.plain('s1', 'tbl1') as unknown as TableObject
+    expect(table.defaults.textStyleId).toBe('body')
+    expect(table.defaults).not.toHaveProperty('minFontSize')
+    h.run('text.style.apply', { slide: 's1', objects: ['tbl1'], style: 'Body', reset: true })
+    expect(h.plain('s1', 'tbl1') as unknown as TableObject).not.toHaveProperty(
+      'defaults.minFontSize',
+    )
+  })
+
+  it('follows a changed style on boxes, not on tables, unless the box set its own', () => {
+    const h = harness()
+    h.run('text.style.apply', { slide: 's1', objects: ['t1', 'tbl1'], style: 'Body' })
+    withBodyFloor(h, 12)
+    expect(propagateTextStyles(h.ctx.deck!, h.ctx.folderTokens!, new Set(['body']))).toBe(1)
+    expect(h.plain('s1', 't1')['minFontSize']).toBe(12)
+    expect((h.plain('s1', 'tbl1') as unknown as TableObject).defaults).not.toHaveProperty(
+      'minFontSize',
+    )
+    // Set by hand on the box: an override the style no longer reaches.
+    h.run('text.setBoxTypography', { slide: 's1', objects: ['t1'], style: { minFontSize: 20 } })
+    expect(h.plain('s1', 't1')['textStyleOverrides']).toEqual(['minFontSize'])
+    withBodyFloor(h, 10)
+    propagateTextStyles(h.ctx.deck!, h.ctx.folderTokens!, new Set(['body']))
+    expect(h.plain('s1', 't1')['minFontSize']).toBe(20)
+  })
+
+  it('a style made from a box takes its floor', () => {
+    expect(textStyleFieldsFromObject({ fontSize: 24, minFontSize: 12 })).toMatchObject({
+      size: 24,
+      minSize: 12,
+    })
   })
 })
 

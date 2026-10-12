@@ -411,6 +411,9 @@ export type FontWeight = 'normal' | 'bold' | 100 | 200 | 300 | 400 | 500 | 600 |
 
 export type TextVerticalAlign = 'top' | 'middle' | 'bottom'
 
+/** {@link TextObject.autofit}: what a box does with text taller than it. Absent = fixed. */
+export type TextAutofit = 'grow-down' | 'shrink'
+
 /**
  * Legacy frame-wide list flag. Superseded by per-paragraph
  * {@link ParagraphAttrs} stored inside the Y.Text. Kept so decks written
@@ -512,6 +515,30 @@ export interface TextObject extends BaseSlideObject {
    * in a box sized for one digit. Absent: wrap at the box width.
    */
   wrap?: 'none'
+  /**
+   * How the box answers text that does not fit its height (agentic A4.2).
+   * Absent: fixed — the box keeps its size and text that runs below it is
+   * clipped by nothing but reported as overflow.
+   * - `'grow-down'`: the box is as tall as its laid-out text; its top stays
+   *   put and it grows or shrinks downwards (PowerPoint "resize shape to fit
+   *   text", `<a:spAutoFit/>`). The renderer draws it at the laid-out height
+   *   whatever `height` says; the editor writes that height back when a
+   *   person changes the box, so `height` is current after any human edit
+   *   and may lag behind an agent's or the server's until the next one.
+   *   `vAlign` has no room to act.
+   * - `'shrink'`: the box keeps its size and the type is scaled down, as one
+   *   (sizes, spacing, indents), until the text fits — never below the
+   *   linked text style's `minSize`, or half the size without one
+   *   (PowerPoint "shrink text on overflow", `<a:normAutofit/>`). A box that
+   *   still does not fit at that scale overflows.
+   */
+  autofit?: TextAutofit
+  /**
+   * The smallest size `autofit: 'shrink'` may scale the box's type to, in
+   * px of the box's own `fontSize` (runs scale with it). Linked boxes take
+   * it from their text style's `minSize`. Absent: half of `fontSize`.
+   */
+  minFontSize?: number
   /** Letter spacing in px. Default 0. */
   letterSpacing?: number
   /** Vertical space inserted ABOVE each paragraph, in px. Default 0. */
@@ -587,6 +614,7 @@ export type TextStyleOverrideKey =
   | 'paragraphSpaceAfter'
   | 'color'
   | 'textTransform'
+  | 'minFontSize'
 
 const TEXT_STYLE_OVERRIDE_KEY_SET: ReadonlySet<TextStyleOverrideKey> = new Set([
   'fontFamily',
@@ -598,6 +626,7 @@ const TEXT_STYLE_OVERRIDE_KEY_SET: ReadonlySet<TextStyleOverrideKey> = new Set([
   'paragraphSpaceAfter',
   'color',
   'textTransform',
+  'minFontSize',
 ])
 
 export const TEXT_STYLE_OVERRIDE_KEYS: ReadonlyArray<TextStyleOverrideKey> = Array.from(

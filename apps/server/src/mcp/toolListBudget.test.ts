@@ -90,8 +90,14 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * through their create schemas (≈ 0.45 KB each) and object.update's
  * description and example (≈ 0.2): 187,928 bytes in url mode, 140 tools
  * (descriptions trimmed once before measuring) — 72 bytes left.
+ * A4.2a (2026-10-12): 188,000 → 189,000 for text autofit: `autofit` and
+ * `minFontSize` in the text create schema (object.create, object.path.create
+ * ≈ 0.1 KB each), a sentence and an example in object.update, minFontSize in
+ * text.setBoxTypography and `minSize` in the token tools: 188,673 bytes in
+ * url mode, 188,805 in link mode, 140 tools (descriptions trimmed once
+ * before measuring).
  */
-export const TOOL_LIST_BUDGET_BYTES = 188_000
+export const TOOL_LIST_BUDGET_BYTES = 189_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

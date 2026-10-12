@@ -157,6 +157,7 @@ export const FontWeightSchema = z.literal([
 ])
 
 export const TextVerticalAlignSchema = z.enum(['top', 'middle', 'bottom'])
+export const TextAutofitSchema = z.enum(['grow-down', 'shrink'])
 export const TextListStyleSchema = z.enum(['bullet', 'numbered'])
 export const ListKindSchema = z.enum(['bullet', 'number'])
 export const ListNumberFormatSchema = z.enum([
@@ -194,6 +195,7 @@ export const TextStyleOverrideKeySchema = z.enum([
   'paragraphSpaceAfter',
   'color',
   'textTransform',
+  'minFontSize',
 ])
 
 /**
@@ -411,6 +413,8 @@ function buildObjectSchemas<C extends ColorSlot, R extends RgbSlot>(color: C, rg
     lineHeight: PositiveNumberSchema.exactOptional(),
     lineSpacing: PositiveNumberSchema.exactOptional(),
     wrap: z.literal('none').exactOptional(),
+    autofit: TextAutofitSchema.exactOptional(),
+    minFontSize: PositiveNumberSchema.exactOptional(),
     // Negative tracking is legitimate (tight display type).
     letterSpacing: FiniteNumberSchema.exactOptional(),
     paragraphSpaceBefore: NonNegativeNumberSchema.exactOptional(),
