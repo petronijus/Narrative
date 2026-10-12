@@ -6,6 +6,10 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+---
+
+## 0.10.32 — Text that fits its box (2026-10-12)
+
 Agentic phase A4 (style packs), step A4.2a.
 
 ### Added

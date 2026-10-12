@@ -342,7 +342,7 @@ passed, $8.42, 19m46s — `component-restamp` and
 `component-promote-headline` is live-only, so it has no recording to
 refresh. Released as 0.10.31 (2026-10-12). Next: A4.2.
 
-**A4.2a built (2026-10-12, unreleased):** `autofit` (`grow-down`,
+**A4.2a released as 0.10.32 (2026-10-12):** `autofit` (`grow-down`,
 `shrink`) and `minFontSize` on text boxes, `minSize` on text styles
 (propagated to linked boxes, not to tables); the renderer draws a growing
 box at its laid-out height and finds a shrinking box's scale by halving
