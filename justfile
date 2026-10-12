@@ -135,9 +135,9 @@ lighthouse:
 mutate:
     pnpm --filter @narrative/slide-model mutate
 
-# PowerPoint round trip of a real deck (target: 0 differences); the path is relative to where you run just
+# PowerPoint round trip of a real deck (target: 0 differences); the path is absolute or relative to where you run just
 pptx-roundtrip deck:
-    cd apps/server && npx tsx src/scripts/pptxRoundtrip.ts "{{ absolute_path(invocation_directory() / deck) }}"
+    cd apps/server && npx tsx src/scripts/pptxRoundtrip.ts "{{ absolute_path(join(invocation_directory(), deck)) }}"
 
 # ── everyday ─────────────────────────────────────────────────────────────
 
