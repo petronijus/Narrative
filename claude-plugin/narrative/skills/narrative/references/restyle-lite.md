@@ -2,7 +2,7 @@
 
 # Restyle with the folder's tokens
 
-Bring slides onto the folder's colours, text styles and fonts — the light version before full style packs exist.
+Bring slides onto the folder's brand — its style pack's layouts when it has one, else its colours, text styles and fonts.
 
 ## Inputs
 
@@ -11,17 +11,32 @@ Take these from the user's request (ask if a required one is missing):
 - `<scope>`: "deck" (default), a slide range, or "selection". Default: deck.
 - `<instruction>`: Optional direction, e.g. "use the accent only for key numbers".
 
-Restyle <scope> onto the folder's design tokens. Direction: <instruction>.
+Restyle <scope> onto the folder's brand. Direction: <instruction>.
 
-Full brand restyling with style packs — layouts, the pack's components and
-`style_slides_restyle` (planned, not available yet) — comes later; this
-playbook uses what exists today.
+First read the folder's style pack with `style_pack_get` (part "summary"; the
+deck's `folderId` from `deck_get`).
 
-1. Read the folder's tokens with `token_list` (the deck's `folderId` from
-   `deck_get`; colours and text styles with their ids); `query_slide` shows
-   which objects already use them (`{ "$token": … }` references),
-   `token_usages` where one token is used. If the folder has no tokens, say
-   so and ask before inventing a palette.
+**With a style pack** — re-lay the slides onto its layouts:
+
+1. `style_pack_get` part "layouts": the layouts by purpose and slots.
+2. For each slide in scope, choose the layout whose purpose fits the
+   slide's point and content, and `slide_applyLayout` with it: the slide's
+   text moves into the new layout's slots by role (title to title, body to
+   body); give `content` for slots the move cannot fill. Objects without a
+   slot that the slide still needs stay where they are — check they do not
+   collide with the new layout.
+3. A deck already on the pack's layouts is restyled in one step with
+   `style_deck_apply` (a new variant, footer fields, the grid as guides): it
+   re-lays every laid-out slide and keeps each slot's content.
+4. `query_check` the restyled slides and fix its errors (shorten text, never
+   shrink it), then look with `query_render` (a sheet for many).
+
+**Without a style pack** — bring the slides onto the folder's tokens:
+
+1. Read the folder's tokens with `token_list` (colours and text styles with
+   their ids); `query_slide` shows which objects already use them
+   (`{ "$token": … }` references), `token_usages` where one token is used.
+   If the folder has no tokens, say so and ask before inventing a palette.
 2. Classify each text box by role (headline, subline, copy, caption,
    footnote, page number) from its size, position and content.
 3. Map roles to the folder's text styles and colours:
@@ -32,10 +47,10 @@ playbook uses what exists today.
    set the box's font, size and colour with `text_setBoxTypography` (it
    removes run-level overrides that fight the box style); other properties
    with `object_update`. One `ops_apply` per slide.
-5. Do not move or resize objects in this playbook unless the user asked;
-   layout changes need the layout-aware restyle that comes with style packs.
+5. Do not move or resize objects in this branch unless the user asked.
 6. Look at the restyled slides with `query_render` (a sheet for many): a
    larger style can make text overflow its box (`overflow`) — say so, or
    fix it with the wording, not by moving objects.
-7. Report which roles you mapped to which styles, and anything that did not
-   fit.
+
+Report which roles or slides you mapped to which styles or layouts, and
+anything that did not fit.

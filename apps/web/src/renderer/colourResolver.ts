@@ -48,7 +48,15 @@ import type { TokenRef } from '@narrative/shared'
 // Resolver singleton
 // ---------------------------------------------------------------------------
 
-export type ColourResolverFn = (value: number | TokenRef | string | undefined | null) => string
+/** Where a colour is painted: the surface of the slide being drawn (A4.2d). */
+export interface ColourContext {
+  surface?: string
+}
+
+export type ColourResolverFn = (
+  value: number | TokenRef | string | undefined | null,
+  ctx?: ColourContext,
+) => string
 
 /** A change of the installed resolver, as `subscribeColourResolver` reports it. */
 export interface ColourResolverChange {
@@ -60,8 +68,29 @@ export interface ColourResolverChange {
 
 type ColourResolverListener = (change: ColourResolverChange) => void
 
+/** The resolver installed by the folder bridge (it knows the tokens and the deck's variant). */
+let _base: ColourResolverFn | null = null
+/** The surface of the slide the canvas shows (A4.2d), set by the canvas. */
+let _surface: string | undefined = undefined
+/** What `resolveColour` uses: the installed resolver bound to the surface. */
 let _resolver: ColourResolverFn | null = null
 const _listeners = new Set<ColourResolverListener>()
+
+function bindSurface(
+  base: ColourResolverFn | null,
+  surface: string | undefined,
+): ColourResolverFn | null {
+  if (base === null) return null
+  if (surface === undefined) return base
+  return (value, ctx) => base(value, { surface, ...ctx })
+}
+
+function swap(next: ColourResolverFn | null): void {
+  const change: ColourResolverChange = { prev: _resolver, next }
+  _resolver = next
+  // Snapshot: a listener may unsubscribe (a canvas unmounting) mid-loop.
+  for (const listener of [..._listeners]) listener(change)
+}
 
 /**
  * Install (or remove) the token-to-colour resolver and tell every
@@ -70,11 +99,35 @@ const _listeners = new Set<ColourResolverListener>()
  * Pass `null` to uninstall (on unmount).
  */
 export function setColourResolver(fn: ColourResolverFn | null): void {
-  if (fn === _resolver) return
-  const change: ColourResolverChange = { prev: _resolver, next: fn }
-  _resolver = fn
-  // Snapshot: a listener may unsubscribe (a canvas unmounting) mid-loop.
-  for (const listener of [..._listeners]) listener(change)
+  if (fn === _base) return
+  _base = fn
+  swap(bindSurface(fn, _surface))
+}
+
+/**
+ * The surface of the slide the canvas shows (its layout's, A4.2d): colour
+ * tokens with a value for it resolve to that value. A change repaints what
+ * it affects, as a new resolver does.
+ */
+export function setRenderingSurface(surface: string | undefined): void {
+  if (surface === _surface) return
+  _surface = surface
+  swap(bindSurface(_base, surface))
+}
+
+/**
+ * Run `fn` resolving colours on `surface` without telling anyone: for a
+ * renderer that paints another slide than the canvas shows (thumbnails),
+ * whose colours are read while it mounts.
+ */
+export function withRenderingSurface<T>(surface: string | undefined, fn: () => T): T {
+  const saved = _resolver
+  _resolver = bindSurface(_base, surface)
+  try {
+    return fn()
+  } finally {
+    _resolver = saved
+  }
 }
 
 /** The resolver `resolveColour` currently uses (null = none installed). */
@@ -113,10 +166,31 @@ export function resolveColourWith(
 
   const css = resolver(value)
   if (css === 'transparent') return 0
-  // CSS hex string → number. Strip leading '#' and parse as hex int.
-  const stripped = css.startsWith('#') ? css.slice(1) : css
+  // CSS hex string → number. Strip leading '#' and parse the colour's six
+  // digits (a token may carry alpha as two more, A4.2d: `resolveAlpha`).
+  const stripped = (css.startsWith('#') ? css.slice(1) : css).slice(0, 6)
   const parsed = parseInt(stripped, 16)
   return isNaN(parsed) ? 0 : parsed
+}
+
+/**
+ * The alpha a colour token carries (`#rrggbbaa`, A4.2d), 0..1: 1 for a
+ * literal colour, a token without alpha or an unresolved one. Renderers
+ * multiply it into the field's own alpha.
+ */
+export function resolveAlphaWith(
+  resolver: ColourResolverFn | null,
+  value: number | TokenRef | undefined | null,
+): number {
+  if (value === undefined || value === null || typeof value === 'number') return 1
+  if (!isTokenRef(value) || resolver === null) return 1
+  const m = /^#?[0-9a-f]{6}([0-9a-f]{2})$/i.exec(resolver(value))
+  return m === null ? 1 : Math.round((parseInt(m[1]!, 16) / 255) * 1000) / 1000
+}
+
+/** `resolveAlphaWith` against the installed resolver. */
+export function resolveAlpha(value: number | TokenRef | undefined | null): number {
+  return resolveAlphaWith(_resolver, value)
 }
 
 /**
@@ -185,7 +259,11 @@ function differs(
   next: ColourResolverFn | null,
 ): boolean {
   if (typeof value !== 'object' || value === null) return false
-  if (isTokenRef(value)) return resolveColourWith(prev, value) !== resolveColourWith(next, value)
+  if (isTokenRef(value))
+    return (
+      resolveColourWith(prev, value) !== resolveColourWith(next, value) ||
+      resolveAlphaWith(prev, value) !== resolveAlphaWith(next, value)
+    )
   if (Array.isArray(value)) {
     for (const item of value) if (differs(item, prev, next)) return true
     return false

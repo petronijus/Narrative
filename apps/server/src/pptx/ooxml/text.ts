@@ -22,12 +22,17 @@
  */
 
 import * as Y from 'yjs'
-import { defaultBulletGlyph, getParagraphDeltas, PARAGRAPH_SEP } from '@narrative/slide-model'
+import {
+  defaultBulletGlyph,
+  effectiveParagraphAttrs,
+  getParagraphDeltas,
+  PARAGRAPH_SEP,
+} from '@narrative/slide-model'
 import type { RichDeltaOp } from '@narrative/slide-model'
-import type { ParagraphAttrs, TextObject } from '@narrative/shared'
+import type { ParagraphAttrs, TextListLevel, TextObject } from '@narrative/shared'
 import { el, tag, type XmlChild, type XmlElement } from './xml.js'
 import { type XmlNode, findFirst, getAttrs, getChildren, getTag } from './read.js'
-import { writeSolidFill } from './color.js'
+import { writeColor, writeSolidFill } from './color.js'
 import { pxToCentipoints, pxToEmu } from './units.js'
 import { ALIGN, ANCHOR, AUTONUM, CAPS } from './vocabulary.js'
 
@@ -144,7 +149,11 @@ function defRPr(d: FrameDefaults): XmlElement {
  * height) is PowerPoint's own percentage. `lineHeight` wins, as it does in
  * the renderer.
  */
-function lnSpc(obj: TextObject): XmlChild {
+function lnSpc(obj: TextObject, level?: TextListLevel): XmlChild {
+  // A level with its own line spacing (A4.2b) sets its paragraphs by it.
+  if (level?.lineSpacing !== undefined && level.lineSpacing > 0) {
+    return tag('a:lnSpc', el('a:spcPct', { val: Math.round(level.lineSpacing * 100_000) }))
+  }
   if (obj.lineHeight !== undefined && obj.lineHeight > 0) {
     return tag('a:lnSpc', el('a:spcPts', { val: pxToCentipoints(obj.lineHeight * obj.fontSize) }))
   }
@@ -172,19 +181,43 @@ function lstStyle(obj: TextObject): XmlElement {
   const align = ALIGN.toXml(obj.align ?? 'left')
   const levels: XmlElement[] = []
   for (let n = 1; n <= 9; n++) {
+    // The box's level defaults (A4.2b) are this level's: PowerPoint applies
+    // them to every paragraph at the level that says nothing itself.
+    const look = obj.listLevels?.[n - 1]
     levels.push(
       el(
         `a:lvl${n}pPr`,
         { algn: align },
-        lnSpc(obj),
-        spacing('a:spcBef', obj.paragraphSpaceBefore),
+        lnSpc(obj, look),
+        spacing('a:spcBef', look?.spaceBefore ?? obj.paragraphSpaceBefore),
         spacing('a:spcAft', obj.paragraphSpaceAfter),
-        el('a:buChar', { char: defaultBulletGlyph(n - 1) }),
-        defRPr(d),
+        typeof look?.bulletColor === 'number' ? tag('a:buClr', writeColor(look.bulletColor)) : null,
+        look?.bulletScale !== undefined
+          ? // Transitional OOXML writes the size as a percentage, 25–400 %.
+            el('a:buSzPct', {
+              val: `${Math.max(25, Math.min(400, Math.round(look.bulletScale * 100)))}%`,
+            })
+          : null,
+        look?.list === 'number'
+          ? el('a:buAutoNum', { type: AUTONUM.toXml(look.numberFormat ?? 'decimal') })
+          : el('a:buChar', { char: look?.bulletChar ?? defaultBulletGlyph(n - 1) }),
+        defRPr(levelDefaults(d, look)),
       ),
     )
   }
   return tag('a:lstStyle', levels)
+}
+
+/** The frame defaults with a level's own type over them. */
+function levelDefaults(d: FrameDefaults, look: TextListLevel | undefined): FrameDefaults {
+  if (look === undefined) return d
+  return {
+    ...d,
+    ...(look.fontSize !== undefined ? { fontSize: look.fontSize } : {}),
+    ...(look.fontWeight !== undefined ? { bold: isBoldWeight(look.fontWeight) } : {}),
+    ...(typeof look.color === 'number' ? { color: look.color } : {}),
+    ...(look.fontFamily !== undefined ? { fontFamily: look.fontFamily } : {}),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -285,12 +318,22 @@ export function readParagraphExt(
  * `<a:pPr>` for a paragraph. `own` is the paragraph's model attributes,
  * `attrs` what is drawn (the legacy frame-wide list style applied).
  */
-function paragraphProps(own: ParagraphAttrs, attrs: ParagraphAttrs, fontSize: number): XmlElement {
+function paragraphProps(
+  own: ParagraphAttrs,
+  attrs: ParagraphAttrs,
+  fontSize: number,
+  look?: TextListLevel,
+): XmlElement {
   const level = clampLevel(attrs.level)
   const isList = attrs.list === 'bullet' || attrs.list === 'number'
   const em = (n: number): number => pxToEmu(n * fontSize)
-  const marL = em(level * INDENT_PER_LEVEL_EM + (isList ? MARKER_HANG_EM : 0))
-  const indent = isList ? -em(MARKER_HANG_EM) : 0
+  // A level that sets its indents (A4.2b) places text and marker in px, as
+  // the renderer does; otherwise the built-in em steps.
+  const pxIndent = look?.indent !== undefined || look?.hanging !== undefined
+  const marL = pxIndent
+    ? pxToEmu(look?.indent ?? 0)
+    : em(level * INDENT_PER_LEVEL_EM + (isList ? MARKER_HANG_EM : 0))
+  const indent = !isList ? 0 : pxIndent ? -pxToEmu(look?.hanging ?? 0) : -em(MARKER_HANG_EM)
   let bullet: XmlChild
   if (attrs.list === 'bullet') {
     // No glyph of its own: inherit the level's default from the lstStyle.
@@ -431,6 +474,18 @@ function paragraphsOf(obj: TextObject): Array<{ attrs: ParagraphAttrs; ops: Rich
 }
 
 /** Apply the legacy frame-wide `listStyle` to paragraphs that carry none. */
+/**
+ * What a paragraph is drawn with: its own attributes over its level's
+ * defaults (A4.2b; `'none'` resolved to plain), then the legacy frame-wide
+ * list style for a paragraph that is still no list.
+ */
+function drawnAttrs(obj: TextObject, attrs: ParagraphAttrs): ParagraphAttrs {
+  const resolved = effectiveParagraphAttrs(attrs, obj.listLevels)
+  // An explicit 'none' is plain even under the legacy frame-wide style.
+  if (attrs.list === 'none') return resolved
+  return withLegacyList(obj, resolved)
+}
+
 function withLegacyList(obj: TextObject, attrs: ParagraphAttrs): ParagraphAttrs {
   if (attrs.list !== undefined || obj.listStyle === undefined) return attrs
   return { ...attrs, list: obj.listStyle === 'numbered' ? 'number' : 'bullet' }
@@ -515,7 +570,7 @@ export function writeTextBody(
     paragraphs = [
       tag(
         'a:p',
-        paragraphProps({}, withLegacyList(obj, {}), obj.fontSize),
+        paragraphProps({}, drawnAttrs(obj, {}), obj.fontSize, obj.listLevels?.[0]),
         el(
           'a:fld',
           { id: '{B6F15528-21DE-4FAA-801E-634DDDAF4B2B}', type: 'slidenum' },
@@ -529,7 +584,12 @@ export function writeTextBody(
     paragraphs = paragraphsOf(obj).map((p) =>
       tag(
         'a:p',
-        paragraphProps(p.attrs, withLegacyList(obj, p.attrs), obj.fontSize),
+        paragraphProps(
+          p.attrs,
+          drawnAttrs(obj, p.attrs),
+          obj.fontSize,
+          obj.listLevels?.[clampLevel(p.attrs.level)],
+        ),
         textRuns(p.ops, link),
         endPara,
       ),

@@ -79,6 +79,7 @@ import type {
   TextStyleOverrideKey,
   TextVerticalAlign,
   TextAutofit,
+  TextListLevel,
   TokenRef,
   TriangleObject,
   VideoObject,
@@ -161,6 +162,7 @@ export type SchemaCoverage = [
 
   // slide.ts sub-types
   Assert<Covers<typeof O.ShadowStyleSchema, ShadowStyle>>,
+  Assert<Covers<typeof O.TextListLevelSchema, TextListLevel>>,
   Assert<Covers<typeof O.ObjectHyperlinkSchema, ObjectHyperlink>>,
   Assert<Covers<typeof O.ObjectRoleSchema, ObjectRole>>,
   Assert<Covers<typeof O.ComponentProvenanceSchema, ComponentProvenance>>,

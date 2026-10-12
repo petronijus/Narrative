@@ -15,8 +15,12 @@
  * idempotent (a re-run changes only what is still out of date).
  */
 
-import { eq, sql } from 'drizzle-orm'
-import { appDataMigrations, components, folders } from '../db/schema.js'
+import { and, eq, isNull, sql } from 'drizzle-orm'
+import { appDataMigrations, components, folders, mediaAssets } from '../db/schema.js'
+import { buildS3Client } from '../media/s3Client.js'
+import { readAll } from '../media/finalizeUpload.js'
+import { parseFontMetadata } from '../media/fontMetadata.js'
+import { maxUploadBytes } from '../media/uploadPolicy.js'
 import type { ServiceDeps } from './deps.js'
 import { ensureFolderTokens, queuePropagation } from './tokens.js'
 import { adoptMasterMedia } from './componentStaging.js'
@@ -117,9 +121,49 @@ export const componentMediaOwnedByComponent: DataMigration = {
   },
 }
 
+/**
+ * A4.2c: fonts uploaded before their variable axes were read (migration
+ * 0035) are read again — each stored font file is parsed once and its
+ * weight / width axis ranges recorded, `{}` for a static font, so text set
+ * at a width finds the face that has it. Only rows still NULL are read.
+ */
+export const fontAxesBackfill: DataMigration = {
+  id: '2026-10-12-font-axes',
+  description: 'read the weight and width axes of every stored font',
+  async run(deps) {
+    const rows = await deps.db
+      .select({ id: mediaAssets.id, storageKey: mediaAssets.storageKey })
+      .from(mediaAssets)
+      .where(and(eq(mediaAssets.kind, 'font'), isNull(mediaAssets.fontAxes)))
+    const report = { fonts: rows.length, variable: 0, failed: [] as string[] }
+    if (rows.length === 0) return report
+    const s3 = buildS3Client()
+    for (const row of rows) {
+      try {
+        const buf = await readAll(s3, row.storageKey, maxUploadBytes('font'))
+        const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+        const axes = parseFontMetadata(ab as ArrayBuffer).axes ?? {}
+        if (axes.wght !== undefined || axes.wdth !== undefined) report.variable++
+        await deps.db
+          .update(mediaAssets)
+          .set({ fontAxes: axes })
+          .where(eq(mediaAssets.id, row.id))
+      } catch (err) {
+        deps.log.warn({ err, assetId: row.id }, 'font axes data migration: font failed')
+        report.failed.push(row.id)
+      }
+    }
+    if (report.failed.length > 0) {
+      throw Object.assign(new Error('some fonts could not be read'), { report })
+    }
+    return report
+  },
+}
+
 export const DATA_MIGRATIONS: readonly DataMigration[] = [
   folderTokensOnServer,
   componentMediaOwnedByComponent,
+  fontAxesBackfill,
 ]
 
 /** Tries before a failing migration is left alone (it then needs a person: see its `last_error`). */

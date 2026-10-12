@@ -172,6 +172,10 @@ export const USER_ACTIONS = {
     ],
   },
   'folder.delete': { label: 'Delete folder', commands: ['folder.delete'] },
+  'stylePack.compile': { label: 'Compile the style pack', commands: ['style.pack.edit'] },
+  'stylePack.import': { label: 'Import a style pack', commands: ['style.pack.edit'] },
+  'stylePack.export': { label: 'Export the style pack', commands: ['style.pack.get'] },
+  'stylePack.delete': { label: 'Delete the style pack', commands: ['style.pack.edit'] },
 
   // --- Presenting ---------------------------------------------------------
   'present.start': { label: 'Present', commands: ['editor.present.link'] },

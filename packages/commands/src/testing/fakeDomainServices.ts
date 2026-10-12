@@ -42,11 +42,22 @@ import {
   updateFolderToken,
   type FolderTokensSnapshot,
   type TokenCategory,
+  readStylePack,
+  setStylePack,
+  patchStylePack,
+  deleteStylePack,
+  mergeStylePackPatch,
+  readMasterOrigin,
+  replaceMasterObjects,
 } from '@narrative/slide-model'
 import { createFixtureFolderTokens } from './fixtureTokens.js'
 import { InvalidTokenFields, parseNewTokenFields, parseTokenPatch } from '../commands/tokens.js'
 import { textStyleNameTaken } from '../text/textStyle.js'
-import type { TextObject, RectangleObject } from '@narrative/shared'
+import type { TextObject, RectangleObject, StylePack } from '@narrative/shared'
+import { exampleStylePack } from '@narrative/shared'
+import { parseStylePack } from '../stylePack/parse.js'
+import { previousOfUpdate } from '../stylePack/change.js'
+import { compileStylePack } from '../stylePack/compile.js'
 import { CommandError } from '../errors.js'
 import { applyInsertPlan, planForMaster } from '../insert/plan.js'
 import { objectsOf, requireObjects, resolveSlide } from '../refs.js'
@@ -154,6 +165,7 @@ export type DomainFakes = Pick<
   | 'pptx'
   | 'render'
   | 'tokens'
+  | 'stylePacks'
 > & {
   /**
    * A deep copy of everything the fakes hold (and the id counter, so a
@@ -222,6 +234,13 @@ export function createDomainFakes(
   const folderDocs = new Map<string, Y.Doc>([
     [world.folderId, folderDocWith(createFixtureFolderTokens())],
   ])
+  // The fixture folder carries the example style pack (A4.3): style.pack.* examples read and change it.
+  setStylePack(
+    folderDocs.get(world.folderId)!,
+    exampleStylePack() as unknown as Record<string, unknown>,
+  )
+  /** Masters a pack's compile made, by component id (the fixture's own master is fixtureComponentState). */
+  const packMasters = new Map<string, Y.Doc>()
   const folderDoc = (folderId: string): Y.Doc => {
     let doc = folderDocs.get(folderId)
     if (doc === undefined) {
@@ -430,6 +449,7 @@ export function createDomainFakes(
     return pickFixtureSlides(deckId === world.deckId, refs)
   }
   const rTokens = recorder('tokens')
+  const rStyle = recorder('stylePacks')
 
   return {
     snapshot: () =>
@@ -1274,6 +1294,111 @@ export function createDomainFakes(
               'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==',
           },
         }
+      },
+      async measure(args) {
+        rRender('measure', args)
+        // As the real service: in sheets, so its limit is the measure's, not one sheet's.
+        const ids: readonly string[] = args.deckId === world.deckId ? FIXTURE_SLIDE_IDS : []
+        const chosen = (args.slides === 'all' ? ids.map((id) => ({ id })) : args.slides).flatMap(
+          (ref) => pickRenderSlides(args.deckId, [ref]),
+        )
+        if (chosen.length === 0)
+          throw new CommandError('invalid_input', 'The deck has no slides to check')
+        // The fixture's text fits its boxes; growing boxes are drawn at their stored height.
+        return {
+          slides: chosen.map(({ id, index }) => ({ slideId: id, index })),
+          overflow: [],
+          grown: [],
+          failedFonts: [],
+        }
+      },
+    },
+
+    stylePacks: {
+      async get(args) {
+        rStyle('get', args)
+        requireFolder(args.folderId)
+        return readStylePack(folderDoc(args.folderId)) as StylePack | null
+      },
+      async set(args) {
+        rStyle('set', args)
+        requireFolder(args.folderId)
+        const pack = parseStylePack(args.pack)
+        const doc = folderDoc(args.folderId)
+        const previous = readStylePack(doc)
+        setStylePack(doc, pack as unknown as Record<string, unknown>)
+        return { previous }
+      },
+      async update(args) {
+        rStyle('update', args)
+        requireFolder(args.folderId)
+        const doc = folderDoc(args.folderId)
+        const current = readStylePack(doc)
+        if (current === null)
+          throw new CommandError('not_found', 'The folder has no style pack; set one first')
+        parseStylePack(mergeStylePackPatch(current, args.patch))
+        patchStylePack(doc, args.patch)
+        return { previous: previousOfUpdate(current, args.patch) }
+      },
+      async delete(args) {
+        rStyle('delete', args)
+        requireFolder(args.folderId)
+        const doc = folderDoc(args.folderId)
+        const previous = readStylePack(doc)
+        if (previous !== null) deleteStylePack(doc)
+        return { previous }
+      },
+      async compile(args) {
+        rStyle('compile', args)
+        requireFolder(args.folderId)
+        const doc = folderDoc(args.folderId)
+        const pack = readStylePack(doc) as StylePack | null
+        if (pack === null)
+          throw new CommandError('not_found', 'The folder has no style pack to compile')
+        const fonts = (folderFonts.get(args.folderId) ?? []).map((f) => ({
+          family: f.family ?? '',
+          weight: f.weight ?? 400,
+        }))
+        const plan = compileStylePack(pack, { tokens: readFolderTokens(doc), fonts })
+        const counts = {
+          colors: { created: 0, updated: 0 },
+          textStyles: { created: 0, updated: 0 },
+          components: { created: 0, updated: 0 },
+        }
+        for (const category of ['colors', 'textStyles'] as const) {
+          for (const t of plan[category]) {
+            const fields = parseNewTokenFields(category, t.fields)
+            if (category === 'textStyles') fields['builtin'] = false
+            fields['origin'] = t.origin
+            if (t.exists) updateFolderToken(doc, category, t.id, fields)
+            else addFolderToken(doc, category, t.id, fields)
+            counts[category][t.exists ? 'updated' : 'created']++
+          }
+        }
+        for (const c of plan.components) {
+          let id = [...packMasters].find(
+            ([cid, d]) =>
+              components.get(cid)?.folderId === args.folderId &&
+              readMasterOrigin(d)?.key === c.origin.key &&
+              readMasterOrigin(d)?.pack === c.origin.pack,
+          )?.[0]
+          if (id === undefined) {
+            id = fresh('cmp')
+            components.set(id, {
+              id,
+              folderId: args.folderId,
+              name: c.name,
+              thumbnailKey: null,
+              thumbnailUrl: null,
+              createdAt: T0,
+              updatedAt: T0,
+            })
+            packMasters.set(id, new Y.Doc())
+            counts.components.created++
+          } else counts.components.updated++
+          replaceMasterObjects(packMasters.get(id)!, c.objects, c.origin)
+        }
+        return { ...counts, missingFonts: plan.missingFonts }
       },
     },
 

@@ -180,6 +180,17 @@ export interface TextOverflow {
   textHeight: number
 }
 
+/**
+ * A text box that grows with its text (`autofit: 'grow-down'`, A4.2a) and
+ * the height it is drawn at, measured on the page (slide px) — what the
+ * brand checker compares with the region below it (A4.5).
+ */
+export interface GrownText {
+  slideId: string
+  objectId: string
+  height: number
+}
+
 export interface RenderedLook {
   width: number
   height: number
@@ -188,6 +199,8 @@ export interface RenderedLook {
   slides: Array<{ slideId: string; index: number; failedLoads: number }>
   /** Its slides' text boxes that overflow (a compare: the slide now, not before). */
   overflow: TextOverflow[]
+  /** Its slides' growing text boxes as drawn (A4.5); absent from a worker older than A4.5. */
+  grown?: GrownText[]
   /** A compare whose slide did not exist at the start of the run: its "before" side is empty. */
   newSlide?: boolean
 }

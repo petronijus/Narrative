@@ -28,10 +28,11 @@
  */
 
 import { HOCUSPOCUS_URL } from '../lib/endpoints.js'
+import type { StylePack } from '@narrative/shared'
 import { createContext, useContext, useEffect, useRef, useState, useMemo } from 'react'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
-import { hasNoTokens, readFolderTokens } from '@narrative/slide-model'
+import { hasNoTokens, readFolderTokens, readStylePack } from '@narrative/slide-model'
 import { useApi } from '../api/client.js'
 import type { TokenUsage } from '../api/client.js'
 import { FolderDocContext, emptyTokensSnapshot } from './FolderDocContext.js'
@@ -290,3 +291,28 @@ export function useTokenUsages(
 
 export type { FolderTokensSnapshot, FolderDocContextValue } from './FolderDocContext.js'
 export type { TokenUsage } from '../api/client.js'
+
+/**
+ * The folder's style pack, live (agentic A4.3): null when the folder has
+ * none, undefined while it is not known (no provider, not synced yet).
+ * The editor's commands read it as `ctx.stylePack`.
+ */
+export function useFolderStylePack(): StylePack | null | undefined {
+  const ctx = useContext(FolderDocContext)
+  const doc = ctx !== null && ctx.synced ? ctx.doc : undefined
+  const [pack, setPack] = useState<StylePack | null | undefined>(() =>
+    doc === undefined ? undefined : (readStylePack(doc) as StylePack | null),
+  )
+  useEffect(() => {
+    if (doc === undefined) {
+      setPack(undefined)
+      return
+    }
+    const map = doc.getMap('stylePack')
+    const read = (): void => setPack(readStylePack(doc) as StylePack | null)
+    read()
+    map.observeDeep(read)
+    return () => map.unobserveDeep(read)
+  }, [doc])
+  return pack
+}

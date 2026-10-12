@@ -232,6 +232,22 @@ describe('text.list — the Inspector rules', () => {
   const attrs = (h: ReturnType<typeof harness>, id: string) =>
     getParagraphDeltas(h.text('s1', id)).map((p) => p.attrs)
 
+  it("on a box whose levels make a list, 'none' and the toggle keep a paragraph plain explicitly (A4.2b)", () => {
+    const h = harness()
+    h.run('text.set', { target: { slide: 's1', object: 't1' }, text: 'a\n\nb' })
+    h.run('object.update', {
+      slide: 's1',
+      object: 't1',
+      patch: { listLevels: [{ list: 'bullet', bulletChar: '–' }] },
+    })
+    h.run('text.list', { target: { slide: 's1', object: 't1' }, kind: 'none' })
+    expect(attrs(h, 't1')).toEqual([{ list: 'none' }, { list: 'none' }])
+    // Every paragraph shows a bullet again, from its level: toggling removes it explicitly.
+    h.run('text.list', { target: { slide: 's1', object: 't1' }, kind: 'bullet' })
+    h.run('text.list', { target: { slide: 's1', object: 't1' }, toggle: 'bullet' })
+    expect(attrs(h, 't1')).toEqual([{ list: 'none' }, { list: 'none' }])
+  })
+
   it('bullets every paragraph when no range is given, and toggle removes it when all already match', () => {
     const h = harness()
     h.run('text.set', { target: { slide: 's1', object: 't1' }, text: 'a\n\nb' })

@@ -5,18 +5,27 @@
  * we surface to the client (family, weight, style, postscript name).
  *
  * Uses the official `name` table for the family + postscript name and
- * the `OS/2` table for weight + italic bit. Variable fonts (with an
- * `fvar` table) collapse to their default instance — multi-axis UI is
- * deferred to v2.
+ * the `OS/2` table for weight + italic bit. A variable font (an `fvar`
+ * table) is listed as its default instance, with the ranges of its weight
+ * and width axes (A4.2c: text set at a width — Fabrikam Type Extended is
+ * `wdth` 130 — needs a face that has it).
  */
 
 import * as opentype from 'opentype.js'
+
+/** The ranges of a variable font's weight and width axes (`fvar`), [min, max]. */
+export interface FontAxes {
+  wght?: [number, number]
+  wdth?: [number, number]
+}
 
 export interface FontMetadata {
   family: string
   weight: number
   style: 'normal' | 'italic'
   postscriptName: string
+  /** Absent for a static font, or a variable one with neither axis. */
+  axes?: FontAxes
 }
 
 /**
@@ -63,7 +72,30 @@ export function parseFontMetadata(buf: ArrayBuffer): FontMetadata {
   const italic = (os2?.fsSelection ?? 0) & 0b1
   const style: 'normal' | 'italic' = italic ? 'italic' : 'normal'
 
-  return { family: familyName, weight, style, postscriptName }
+  const axes = variableAxes(font)
+  return {
+    family: familyName,
+    weight,
+    style,
+    postscriptName,
+    ...(axes !== undefined ? { axes } : {}),
+  }
+}
+
+/** The weight and width axes of a variable font's `fvar` table. */
+function variableAxes(font: opentype.Font): FontAxes | undefined {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- opentype.js does not type fvar
+  const fvar = (font.tables as any).fvar as
+    | { axes?: Array<{ tag?: string; minValue?: number; maxValue?: number }> }
+    | undefined
+  const out: FontAxes = {}
+  for (const axis of fvar?.axes ?? []) {
+    const { tag, minValue, maxValue } = axis
+    if (typeof minValue !== 'number' || typeof maxValue !== 'number') continue
+    if (!Number.isFinite(minValue) || !Number.isFinite(maxValue) || minValue > maxValue) continue
+    if (tag === 'wght' || tag === 'wdth') out[tag] = [minValue, maxValue]
+  }
+  return out.wght === undefined && out.wdth === undefined ? undefined : out
 }
 
 type OpenTypeNames = Record<string, Record<string, string> | undefined>

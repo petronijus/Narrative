@@ -155,6 +155,14 @@ mutate:
 pptx-roundtrip deck:
     cd apps/server && npx tsx src/scripts/pptxRoundtrip.ts "{{ absolute_path(join(invocation_directory(), deck)) }}"
 
+# A brand's style pack (contoso, fabrikam, tailspin, woodgrove, adatum or all) built from its sources in the woodgrove-ai-brain checkout, written to private/packs (A4.7)
+style-pack brand="all" brain="":
+    cd apps/server && npx tsx src/stylePacks/bootstrap/cli.ts {{ brand }} "{{ brain }}"
+
+# Put a bootstrapped pack into a folder through the command API (NARRATIVE_TOKEN: a personal access token, scope api); api defaults to the dev stack
+style-pack-import pack folder api="":
+    cd apps/server && npx tsx src/stylePacks/bootstrap/importPack.ts "{{ absolute_path(join(invocation_directory(), pack)) }}" {{ folder }} "{{ api }}"
+
 # ── everyday ─────────────────────────────────────────────────────────────
 
 # Web :5173 + server :3001 (WebSocket :3002) + video worker (the docker services must be up: `just services`)

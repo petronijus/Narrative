@@ -208,6 +208,7 @@ describe('commandTargetProblems', () => {
       'editor.context',
       'editor.present.link',
       'editor.show',
+      'query.check',
       'query.render',
       'share.invites.cancel',
       'share.invites.list',

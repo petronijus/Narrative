@@ -14,6 +14,7 @@
 import { z } from 'zod'
 import {
   FiniteNumberSchema,
+  ListNumberFormatSchema,
   NonNegativeNumberSchema,
   PositiveNumberSchema,
   RgbInputSchema,
@@ -52,6 +53,28 @@ const UNSAFE_FAMILY = /[;{}<>\\\u0000-\u001f\u007f]/
 const HexSchema = RgbInputSchema.transform(hexOf).describe('"#RRGGBB"')
 const WEIGHT = z.number().int().min(100).max(900).multipleOf(100)
 
+/** A colour as a style stores it: '#rrggbb' or one of the folder colours. */
+const StyleColorSchema = z
+  .union([HexSchema, z.strictObject({ $token: z.string().regex(/^colors\.[A-Za-z0-9_-]+$/) })])
+  .describe('"#RRGGBB" or one of the folder colours, { "$token": "colors.<id>" }')
+
+/** One nesting level of a text style (A4.2b): what its paragraphs default to. */
+const StyleLevelSchema = z.strictObject({
+  list: z.enum(['bullet', 'number', 'none']).optional(),
+  bulletChar: z.string().min(1).max(4).optional(),
+  bulletColor: StyleColorSchema.optional(),
+  bulletScale: PositiveNumberSchema.max(4).optional(),
+  numberFormat: ListNumberFormatSchema.optional(),
+  indent: NonNegativeNumberSchema.max(1920).optional(),
+  hanging: NonNegativeNumberSchema.max(1920).optional(),
+  spaceBefore: NonNegativeNumberSchema.max(1000).optional(),
+  fontFamily: z.string().trim().min(1).max(200).optional(),
+  fontWeight: WEIGHT.optional(),
+  fontSize: PositiveNumberSchema.max(2000).optional(),
+  color: StyleColorSchema.optional(),
+  lineSpacing: PositiveNumberSchema.max(10).optional(),
+})
+
 /** Text-style fields, as stored; each optional (a style may leave one to the box). */
 const textStyleShape = {
   family: z
@@ -69,14 +92,21 @@ const textStyleShape = {
   minSize: PositiveNumberSchema.max(2000).describe(
     'px: the smallest size a box of this style shrinks its type to (autofit "shrink")',
   ),
+  fontStretch: z.number().min(50).max(200).describe('Width, % of normal (variable fonts)'),
   lineHeight: PositiveNumberSchema.max(10).describe('Multiple of the size'),
+  lineSpacing: PositiveNumberSchema.max(10).describe(
+    "PowerPoint's: multiple of the font's normal line; not with lineHeight",
+  ),
+  align: z.enum(['left', 'center', 'right']),
   letterSpacing: FiniteNumberSchema.min(-100).max(100),
   paragraphSpaceBefore: NonNegativeNumberSchema.max(1000),
   paragraphSpaceAfter: NonNegativeNumberSchema.max(1000),
-  color: z
-    .union([HexSchema, z.strictObject({ $token: z.string().regex(/^colors\.[A-Za-z0-9_-]+$/) })])
-    .describe('"#RRGGBB" or one of the folder colours, { "$token": "colors.<id>" }'),
+  color: StyleColorSchema,
   textTransform: z.enum(['none', 'uppercase', 'lowercase', 'capitalize']),
+  levels: z
+    .array(StyleLevelSchema)
+    .max(9)
+    .describe('Per paragraph level (0 = top): defaults its paragraphs take; indent/hanging in px'),
 }
 
 function optional<T extends Record<string, z.ZodType>>(shape: T) {
@@ -105,11 +135,34 @@ const TokenIdSchema = IdSchema.describe('Token id within its category (token.lis
 
 /** The categories agents and the page create and change (nothing applies an effect style yet). */
 
-const NewColor = z.strictObject({ name: TokenNameSchema, value: HexSchema })
+/** A colour token's value: '#RRGGBB', or '#RRGGBBAA' with alpha (A4.2d); stored lowercase. */
+const ColorValueSchema = z
+  .union([
+    z
+      .string()
+      .regex(/^#[0-9a-fA-F]{8}$/)
+      .transform((v) => v.toLowerCase()),
+    HexSchema,
+  ])
+  .describe('"#RRGGBB" or "#RRGGBBAA"')
+/** Values per deck variant on one axis (A4.2d): { axis, values: { <variant value>: colour } }. */
+const ByVariantSchema = z.strictObject({
+  axis: z.string().min(1).max(48),
+  values: z.record(z.string().min(1).max(48), ColorValueSchema),
+})
+const BySurfaceSchema = z.record(z.string().min(1).max(48), ColorValueSchema)
+
+const NewColor = z.strictObject({
+  name: TokenNameSchema,
+  value: ColorValueSchema,
+  byVariant: ByVariantSchema.optional(),
+  bySurface: BySurfaceSchema.optional(),
+})
 const NewTextStyle = z.strictObject({ name: TokenNameSchema, ...optional(textStyleShape) })
 const ColorPatch = z.strictObject({
   name: TokenNameSchema.optional(),
-  value: HexSchema.optional(),
+  value: ColorValueSchema.optional(),
+  ...clearable({ byVariant: ByVariantSchema, bySurface: BySurfaceSchema }),
 })
 const TextStylePatch = z.strictObject({
   name: TokenNameSchema.optional(),
@@ -156,6 +209,7 @@ export function parseTokenPatch(
     Object.entries(patch).map(([k, v]) => [k, v === undefined ? null : v]),
   )
   const parsed = (category === 'colors' ? ColorPatch : TextStylePatch).safeParse(raw)
+  // Only optional fields can be removed: a colour's name and value cannot.
   if (!parsed.success) throw new InvalidTokenFields(issuesOf(parsed.error))
   const out: Record<string, unknown> = { ...parsed.data }
   for (const [k, v] of Object.entries(raw)) if (v === null) out[k] = undefined
@@ -242,10 +296,11 @@ export const tokenCreate = defineCommand({
   id: 'token.create',
   title: 'Add a design token',
   description:
-    `Add a colour or a text style to the folder, for every deck in it. A colour is { name, value }; a folder holds ` +
+    `Add a colour or a text style to the folder, for every deck in it. A colour is { name, value } ("#RRGGBB" or ` +
+    `"#RRGGBBAA"), optionally byVariant { axis, values } (a value per deck variant) and bySurface; a folder holds ` +
     `at most ${MAX_COLORS} colours. A text style names what linked text takes — family, weight, size, lineHeight ` +
     '(multiple of the size), letterSpacing, paragraph spacing, colour (a hex or a folder colour), textTransform, ' +
-    'minSize (the floor of autofit "shrink"); ' +
+    'minSize (the floor of autofit "shrink"), levels (list defaults per paragraph level); ' +
     'apply it with text.style.apply; its name must be new in the folder (token.list). Returns the new id. Undo: ' +
     'token.delete. Needs the editor role in the folder.',
   input: z.discriminatedUnion('category', [
@@ -394,7 +449,30 @@ export const tokenSeedDefaults = defineCommand({
   },
 })
 
-const ColorTokenOutput = z.object({ id: z.string(), name: z.string(), value: z.string() })
+const ColorTokenOutput = z.object({
+  id: z.string(),
+  name: z.string(),
+  value: z.string(),
+  byVariant: z.object({ axis: z.string(), values: z.record(z.string(), z.string()) }).optional(),
+  bySurface: z.record(z.string(), z.string()).optional(),
+  origin: z.object({ pack: z.string(), key: z.string() }).optional(),
+})
+const OutputColor = z.union([z.string(), z.object({ $token: z.string() })])
+const StyleLevelOutput = z.object({
+  list: z.enum(['bullet', 'number', 'none']).optional(),
+  bulletChar: z.string().optional(),
+  bulletColor: OutputColor.optional(),
+  bulletScale: z.number().optional(),
+  numberFormat: ListNumberFormatSchema.optional(),
+  indent: z.number().optional(),
+  hanging: z.number().optional(),
+  spaceBefore: z.number().optional(),
+  fontFamily: z.string().optional(),
+  fontWeight: z.number().optional(),
+  fontSize: z.number().optional(),
+  color: OutputColor.optional(),
+  lineSpacing: z.number().optional(),
+})
 const TextStyleOutput = z.object({
   id: z.string(),
   name: z.string(),
@@ -402,12 +480,16 @@ const TextStyleOutput = z.object({
   weight: z.number().optional(),
   size: z.number().optional(),
   minSize: z.number().optional(),
+  fontStretch: z.number().optional(),
   lineHeight: z.number().optional(),
+  lineSpacing: z.number().optional(),
+  align: z.enum(['left', 'center', 'right']).optional(),
   letterSpacing: z.number().optional(),
   paragraphSpaceBefore: z.number().optional(),
   paragraphSpaceAfter: z.number().optional(),
   color: z.union([z.string(), z.object({ $token: z.string() })]).optional(),
   textTransform: z.enum(['none', 'uppercase', 'lowercase', 'capitalize']).optional(),
+  levels: z.array(StyleLevelOutput).optional(),
   builtin: z.boolean().optional(),
 })
 const EffectStyleOutput = z.object({

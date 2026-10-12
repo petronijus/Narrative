@@ -45,6 +45,7 @@ import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { computeSlideNumber } from '@narrative/shared'
 import { setRenderingSlideNumber } from './slideNumberContext.js'
+import { setRenderingSurface } from './colourResolver.js'
 import { applyBackground } from './ArtboardBackground.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import { disposeComponentDocCache } from '../state/componentDocCache.js'
@@ -375,6 +376,15 @@ export function Canvas({
     if (instance === null) return
     instance.sceneGraph.refreshSlideNumberTexts()
   }, [currentSlideNumber, pixiReady])
+  // The active slide's surface (its layout's, A4.2d): its colour tokens
+  // resolve on it; a change repaints what it affects.
+  const surface = slides.find((s) => s.id === activeSlideId)?.layout?.surface
+  useEffect(() => {
+    setRenderingSurface(surface)
+  }, [surface])
+  useEffect(() => {
+    return () => setRenderingSurface(undefined)
+  }, [])
 
   // Reaktivita na Y.Doc přes incremental changes (M3).
   // Initial state přichází synchronně jako první emise (added = current).

@@ -26,6 +26,7 @@ export type {
   FontWeight,
   TextVerticalAlign,
   TextAutofit,
+  TextListLevel,
   TextListStyle,
   ListKind,
   ListNumberFormat,
@@ -75,6 +76,8 @@ export type {
   ImageBackground,
   SlideBackground,
   DeckGuide,
+  DeckMeta,
+  SlideLayoutRef,
 } from './deck.js'
 
 export { DEFAULT_TRANSITION, DEFAULT_BACKGROUND, computeSlideNumber } from './deck.js'
@@ -134,6 +137,7 @@ export {
   type RenderPage,
   type RenderPageLookSpec,
   type TextOverflow,
+  type GrownText,
   renderPageName,
   renderPagePath,
   LOOK_MAX_EDGE,

@@ -69,6 +69,7 @@ import {
   ROLE_RANK,
   requiredRole,
   commandReadsFolderFonts,
+  commandReadsStylePack,
   commandReadsFolderTokens,
   commandUsesDocument,
   prepareInvocation,
@@ -110,6 +111,7 @@ import {
 import type { AgentDocuments } from './documents.js'
 import type { FolderFontsReader } from './folderFonts.js'
 import type { FolderTokensReader } from './folderTokens.js'
+import type { FolderStylePackReader } from './folderStylePack.js'
 import type { OpConfirmation } from './runStore.js'
 import { collectTouched, type Touched } from './touched.js'
 import {
@@ -239,6 +241,12 @@ export interface ServerHostDeps {
    * none and refuse what needs them (`conflict`).
    */
   folderFonts?: FolderFontsReader
+  /**
+   * The target's folder style pack, for commands that declare
+   * `readsStylePack` (agent/folderStylePack.ts). Without it such commands
+   * see none and refuse what needs it (`conflict`).
+   */
+  folderStylePack?: FolderStylePackReader
 }
 
 /** Lookups that know nothing: summaries then name targets by id only. */
@@ -805,6 +813,11 @@ export class ServerHost {
       commandReadsFolderFonts(this.deps.registry, commandId, input)
         ? await this.deps.folderFonts(target)
         : undefined
+    const stylePack =
+      this.deps.folderStylePack !== undefined &&
+      commandReadsStylePack(this.deps.registry, commandId, input)
+        ? await this.deps.folderStylePack(target)
+        : undefined
 
     const lease = await this.deps.documents.acquire(documentName)
     try {
@@ -815,6 +828,7 @@ export class ServerHost {
         deck,
         ...(folderTokens === undefined ? {} : { folderTokens }),
         ...(folderFonts === undefined ? {} : { folderFonts }),
+        ...(stylePack === undefined ? {} : { stylePack }),
       }
       // Validation and the async `load` phase happen here, before any transaction.
       const prepared = await prepareInvocation(this.deps.registry, docCtx, commandId, input)

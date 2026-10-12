@@ -28,9 +28,10 @@ Narrative is Woodgrove's collaborative presentation editor. You drive it through
 
 Read the matching playbook before you start a task; they build on the basics below.
 
+- **Build slides with the brand's style pack** — Build or extend a deck with its folder's style pack — layouts chosen by purpose, slots filled, the pack's components, checked after every slide. → [references/build-with-pack.md](references/build-with-pack.md)
 - **Targeted edits** — Make a specific change the user asked for — move, copy, restyle or rewrite particular objects or slides. → [references/edit.md](references/edit.md)
 - **Find and replace text** — Replace a word or phrase across one slide or the whole deck, keeping formatting. → [references/find-replace.md](references/find-replace.md)
-- **Restyle with the folder's tokens** — Bring slides onto the folder's colours, text styles and fonts — the light version before full style packs exist. → [references/restyle-lite.md](references/restyle-lite.md)
+- **Restyle with the folder's tokens** — Bring slides onto the folder's brand — its style pack's layouts when it has one, else its colours, text styles and fonts. → [references/restyle-lite.md](references/restyle-lite.md)
 - **Shorten or tighten text** — Make the text of a slide or selection shorter and sharper without changing what it says. → [references/shorten.md](references/shorten.md)
 - **Translate slides** — Translate the text of a slide range or the whole deck into another language, keeping layout and formatting. → [references/translate.md](references/translate.md)
 

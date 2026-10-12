@@ -39,6 +39,7 @@ import {
   type RenderPageLookSpec as PageLookSpec,
   type RenderTarget,
   type RenderedSlide,
+  type GrownText,
   type TextOverflow,
 } from '@narrative/shared'
 import type { RenderWorkerConfig } from './config.js'
@@ -77,6 +78,8 @@ interface RenderWindow {
       height: number
       slides: Array<{ slideId: string; index: number; failedLoads: number }>
       overflow: TextOverflow[]
+      /** Absent from a page older than A4.5. */
+      grown?: GrownText[]
       failedFonts: string[]
       timings?: unknown
     }>
@@ -352,6 +355,7 @@ async function runOnPage(
       sizeBytes,
       slides: outcome.value.slides,
       overflow: outcome.value.overflow,
+      ...(outcome.value.grown !== undefined ? { grown: outcome.value.grown } : {}),
       ...(spec.mode === 'compare' && spec.beforePng === null ? { newSlide: true } : {}),
     },
     failedFonts: outcome.value.failedFonts,

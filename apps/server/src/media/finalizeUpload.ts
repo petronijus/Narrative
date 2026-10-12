@@ -152,7 +152,8 @@ export type FinalizedUpload =
  * `maxBytes`: a stored object is only as small as its upload path made it,
  * and the whole API shares one process.
  */
-async function readAll(
+/** A stored object's bytes, at most `maxBytes` (the stored-font backfill reads fonts with it). */
+export async function readAll(
   s3: S3Client,
   storageKey: string,
   maxBytes: number,
@@ -273,6 +274,7 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
         fontWeight: metadata.weight,
         fontStyle: metadata.style,
         fontPostscriptName: metadata.postscriptName,
+        fontAxes: metadata.axes ?? {},
       })
     } catch (err) {
       log.error({ err }, 'createMediaAsset (font) failed')

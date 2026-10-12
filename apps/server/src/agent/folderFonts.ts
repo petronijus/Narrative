@@ -1,7 +1,8 @@
 /**
  * agent/folderFonts.ts — the font faces a command's target sees
  * (`ctx.folderFonts`): the fonts uploaded to the folder the deck or
- * component master belongs to, as family and weight.
+ * component master belongs to, as family and weight (and a variable face's
+ * axis ranges).
  *
  * The server host loads them only for commands that declare
  * `readsFolderFonts` (or a batch containing one), after it has authorised
@@ -31,7 +32,13 @@ export function createFolderFontsReader(sources: FolderFontsSources): FolderFont
     const folderId = await sources.folderOf(target)
     if (folderId === null) return null
     const faces = await sources.listFonts(folderId)
-    return faces.length === 0 ? null : faces.map((f) => ({ family: f.family, weight: f.weight }))
+    return faces.length === 0
+      ? null
+      : faces.map((f) => ({
+          family: f.family,
+          weight: f.weight,
+          ...(f.axes !== undefined ? { axes: f.axes } : {}),
+        }))
   }
 }
 
@@ -43,6 +50,11 @@ export function createDbFolderFontsReader(db: Database): FolderFontsReader {
       (await listFolderFontAssets(db, folderId)).map((row) => ({
         family: row.fontFamily,
         weight: row.fontWeight,
+        // A variable face covers its axes' ranges (A4.2c).
+        ...(row.fontAxes !== null &&
+        (row.fontAxes.wght !== undefined || row.fontAxes.wdth !== undefined)
+          ? { axes: row.fontAxes }
+          : {}),
       })),
   })
 }

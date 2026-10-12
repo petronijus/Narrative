@@ -1104,6 +1104,7 @@ export async function copyMedia(
         fontWeight: row.fontWeight,
         fontStyle: row.fontStyle,
         fontPostscriptName: row.fontPostscriptName,
+        fontAxes: row.fontAxes,
         ...outputs,
       })
       if (args.assetIds.has(row.id)) idMap.set(row.id, newId)

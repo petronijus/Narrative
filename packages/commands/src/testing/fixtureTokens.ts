@@ -7,14 +7,20 @@
  * give the token commands' examples something to work on.
  */
 
-import type { FolderTokensSnapshot } from '@narrative/slide-model'
+import type {
+  ColorTokenSnapshot,
+  FolderTokensSnapshot,
+  TextStyleTokenSnapshot,
+} from '@narrative/slide-model'
+import { exampleStylePack, type StylePack } from '@narrative/shared'
+import { compileStylePack } from '../stylePack/compile.js'
 import type { FontFaceWeight } from '../text/fontWeights.js'
 
 export const FIXTURE_COLOR_TOKEN_ID = 'brandBlue'
 export const FIXTURE_PAGE_NUMBER_STYLE_ID = 'footnotes'
 
 export function createFixtureFolderTokens(): FolderTokensSnapshot {
-  return {
+  return withCompiledExamplePack({
     colors: {
       [FIXTURE_COLOR_TOKEN_ID]: {
         id: FIXTURE_COLOR_TOKEN_ID,
@@ -50,7 +56,31 @@ export function createFixtureFolderTokens(): FolderTokensSnapshot {
         params: { color: '#000000', blur: 24, offsetX: 0, offsetY: 8, opacity: 0.2 },
       },
     },
-  }
+  })
+}
+
+/**
+ * The fixture folder's example style pack (A4.3) has been compiled (A4.4):
+ * its colour and text-style tokens are the folder's too, so the layout
+ * commands' examples lay slides out with it.
+ */
+function withCompiledExamplePack(tokens: FolderTokensSnapshot): FolderTokensSnapshot {
+  const plan = compileStylePack(exampleStylePack(), { tokens, fonts: null })
+  for (const t of plan.colors)
+    tokens.colors[t.id] = { id: t.id, ...t.fields, origin: t.origin } as ColorTokenSnapshot
+  for (const t of plan.textStyles)
+    tokens.textStyles[t.id] = {
+      id: t.id,
+      ...t.fields,
+      builtin: false,
+      origin: t.origin,
+    } as TextStyleTokenSnapshot
+  return tokens
+}
+
+/** The fixture folder's example style pack (the fake services' fixture folder holds it). */
+export function createFixtureStylePack(): StylePack {
+  return exampleStylePack()
 }
 
 /** The fixture folder's uploaded fonts: one family with a light and a semibold cut. */

@@ -1240,6 +1240,18 @@
       "hosts": ["browser", "server"]
     },
     {
+      "id": "query.check",
+      "domain": "query",
+      "title": "Check the deck against its brand",
+      "description": "Check slides against the deck's folder style pack, as the brand's QA does: text that does not fit (measured with the real fonts; a growing box against what is below it), partial overlaps, content outside the margins, text colours outside the pack, a background of another variant, missing footer or page number, placeholder text, empty picture regions, and the editorial rules (capitals, italics, bullet glyphs, title periods and length, the accent budget, typography, emoji). Each finding names its slide, object (and table cell), the rule and an error or warning level; fix the errors before you report a slide done. `fit: false` skips the measurement (a few seconds per 20 slides). A font that did not load leaves the fit unverified (`fitVerified: false`, an error). Any reader of the deck.",
+      "role": "viewer",
+      "effects": [],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"]
+    },
+    {
       "id": "query.deck",
       "domain": "query",
       "title": "Deck outline",
@@ -1450,6 +1462,17 @@
       "hosts": ["browser", "server"]
     },
     {
+      "id": "slide.applyLayout",
+      "domain": "slide",
+      "title": "Lay a slide out with a pack layout",
+      "description": "Lay a slide out with one of its folder's style pack layouts (style.pack.get \"layouts\" lists them by purpose and slots): each slot becomes a box in the brand's text style and place, a picture, or the pack's component; the pack's footer, page number and decoration are drawn. `content` fills slots by name: text (a string or { paragraphs }) or a picture { assetId }. On a slide that has a layout already, the text and pictures of its slots move into the new layout's slots of the same name or role; objects without a slot stay as they are. `surface`: where the layout offers a choice (a photo tone). The pack must have been compiled. Undo: one step.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
       "id": "slide.collapse",
       "domain": "slide",
       "title": "Collapse slide section",
@@ -1588,6 +1611,41 @@
       "confirm": "never",
       "idempotent": true,
       "hosts": ["browser", "server"]
+    },
+    {
+      "id": "style.deck.apply",
+      "domain": "style",
+      "title": "Re-style a deck with its folder's pack",
+      "description": "Re-lay every slide of the deck that follows a pack layout with its folder's style pack, keeping each slot's content, and redraw the pack's footer, page numbers and decoration. `variant` sets the deck's variant, one value per pack axis (style.pack.get \"summary\" lists them) — its colours follow; `fields` fills the footer's fields (null clears one); `lang` picks the footer language; `guides` (default true) adds the pack's grid as guides. A slide whose layout this pack does not have is left as it is and listed. Undo: one step.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "style.pack.edit",
+      "domain": "style",
+      "title": "Change the folder's style pack",
+      "description": "Change the folder's style pack. `op`: \"set\" replaces it with `pack` (a whole pack, as style.pack.get \"pack\" returns one); \"update\" applies `patch`, a JSON merge patch (null removes; `layouts` and `components` may be an object keyed by id to change, add or, with null, remove single ones); \"delete\" removes it; \"compile\" turns it into the folder's colour and text-style tokens and its component masters (only what an earlier compile made is updated; tokens and masters people made are left alone) and names the fonts the folder still needs. The result is validated whole; nothing is written when it is not valid. `previous`: for an update, the update that undoes it; for set/delete, the pack before (set it back; null: there was none). Only when the user asked for a change to the brand. Needs the editor role in the folder.",
+      "role": "editor",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["server"]
+    },
+    {
+      "id": "style.pack.get",
+      "domain": "style",
+      "title": "Read the folder's style pack",
+      "description": "The folder's style pack — its brand as layouts, text styles, colour variants, components and rules. `part`: \"summary\" (start here), \"layouts\" (each layout's id, purpose and slots: pick one by purpose), \"layout\" (one, in full, with `layoutId`) or \"pack\" (all of it, large). null when the folder has none. Any member of the folder, and anyone with access to one of its decks.",
+      "role": "viewer",
+      "folderReaders": "content",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"]
     },
     {
       "id": "table.border.preset",
@@ -1867,7 +1925,7 @@
       "id": "token.create",
       "domain": "token",
       "title": "Add a design token",
-      "description": "Add a colour or a text style to the folder, for every deck in it. A colour is { name, value }; a folder holds at most 24 colours. A text style names what linked text takes — family, weight, size, lineHeight (multiple of the size), letterSpacing, paragraph spacing, colour (a hex or a folder colour), textTransform, minSize (the floor of autofit \"shrink\"); apply it with text.style.apply; its name must be new in the folder (token.list). Returns the new id. Undo: token.delete. Needs the editor role in the folder.",
+      "description": "Add a colour or a text style to the folder, for every deck in it. A colour is { name, value } (\"#RRGGBB\" or \"#RRGGBBAA\"), optionally byVariant { axis, values } (a value per deck variant) and bySurface; a folder holds at most 24 colours. A text style names what linked text takes — family, weight, size, lineHeight (multiple of the size), letterSpacing, paragraph spacing, colour (a hex or a folder colour), textTransform, minSize (the floor of autofit \"shrink\"), levels (list defaults per paragraph level); apply it with text.style.apply; its name must be new in the folder (token.list). Returns the new id. Undo: token.delete. Needs the editor role in the folder.",
       "role": "editor",
       "effects": ["server"],
       "undo": "undoable",

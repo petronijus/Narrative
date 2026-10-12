@@ -10,11 +10,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 import {
   getColourResolver,
+  resolveAlpha,
   resolveColour,
   setColourResolver,
+  setRenderingSurface,
   subscribeColourResolver,
   tokenColoursDiffer,
   type ColourResolverFn,
+  withRenderingSurface,
 } from './colourResolver'
 
 const PINK = { $token: 'colors.pink' }
@@ -143,5 +146,30 @@ describe('tokenColoursDiffer', () => {
 
   it('the same resolver twice is never a change', () => {
     expect(tokenColoursDiffer({ fill: PINK }, before, before)).toBe(false)
+  })
+})
+
+describe('surface and alpha (A4.2d)', () => {
+  const tok = { $token: 'colors.text' }
+  const base = (_v: unknown, ctx?: { surface?: string }): string =>
+    ctx?.surface === 'dark' ? '#ffffff' : '#00112233'
+
+  it('binds the canvas surface, repainting once, and lets a thumbnail use its own', () => {
+    const changes: unknown[] = []
+    const off = subscribeColourResolver((c) => changes.push(c))
+    setColourResolver(base)
+    expect(resolveColour(tok)).toBe(0x001122)
+    expect(resolveAlpha(tok)).toBe(0.2)
+    setRenderingSurface('dark')
+    expect(resolveColour(tok)).toBe(0xffffff)
+    expect(resolveAlpha(tok)).toBe(1)
+    expect(changes.length).toBe(2)
+    // A thumbnail of another slide: its surface for the call, nobody told.
+    expect(withRenderingSurface(undefined, () => resolveColour(tok))).toBe(0x001122)
+    expect(resolveColour(tok)).toBe(0xffffff)
+    expect(changes.length).toBe(2)
+    setRenderingSurface(undefined)
+    setColourResolver(null)
+    off()
   })
 })

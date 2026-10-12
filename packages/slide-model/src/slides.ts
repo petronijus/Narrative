@@ -16,6 +16,7 @@ import type {
   Slide,
   SlideTransition,
   SlideBackground,
+  SlideLayoutRef,
   GradientStop,
   ImageBackground,
 } from '@narrative/shared'
@@ -99,6 +100,7 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
   const skipped = yMap.get('skipped') as boolean | undefined
   const indent = yMap.get('indent') as number | undefined
   const collapsed = yMap.get('collapsed') as boolean | undefined
+  const layout = readSlideLayout(yMap.get('layout'))
 
   return {
     id,
@@ -110,6 +112,19 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
     ...(skipped === true ? { skipped: true } : {}),
     ...(typeof indent === 'number' && indent > 0 ? { indent } : {}),
     ...(collapsed === true ? { collapsed: true } : {}),
+    ...(layout !== undefined ? { layout } : {}),
+  }
+}
+
+/** A slide's pack layout reference (A4.4), stored as a plain value; undefined when malformed. */
+export function readSlideLayout(v: unknown): SlideLayoutRef | undefined {
+  if (typeof v !== 'object' || v === null) return undefined
+  const r = v as Record<string, unknown>
+  if (typeof r['packId'] !== 'string' || typeof r['layoutId'] !== 'string') return undefined
+  return {
+    packId: r['packId'],
+    layoutId: r['layoutId'],
+    ...(typeof r['surface'] === 'string' ? { surface: r['surface'] } : {}),
   }
 }
 
@@ -611,4 +626,32 @@ export function getSlideNotesFragment(
   if (idx === -1) return null
   const notes = ctx.slides.get(idx).get('notes')
   return notes instanceof Y.XmlFragment ? notes : null
+}
+
+// ---------------------------------------------------------------------------
+// A4.4: the style pack layout a slide follows
+// ---------------------------------------------------------------------------
+
+/**
+ * Record which pack layout the slide follows (`slide.applyLayout`), or
+ * stop following one (`null`). Its `surface` is where the slide's colour
+ * tokens resolve.
+ */
+export function setSlideLayout(
+  ctx: SlideMutationContext,
+  slideId: string,
+  layout: SlideLayoutRef | null,
+): void {
+  const idx = findSlideIndex(ctx.slides, slideId)
+  if (idx === -1) return
+  ctx.doc.transact(() => {
+    const slideMap = ctx.slides.get(idx)
+    if (layout === null) slideMap.delete('layout')
+    else
+      slideMap.set('layout', {
+        packId: layout.packId,
+        layoutId: layout.layoutId,
+        ...(layout.surface !== undefined ? { surface: layout.surface } : {}),
+      })
+  }, LOCAL_ORIGIN)
 }

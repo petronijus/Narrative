@@ -15,6 +15,7 @@ import {
   getParagraphs,
   indentParagraphs,
   toggleListKind,
+  plainListValue,
   updateObject,
   updateParagraphsInRange,
   type ParagraphPatch,
@@ -38,6 +39,7 @@ import {
   writePlan,
   displayOf,
 } from '../text/body.js'
+import { listLevelsOf } from '../text/listLevels.js'
 import {
   TextRangeSchema,
   TextTargetSchema,
@@ -257,7 +259,7 @@ export const textList = defineCommand({
       target: TextTargetSchema,
       range: TextRangeSchema.optional(),
       kind: z.union([ListKindSchema, z.literal('none')]).optional(),
-      toggle: ListKindSchema.optional(),
+      toggle: z.enum(['bullet', 'number']).optional(),
       level: z.number().int().min(0).max(MAX_LIST_LEVEL).optional(),
       indent: z
         .number()
@@ -371,19 +373,24 @@ export const textList = defineCommand({
       } as unknown as SlideObjectPatch<SlideObject>)
     }
 
+    // A box's level defaults (A4.2b): a paragraph made plain where its level
+    // would make it a list says so explicitly (`'none'`).
+    const levels =
+      target.kind === 'text' ? listLevelsOf(target.objectMap.get('listLevels')) : undefined
+
     let touched = 0
     for (const r of ranges) {
       const from = r.start
       const to = r.end
-      if (input.toggle !== undefined) toggleListKind(body, from, to, input.toggle)
+      if (input.toggle !== undefined) toggleListKind(body, from, to, input.toggle, levels)
       if (input.indent !== undefined) indentParagraphs(body, from, to, input.indent)
       // Everything else is one patch per paragraph, the Inspector's rules:
       // a glyph implies bullet, a number format implies number, "none"
       // clears the list with all its decorations.
       const patch: ParagraphPatch = {}
-      if (input.kind === 'none') {
+      const plain = input.kind === 'none'
+      if (plain) {
         Object.assign(patch, {
-          list: null,
           level: null,
           bulletChar: null,
           numberFormat: null,
@@ -402,8 +409,12 @@ export const textList = defineCommand({
         patch.numberFormat = input.numberFormat
       }
       if (input.startAt !== undefined) patch.startAt = input.startAt
-      if (Object.keys(patch).length > 0) {
-        updateParagraphsInRange(body, from, to, () => patch)
+      if (plain || Object.keys(patch).length > 0) {
+        updateParagraphsInRange(body, from, to, (attrs) =>
+          plain
+            ? { ...patch, list: plainListValue(patch.level === null ? 0 : attrs.level, levels) }
+            : patch,
+        )
       }
       touched += getParagraphs(body).filter((p) => p.start <= to && p.end >= from).length
     }

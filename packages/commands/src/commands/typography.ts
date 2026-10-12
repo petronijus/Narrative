@@ -89,6 +89,7 @@ export const BOX_TYPOGRAPHY_KEYS = [
   'paragraphSpaceBefore',
   'paragraphSpaceAfter',
   'minFontSize',
+  'fontStretch',
 ] as const
 
 const TypographyPatchSchema = objectPatchInputSchema('text')

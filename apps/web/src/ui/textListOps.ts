@@ -57,9 +57,9 @@ export function currentParagraphAttrs(obj: TextObject): ParagraphAttrs {
   }
   const sel = getActiveTextSelection()
   if (sel !== null && sel.objectId === obj.id && sel.yText === obj.text) {
-    return readParagraphAttrsForRange(obj.text, sel.start, sel.end)
+    return readParagraphAttrsForRange(obj.text, sel.start, sel.end, obj.listLevels)
   }
-  return readParagraphAttrsForRange(obj.text, 0, obj.text.length)
+  return readParagraphAttrsForRange(obj.text, 0, obj.text.length, obj.listLevels)
 }
 
 /** Set the list kind on the targeted paragraphs, or remove the list (`null`). */

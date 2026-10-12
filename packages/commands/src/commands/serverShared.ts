@@ -208,6 +208,11 @@ export const FontFaceOutput = z.object({
   weight: z.number().nullable(),
   style: z.string().nullable(),
   postscriptName: z.string().nullable(),
+  axes: z
+    .object({ wght: z.tuple([z.number(), z.number()]), wdth: z.tuple([z.number(), z.number()]) })
+    .partial()
+    .optional()
+    .describe('A variable face: its weight and width (fontStretch) ranges'),
   url: z.string().describe('Short-lived download URL of the font file'),
   sizeBytes: z.number(),
   uploadedAt: IsoTime,

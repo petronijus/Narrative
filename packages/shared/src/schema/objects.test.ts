@@ -183,7 +183,7 @@ describe('text', () => {
   it('rejects duplicate and unknown text-style override keys', () => {
     const dup = TextObjectSchema.safeParse({ ...text, textStyleOverrides: ['color', 'color'] })
     expect(issuePaths(dup)).toEqual([['textStyleOverrides']])
-    const unknown = TextObjectSchema.safeParse({ ...text, textStyleOverrides: ['align'] })
+    const unknown = TextObjectSchema.safeParse({ ...text, textStyleOverrides: ['vAlign'] })
     expect(issuePaths(unknown)).toEqual([['textStyleOverrides', 0]])
   })
 

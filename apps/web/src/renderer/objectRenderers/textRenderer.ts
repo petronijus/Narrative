@@ -57,7 +57,7 @@ import type { TextObject } from '../types'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { markRenderDirty } from '../RenderScheduler.js'
 import { applyFlip } from './applyFlip.js'
-import { resolveColour } from '../colourResolver.js'
+import { resolveAlpha, resolveColour } from '../colourResolver.js'
 import { cssFontFamily } from '../fontFallback.js'
 import { isEmbeddableFamilyName } from '../fontChanges.js'
 import { getRenderingSlideNumber } from '../slideNumberContext.js'
@@ -357,7 +357,7 @@ export function buildStyleOpts(data: TextObject, scale = 1): any {
     fontSize: data.fontSize,
     fontWeight: data.fontWeight,
     fontStyle: data.italic === true ? 'italic' : 'normal',
-    fill: colorWithAlpha(resolveColour(data.color), data.colorAlpha ?? 1),
+    fill: colorWithAlpha(resolveColour(data.color), (data.colorAlpha ?? 1) * resolveAlpha(data.color)),
     align: data.align,
     // Room in the rasterised texture for ink outside the line boxes.
     //
@@ -395,7 +395,7 @@ export function buildStyleOpts(data: TextObject, scale = 1): any {
   if (data.stroke !== undefined && (data.strokeWidth ?? 1) > 0) {
     opts.stroke = {
       color: hexToColorString(resolveColour(data.stroke)),
-      alpha: data.strokeAlpha ?? 1,
+      alpha: (data.strokeAlpha ?? 1) * resolveAlpha(data.stroke),
       width: data.strokeWidth ?? 1,
     }
   }
@@ -414,6 +414,11 @@ export function buildStyleOpts(data: TextObject, scale = 1): any {
   // renderers use the same text layout algorithm.
   opts.cssOverrides = [
     `font-family: ${cssStack}`,
+    // A width of a variable face (A4.2c); the @font-face rules declare the
+    // ranges each face covers.
+    ...(data.fontStretch !== undefined && data.fontStretch !== 100
+      ? [`font-stretch: ${data.fontStretch}%`]
+      : []),
     // Wrapping text is laid out at exactly the box width; unwrapped text at
     // its own width, with no break opportunity but explicit line breaks.
     ...(data.wrap === 'none'
@@ -619,6 +624,7 @@ function applyAutofit(container: Container, textNode: HTMLText, data: TextObject
     data.paragraphSpaceAfter,
     data.wrap,
     data.minFontSize,
+    data.fontStretch,
   ].join('|')
   const memo = asAny(container)[SHRINK_TAG] as { key: string; scale: number } | undefined
   let scale: number
@@ -1002,6 +1008,7 @@ export const textRenderer = {
       prev.lineHeight !== next.lineHeight ||
       prev.lineSpacing !== next.lineSpacing ||
       prev.wrap !== next.wrap ||
+      prev.fontStretch !== next.fontStretch ||
       prev.stroke !== next.stroke ||
       prev.strokeAlpha !== next.strokeAlpha ||
       prev.strokeWidth !== next.strokeWidth
@@ -1089,12 +1096,15 @@ export const textRenderer = {
       'lineHeight' in patch ||
       'lineSpacing' in patch ||
       'wrap' in patch ||
+      'fontStretch' in patch ||
       'stroke' in patch ||
       'strokeAlpha' in patch ||
       'strokeWidth' in patch ||
       'textTransform' in patch ||
       'paragraphSpaceBefore' in patch ||
-      'paragraphSpaceAfter' in patch
+      'paragraphSpaceAfter' in patch ||
+      // Level defaults (A4.2b) are drawn into the HTML: markers, indents, type.
+      'listLevels' in patch
     // What the autofit search measures besides the style: the box's height
     // and the box's own settings.
     const autofitAffected = 'autofit' in patch || 'minFontSize' in patch || 'height' in patch
@@ -1255,6 +1265,8 @@ export const textRenderer = {
     const textNode = getTextNode(node)
     if (textNode === undefined) return
     textNode.style = new HTMLTextStyle(buildStyleOpts(data, textNode.scale.y))
+    // Level colours (bullets, level text, A4.2b) are written into the HTML.
+    if (data.listLevels !== undefined) textNode.text = buildHtmlForNode(textNode, data)
     setStoredData(node, data)
   },
 

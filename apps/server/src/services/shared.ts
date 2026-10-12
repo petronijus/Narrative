@@ -174,6 +174,10 @@ export async function fontFaceInfo(row: FontAssetRow): Promise<FontFaceInfo> {
     weight: row.fontWeight,
     style: row.fontStyle,
     postscriptName: row.fontPostscriptName,
+    ...(row.fontAxes !== null &&
+    (row.fontAxes.wght !== undefined || row.fontAxes.wdth !== undefined)
+      ? { axes: row.fontAxes }
+      : {}),
     url: await presignGetUrl(row.storageKey),
     sizeBytes: row.sizeBytes,
     uploadedAt: iso(row.createdAt),

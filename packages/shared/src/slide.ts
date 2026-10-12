@@ -422,8 +422,42 @@ export type TextAutofit = 'grow-down' | 'shrink'
  */
 export type TextListStyle = 'bullet' | 'numbered'
 
-/** Kind of list a paragraph belongs to. Absent ⇒ plain paragraph. */
-export type ListKind = 'bullet' | 'number'
+/**
+ * Kind of list a paragraph belongs to. Absent ⇒ its level's default in the
+ * box's `listLevels` (a linked text style's levels, A4.2b), else a plain
+ * paragraph; `'none'` ⇒ a plain paragraph whatever the levels say.
+ */
+export type ListKind = 'bullet' | 'number' | 'none'
+
+/**
+ * How paragraphs at one nesting level look by default (agentic A4.2b): the
+ * level style of a folder text style (`levels`), carried onto the linked
+ * box as `TextObject.listLevels[level]`. A paragraph's own attributes win
+ * over it; the renderer, the edit overlay and PPTX export read it.
+ */
+export interface TextListLevel {
+  /** The paragraph's list kind when it sets none of its own. */
+  list?: ListKind
+  /** Bullet glyph (a symbol font's glyph is mapped to Unicode). */
+  bulletChar?: string
+  /** Bullet colour; absent ⇒ the text's. */
+  bulletColor?: number | TokenRef
+  /** Bullet size as a multiple of the text's (PowerPoint `buSzPct`). */
+  bulletScale?: number
+  numberFormat?: ListNumberFormat
+  /** Where the text starts, px from the box's left edge (OOXML `marL`). */
+  indent?: number
+  /** How far left of the text the marker hangs, px (−OOXML `indent`). */
+  hanging?: number
+  /** Space above each paragraph at this level, px. */
+  spaceBefore?: number
+  fontFamily?: string
+  fontWeight?: FontWeight
+  fontSize?: number
+  color?: number | TokenRef
+  /** Line spacing, × the font's normal line (as `TextObject.lineSpacing`). */
+  lineSpacing?: number
+}
 
 /**
  * Numbering scheme for ordered (`number`) list paragraphs. Names mirror
@@ -451,7 +485,10 @@ export const MAX_LIST_LEVEL = 8
  * no `list` is a plain paragraph; `level` still applies as a left indent.
  */
 export interface ParagraphAttrs {
-  /** List kind. Absent ⇒ not a list item (plain paragraph). */
+  /**
+   * List kind. Absent ⇒ the level's default in the box's `listLevels`, else
+   * not a list item; `'none'` ⇒ not a list item whatever the levels say.
+   */
   list?: ListKind
   /** Indent / nesting level, 0..{@link MAX_LIST_LEVEL}. Default 0. */
   level?: number
@@ -539,6 +576,19 @@ export interface TextObject extends BaseSlideObject {
    * it from their text style's `minSize`. Absent: half of `fontSize`.
    */
   minFontSize?: number
+  /**
+   * The width the box's type is set at, % of normal (CSS `font-stretch`, a
+   * variable font's `wdth` axis; A4.2c): Fabrikam Type Extended is 130. Drawn
+   * from the folder face whose width range holds it; absent = 100.
+   */
+  fontStretch?: number
+  /**
+   * Per nesting level (index = `ParagraphAttrs.level`, ≤ 9): the defaults a
+   * paragraph takes when it sets nothing of its own — list kind, bullet,
+   * indent, spacing, type. Linked boxes take it from their text style's
+   * `levels` (A4.2b); absent ⇒ the built-in look (`•` `◦` …, 1.5 em steps).
+   */
+  listLevels?: TextListLevel[]
   /** Letter spacing in px. Default 0. */
   letterSpacing?: number
   /** Vertical space inserted ABOVE each paragraph, in px. Default 0. */
@@ -615,6 +665,10 @@ export type TextStyleOverrideKey =
   | 'color'
   | 'textTransform'
   | 'minFontSize'
+  | 'listLevels'
+  | 'fontStretch'
+  | 'lineSpacing'
+  | 'align'
 
 const TEXT_STYLE_OVERRIDE_KEY_SET: ReadonlySet<TextStyleOverrideKey> = new Set([
   'fontFamily',
@@ -627,6 +681,10 @@ const TEXT_STYLE_OVERRIDE_KEY_SET: ReadonlySet<TextStyleOverrideKey> = new Set([
   'color',
   'textTransform',
   'minFontSize',
+  'listLevels',
+  'fontStretch',
+  'lineSpacing',
+  'align',
 ])
 
 export const TEXT_STYLE_OVERRIDE_KEYS: ReadonlyArray<TextStyleOverrideKey> = Array.from(

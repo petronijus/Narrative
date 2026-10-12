@@ -54,6 +54,7 @@ const sampleAsset: MediaAsset = {
   fontWeight: null,
   fontStyle: null,
   fontPostscriptName: null,
+  fontAxes: null,
 }
 
 const sampleVideoAsset: MediaAsset = {
@@ -80,6 +81,7 @@ const sampleVideoAsset: MediaAsset = {
   fontWeight: null,
   fontStyle: null,
   fontPostscriptName: null,
+  fontAxes: null,
 }
 
 const sampleArgs: CreateMediaAssetArgs = {

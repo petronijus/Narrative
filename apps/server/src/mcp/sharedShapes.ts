@@ -54,6 +54,11 @@ const COMPACT_TOKEN_REF = {
   required: ['$token'],
 }
 
+/** The text body input (text.set, object.create, slide.applyLayout) as the commands' zod produces it. */
+const TEXT_BODY: JsonSchema = JSON.parse(
+  '{"anyOf":[{"type":"string"},{"type":"object","properties":{"paragraphs":{"minItems":1,"maxItems":1000,"type":"array","items":{"type":"object","properties":{"list":{"type":"string","enum":["bullet","number","none"]},"level":{"type":"integer","minimum":0,"maximum":8},"bulletChar":{"type":"string"},"numberFormat":{"type":"string","enum":["decimal","decimalParen","lowerAlpha","lowerAlphaParen","upperAlpha","upperAlphaParen","lowerRoman","upperRoman"]},"startAt":{"type":"integer","exclusiveMinimum":0},"text":{"type":"string"},"runs":{"maxItems":1000,"type":"array","items":{"type":"object","properties":{"text":{"type":"string"},"bold":{"type":"boolean"},"fontWeight":{"type":"integer","minimum":100,"maximum":900,"multipleOf":100},"italic":{"type":"boolean"},"underline":{"type":"boolean"},"color":{"anyOf":[{"type":"integer","minimum":0,"maximum":16777215},{"type":"string","pattern":"^#(?:[0-9a-f]{3}|[0-9a-f]{6})$"}]},"fontFamily":{"type":"string"},"fontSize":{"type":"number","exclusiveMinimum":0,"maximum":2000}},"required":["text"]}}}}}},"required":["paragraphs"]}]}',
+) as JsonSchema
+
 export const SHARED_SHAPES: readonly SharedShape[] = [
   {
     name: 'slide reference',
@@ -107,6 +112,25 @@ export const SHARED_SHAPES: readonly SharedShape[] = [
     },
     // The vocabulary's `cell` note says they are 0-based.
     note: '',
+  },
+  {
+    // A4.4: slide.applyLayout's slot content made it a third tool's; the
+    // instructions say what a body is (guidance.ts) and this note the run.
+    name: 'text body',
+    match: TEXT_BODY,
+    compact: {
+      anyOf: [
+        { type: 'string' },
+        {
+          type: 'object',
+          properties: { paragraphs: { type: 'array', items: { type: 'object' } } },
+          required: ['paragraphs'],
+        },
+      ],
+    },
+    note:
+      'A paragraph is { list?, level?, bulletChar?, numberFormat?, startAt?, text } or { …, runs }: 1 to 1000 ' +
+      'paragraphs; a run is { text, bold?, fontWeight?, italic?, underline?, color?, fontFamily?, fontSize? }.',
   },
   {
     name: 'object id list',

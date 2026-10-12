@@ -79,7 +79,8 @@ describe('text.setBoxTypography', () => {
     expect(h.plain('s1', 't1')).toMatchObject({
       textStyleId: 'title',
       fontSize: 48,
-      textStyleOverrides: ['fontSize'],
+      // Text styles carry alignment since A4.2e: set by hand, it is an override too.
+      textStyleOverrides: ['fontSize', 'align'],
     })
   })
 
@@ -200,6 +201,30 @@ describe('the shrink floor (A4.2a)', () => {
     withBodyFloor(h, 10)
     propagateTextStyles(h.ctx.deck!, h.ctx.folderTokens!, new Set(['body']))
     expect(h.plain('s1', 't1')['minFontSize']).toBe(20)
+  })
+
+  it("carries the style's list levels onto a linked box, colours resolved, not to a table (A4.2b)", () => {
+    const h = harness()
+    h.ctx.folderTokens!.textStyles['body']!.levels = [
+      { list: 'bullet', bulletChar: '›', bulletColor: { $token: 'colors.brandBlue' }, indent: 30 },
+      { list: 'bullet', color: '#888888' },
+    ]
+    h.run('text.style.apply', { slide: 's1', objects: ['t1', 'tbl1'], style: 'Body' })
+    expect(h.plain('s1', 't1')['listLevels']).toEqual([
+      { list: 'bullet', bulletChar: '›', bulletColor: 0x2040c0, indent: 30 },
+      { list: 'bullet', color: 0x888888 },
+    ])
+    expect((h.plain('s1', 'tbl1') as unknown as TableObject).defaults).not.toHaveProperty(
+      'listLevels',
+    )
+    expect(
+      textStyleFieldsFromObject({ fontSize: 24, listLevels: h.plain('s1', 't1')['listLevels'] })[
+        'levels'
+      ],
+    ).toEqual([
+      { list: 'bullet', bulletChar: '›', bulletColor: '#2040c0', indent: 30 },
+      { list: 'bullet', color: '#888888' },
+    ])
   })
 
   it('a style made from a box takes its floor', () => {

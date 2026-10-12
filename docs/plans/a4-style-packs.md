@@ -269,13 +269,15 @@ JSON import/export of the whole pack for the rest.
 
 ### A4.7 Bootstrap the five packs
 
-- `tools/style-packs/` importers, output into `private/packs/`: <!-- docs-check: ignore -->
+- Importers in `apps/server/src/stylePacks/bootstrap/` (`just style-pack`;
+  they reuse the server's PPTX parser and the shared schema, so they live
+  next to them rather than in `tools/`), output into `private/packs/`: <!-- docs-check: ignore -->
   - **Contoso** from `layouts.json` (58 layouts → pack layouts, almost field
     for field; the grid, palette, fonts, `–` bullet; `check_deck.py`'s
     rules → `qa`/`editorial`); `layouts.json` wins over `vw_deck.py`
     (§7.4).
   - **Fabrikam** and **Tailspin** through the **master reader**
-    (`apps/server/src/pptx/masterReader.ts`, reusing the parser's <!-- docs-check: ignore -->
+    (`apps/server/src/pptx/masterReader.ts`, reusing the parser's
     placeholder, txStyles, list-level and theme helpers, exported for it):
     walks `sldMasterIdLst` → every layout (also those no slide uses), each
     layout's `type` and name, placeholders → regions (rect fractions of
@@ -366,3 +368,89 @@ Verified: `just check`; `text-autofit` 20/20 repeated; `just e2e` with two
 workers 207 passed, 2 failed (canvas-sharpness, htmltext-texture-isolation)
 that passed 3/3 alone — the machine was at load 62 from a kernel build;
 `just pptx-roundtrip` on the Proseware deck 0 differences.
+
+**A4.2b–A4.8 built (2026-10-12/13, unreleased; Petr: "the whole of A4,
+no deploy, test at the end"):**
+
+- **A4.2b list levels:** `listLevels` on text boxes and `levels` on text
+  styles (glyph, bullet colour and scale, px indents, per-level font, size,
+  colour, weight, line spacing, space before; list kind `none`); the
+  renderer, Inspector list control, `text.list`, PPTX lstStyle and the
+  extension follow; `listLevels` stayed off `text.setBoxTypography` (the
+  tools/list budget).
+- **A4.2c font stretch:** `fvar` axes read on upload (`font_axes`, migration
+  0035, `fontAxesBackfill`); `font-stretch` in @font-face and the renderer;
+  a variable face covers its weight range; Inspector → Width.
+- **A4.2d deck meta and colours:** `DeckMeta` (variant, fields, lang) and
+  `Slide.layout`; colour tokens with alpha, `byVariant`, `bySurface`,
+  resolved per deck variant and slide surface in the editor, thumbnails,
+  the render page and PPTX export.
+- **A4.2e:** `lineSpacing` and `align` on text styles.
+- **A4.3 the pack:** schema (`shared/schema/stylePack.ts`), whole-pack
+  validation (§3), an example pack, storage in the folder document
+  (nested maps, merge patches, layouts and components by id),
+  `style.pack.get` / `style.pack.edit` with an exact inverse for undo, the
+  MCP resource `narrative://folders/{folderId}/pack`.
+- **A4.4 compile and layouts:** compile to tokens (deterministic ids,
+  origin) and masters; an axis value a layout pins as its surface gets
+  `bySurface` values too (found with Contoso's chart slide); `planLayout`
+  (regions with insets, content moved by slot and role, furniture, decor,
+  backgrounds); `slide.applyLayout`, `style.deck.apply`.
+- **A4.5 `query.check`:** the rules of §7.5 in `stylePack/check.ts`; the
+  render page measures growing boxes (`grown`, alongside `overflow`); the
+  render service's `measure` runs sheets of 20 slides, up to 100.
+- **A4.6:** Folder Settings → Style pack (`pages/StylePackTab.tsx`): view
+  everything, edit colours, layout regions and rules, compile, import and
+  export JSON — through `POST /commands` with `style.pack.edit`, the
+  agent's door.
+- **A4.7:** the master reader (each master's own theme and `clrMap`,
+  layouts no slide uses, inherited placeholder geometry and levels, group
+  transforms, SVG blips), a generic template mapper (Fabrikam, Tailspin), Contoso from
+  `layouts.json`, Woodgrove measured from the render in headless Chromium,
+  Adatum derived from Woodgrove and computed from its spec. `just style-pack`
+  validates each pack, lays out every layout on an empty slide and checks
+  it; `just style-pack-import` puts one into a folder over the command API
+  (pack, compile, logos into a pack master, asset ids). Sizes: Contoso 23
+  layouts / 86 regions, Fabrikam 31 / 194, Tailspin 21 / 81, Woodgrove 13 / 126,
+  Adatum 5 / 42. Left out and recorded in each pack's `calls`: the Contoso logo
+  (master artwork), Tailspin's WMF logo and freeform waves, Woodgrove's Data Story
+  and Hero Case Study (not in the test deck). The fonts come from the
+  MacBook (HANDOVER.md); production imports wait for Petr, brand by brand.
+- **A4.8:** the `build-with-pack` playbook, `restyle-lite` rewritten for
+  packs, eval scenarios `pack-build-slide`, `pack-deck-variant`,
+  `pack-fix-check` (memory world models packs), `FINISHED_PHASES += A4`.
+
+**Stopped 2026-10-13 00:40, committed and pushed unreleased (not deployed,
+not released). Where the final test round stood:**
+
+- Green: `just check` (typecheck, lint, docs, every unit test, capabilities);
+  `just style-pack all` (five packs valid, every layout lays out);
+  e2e `style-pack` "Folder Settings shows the pack, compiles it and edits a
+  colour"; e2e `query-render` 8/8.
+- **Open blocker — a text box with `autofit` and a token colour never
+  settles on the render page** (so `query.render`, `query.check`'s
+  measurement and thumbnails of pack slides time out; the editor canvas
+  showed such a slide blank). Reproduced without packs: one text box,
+  `autofit: 'grow-down'` or `'shrink'`, colour `{ $token }` (any colour
+  token, no variants needed) → `query.render` "did not finish in time";
+  the same box with a literal colour, or a token colour without autofit,
+  renders in ~1.2 s. The render page reports `not-settled` after 30 s with
+  `rasters: 674` in 337 passes: the box is rasterised again on every settle
+  pass. No resolver loop (5 swaps, one `repaintColours` and one layout
+  publish per object): look at what re-arms the HTMLText raster each pass —
+  `repaintColours` (now rebuilding the HTML for list levels) or
+  `applyAutofit` against the token-resolved style (`buildStyleOpts` →
+  `resolveAlpha`), likely a style that never compares equal so every
+  `renderNow` re-rasterises. Check whether 0.10.32 (A4.2a, autofit) already
+  has it with token colours. Fix it first, then rerun e2e `style-pack`
+  ("passes the brand check, measured").
+- Not yet run: the full `just e2e`, `just e2e-affected`, `just eval`
+  (the three pack scenarios are live-only until recorded: `just eval
+--filter pack- --record`, then set `replay: true`), `just pptx-roundtrip`
+  on the Proseware deck, the `agent-parity` and `code-reviewer` reviews, a
+  `just load` / `just size` look.
+- The packs themselves live only in the private overlay
+  (`private/packs/`, regenerated by `just style-pack`; not committed there).
+- Next: the blocker, the rest of the test round, then a release (0.11.0)
+  and, at Petr's go per brand, `just style-pack-import` into production
+  folders plus the MacBook font/logo handover.

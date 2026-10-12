@@ -19,7 +19,7 @@
  * gives it is the brand checker's question once slides have layouts (A4.4).
  */
 
-import type { SlideObject, TextOverflow } from '@narrative/shared'
+import type { GrownText, SlideObject, TextOverflow } from '@narrative/shared'
 import type { SceneGraph } from '../renderer/SceneGraph.js'
 import { laidOutTextBottom } from '../renderer/objectRenderers/textRenderer.js'
 
@@ -44,6 +44,27 @@ export function measureTextOverflow(
       boxHeight: Math.round(object.height),
       textHeight: Math.round(bottom),
     })
+  }
+  return out
+}
+
+/**
+ * The height each growing text box of the shown slide is drawn at (A4.5,
+ * the brand checker's fit rule: a growing box against the region below).
+ */
+export function measureGrownText(
+  sceneGraph: Pick<SceneGraph, 'getNode'>,
+  objects: readonly SlideObject[],
+  slideId: string,
+): GrownText[] {
+  const out: GrownText[] = []
+  for (const object of objects) {
+    if (object.type !== 'text' || object.autofit !== 'grow-down') continue
+    const node = sceneGraph.getNode(object.id)
+    if (node === undefined) continue
+    const bottom = laidOutTextBottom(node.container, object)
+    if (bottom === null) continue
+    out.push({ slideId, objectId: object.id, height: Math.round(bottom) })
   }
   return out
 }

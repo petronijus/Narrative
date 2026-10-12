@@ -138,6 +138,11 @@ export const SHARED_FIELDS: readonly SharedField[] = [
   { description: 'MIME type hint, e.g. "image/png" (the bytes decide the type)', note: '' },
   // Sharing
   {
+    // The text body's runs (sharedShapes.ts' text body note says what a run holds).
+    description: 'Formatted runs, in order',
+    note: '',
+  },
+  {
     description:
       'viewer = can look and present; editor = can change the deck; owner = can also share and delete it',
     note: 'Share `role`: viewer = can look and present; editor = can change the deck; owner = can also share and delete it.',

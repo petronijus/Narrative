@@ -329,6 +329,42 @@ export async function matrixDeck(): Promise<ImportedDeck> {
       flipH: true,
     },
     {
+      id: 'tx-levels',
+      type: 'text',
+      ...frame(1000, 760, 800, 300),
+      // A4.2b: paragraphs that take their level's defaults, one made plain
+      // against them, one numbered on its own.
+      text: rich((t) => {
+        t.insert(0, 'Inherits level 0')
+        t.insert(16, PARAGRAPH_SEP)
+        t.insert(17, 'Inherits level 1')
+        t.insert(33, PARAGRAPH_SEP, { level: 1 })
+        t.insert(34, 'Plain on purpose')
+        t.insert(50, PARAGRAPH_SEP, { list: 'none' })
+        t.insert(51, 'Own numbering')
+        t.insert(64, PARAGRAPH_SEP, { list: 'number', numberFormat: 'lowerAlpha' })
+      }),
+      fontSize: 28,
+      fontWeight: 400,
+      color: 0x101010,
+      align: 'left',
+      listLevels: [
+        {
+          list: 'bullet',
+          bulletChar: '–',
+          bulletColor: 0xf50537,
+          bulletScale: 1.5,
+          indent: 40,
+          hanging: 24,
+          spaceBefore: 6,
+          fontSize: 36,
+          fontWeight: 700,
+          lineSpacing: 0.9,
+        },
+        { list: 'bullet', indent: 80, hanging: 24 },
+      ],
+    },
+    {
       id: 'tx4',
       type: 'text',
       ...frame(1600, 980, 200, 60),

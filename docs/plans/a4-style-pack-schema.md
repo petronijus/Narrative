@@ -314,6 +314,7 @@ interface PackComponent {
     textStyle?: Id
     fill?: ColorRef
     stroke?: { color: ColorRef; width: Px }
+    radius?: Px // a shape's corners (added in A4.7: Woodgrove's label pill)
     autofit?: 'grow-down' | 'fixed'
     isSlideNumber?: true
     text?: string

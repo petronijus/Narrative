@@ -92,7 +92,7 @@ ACCESS = [
     "move-deck-share-link",
     "folder-sharing",
 ]
-TOKENS = ["folder-tokens", "share-link-folder-tokens", "folder-font-preview"]
+TOKENS = ["folder-tokens", "share-link-folder-tokens", "folder-font-preview", "style-pack"]
 COMPONENTS = [
     "component-master-upload",
     "component-picker-search-settings",
@@ -134,6 +134,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/components/PresentLayout.tsx", PRESENT),
     ("apps/web/src/components/presentStartSlide.ts", PRESENT),
     ("apps/web/src/pages/DeckPresent.tsx", PRESENT),
+    ("apps/web/src/pages/StylePackTab.tsx", ["style-pack"]),
     # render-export reaches __narrativeRenderShow (the worker's slide switch).
     ("apps/web/src/pages/DeckRender.tsx", ["render-page", "render-export", "query-render", "deck-card"]),
     # A component master's render page (its card, A3.5).

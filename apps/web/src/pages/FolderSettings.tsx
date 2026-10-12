@@ -7,6 +7,7 @@
  *   Colors      — grid of color swatches with inline rename + popover picker
  *   Text styles — list of text style rows with an editor panel
  *   Effect styles — shadow + blur presets
+ *   Style pack  — the folder's brand (A4.6, StylePackTab.tsx)
  *
  * Wraps with FolderDocProvider for the folder's tokens. Changes go to the
  * server (useFolderTokenWriter, state/folderTokenWriter.ts), which carries
@@ -38,6 +39,7 @@ import { SYSTEM_FONTS } from '@narrative/commands'
 import { FolderFontLoader } from '../state/FolderFontLoader.js'
 import type { FolderSummary } from '../api/client.js'
 import { FolderShareDialog } from '../ui/FolderShareDialog.js'
+import { StylePackTab } from './StylePackTab.js'
 import { canEditFolder, isOwnDrafts } from '../state/folderAccess.js'
 import {
   MAX_COLORS,
@@ -49,7 +51,7 @@ import {
 // Tab type
 // ---------------------------------------------------------------------------
 
-type SettingsTab = 'colors' | 'textStyles' | 'fonts' | 'components'
+type SettingsTab = 'colors' | 'textStyles' | 'fonts' | 'components' | 'stylePack'
 
 /** Whether the user may change the folder's tokens, fonts and components (editor or owner). */
 const FolderEditableContext = createContext(false)
@@ -72,7 +74,8 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
     tabFromUrl === 'colors' ||
     tabFromUrl === 'textStyles' ||
     tabFromUrl === 'fonts' ||
-    tabFromUrl === 'components'
+    tabFromUrl === 'components' ||
+    tabFromUrl === 'stylePack'
       ? tabFromUrl
       : 'colors'
   const [activeTab, setActiveTabState] = useState<SettingsTab>(initialTab)
@@ -138,6 +141,7 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
     { id: 'fonts', label: 'Fonts' },
     { id: 'textStyles', label: 'Text styles' },
     { id: 'components', label: 'Components' },
+    { id: 'stylePack', label: 'Style pack' },
   ]
 
   return (
@@ -254,6 +258,7 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
             </FolderFontsProvider>
           )}
           {activeTab === 'components' && <ComponentsTab folderId={folderId} />}
+          {activeTab === 'stylePack' && <StylePackTab folderId={folderId} editable={editable} />}
         </FolderEditableContext>
       </main>
 

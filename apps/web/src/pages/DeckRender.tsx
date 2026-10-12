@@ -58,7 +58,7 @@ import { failedRenderFonts, failedRenderWork } from '../renderer/renderWork.js'
 import { canvasToPng, captureSlideCanvas, watchContextLoss } from '../renderer/captureSlide.js'
 import { getDefaultResourceManager } from '../renderer/ResourceManager.js'
 import { setImageVariantCap } from '../renderer/imageUrl.js'
-import type { RenderPageLookSpec, TextOverflow } from '@narrative/shared'
+import type { RenderPageLookSpec, GrownText, TextOverflow } from '@narrative/shared'
 import {
   blobToBase64,
   composeLook,
@@ -68,7 +68,7 @@ import {
   type LookFrame,
   type LookRequest,
 } from './renderLook.js'
-import { measureTextOverflow } from './textFit.js'
+import { measureGrownText, measureTextOverflow } from './textFit.js'
 import type { DeckFontsContextValue } from '../state/useDeckFonts.js'
 import { startJobTimer, type JobTimer, type JobTimings } from './renderTimings.js'
 import { decodeBase64, untilCoversStateVector } from '../lib/stateVector.js'
@@ -165,6 +165,8 @@ declare global {
         slides: Array<{ slideId: string; index: number; failedLoads: number }>
         /** The text boxes of those slides that overflow (textFit.ts). */
         overflow: TextOverflow[]
+        /** Their growing text boxes as drawn (textFit.ts). */
+        grown: GrownText[]
         failedFonts: string[]
         timings: JobTimings
       }>
@@ -532,6 +534,7 @@ export function DeckRender() {
         const frames: LookFrame[] = []
         const slides: Array<{ slideId: string; index: number; failedLoads: number }> = []
         const overflow: TextOverflow[] = []
+        const grown: GrownText[] = []
         // A sheet's tiles, a card picture and a compare's halves are small:
         // their slides draw with preview-size pictures.
         if (spec.mode === 'sheet' || spec.mode === 'thumbnail' || spec.mode === 'compare') {
@@ -543,6 +546,7 @@ export function DeckRender() {
             timer.mark('ready')
             const shot = await settleAndCapture(timer)
             overflow.push(...measureTextOverflow(sceneGraph, objectsRef.current, slideId))
+            grown.push(...measureGrownText(sceneGraph, objectsRef.current, slideId))
             // A sheet or a compare keeps only its tile of each slide, not full captures.
             const canvas =
               spec.mode === 'sheet'
@@ -581,6 +585,7 @@ export function DeckRender() {
           height: look.height,
           slides,
           overflow,
+          grown,
           failedFonts: failedRenderFonts(),
           timings: timer.done(),
         }

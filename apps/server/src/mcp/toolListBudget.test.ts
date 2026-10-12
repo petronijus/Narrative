@@ -96,8 +96,23 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * text.setBoxTypography and `minSize` in the token tools: 188,673 bytes in
  * url mode, 188,805 in link mode, 140 tools (descriptions trimmed once
  * before measuring).
+ * A4.2b (2026-10-12): 189,000 → 192,500 for list levels: `listLevels` in the
+ * text create schema (object.create ≈ 0.8 KB) and a text style's `levels`
+ * in token.create and token.update (≈ 1.1 KB each; level descriptions
+ * trimmed, listLevels kept out of text.setBoxTypography — object.update
+ * sets it): 191,971 bytes in url mode, 140 tools.
+ * A4.2c–A4.4 (2026-10-12): 192,500 → 198,500 for the style pack tools —
+ * style.pack.get ≈ 0.9 KB, style.pack.edit ≈ 1.6 KB, slide.applyLayout ≈ 1.5 KB
+ * (its slot content takes the text body, now a shared shape: −1.2 KB on
+ * each of three tools), style.deck.apply ≈ 1.3 KB — and colour tokens' alpha,
+ * byVariant and bySurface plus fontStretch, lineSpacing and align on text
+ * styles in token.create / token.update (≈ 0.9 KB): 198,073 bytes in url mode,
+ * 144 tools.
+ * A4.5 (2026-10-12): 198,500 → 200,000 for query.check ≈ 1.4 KB (the
+ * brand checker; its rules are listed once, in its description):
+ * 199,492 bytes in url mode, 145 tools.
  */
-export const TOOL_LIST_BUDGET_BYTES = 189_000
+export const TOOL_LIST_BUDGET_BYTES = 200_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

@@ -254,6 +254,7 @@ vi.mock('../state/FolderDocProvider', () => ({
   useFolderTokens: () => ({ colors: {}, textStyles: {}, effectStyles: {} }),
   useFolderTokensOptional: () => ({ colors: {}, textStyles: {}, effectStyles: {} }),
   useFolderTokensForCommands: () => undefined,
+  useFolderStylePack: () => undefined,
   useFolderTokenWriter: () => null,
   FolderDocProvider: ({ children }: { children: unknown }) => children,
 }))

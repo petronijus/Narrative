@@ -411,3 +411,47 @@ export function writeComponentMaster(
   }, origin)
   return true
 }
+
+// ---------------------------------------------------------------------------
+// Masters a style pack made (A4.4)
+// ---------------------------------------------------------------------------
+
+/** What made a master: a style pack's compile (`meta.origin` of its document). */
+export function readMasterOrigin(doc: Y.Doc): { pack: string; key: string } | undefined {
+  const o = doc.getMap<unknown>('meta').get('origin')
+  if (typeof o !== 'object' || o === null) return undefined
+  const r = o as Record<string, unknown>
+  return typeof r['pack'] === 'string' && typeof r['key'] === 'string'
+    ? { pack: r['pack'], key: r['key'] }
+    : undefined
+}
+
+/**
+ * Make the master's one slide hold exactly `objects` (rich-text bodies
+ * included) and record `origin` — a style pack's compile writing the
+ * master it made. Creates the slide when the master has none. One
+ * transaction (nested in the caller's).
+ */
+export function replaceMasterObjects(
+  doc: Y.Doc,
+  objects: ReadonlyArray<SlideObject>,
+  origin: { pack: string; key: string },
+): void {
+  doc.transact(() => {
+    const slides = doc.getArray<Y.Map<unknown>>('slides')
+    if (slides.length === 0) {
+      writeComponentMaster(doc, objects, [])
+    } else {
+      const slide = slides.get(0)
+      let arr = slide.get('objects')
+      if (!(arr instanceof Y.Array)) {
+        arr = new Y.Array<Y.Map<unknown>>()
+        slide.set('objects', arr)
+      }
+      const list = arr as Y.Array<Y.Map<unknown>>
+      if (list.length > 0) list.delete(0, list.length)
+      insertObjectsWithRichText(list, objects)
+    }
+    doc.getMap<unknown>('meta').set('origin', { pack: origin.pack, key: origin.key })
+  })
+}

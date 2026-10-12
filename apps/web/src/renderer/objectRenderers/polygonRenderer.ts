@@ -19,7 +19,7 @@ import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline } from '../strokeDashed.js'
 import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
 import { applyFlip } from './applyFlip.js'
-import { resolveColour } from '../colourResolver.js'
+import { resolveAlpha, resolveColour } from '../colourResolver.js'
 
 type PolygonLike = TriangleObject | PolygonObject
 
@@ -65,7 +65,7 @@ function drawPolygon(g: Graphics, container: PixiContainer, data: PolygonLike): 
     if (texture !== null) {
       g.fill(imageFillToPixiFill(data.fillStyle, texture, data.width, data.height))
     } else {
-      g.fill({ color: fillColour, alpha: data.fillAlpha ?? 1 })
+      g.fill({ color: fillColour, alpha: (data.fillAlpha ?? 1) * resolveAlpha(data.fill) })
     }
   } else {
     releaseImageFill(container)
@@ -73,7 +73,7 @@ function drawPolygon(g: Graphics, container: PixiContainer, data: PolygonLike): 
     const resolved = fillStyleToPixi(data.fillStyle, fillColour, data.width, data.height, container)
     const fillInput =
       data.fillStyle === undefined
-        ? { color: fillColour, alpha: data.fillAlpha ?? 1 }
+        ? { color: fillColour, alpha: (data.fillAlpha ?? 1) * resolveAlpha(data.fill) }
         : resolved.input
     g.fill(fillInput)
   }
@@ -82,7 +82,7 @@ function drawPolygon(g: Graphics, container: PixiContainer, data: PolygonLike): 
   if (data.stroke !== undefined && (data.strokeWidth ?? 0) > 0) {
     const strokeColour = resolveColour(data.stroke)
     const w = data.strokeWidth ?? 1
-    const sa = data.strokeAlpha ?? 1
+    const sa = (data.strokeAlpha ?? 1) * resolveAlpha(data.stroke)
     if (data.strokeDash === true) {
       const pts: Array<{ x: number; y: number }> = []
       for (let i = 0; i < points.length; i += 2) {

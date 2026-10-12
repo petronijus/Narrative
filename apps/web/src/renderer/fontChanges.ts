@@ -48,6 +48,8 @@ interface Face {
   family: string
   weight: string
   style: string
+  /** `font-stretch` of the rule: a width or a variable range (A4.2c). */
+  stretch: string
   dataUrl: string
 }
 
@@ -103,6 +105,8 @@ export function subscribeFontFamilyChanges(listener: Listener): () => void {
 
 const WEIGHT = /^\d{1,3}(?: \d{1,3})?$/
 const STYLE = /^(?:normal|italic|oblique)$/
+/** One width or a variable face's range (A4.2c): `100%`, `75% 125%`. */
+const STRETCH = /^\d{1,3}(?:\.\d+)?%(?: \d{1,3}(?:\.\d+)?%)?$/
 
 /** The `@font-face` rules for every registered face of `family`, as Pixi embeds them. */
 function familyCss(family: string): string {
@@ -112,7 +116,7 @@ function familyCss(family: string): string {
     .map(
       (face) =>
         `@font-face { font-family: ${quoted}; font-weight: ${face.weight}; ` +
-        `font-style: ${face.style}; src: url('${face.dataUrl}'); }`,
+        `font-style: ${face.style}; font-stretch: ${face.stretch}; src: url('${face.dataUrl}'); }`,
     )
     .join('\n')
 }
@@ -157,8 +161,11 @@ function base64(bytes: Uint8Array): string {
 export function setHtmlTextFace(face: {
   key: string
   family: string
+  /** A weight, or a variable face's range ("100 900"). */
   weight: string
   style: string
+  /** A width, or a variable face's range ("75% 125%"); absent = normal. */
+  stretch?: string
   bytes: ArrayBuffer
 }): void {
   if (!isEmbeddableFamilyName(face.family)) return
@@ -168,6 +175,7 @@ export function setHtmlTextFace(face: {
     family: face.family,
     weight: WEIGHT.test(face.weight) ? face.weight : '400',
     style: STYLE.test(face.style) ? face.style : 'normal',
+    stretch: face.stretch !== undefined && STRETCH.test(face.stretch) ? face.stretch : '100%',
     dataUrl: `data:${fontMime(view)};base64,${base64(view)}`,
   })
   if (previous !== undefined && previous.family !== face.family) {

@@ -161,6 +161,7 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
       fontSize: `${obj.fontSize}px`,
       fontWeight: weightToCss(obj.fontWeight),
       fontStyle: obj.italic === true ? 'italic' : 'normal',
+      ...(obj.fontStretch !== undefined ? { fontStretch: `${obj.fontStretch}%` } : {}),
       textDecoration: obj.underline === true ? 'underline' : 'none',
       // Match Pixi: fixed pixel line heights. Each paragraph carries its own
       // (buildListedHtml, from the fonts in it); this is the frame's, for
@@ -195,6 +196,7 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
       obj.letterSpacing,
       obj.align,
       obj.textTransform,
+      obj.fontStretch,
     ],
   )
 

@@ -512,6 +512,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
       fontWeight: meta.weight,
       fontStyle: meta.style,
       fontPostscriptName: meta.postscriptName,
+      fontAxes: meta.axes ?? {},
     })
 
     return {
@@ -561,6 +562,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
             fontWeight: asset.fontWeight,
             fontStyle: asset.fontStyle,
             fontPostscriptName: asset.fontPostscriptName,
+            fontAxes: asset.fontAxes,
           })),
         )
       }

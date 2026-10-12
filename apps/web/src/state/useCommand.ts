@@ -25,7 +25,7 @@ import { LOCAL_ORIGIN, type FolderTokensSnapshot } from '@narrative/slide-model'
 import { useSlideDoc } from './useSlideDoc.js'
 import { useDeckRole } from './DeckRoleContext.js'
 import { useAuth } from './AuthContext.js'
-import { useFolderTokensForCommands } from './FolderDocProvider.js'
+import { useFolderStylePack, useFolderTokensForCommands } from './FolderDocProvider.js'
 import { useFolderFontsForCommands } from './useFolderFonts.js'
 
 /** One registry per page: definitions are stateless, so sharing it is safe. */
@@ -88,6 +88,7 @@ export function useCommand(): CommandDispatch {
   const userId = user?.sub ?? 'anonymous'
   const folderTokens = useFolderTokensForCommands()
   const folderFonts = useFolderFontsForCommands()
+  const stylePack = useFolderStylePack()
 
   const ctx = useMemo<CommandContext>(
     () => ({
@@ -97,8 +98,9 @@ export function useCommand(): CommandDispatch {
       deck: deckCtx,
       ...(folderTokens === undefined ? {} : { folderTokens }),
       ...(folderFonts === undefined ? {} : { folderFonts }),
+      ...(stylePack === undefined ? {} : { stylePack }),
     }),
-    [userId, role, deckCtx, folderTokens, folderFonts],
+    [userId, role, deckCtx, folderTokens, folderFonts, stylePack],
   )
 
   const ctxFor = useCallback(

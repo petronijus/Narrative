@@ -16,19 +16,43 @@ import { useEffect } from 'react'
 import { useFolderTokens } from '../state/FolderDocProvider.js'
 import { TokensProvider, useTokensResolve } from '../state/TokensContext.js'
 import { setColourResolver } from '../renderer/colourResolver.js'
+import { useDeckVariant } from '../state/useDeckMeta.js'
 
 /**
  * Reads the live token snapshot from FolderDocProvider and passes it to
  * TokensProvider. Separate component so it sits inside FolderDocProvider.
  */
-export function FolderTokensBridge({ children }: { children: React.ReactNode }) {
+export function FolderTokensBridge({
+  children,
+  variant,
+  installResolver = true,
+}: {
+  children: React.ReactNode
+  /** The deck's variant (A4.2d); absent outside a deck. */
+  variant?: Readonly<Record<string, string>> | undefined
+  /**
+   * False where a nested `DeckTokensBridge` installs the resolver with the
+   * deck's variant (DeckShell): two installers would fight.
+   */
+  installResolver?: boolean
+}) {
   const tokens = useFolderTokens()
   return (
-    <TokensProvider tokens={tokens}>
-      <ColourResolverInstaller />
+    <TokensProvider tokens={tokens} variant={variant}>
+      {installResolver && <ColourResolverInstaller />}
       {children}
     </TokensProvider>
   )
+}
+
+/**
+ * The folder bridge again, inside the deck's `SlideDocProvider`, with the
+ * deck's variant (A4.2d): colour tokens that differ per variant resolve on
+ * the deck's, in React and in the renderer.
+ */
+export function DeckTokensBridge({ children }: { children: React.ReactNode }) {
+  const variant = useDeckVariant()
+  return <FolderTokensBridge variant={variant}>{children}</FolderTokensBridge>
 }
 
 /**

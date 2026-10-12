@@ -108,6 +108,8 @@ export default [
       'apps/server/src/observability/sentry.ts', // observability init, may log before pino
       'apps/server/src/db/migrate.ts', // migration CLI — stdout progress is the UX
       'apps/server/src/scripts/**/*.ts', // one-shot CLI scripts — console is the output
+      'apps/server/src/stylePacks/bootstrap/cli.ts', // style-pack CLI — console is the output
+      'apps/server/src/stylePacks/bootstrap/importPack.ts', // style-pack import CLI
     ],
     rules: {
       'no-console': 'error',

@@ -52,8 +52,9 @@ import {
   type RenderPage,
   type RenderedSlide,
 } from '@narrative/shared'
-import { MAX_RENDER_SLIDES } from '@narrative/commands'
+import { MAX_MEASURE_SLIDES, MAX_RENDER_SLIDES } from '@narrative/commands'
 import type {
+  TextMeasurement,
   PngExportResult,
   RenderLookResult,
   RenderService,
@@ -734,7 +735,58 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     return { delivery: 'url', slides, expiresAt, failedFonts }
   }
 
-  return { exportPng, renderStored, look, refreshThumbnail, backgroundThumbnail }
+  /**
+   * The text of up to MAX_MEASURE_SLIDES slides, measured in sheets of
+   * MAX_RENDER_SLIDES (the sheet's picture is the job's by-product, never
+   * read): every overflow, and every growing box's drawn height.
+   */
+  async function measure(args: {
+    userId: string
+    deckId: string
+    slides: RenderSlideRef[] | 'all'
+  }): Promise<TextMeasurement> {
+    const deck = await liveDeck(args)
+    const chosen = pickSlides(deck.slides, args.slides)
+    if (chosen.length === 0) throw badRequest('The deck has no slides to check')
+    if (chosen.length > MAX_MEASURE_SLIDES) {
+      throw tooLarge(
+        `That is ${chosen.length} slides; one check measures at most ${MAX_MEASURE_SLIDES} — ask for them in parts`,
+      )
+    }
+    const key = `${exportsPrefix(deck.card)}measure.png`
+    const indexOf = new Map(chosen.map((s) => [s.id, s.index]))
+    const out: TextMeasurement = { slides: [], overflow: [], grown: [], failedFonts: [] }
+    const fonts = new Set<string>()
+    for (let i = 0; i < chosen.length; i += MAX_RENDER_SLIDES) {
+      const part = chosen.slice(i, i + MAX_RENDER_SLIDES)
+      const result = await runJob(args.userId, deck, part.length, {
+        kind: 'look',
+        look: { mode: 'sheet', slideIds: part.map((s) => s.id) },
+        key,
+      })
+      if (result.kind !== 'look') throw failed('The renderer answered another job', 503)
+      for (const s of result.look.slides) out.slides.push({ slideId: s.slideId, index: s.index })
+      for (const o of result.look.overflow ?? [])
+        out.overflow.push({
+          slideId: o.slideId,
+          index: indexOf.get(o.slideId) ?? -1,
+          objectId: o.objectId,
+          boxHeight: o.boxHeight,
+          textHeight: o.textHeight,
+        })
+      // A renderer older than A4.5 says nothing of growing boxes: not "none".
+      if (result.look.grown === undefined) out.grown = null
+      else if (out.grown !== null) out.grown.push(...result.look.grown)
+      for (const f of result.failedFonts) fonts.add(f)
+    }
+    out.failedFonts = [...fonts]
+    void buildS3Client()
+      .send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: key }))
+      .catch(() => undefined)
+    return out
+  }
+
+  return { exportPng, renderStored, look, measure, refreshThumbnail, backgroundThumbnail }
 }
 
 /** Test helper: forget the in-flight counts. */

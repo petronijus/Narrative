@@ -47,4 +47,4 @@ export const KNOWN_MISSING: readonly KnownMissing[] = [
 ]
 
 /** Phases already finished: their entries must be gone. Move the marker as phases close. */
-export const FINISHED_PHASES: readonly Phase[] = ['A0', 'A1', 'A2', 'A3']
+export const FINISHED_PHASES: readonly Phase[] = ['A0', 'A1', 'A2', 'A3', 'A4']

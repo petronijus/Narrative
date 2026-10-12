@@ -57,7 +57,7 @@ import { FolderDocProvider } from '../state/FolderDocProvider.js'
 import { FolderFontsProvider } from '../state/useFolderFonts.js'
 import { FolderFontLoader } from '../state/FolderFontLoader.js'
 import { DeckFontsProvider } from '../state/useDeckFonts.js'
-import { FolderTokensBridge } from './FolderTokensBridge.js'
+import { DeckTokensBridge, FolderTokensBridge } from './FolderTokensBridge.js'
 
 export interface DeckShellContextValue {
   /**
@@ -100,7 +100,8 @@ export function FolderDocGate({ children }: FolderDocGateProps) {
     <FolderFontsProvider folderId={folderId}>
       <FolderFontLoader />
       <FolderDocProvider folderId={folderId}>
-        <FolderTokensBridge>{children}</FolderTokensBridge>
+        {/* The deck's own bridge installs the renderer's resolver, with its variant. */}
+        <FolderTokensBridge installResolver={false}>{children}</FolderTokensBridge>
       </FolderDocProvider>
     </FolderFontsProvider>
   )
@@ -160,21 +161,23 @@ export function DeckShell() {
                 hydrate={!isRender}
                 {...(frozenDoc !== null ? { doc: frozenDoc } : {})}
               >
-                <ActiveSlideProvider>
-                  <MediaUploadProvider deckId={id}>
-                    <RulersProvider>
-                      <SnappingProvider>
-                        <CanvasInstanceContext value={canvasInstance}>
-                          <Outlet
-                            context={
-                              { onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue
-                            }
-                          />
-                        </CanvasInstanceContext>
-                      </SnappingProvider>
-                    </RulersProvider>
-                  </MediaUploadProvider>
-                </ActiveSlideProvider>
+                <DeckTokensBridge>
+                  <ActiveSlideProvider>
+                    <MediaUploadProvider deckId={id}>
+                      <RulersProvider>
+                        <SnappingProvider>
+                          <CanvasInstanceContext value={canvasInstance}>
+                            <Outlet
+                              context={
+                                { onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue
+                              }
+                            />
+                          </CanvasInstanceContext>
+                        </SnappingProvider>
+                      </RulersProvider>
+                    </MediaUploadProvider>
+                  </ActiveSlideProvider>
+                </DeckTokensBridge>
               </SlideDocProvider>
             )}
           </FolderDocGate>

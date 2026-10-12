@@ -397,6 +397,12 @@ export const mediaAssets = pgTable(
     fontStyle: text('font_style'),
     /** Postscript name — uniquely identifies one face within a family. */
     fontPostscriptName: text('font_postscript_name'),
+    /**
+     * A4.2c: a variable font's axis ranges, `{ wght?: [min, max], wdth?:
+     * [min, max] }`; `{}` for a static font; NULL until read (a font stored
+     * before migration 0035, until the data migration reads it).
+     */
+    fontAxes: jsonb('font_axes').$type<{ wght?: [number, number]; wdth?: [number, number] }>(),
   },
   (t) => [
     index('media_assets_deck_idx').on(t.deckId),

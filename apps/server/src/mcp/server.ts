@@ -58,6 +58,15 @@ export interface SessionServerDeps {
 
 const MAX_CLIENT_NAME = 80
 
+/** A folder's style pack as a resource (A4.3): summary and layouts, sized for a model. */
+export const PACK_RESOURCE_TEMPLATE = 'narrative://folders/{folderId}/pack'
+
+/** The folder of a pack resource URI, or null for any other URI. */
+export function packResourceFolder(uri: string): string | null {
+  const m = /^narrative:\/\/folders\/([A-Za-z0-9_-]{1,64})\/pack$/.exec(uri)
+  return m === null ? null : m[1]!
+}
+
 /** The client's name as recorded on runs (`clientInfo` from initialize). */
 export function clientNameOf(server: Server): string | undefined {
   const info = server.getClientVersion()
@@ -196,9 +205,44 @@ export function createSessionServer(identity: SessionIdentity, deps: SessionServ
     resources: deps.guidance.listResources(),
   }))
   server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
-    resourceTemplates: [],
+    resourceTemplates: [
+      {
+        uriTemplate: PACK_RESOURCE_TEMPLATE,
+        name: 'Folder style pack',
+        description:
+          "A folder's style pack for a model: its variants, colours, fonts, text styles, rules and every layout " +
+          "with its purpose and slots (style.pack.get reads parts of it; a deck's folder is its folderId).",
+        mimeType: 'application/json',
+      },
+    ],
   }))
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const folderId = packResourceFolder(request.params.uri)
+    if (folderId !== null) {
+      // As the command reads it, with this session's user's access to the folder.
+      const read = async (part: 'summary' | 'layouts'): Promise<unknown> => {
+        const outcome = await deps.host.execute({
+          actor: { userId: identity.userId, kind: 'agent' },
+          surface: 'mcp',
+          target: { folderId },
+          invocation: { command: 'style.pack.get', input: { part } },
+        })
+        if (!outcome.ok)
+          throw new McpError(-32002, outcome.error.message, { uri: request.params.uri })
+        return (outcome.result as { value: unknown }).value
+      }
+      const summary = await read('summary')
+      const layouts = summary === null ? [] : await read('layouts')
+      return {
+        contents: [
+          {
+            uri: request.params.uri,
+            mimeType: 'application/json',
+            text: JSON.stringify({ pack: summary, layouts }),
+          },
+        ],
+      }
+    }
     try {
       return deps.guidance.readResource(request.params.uri)
     } catch (e) {

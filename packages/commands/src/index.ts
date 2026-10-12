@@ -38,6 +38,7 @@ export {
 } from './registry.js'
 export {
   commandReadsFolderFonts,
+  commandReadsStylePack,
   commandReadsFolderTokens,
   commandUsesDocument,
   isBatchable,
@@ -66,6 +67,7 @@ export {
 } from './refs.js'
 export { stampMaster, type StampResult } from './commands/components.js'
 export { MAX_RENDER_SLIDES } from './commands/render.js'
+export { MAX_MEASURE_SLIDES, type TextMeasurement } from './services/render.js'
 export {
   ANCHORS,
   OPPOSITE_ANCHOR,
@@ -123,6 +125,7 @@ export {
   type ComponentService,
   type PptxService,
   type TokenService,
+  type StylePackService,
   type EditorService,
   type AgentRunService,
 } from './services.js'
@@ -174,6 +177,7 @@ export {
   effectiveFontWeight,
   matchFontWeight,
   pickPrimaryFamily,
+  stretchRangeFor,
   toNumericWeight,
   type FontFaceWeight,
   type NumericFontWeight,
@@ -189,3 +193,27 @@ export {
   textStyleFieldsFromObject,
   textStyleNameTaken,
 } from './text/textStyle.js'
+export {
+  stylePackEdit,
+  stylePackGet,
+  stylePackCommands,
+  layoutBrief,
+  packSummary,
+} from './commands/stylePacks.js'
+export { parseStylePack } from './stylePack/parse.js'
+export { planLayout, type LayoutPlan, type SlotContent } from './stylePack/layout.js'
+export {
+  checkDeck,
+  type CheckFinding,
+  type CheckMeasurement,
+  type CheckReport,
+} from './stylePack/check.js'
+export { previousOfUpdate } from './stylePack/change.js'
+export {
+  compileStylePack,
+  compiledTokenId,
+  linkedTextFields,
+  type CompiledComponent,
+  type CompiledToken,
+  type StylePackCompilation,
+} from './stylePack/compile.js'

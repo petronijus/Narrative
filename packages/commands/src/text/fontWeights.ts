@@ -56,6 +56,35 @@ export const SYSTEM_FONTS: ReadonlyArray<{
 export interface FontFaceWeight {
   family: string
   weight: number
+  /** A variable face's weight and width axis ranges (A4.2c): it covers every weight in `wght`. */
+  axes?: { wght?: [number, number]; wdth?: [number, number] }
+}
+
+/** The weights a face covers: its own, or every standard weight in a variable face's range. */
+function faceWeights(face: FontFaceWeight): number[] {
+  const range = face.axes?.wght
+  if (range === undefined) return [face.weight]
+  return STANDARD_WEIGHTS.filter((w) => w >= range[0] && w <= range[1])
+}
+
+/**
+ * The widths (`fontStretch`, % of normal) a folder family can be drawn at
+ * without synthesis: the union of its variable faces' `wdth` ranges; null
+ * when no face of it has a width axis (only 100 is real).
+ */
+export function stretchRangeFor(
+  fontFamily: string | undefined,
+  folderFonts: ReadonlyArray<FontFaceWeight>,
+): [number, number] | null {
+  const primary = pickPrimaryFamily(fontFamily)
+  if (primary === null) return null
+  let range: [number, number] | null = null
+  for (const f of folderFonts) {
+    const w = f.family === primary ? f.axes?.wdth : undefined
+    if (w === undefined) continue
+    range = range === null ? [w[0], w[1]] : [Math.min(range[0], w[0]), Math.max(range[1], w[1])]
+  }
+  return range
 }
 
 /** The legacy `'normal'` / `'bold'` keywords map to 400 / 700. */
@@ -93,7 +122,7 @@ export function allowedWeightsFor(
 ): NumericFontWeight[] | null {
   const primary = pickPrimaryFamily(fontFamily)
   if (primary === null) return null
-  const uploaded = folderFonts.filter((f) => f.family === primary).map((f) => f.weight)
+  const uploaded = folderFonts.filter((f) => f.family === primary).flatMap(faceWeights)
   const source =
     uploaded.length > 0
       ? uploaded

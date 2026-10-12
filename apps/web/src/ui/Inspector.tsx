@@ -113,9 +113,11 @@ import {
   BOX_TYPOGRAPHY_KEYS,
   PAGE_NUMBER_TEXT_STYLE_NAME,
   findTextStyleByName,
+  stretchRangeFor,
   textStyleFieldsFromObject,
 } from '@narrative/commands'
 import { forCommand } from './commandPatch.js'
+import { useFolderFontsOptional } from '../state/useFolderFonts.js'
 import { isMaskableShape, listSlides } from '@narrative/slide-model'
 import type { AlignAxis, DistributeAxis, LayerMove, RichAttrs } from '@narrative/slide-model'
 import type {
@@ -3864,6 +3866,8 @@ export interface TypographyFeatures {
   colorAlpha?: boolean
   /** Autofit (fixed / grow with text / shrink text) and the shrink minimum — a box's, not a cell's. */
   autofit?: boolean
+  /** Width of a variable face (`fontStretch`) — a box's; the table renderer sets none. */
+  fontStretch?: boolean
 }
 
 const FEATURES_TEXT: Required<TypographyFeatures> = {
@@ -3873,6 +3877,7 @@ const FEATURES_TEXT: Required<TypographyFeatures> = {
   stroke: true,
   colorAlpha: true,
   autofit: true,
+  fontStretch: true,
 }
 
 interface TypographySectionProps {
@@ -4028,6 +4033,11 @@ function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
 
 export function TypographySection({ obj, patch, features: featuresIn }: TypographySectionProps) {
   const features: Required<TypographyFeatures> = { ...FEATURES_TEXT, ...featuresIn }
+  const folderFontsForWidth = useFolderFontsOptional()?.fonts
+  const stretchRange = useMemo(
+    () => stretchRangeFor(obj.fontFamily, folderFontsForWidth ?? []),
+    [obj.fontFamily, folderFontsForWidth],
+  )
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
   const command = useCommand()
@@ -4291,6 +4301,32 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
         </div>
 
         <FontWeightSelect obj={obj} patch={patch} />
+
+        {/* Width (A4.2c): offered where the family has a variable width
+            axis, or the box already sets one. Clamped to the axis range. */}
+        {features.fontStretch && (stretchRange !== null || obj.fontStretch !== undefined) && (
+          <div className="flex items-center gap-2">
+            <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Width</span>
+            <CompactNumberField
+              id={`inspector-fontstretch-${obj.id}`}
+              glyph={
+                <span className="text-[9px] font-semibold leading-none" aria-hidden>
+                  ↔%
+                </span>
+              }
+              ariaLabel="Width, % of normal"
+              value={obj.fontStretch ?? 100}
+              step={5}
+              onChange={(v) => {
+                const [lo, hi] = stretchRange ?? [50, 200]
+                const next = Math.round(Math.min(hi, Math.max(lo, v)))
+                patch({
+                  fontStretch: next === 100 ? undefined : next,
+                } as unknown as SlideObjectPatch<TextObject>)
+              }}
+            />
+          </div>
+        )}
 
         {/* Bold + Italic + Underline as a single 3-segment toggle bar.
             Each toggle first attempts an inline format on the active
@@ -4582,7 +4618,9 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
             <div className="flex items-center gap-2">
               <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">List</span>
               <select
-                value={paraAttrs.list ?? ''}
+                value={
+                  paraAttrs.list === undefined || paraAttrs.list === 'none' ? '' : paraAttrs.list
+                }
                 onChange={(e) => {
                   const v = e.target.value
                   if (listTarget !== null)

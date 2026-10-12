@@ -130,6 +130,33 @@ export interface Slide {
    * subsequent slide at a higher indent level.
    */
   collapsed?: boolean
+  /**
+   * The style pack layout the slide follows (A4.4): written by
+   * `slide.applyLayout`, restyled by `style.deck.apply`, cleared when the
+   * slide stops following it. Its `surface` (a photo tone, a blue band) is
+   * where the slide's colour tokens resolve (A4.2d).
+   */
+  layout?: SlideLayoutRef
+}
+
+/** A slide's pack layout (A4.4). */
+export interface SlideLayoutRef {
+  packId: string
+  layoutId: string
+  /** The surface the layout pins or the slide chose; colour tokens resolve on it. */
+  surface?: string
+}
+
+/**
+ * Deck-wide settings at the document root's `meta` map (A4.2d): the
+ * deck's style variant — one value per axis of its folder's pack (Contoso's
+ * background; Woodgrove's theme and accent) — the values of the pack's footer
+ * fields, and the deck's language.
+ */
+export interface DeckMeta {
+  variant?: Record<string, string>
+  fields?: Record<string, string>
+  lang?: string
 }
 
 /**

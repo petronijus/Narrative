@@ -364,7 +364,7 @@ export const RunOutputSchema = z.object({
 
 export const ParagraphOutputSchema = z.object({
   runs: z.array(RunOutputSchema),
-  list: z.enum(['bullet', 'number']).optional(),
+  list: z.enum(['bullet', 'number', 'none']).optional(),
   level: z.number().optional(),
   bulletChar: z.string().optional(),
   numberFormat: z.string().optional(),

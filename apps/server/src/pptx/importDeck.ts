@@ -493,6 +493,7 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
       fontWeight: metadata.weight,
       fontStyle: metadata.style,
       fontPostscriptName: metadata.postscriptName,
+      fontAxes: metadata.axes ?? {},
     })
     uploadedFontCount++
   }

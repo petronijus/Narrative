@@ -44,6 +44,7 @@ import { AgentConfirmations } from './confirmations.js'
 import { ServerHost } from './serverHost.js'
 import { repointMovedMedia } from '../services/localiseMedia.js'
 import { createDbFolderFontsReader, type FolderFontsReader } from './folderFonts.js'
+import { createDbFolderStylePackReader, type FolderStylePackReader } from './folderStylePack.js'
 import { createDbFolderTokensReader, type FolderTokensReader } from './folderTokens.js'
 
 /** Agent runs (and their ops) idle for longer than this are deleted. */
@@ -193,6 +194,8 @@ export interface AgentRuntimeOptions {
   folderTokens?: FolderTokensReader
   /** Where commands read the target folder's font faces; default: its font assets (agent/folderFonts.ts). */
   folderFonts?: FolderFontsReader
+  /** Where commands read the target folder's style pack; default: the folder document (agent/folderStylePack.ts). */
+  folderStylePack?: FolderStylePackReader
   /** Test seam: confirmation summary lookups (default: the database). */
   confirmationLookups?: ConfirmationLookups
 }
@@ -296,6 +299,13 @@ export async function createAgentRuntime(opts: AgentRuntimeOptions): Promise<Age
         hocuspocus: () => opts.hocuspocus,
       }),
     folderFonts: opts.folderFonts ?? createDbFolderFontsReader(opts.db),
+    folderStylePack:
+      opts.folderStylePack ??
+      createDbFolderStylePackReader({
+        db: opts.db,
+        log: opts.log,
+        hocuspocus: () => opts.hocuspocus,
+      }),
   })
 
   return {

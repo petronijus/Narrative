@@ -101,6 +101,8 @@ export interface CreateMediaAssetArgs {
   fontStyle?: string
   /** P15: parsed postscript name. Set only when kind='font'. */
   fontPostscriptName?: string
+  /** A variable font's axis ranges (A4.2c); `{}` for a static font. */
+  fontAxes?: { wght?: [number, number]; wdth?: [number, number] }
 }
 
 /**
@@ -126,6 +128,7 @@ export async function createMediaAsset(db: Database, args: CreateMediaAssetArgs)
     fontWeight: args.fontWeight ?? null,
     fontStyle: args.fontStyle ?? null,
     fontPostscriptName: args.fontPostscriptName ?? null,
+    fontAxes: args.fontAxes ?? null,
   })
 }
 
@@ -246,6 +249,8 @@ export interface FontAssetRow {
   fontWeight: number
   fontStyle: 'normal' | 'italic'
   fontPostscriptName: string
+  /** A variable font's axis ranges (A4.2c); `{}` static, null not read yet. */
+  fontAxes: { wght?: [number, number]; wdth?: [number, number] } | null
   uploaderUserId: string
   originalFilename: string | null
   sizeBytes: number
@@ -278,6 +283,7 @@ function toFontRow(row: any): FontAssetRow {
     fontWeight: row.fontWeight ?? 400,
     fontStyle: (row.fontStyle as 'normal' | 'italic' | null) ?? 'normal',
     fontPostscriptName: row.fontPostscriptName ?? row.fontFamily ?? '',
+    fontAxes: row.fontAxes ?? null,
     uploaderUserId: row.uploaderUserId,
     originalFilename: row.originalFilename,
     sizeBytes: row.sizeBytes ?? 0,

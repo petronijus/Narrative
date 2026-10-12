@@ -312,6 +312,17 @@ export interface ApiClient {
    * no longer revertible (already reverted, unloaded, expired), 404, 403.
    */
   revertAgentRun(runId: string, lastOps?: number): Promise<RevertRunResult>
+
+  // ---------------------------------------------------------------------------
+  // Agentic A4.6 — a folder's style pack (Folder Settings)
+  // ---------------------------------------------------------------------------
+  /**
+   * Run a folder command through the command API (`POST /commands`, the
+   * door scripts and agents use), as the signed-in user: `style.pack.get`,
+   * `style.pack.edit`. Its result; throws `ApiRequestError` with the
+   * command's own message (400 with what is invalid, 403, 404).
+   */
+  runFolderCommand<T>(folderId: string, command: string, input: unknown): Promise<T>
 }
 
 /**
@@ -583,6 +594,8 @@ export interface FolderFontSummary {
   weight: number
   style: 'normal' | 'italic'
   postscriptName: string
+  /** A variable face's weight and width axis ranges, [min, max] (A4.2c). */
+  axes?: { wght?: [number, number]; wdth?: [number, number] }
   /** Presigned MinIO URL — valid for ~1 h. Refresh by calling listFolderFonts again. */
   url: string
   sizeBytes: number
@@ -1275,6 +1288,16 @@ export function createApiClient(): ApiClient {
       if (!res.ok) throw await apiRequestError(res)
       const data = (await res.json()) as { runs: AgentRunSummary[] }
       return data.runs
+    },
+
+    runFolderCommand: async <T>(folderId: string, command: string, input: unknown) => {
+      const res = await request('/commands', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: { folderId }, command, input, client: 'Folder settings' }),
+      })
+      if (!res.ok) throw await apiRequestError(res)
+      return ((await res.json()) as { result: T }).result
     },
 
     revertAgentRun: async (runId, lastOps) => {

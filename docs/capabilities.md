@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **140**. Known missing: **1**. Deliberately excluded: **21**.
+Commands: **145**. Known missing: **1**. Deliberately excluded: **21**.
 
 ## agent
 
@@ -142,12 +142,13 @@ Commands: **140**. Known missing: **1**. Deliberately excluded: **21**.
 
 ## query
 
-| Command        | What it does   | Role   | Undo | Confirm | Hints     |
-| -------------- | -------------- | ------ | ---- | ------- | --------- |
-| `query.deck`   | Deck outline   | viewer | n/a  | never   | read-only |
-| `query.object` | Read object    | viewer | n/a  | never   | read-only |
-| `query.render` | Look at slides | viewer | n/a  | never   | read-only |
-| `query.slide`  | Read slide     | viewer | n/a  | never   | read-only |
+| Command        | What it does                     | Role   | Undo | Confirm | Hints     |
+| -------------- | -------------------------------- | ------ | ---- | ------- | --------- |
+| `query.check`  | Check the deck against its brand | viewer | n/a  | never   | read-only |
+| `query.deck`   | Deck outline                     | viewer | n/a  | never   | read-only |
+| `query.object` | Read object                      | viewer | n/a  | never   | read-only |
+| `query.render` | Look at slides                   | viewer | n/a  | never   | read-only |
+| `query.slide`  | Read slide                       | viewer | n/a  | never   | read-only |
 
 ## share
 
@@ -165,21 +166,30 @@ Commands: **140**. Known missing: **1**. Deliberately excluded: **21**.
 
 ## slide
 
-| Command               | What it does               | Role   | Undo     | Confirm | Hints      |
-| --------------------- | -------------------------- | ------ | -------- | ------- | ---------- |
-| `slide.add`           | Add slide                  | editor | undoable | never   |            |
-| `slide.collapse`      | Collapse slide section     | editor | undoable | never   | idempotent |
-| `slide.copyTo`        | Copy slides                | editor | undoable | never   |            |
-| `slide.delete`        | Delete slides              | editor | undoable | never   |            |
-| `slide.duplicate`     | Duplicate slide            | editor | undoable | never   |            |
-| `slide.indent`        | Set slide outline level    | editor | undoable | never   | idempotent |
-| `slide.move`          | Move slides                | editor | undoable | never   |            |
-| `slide.notes.get`     | Read speaker notes         | viewer | n/a      | never   | read-only  |
-| `slide.notes.set`     | Set speaker notes          | editor | undoable | never   | idempotent |
-| `slide.rename`        | Rename slide               | editor | undoable | never   | idempotent |
-| `slide.setBackground` | Set slide background       | editor | undoable | never   | idempotent |
-| `slide.setTransition` | Set slide transition       | editor | undoable | never   | idempotent |
-| `slide.skip`          | Skip slide in presentation | editor | undoable | never   | idempotent |
+| Command               | What it does                       | Role   | Undo     | Confirm | Hints      |
+| --------------------- | ---------------------------------- | ------ | -------- | ------- | ---------- |
+| `slide.add`           | Add slide                          | editor | undoable | never   |            |
+| `slide.applyLayout`   | Lay a slide out with a pack layout | editor | undoable | never   |            |
+| `slide.collapse`      | Collapse slide section             | editor | undoable | never   | idempotent |
+| `slide.copyTo`        | Copy slides                        | editor | undoable | never   |            |
+| `slide.delete`        | Delete slides                      | editor | undoable | never   |            |
+| `slide.duplicate`     | Duplicate slide                    | editor | undoable | never   |            |
+| `slide.indent`        | Set slide outline level            | editor | undoable | never   | idempotent |
+| `slide.move`          | Move slides                        | editor | undoable | never   |            |
+| `slide.notes.get`     | Read speaker notes                 | viewer | n/a      | never   | read-only  |
+| `slide.notes.set`     | Set speaker notes                  | editor | undoable | never   | idempotent |
+| `slide.rename`        | Rename slide                       | editor | undoable | never   | idempotent |
+| `slide.setBackground` | Set slide background               | editor | undoable | never   | idempotent |
+| `slide.setTransition` | Set slide transition               | editor | undoable | never   | idempotent |
+| `slide.skip`          | Skip slide in presentation         | editor | undoable | never   | idempotent |
+
+## style
+
+| Command            | What it does                           | Role                                       | Undo     | Confirm | Hints     |
+| ------------------ | -------------------------------------- | ------------------------------------------ | -------- | ------- | --------- |
+| `style.deck.apply` | Re-style a deck with its folder's pack | editor                                     | undoable | never   |           |
+| `style.pack.edit`  | Change the folder's style pack         | editor                                     | undoable | never   |           |
+| `style.pack.get`   | Read the folder's style pack           | viewer; also a guest of the folder's decks | n/a      | never   | read-only |
 
 ## table
 

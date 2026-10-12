@@ -443,6 +443,8 @@ describe('every folder-scoped command', () => {
     'folder.invites.cancel': { role: 'owner' },
     'media.fontUrl': { role: 'viewer', folderReaders: 'content' },
     'token.list': { role: 'viewer', folderReaders: 'content' },
+    'style.pack.get': { role: 'viewer', folderReaders: 'content' },
+    'style.pack.edit': { role: 'editor' },
     'token.usages': { role: 'viewer' },
     'token.create': { role: 'editor' },
     'token.update': { role: 'editor' },
@@ -1158,7 +1160,13 @@ describe('token.*', () => {
 
   it("lists the folder's tokens with their ids", async () => {
     const out = await list(folderCtx())
-    expect(out.colors.map((t) => t.id)).toEqual(['brandBlue', 'ink', 'retired'])
+    // The fixture's own colours, then those the example pack's compile made (A4.4).
+    expect(out.colors.map((t) => t.id).slice(0, 3)).toEqual(['brandBlue', 'ink', 'retired'])
+    expect(out.colors.find((t) => t.id === 'p-example-role-text')).toMatchObject({
+      name: 'Text',
+      byVariant: { axis: 'background', values: { light: '#001e50', dark: '#ffffff' } },
+      origin: { pack: 'example', key: 'role:text' },
+    })
     expect(out.textStyles.find((t) => t.id === 'title')).toMatchObject({
       name: 'Title',
       builtin: true,

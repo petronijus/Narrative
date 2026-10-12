@@ -75,6 +75,23 @@ export interface RenderLookResult {
   image: { mimeType: 'image/png'; base64: string }
 }
 
+/**
+ * The text of slides measured on the page with the real fonts (A4.5, the
+ * brand checker's fit rules): boxes that overflow, every growing box's
+ * drawn height. No picture comes back.
+ */
+export interface TextMeasurement {
+  slides: Array<{ slideId: string; index: number }>
+  /** Every overflowing box (not capped like `look`'s). */
+  overflow: TextOverflowInfo[]
+  /** Growing boxes (`autofit: 'grow-down'`) as drawn; null from a renderer older than A4.5. */
+  grown: Array<{ slideId: string; objectId: string; height: number }> | null
+  failedFonts: string[]
+}
+
+/** Slides one `measure` call takes: it renders them in sheets of `MAX_RENDER_SLIDES`. */
+export const MAX_MEASURE_SLIDES = 100
+
 export interface RenderService {
   /**
    * PNGs (1920×1080) of slides of the live deck (any reader of the deck).
@@ -92,6 +109,15 @@ export interface RenderService {
    * deck): a slide, a region at full resolution, or a numbered sheet.
    */
   look(args: { userId: string; deckId: string; view: RenderView }): Promise<RenderLookResult>
+  /**
+   * Measure the text of slides of the live deck (any reader of the deck),
+   * at most MAX_MEASURE_SLIDES; `'all'` of a longer deck is refused.
+   */
+  measure(args: {
+    userId: string
+    deckId: string
+    slides: RenderSlideRef[] | 'all'
+  }): Promise<TextMeasurement>
   /**
    * Redraw a card picture from the first slide now (editors of the deck,
    * or of a master's folder); bad_request for a deck without slides.

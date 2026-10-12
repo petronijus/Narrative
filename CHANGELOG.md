@@ -6,6 +6,58 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+Agentic phase A4 (style packs), steps A4.2b–A4.8: a folder can hold its
+brand as a style pack, and agents build, restyle and check slides with it.
+
+### Added
+
+- **Style packs.** A folder's style pack holds its brand: colour variants
+  (a light and a dark theme, a highlight colour…) and surfaces, fonts, text
+  styles with list levels, the grid, footer, page number and logo, layouts
+  with named slots, components, and the editorial and QA rules. It lives in
+  the folder and syncs like its tokens. **Folder Settings → Style pack**
+  shows it — colours and variants, fonts and text styles, every layout as a
+  small preview, components, rules — and lets editors tune colours, a
+  layout's regions and the rules, compile it, and import or export it as
+  JSON.
+- **Compile** makes a pack the folder's colour and text-style tokens
+  (colours that follow the deck's variant and the slide's surface) and its
+  component masters; a second compile updates what the first made and
+  leaves everything people made alone.
+- **Layouts.** A slide laid out with a pack layout gets a box per slot in
+  the brand's text style and place, the pack's components, its footer,
+  page number and decoration; the slide's text moves into the new layout's
+  slots by name or role when it changes layout. A deck's variant (dark,
+  light, a highlight colour) and its footer fields are set once, and every
+  laid-out slide follows.
+- **The brand check.** `query.check` checks slides against the pack: text
+  that does not fit (measured on the render page, a growing box against
+  what is below it), partial overlaps, the grid, text colours, one variant
+  per deck, missing footer or page number, placeholder text, empty picture
+  regions, capitals, italics, bullet glyphs, title periods and length, the
+  accent budget, typography and emoji — each finding with its slide,
+  object, rule and level.
+- Agents reach all of it: `style.pack.get`, `style.pack.edit` (set, update,
+  delete, compile), `slide.applyLayout`, `style.deck.apply`, `query.check`,
+  the `narrative://folders/{folderId}/pack` MCP resource, the new
+  `build-with-pack` playbook and `restyle-lite` rewritten for packs.
+- **Text styles and boxes** gain list levels (bullet glyph, colour and
+  size, indents, per-level font, size, colour and spacing), a width for
+  variable fonts with a `wdth` axis (Inspector → Width), line spacing and
+  alignment; colour tokens gain alpha and per-variant and per-surface
+  values.
+- Bootstrap of five brand packs (Contoso, Fabrikam, Tailspin, Woodgrove, Adatum)
+  from their sources, `just style-pack`, and their import into a folder
+  through the command API, `just style-pack-import`.
+
+### Changed
+
+- Fonts with variable axes record them on upload (and existing fonts are
+  backfilled), so a variable face covers its whole weight and width range.
+- PowerPoint export draws colours on the deck's variant and each slide's
+  surface; list levels and the new text fields round-trip through
+  Narrative's own extension.
+
 ---
 
 ## 0.10.32 — Text that fits its box (2026-10-12)

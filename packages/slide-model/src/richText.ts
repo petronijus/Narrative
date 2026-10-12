@@ -27,6 +27,7 @@ import {
   type ParagraphAttrKey,
   type TextListStyle,
 } from '@narrative/shared'
+
 import { fontFamilyNames, quoteCssFamilyName } from './cssFontFamily.js'
 
 export interface RichAttrs {
@@ -204,7 +205,9 @@ export function defaultBulletGlyph(level: number): string {
 function readBlockAttrs(a?: Record<string, unknown>): ParagraphAttrs {
   const out: ParagraphAttrs = {}
   if (a === undefined) return out
-  if (a['list'] === 'bullet' || a['list'] === 'number') out.list = a['list'] as ListKind
+  if (a['list'] === 'bullet' || a['list'] === 'number' || a['list'] === 'none') {
+    out.list = a['list'] as ListKind
+  }
   if (typeof a['level'] === 'number' && a['level'] > 0) {
     out.level = Math.min(MAX_LIST_LEVEL, Math.floor(a['level']))
   }
@@ -435,16 +438,21 @@ export function toggleListKind(
   yt: Y.Text,
   from: number,
   to: number,
-  kind: ListKind,
+  kind: Exclude<ListKind, 'none'>,
+  levels?: ReadonlyArray<ListLevelDefaults | undefined>,
 ): ListKind | null {
   const lo = Math.max(0, Math.min(from, to))
   const hi = Math.max(from, to)
   const covered = getParagraphs(yt).filter((p) => p.start <= hi && p.end >= lo)
-  const allMatch = covered.length > 0 && covered.every((p) => p.attrs.list === kind)
+  // What each paragraph shows, its level's default included (A4.2b).
+  const allMatch =
+    covered.length > 0 &&
+    covered.every((p) => effectiveParagraphAttrs(p.attrs, levels).list === kind)
   if (allMatch) {
-    // Remove the list entirely, including any list-only decorations.
-    updateParagraphsInRange(yt, from, to, () => ({
-      list: null,
+    // Remove the list entirely, including any list-only decorations; where
+    // the level would make it a list by default, say so explicitly.
+    updateParagraphsInRange(yt, from, to, (attrs) => ({
+      list: plainListValue(attrs.level, levels),
       level: null,
       bulletChar: null,
       numberFormat: null,
@@ -479,16 +487,24 @@ export function indentParagraphs(yt: Y.Text, from: number, to: number, delta: nu
  * paragraphs agree on its value — the Inspector shows a blank/mixed state
  * otherwise.
  */
-export function readParagraphAttrsForRange(yt: Y.Text, from: number, to: number): ParagraphAttrs {
+export function readParagraphAttrsForRange(
+  yt: Y.Text,
+  from: number,
+  to: number,
+  levels?: ReadonlyArray<ListLevelDefaults | undefined>,
+): ParagraphAttrs {
   const lo = Math.max(0, Math.min(from, to))
   const hi = Math.max(from, to)
-  const covered = getParagraphs(yt).filter((p) => p.start <= hi && p.end >= lo)
+  // With level defaults (A4.2b), what the paragraphs show.
+  const covered = getParagraphs(yt)
+    .filter((p) => p.start <= hi && p.end >= lo)
+    .map((p) => (levels === undefined ? p.attrs : effectiveParagraphAttrs(p.attrs, levels)))
   if (covered.length === 0) return {}
-  const first = covered[0]!.attrs
+  const first = covered[0]!
   const out: ParagraphAttrs = { ...first }
-  for (const p of covered.slice(1)) {
+  for (const attrs of covered.slice(1)) {
     for (const k of PARAGRAPH_ATTR_KEYS) {
-      if ((out[k] as unknown) !== (p.attrs[k] as unknown)) delete out[k]
+      if ((out[k] as unknown) !== (attrs[k] as unknown)) delete out[k]
     }
   }
   return out
@@ -558,6 +574,63 @@ export function formatListNumber(n: number, fmt: ListNumberFormat): string {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Level defaults (A4.2b)
+// ---------------------------------------------------------------------------
+
+/**
+ * What a nesting level gives a paragraph that says nothing of its own: the
+ * box's `listLevels[level]` (`TextListLevel` in @narrative/shared) as far as
+ * the list structure goes. Colours are left to the caller.
+ */
+export interface ListLevelDefaults {
+  list?: ListKind
+  bulletChar?: string
+  numberFormat?: ListNumberFormat
+}
+
+/**
+ * The attributes a paragraph is drawn with: its own, over its level's
+ * defaults. An own `list` wins (`'none'` makes it plain); without one the
+ * level's kind applies, and with it the level's glyph or number format
+ * where the paragraph names none. The result's `list` is never `'none'`
+ * (absent = plain). A box without `listLevels` draws its paragraphs exactly
+ * as they say, as before A4.2b.
+ */
+export function effectiveParagraphAttrs(
+  attrs: ParagraphAttrs,
+  levels?: ReadonlyArray<ListLevelDefaults | undefined>,
+): ParagraphAttrs {
+  const level = Math.max(0, Math.min(MAX_LIST_LEVEL, attrs.level ?? 0))
+  const def = levels?.[level]
+  const out: ParagraphAttrs = { ...attrs }
+  const kind = attrs.list ?? def?.list
+  if (kind === undefined || kind === 'none') {
+    delete out.list
+    return out
+  }
+  out.list = kind
+  if (kind === 'bullet' && out.bulletChar === undefined && def?.bulletChar !== undefined) {
+    out.bulletChar = def.bulletChar
+  }
+  if (kind === 'number' && out.numberFormat === undefined && def?.numberFormat !== undefined) {
+    out.numberFormat = def.numberFormat
+  }
+  return out
+}
+
+/**
+ * The `list` value that makes a paragraph at `level` plain: `'none'` where
+ * the level's default is a list, else no value at all (null clears it).
+ */
+export function plainListValue(
+  level: number | undefined,
+  levels?: ReadonlyArray<ListLevelDefaults | undefined>,
+): 'none' | null {
+  const def = levels?.[Math.max(0, Math.min(MAX_LIST_LEVEL, level ?? 0))]
+  return def?.list === 'bullet' || def?.list === 'number' ? 'none' : null
+}
+
 /**
  * Compute the literal list marker for each paragraph (bullet glyph or
  * formatted number), or `null` for a non-list paragraph. Numbering keeps a
@@ -577,7 +650,8 @@ export function computeMarkers(
   const legacyKind: ListKind | undefined =
     legacyListStyle === 'bullet' ? 'bullet' : legacyListStyle === 'numbered' ? 'number' : undefined
   return attrs.map((a) => {
-    const kind: ListKind | undefined = a.list ?? legacyKind
+    // `'none'` is a plain paragraph whatever else would make it a list.
+    const kind: ListKind | undefined = a.list === 'none' ? undefined : (a.list ?? legacyKind)
     const level = Math.max(0, Math.min(MAX_LIST_LEVEL, a.level ?? 0))
     // Descending out of any deeper level restarts it next time.
     for (let l = level + 1; l < counters.length; l++) {
@@ -726,7 +800,40 @@ export interface ListedHtmlOptions extends HtmlDefaults {
    * are multiples of the line's own font, not of the frame's default size),
    * so each paragraph gets its own. Needs `fontSize`.
    */
-  lineHeightForFontSize?: (fontSizePx: number) => number
+  lineHeightForFontSize?: (fontSizePx: number, lineSpacing?: number) => number
+  /**
+   * Per nesting level, what a paragraph takes when it says nothing of its
+   * own (A4.2b, the box's `listLevels` with colours resolved): its list
+   * kind, marker, indents in px, spacing and type.
+   */
+  listLevels?: ReadonlyArray<ListLevelLook | undefined>
+}
+
+/** A level's defaults as {@link buildListedHtml} draws them: colours resolved to 0xRRGGBB. */
+export interface ListLevelLook extends ListLevelDefaults {
+  bulletColor?: number
+  bulletScale?: number
+  /** Text start, px from the box's left edge. */
+  indent?: number
+  /** Marker gutter, px left of the text. */
+  hanging?: number
+  spaceBefore?: number
+  fontFamily?: string
+  fontWeight?: number
+  fontSize?: number
+  color?: number
+  lineSpacing?: number
+}
+
+/** The frame size a paragraph's unsized runs take: its level's, else the frame's. */
+export function paragraphFrameSizePx(
+  attrs: ParagraphAttrs,
+  frameFontSize: number,
+  levels?: ReadonlyArray<{ fontSize?: number } | undefined>,
+): number {
+  const level = Math.max(0, Math.min(MAX_LIST_LEVEL, attrs.level ?? 0))
+  const size = levels?.[level]?.fontSize
+  return typeof size === 'number' && size > 0 ? size : frameFontSize
 }
 
 /**
@@ -763,10 +870,9 @@ export function buildListedHtml(paras: ParagraphDelta[], o: ListedHtmlOptions): 
   if (o.underline !== undefined) defaults.underline = o.underline
   if (o.fontWeight !== undefined) defaults.fontWeight = o.fontWeight
   if (o.color !== undefined) defaults.color = o.color
-  const markers = computeMarkers(
-    paras.map((p) => p.attrs),
-    o.legacyListStyle,
-  )
+  const levels = o.listLevels
+  const effective = paras.map((p) => effectiveParagraphAttrs(p.attrs, levels))
+  const markers = computeMarkers(effective, o.legacyListStyle)
   const psB =
     typeof o.paragraphSpaceBefore === 'number' && o.paragraphSpaceBefore > 0
       ? o.paragraphSpaceBefore
@@ -781,6 +887,7 @@ export function buildListedHtml(paras: ParagraphDelta[], o: ListedHtmlOptions): 
     const p = paras[i]!
     const marker = markers[i] ?? null
     const level = Math.max(0, Math.min(MAX_LIST_LEVEL, p.attrs.level ?? 0))
+    const look = levels?.[level]
     const styleBits: string[] = []
     // A line is as tall as the fonts on it. CSS also sizes every line by the
     // block's own font (its "strut"), centred on its own metrics — with the
@@ -789,26 +896,48 @@ export function buildListedHtml(paras: ParagraphDelta[], o: ListedHtmlOptions): 
     // than the frame takes that size itself; runs with no size of their own
     // keep the frame's, and lengths the model measures in the frame's em
     // (indent, marker gutter) are given in px so they do not move with it.
-    const paraSize = frameSize !== undefined ? paragraphFontSizePx(p, frameSize) : undefined
+    // A level with a size of its own sets the paragraph in it (A4.2b): its
+    // unsized runs take the level's size, not the frame's.
+    const paraFrame =
+      frameSize !== undefined ? paragraphFrameSizePx(p.attrs, frameSize, levels) : undefined
+    const paraSize = paraFrame !== undefined ? paragraphFontSizePx(p, paraFrame) : undefined
     const ownSize = paraSize !== undefined && paraSize !== frameSize ? paraSize : undefined
     const len = (em: number): string =>
       ownSize !== undefined && frameSize !== undefined
         ? `${Math.round(em * frameSize * 1000) / 1000}px`
         : `${em.toFixed(3)}em`
     if (ownSize !== undefined) styleBits.push(`font-size:${ownSize}px`)
+    if (look?.fontFamily !== undefined) {
+      const family = sanitizeFontFamily(look.fontFamily)
+      const names = family === undefined ? [] : fontFamilyNames(family)
+      if (names.length > 0) {
+        styleBits.push(`font-family:${names.map((n) => quoteCssFamilyName(n, "'")).join(', ')}`)
+      }
+    }
+    const spaceBefore = look?.spaceBefore ?? psB
     // Space-before is the gap *between* paragraphs. PowerPoint does not apply
     // it above the first paragraph in a text frame, and neither do we — the
     // extra leading pushed imported text down by one gap and was part of why
     // a frame PowerPoint had auto-sized to its text overflowed here.
-    if (psB > 0 && i > 0) styleBits.push(`margin-top:${psB}px`)
+    if (spaceBefore > 0 && i > 0) styleBits.push(`margin-top:${spaceBefore}px`)
     if (psA > 0) styleBits.push(`margin-bottom:${psA}px`)
     if (o.lineHeightForFontSize !== undefined && paraSize !== undefined) {
-      const lh = o.lineHeightForFontSize(paraSize)
+      const lh = o.lineHeightForFontSize(paraSize, look?.lineSpacing)
       if (lh > 0) styleBits.push(`line-height:${Math.round(lh * 1000) / 1000}px`)
     }
-    if (marker !== null) {
+    // A level that sets its indents places the text and the marker gutter
+    // in px, as PowerPoint's marL / indent do; otherwise the built-in em
+    // steps.
+    const pxIndent = look?.indent !== undefined || look?.hanging !== undefined
+    const indentPx = look?.indent ?? 0
+    const hangPx = look?.hanging ?? 0
+    const gutter = pxIndent ? `${hangPx}px` : ownSize !== undefined ? len(hangEm) : `${hangEm}em`
+    if (pxIndent) {
+      if (indentPx > 0) styleBits.push(`padding-left:${indentPx}px`)
+      if (marker !== null && hangPx > 0) styleBits.push(`text-indent:-${hangPx}px`)
+    } else if (marker !== null) {
       styleBits.push(`padding-left:${len(level * indentEm + hangEm)}`)
-      styleBits.push(`text-indent:-${ownSize !== undefined ? len(hangEm) : `${hangEm}em`}`)
+      styleBits.push(`text-indent:-${gutter}`)
     } else if (level > 0) {
       styleBits.push(`padding-left:${len(level * indentEm)}`)
     }
@@ -818,16 +947,27 @@ export function buildListedHtml(paras: ParagraphDelta[], o: ListedHtmlOptions): 
     // gutter and off the left edge of the rendered text. Every bullet and
     // number since multi-level lists landed was drawn outside the picture —
     // the gutter was there, the marker was not.
+    // A scaled marker is set in a larger font: an em gutter is divided by
+    // the scale so it stays as wide as the paragraph's.
+    const scale = look?.bulletScale !== undefined && look.bulletScale > 0 ? look.bulletScale : 1
+    const markerWidth =
+      scale !== 1 && !pxIndent && ownSize === undefined
+        ? `${Math.round((hangEm / scale) * 1000) / 1000}em`
+        : gutter
+    const markerBits = [`display:inline-block`, `width:${markerWidth}`, `text-indent:0`]
+    if (look?.bulletColor !== undefined && effective[i]?.list === 'bullet') {
+      markerBits.push(`color:${colorHex(look.bulletColor)}`)
+    }
+    if (scale !== 1) markerBits.push(`font-size:${Math.round(scale * 1000) / 10}%`)
     const markerHtml =
       marker !== null
-        ? `<span data-marker="1" contenteditable="false" style="display:inline-block;width:${ownSize !== undefined ? len(hangEm) : `${hangEm}em`};text-indent:0">${escapeHtml(marker)}</span>`
+        ? `<span data-marker="1" contenteditable="false" style="${markerBits.join(';')}">${escapeHtml(marker)}</span>`
         : ''
-    const inner = toHtml(
-      p.ops,
-      ownSize !== undefined && frameSize !== undefined
-        ? { ...defaults, fontSize: frameSize }
-        : defaults,
-    )
+    const paraDefaults: HtmlDefaults = { ...defaults }
+    if (look?.fontWeight !== undefined) paraDefaults.fontWeight = look.fontWeight
+    if (look?.color !== undefined) paraDefaults.color = look.color
+    if (ownSize !== undefined && paraFrame !== undefined) paraDefaults.fontSize = paraFrame
+    const inner = toHtml(p.ops, paraDefaults)
     const body = inner.length > 0 ? inner : '<br data-empty="1">'
     const style = styleBits.length > 0 ? ` style="${styleBits.join(';')}"` : ''
     out.push(`<div data-pb="1"${style}>${markerHtml}${body}</div>`)
@@ -844,7 +984,9 @@ export function blockAttrsToInsertAttrs(
   attrs: ParagraphAttrs,
 ): Record<string, unknown> | undefined {
   const rec: Record<string, unknown> = {}
-  if (attrs.list === 'bullet' || attrs.list === 'number') rec['list'] = attrs.list
+  if (attrs.list === 'bullet' || attrs.list === 'number' || attrs.list === 'none') {
+    rec['list'] = attrs.list
+  }
   if (typeof attrs.level === 'number' && attrs.level > 0) {
     rec['level'] = Math.min(MAX_LIST_LEVEL, Math.floor(attrs.level))
   }
