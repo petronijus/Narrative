@@ -230,10 +230,15 @@ lefthook's hooks never run — `just doctor` flags it).
 wires three hooks: files written are formatted (`tools/dev/format.sh
 --edit`, Prettier only — ESLint costs ~5 s a call), writes of secrets,
 lockfiles and generated files are refused, and a turn whose content
-has not passed before runs `just check`. Green content is remembered by
-`tools/dev/check-cache.sh` (content fingerprints in `.git/claude-check-green`,
-one run at a time per clone), so the pre-push hook skips a tree the Stop hook
-already checked. Subagents in
+has not passed before runs the affected lane, `just check-affected`
+(`tools/dev/check-affected.sh`: the packages a change reaches and their
+dependents, against the last tree that passed; the whole `just check` when
+a shared file — the justfile, `tools/`, root config, the lockfile — changed),
+skipped while the session's background agents are still working. What
+passed is remembered by `tools/dev/check-cache.sh` (content fingerprints in
+`.git/claude-check-green` for the whole lane, `.git/claude-check-affected-green`
+for the affected one, one run at a time per clone); the pre-push hook needs
+the whole lane and skips a tree that already passed it. Subagents in
 `.claude/agents/`, path-scoped rules in `.claude/rules/`.
 
 ## Common first-run failures

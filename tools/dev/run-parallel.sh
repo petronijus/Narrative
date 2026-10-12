@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Run just recipes side by side: `tools/dev/run-parallel.sh typecheck lint test`.
+# A recipe may carry arguments in the same word, split on spaces:
+# `run-parallel.sh "test ...{./apps/web}" lint-docs` (tools/dev/check-affected.sh).
 #
 # `just check` uses it for its independent steps, which otherwise add up
 # (typecheck, lint, the unit tests and the manifest check share no state).
@@ -19,36 +21,43 @@ trap 'rm -rf "$logs"' EXIT
 
 started=$(date +%s)
 pids=()
+i=0
 for recipe in "$@"; do
   (
     t0=$(date +%s)
-    just "$recipe" >"$logs/$recipe.log" 2>&1
+    set -f # the words are arguments, never globs
+    # shellcheck disable=SC2086
+    just $recipe >"$logs/$i.log" 2>&1
     rc=$?
-    echo "$rc $(($(date +%s) - t0))" >"$logs/$recipe.status"
+    echo "$rc $(($(date +%s) - t0))" >"$logs/$i.status"
     exit "$rc"
   ) &
   pids+=("$!")
+  i=$((i + 1))
 done
 
 for pid in "${pids[@]}"; do wait "$pid" || true; done
 
 failed=()
+i=0
 for recipe in "$@"; do
-  read -r rc secs <"$logs/$recipe.status"
+  read -r rc secs <"$logs/$i.status"
   if [[ "$rc" == 0 ]]; then
     printf '  ok    %-20s %4ss\n' "$recipe" "$secs"
   else
     printf '  FAIL  %-20s %4ss\n' "$recipe" "$secs"
-    failed+=("$recipe")
+    failed+=("$i")
   fi
+  i=$((i + 1))
 done
 echo "  ($(($(date +%s) - started))s in parallel)"
 
 if ((${#failed[@]} > 0)); then
-  for recipe in "${failed[@]}"; do
+  recipes=("$@")
+  for i in "${failed[@]}"; do
     echo
-    echo "── just $recipe ──────────────────────────────────────────────"
-    cat "$logs/$recipe.log"
+    echo "── just ${recipes[$i]} ──────────────────────────────────────────────"
+    cat "$logs/$i.log"
   done
   exit 1
 fi

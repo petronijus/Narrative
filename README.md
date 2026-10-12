@@ -167,7 +167,7 @@ the CI, run locally; the pre-push hook runs `just check`, and
 [`AGENTS.md`](./AGENTS.md) maps "files you touched" → "what else to run":
 
 ```bash
-just check     # the baseline, always (the pre-push hook and Claude Code's Stop hook run it)
+just check     # the baseline, always (the pre-push hook runs it; Claude Code's Stop hook runs `just check-affected`)
 ```
 
 `just size`, `just load`, `just lighthouse`, `just eval` and `just mutate`

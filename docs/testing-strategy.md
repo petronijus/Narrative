@@ -522,11 +522,13 @@ Coding agents read [`/AGENTS.md`](../AGENTS.md) on every conversation
 (Claude Code through `CLAUDE.md`, which imports it; until 2026-09-30 the
 table lived in CLAUDE.md itself). Its "When to run what" table maps "files
 you touched" → "what else to run" on top of `just check`, which the Claude
-Code Stop hook and the pre-push hook run by themselves. It is the operating
+Code Stop hook (narrowed to the packages a change reaches, `just
+check-affected`, since 2026-10-12) and the pre-push hook run by themselves. It is the operating
 contract for autonomous changes; update it when you add a new test target
 or retire an existing one. Examples of the policy:
 
-- Edit anything → `just check` (always; the Stop and pre-push hooks run it).
+- Edit anything → `just check` (always; the pre-push hook runs it, the Stop
+  hook its affected lane).
 - Touch the renderer → also run `renderer-visual` + `inspector-flows` e2e.
 - Touch Yjs mutations → also run the property-based CRDT test +
   `multi-client-collab` e2e.

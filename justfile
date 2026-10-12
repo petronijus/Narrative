@@ -50,13 +50,29 @@ fmt:
 fmt-check:
     tools/dev/format.sh --check --all
 
-# TypeScript in every package
-typecheck:
-    pnpm -r --no-sort typecheck
+# TypeScript in every package; `just typecheck web` (workspace filters) for some
+typecheck *filters:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if (($# == 0)); then exec pnpm -r --no-sort typecheck; fi
+    args=()
+    for f in "$@"; do args+=(--filter "$f"); done
+    exec pnpm "${args[@]}" --no-sort typecheck
 
-# ESLint in every package (incl. the one-door rule)
-lint:
-    NODE_OPTIONS="{{ eslint_node_options }}" pnpm -r --no-sort lint
+# ESLint in every package (incl. the one-door rule); `just lint web` (workspace filters) for some
+lint *filters:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export NODE_OPTIONS="{{ eslint_node_options }}"
+    if (($# == 0)); then exec pnpm -r --no-sort lint; fi
+    args=()
+    for f in "$@"; do args+=(--filter "$f"); done
+    exec pnpm "${args[@]}" --no-sort lint
+
+# The fast lane narrowed to what changed since the last content that passed (what the Claude Code Stop hook runs;
+# tools/dev/check-affected.sh); pre-push still runs `just check`
+check-affected:
+    tools/dev/check-cache.sh run-affected
 
 # Docs name only recipes, files, headings and imports that exist; the e2e map names only specs that exist
 lint-docs:
