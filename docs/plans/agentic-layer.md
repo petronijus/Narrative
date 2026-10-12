@@ -636,10 +636,12 @@ that Narrative mirrors the skills. So:
 | Adatum        | extends Woodgrove: lime accent, decoration, chart palette                                                                      | `adatum-deck-design.md`                                                      |
 
 **The PPTX master reader is a real deliverable.** It turns a client
-master's layouts into pack layout data (and its theme into tokens); it does
-not turn them into components. It also fixes "masters and layouts are
-flattened on import" for ordinary PPTX imports: slides imported from a
-branded deck keep their layout and slot provenance.
+master's layouts into pack layout data (and its theme into tokens).
+**Changed 2026-10-12 (Petr):** it is a bootstrap tool only — ordinary PPTX
+import and export stay as they are (no real masters on export, no layout
+provenance on import), and where the skill or the deck makes it worthwhile
+it proposes components (headline, subline, divider slides).
+[`a4-style-packs.md`](./a4-style-packs.md) → "Decided".
 
 ### 7.4 Contradictions resolved at bootstrap
 
@@ -687,11 +689,13 @@ treats it as a failure, as the Contoso checker does.
 Office, Fabrikam Type, Northwind Sans ST Pro) as folder fonts.
 
 - Brand fonts are uploaded as **folder fonts** of the client's folder.
-  They are scoped to the folder and are never served to anonymous
-  share-link viewers.
-- **Gap to fix in A4:** an editor on a shared deck cannot load the
-  folder's fonts today (folder routes are owner-only), so a collaborator
-  would see fallback faces. Deck-scoped font access fixes it.
+  They are scoped to the folder. **Changed 2026-10-12 (Petr):** a deck
+  guest and a share-link visitor load them too (folder sharing, a6adabb;
+  8eb320b for guests' agents), so a client opening a link sees the brand
+  faces; the earlier "never served to anonymous share-link viewers" is
+  withdrawn.
+- ~~Gap to fix in A4: deck-scoped font access for shared-deck editors~~ —
+  closed by folder sharing before A4 started.
 - **Contoso Head/Text Office** are not in the brain repo (the skill
   deliberately links rather than ships them); they have to be uploaded
   from Woodgrove's own font files.
