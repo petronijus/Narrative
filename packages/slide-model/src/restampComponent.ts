@@ -190,7 +190,12 @@ function segmentsInside(segments: unknown, rows: number, cols: number): Record<s
 function frameOf(rec: { get(key: string): unknown } | Record<string, unknown>) {
   const get = (k: string): unknown =>
     rec instanceof Y.Map ? rec.get(k) : (rec as Record<string, unknown>)[k]
-  return { x: num(get('x')), y: num(get('y')), width: num(get('width')), height: num(get('height')) }
+  return {
+    x: num(get('x')),
+    y: num(get('y')),
+    width: num(get('width')),
+    height: num(get('height')),
+  }
 }
 
 /** What `masterGroupOf` says of an object that is no copy in this stamp of a current master object. */

@@ -22,7 +22,11 @@ import type { ServiceDeps } from './deps.js'
 import { badRequest, conflict, notFound } from './errors.js'
 import { iso, requireComponentRole, requireFolderRole } from './shared.js'
 import { documentName, readDocState } from './liveDocs.js'
-import { createEmptyComponent, prepareComponentStamp, promoteComponent } from './componentStaging.js'
+import {
+  createEmptyComponent,
+  prepareComponentStamp,
+  promoteComponent,
+} from './componentStaging.js'
 
 /** Why a deck cannot restamp stamps of a component in another folder. */
 export const RESTAMP_ELSEWHERE =

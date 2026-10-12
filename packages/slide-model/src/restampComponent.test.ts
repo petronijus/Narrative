@@ -291,7 +291,14 @@ describe('restampComponent', () => {
 
   it('keeps a table slot’s cells, grid and size, and takes its styling from the master', () => {
     const w = world([rect('m_bar', 0, 0)])
-    const tableId = addTable(w.masterObjects, { x: 0, y: 100, width: 400, height: 80, rows: 2, cols: 2 })
+    const tableId = addTable(w.masterObjects, {
+      x: 0,
+      y: 100,
+      width: 400,
+      height: 80,
+      rows: 2,
+      cols: 2,
+    })
     update(w.masterObjects, tableId, { name: 'figures' })
     const [, table] = stampComponent(w.objects, w.master, { x: 0, y: 0 }, CMP)
     // People fill a cell and add a column (the frame grows with the grid).
@@ -302,7 +309,11 @@ describe('restampComponent', () => {
     })
     insertTableCol(w.objects, table!, 2)
     const stamped = () => byId(w.objects, table!) as TableObject
-    const grid = { colWidths: stamped().colWidths, width: stamped().width, height: stamped().height }
+    const grid = {
+      colWidths: stamped().colWidths,
+      width: stamped().width,
+      height: stamped().height,
+    }
     // The master restyles its table: bigger type, a heavy bottom rule.
     setTableDefaultsPatch(w.masterObjects, tableId, { fontSize: 30 })
     setTableBorderSegment(w.masterObjects, tableId, 'h:2:1', { color: 0xff0000, width: 4 })
