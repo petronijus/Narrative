@@ -317,6 +317,8 @@ description, `basics.md`, eval scenarios `component-restamp` and
 188,000 bytes, 140 tools. Verified: `just check`; `just e2e -g
 "component"` 14 passed; `multi-client-collab` green on rerun (its known
 flake once); `just pptx-roundtrip` on the Proseware deck 0 differences
-(`just mutate` broken since 2026-09-26). Left before the release: `just
-eval` (descriptions changed; record `componentPromoteHeadline` again).
-Next: A4.2.
+(`just mutate` broken since 2026-09-26). `just eval` at `2c103a9`: 58/58
+passed, $8.42, 19m46s — `component-restamp` and
+`component-create-pagination` passed on their first live run;
+`component-promote-headline` is live-only, so it has no recording to
+refresh. Committed and pushed; not released. Next: A4.2 (on the PC).
