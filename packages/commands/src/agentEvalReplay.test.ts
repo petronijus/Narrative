@@ -19,7 +19,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { MemoryWorld } from '../../../tests/agent-eval/lib/memoryWorld.js'
-import { replayRecording } from '../../../tests/agent-eval/lib/replay.js'
+import { alignIds, replayRecording } from '../../../tests/agent-eval/lib/replay.js'
 import type { Recording } from '../../../tests/agent-eval/lib/report.js'
 import { SCENARIOS, scenarioById } from '../../../tests/agent-eval/scenarios/index.js'
 
@@ -76,5 +76,33 @@ describe('agent eval: recorded transcripts replay and pass', () => {
     expect(result.baseline.pass).toBe(false)
     expect(result.grade.checks.filter((c) => !c.pass)).toEqual([])
     expect(result.grade.pass).toBe(true)
+  })
+})
+
+describe('agent eval: replay id alignment', () => {
+  it('pairs listed records by name and value, whatever order each side lists them in', () => {
+    const map = new Map<string, string>()
+    alignIds(
+      {
+        colors: [
+          { id: 'live-a', name: 'Navy', value: '#001e50' },
+          { id: 'live-b', name: 'White', value: '#ffffff' },
+        ],
+      },
+      {
+        colors: [
+          { id: 'mem-b', name: 'White', value: '#ffffff' },
+          { id: 'mem-a', name: 'Navy', value: '#001e50' },
+        ],
+      },
+      map,
+    )
+    expect(Object.fromEntries(map)).toEqual({ 'live-a': 'mem-a', 'live-b': 'mem-b' })
+  })
+
+  it('pairs other lists by position', () => {
+    const map = new Map<string, string>()
+    alignIds({ slides: ['s-live-1', 's-live-2'] }, { slides: ['s-mem-1', 's-mem-2'] }, map)
+    expect(Object.fromEntries(map)).toEqual({ 's-live-1': 's-mem-1', 's-live-2': 's-mem-2' })
   })
 })

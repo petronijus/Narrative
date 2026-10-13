@@ -63,9 +63,12 @@ import productRenameEverywhere from './productRenameEverywhere.js'
 import subtitlePlainRestyle from './subtitlePlainRestyle.js'
 import yearFixSecondOccurrence from './yearFixSecondOccurrence.js'
 import folderStylesApply from './folderStylesApply.js'
+import listLevelPlainParagraph from './listLevelPlainParagraph.js'
 import packBuildSlide from './packBuildSlide.js'
 import packDeckVariant from './packDeckVariant.js'
+import packEditColour from './packEditColour.js'
 import packFixCheck from './packFixCheck.js'
+import tokenByVariant from './tokenByVariant.js'
 import titleStyleFolderwide from './titleStyleFolderwide.js'
 import quoteStyleFromBox from './quoteStyleFromBox.js'
 
@@ -128,9 +131,12 @@ export const SCENARIOS: readonly AnyScenario[] = [
   subtitlePlainRestyle,
   yearFixSecondOccurrence,
   folderStylesApply,
+  listLevelPlainParagraph,
   packBuildSlide,
   packDeckVariant,
+  packEditColour,
   packFixCheck,
+  tokenByVariant,
   titleStyleFolderwide,
   quoteStyleFromBox,
 ]

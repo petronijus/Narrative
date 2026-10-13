@@ -708,6 +708,26 @@ export class MemoryWorld implements World {
         throw new CommandError('not_found', `deck '${args.target.deckId}' does not exist`)
     }
     const writes = def.effects.includes('doc')
+    // A named run must be this session's open run on this target, as the
+    // server checks for every agent call (services/runs.ts runFor).
+    if (args.attachRunId !== undefined && !(writes && deck !== undefined)) {
+      const named = this.runs.get(args.attachRunId)
+      if (named === undefined || named.status !== 'open' || named.sessionKey !== args.sessionKey)
+        throw new CommandError(
+          'conflict',
+          `run '${args.attachRunId}' is not open (it was closed, reverted or never existed); start a new one with agent.startRun`,
+        )
+      if (deck === undefined)
+        throw new CommandError(
+          'conflict',
+          `run '${args.attachRunId}' works on deck:${named.deckId}; this command changes no deck or master (a folder or account change, not part of that run): call it without runId`,
+        )
+      if (named.deckId !== deck.record.id)
+        throw new CommandError(
+          'conflict',
+          `run '${args.attachRunId}' works on deck:${named.deckId}, not deck:${deck.record.id}`,
+        )
+    }
     const run =
       writes && deck !== undefined
         ? this.runFor(args.sessionKey, deck.record.id, args.attachRunId)

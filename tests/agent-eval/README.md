@@ -196,6 +196,14 @@ registry, so they run unchanged in both worlds.
 | `folder-styles-apply`         | heading linked to the folder's Title, paragraph to Body, no overrides, text kept (`token.list`, `text.style.apply`)                                                 | yes    |
 | `title-style-folderwide`      | Title style 88 px / 800; linked titles in two decks follow, a hand-set size stays, no per-box edits (`token.update`)                                                | yes    |
 | `quote-style-from-box`        | a hand-styled quote saved as "Testimonial" (size, weight, colour) and applied to two more quotes (`text.style.createFromObject`)                                    | yes    |
+| `text-autofit-grow` | the body box grows with its text (`autofit`), not resized by hand; title untouched (`object.update`) | yes |
+| `style-shrink-floor` | a text style may shrink its text to fit, never below its floor (`token.update` `minSize`) | yes |
+| `pack-build-slide` | a content slide laid out with the folder's pack passes the brand check (`slide.applyLayout`, `query.check`) | yes |
+| `pack-deck-variant` | a laid-out deck switched to the pack's dark variant; every slot keeps its content (`style.deck.apply`) | yes |
+| `pack-fix-check` | what the brand check reports on a laid-out slide is fixed (`query.check`) | yes |
+| `pack-edit-colour` | the pack's red changed and compiled; the compiled colour token follows, navy untouched (`style.pack.edit`) | yes |
+| `list-level-plain-paragraph` | one paragraph made plain (`list: "none"`) in a box whose bullets come from its list levels (`text.list`) | yes |
+| `token-by-variant` | a folder colour white on dark decks only: one token with `byVariant` on the pack's axis (`token.update`) | yes |
 
 ¹ Written or extended on 2026-10-03 (folder sharing step 2) and **not run
 live yet**: both need a live run (`just eval --filter

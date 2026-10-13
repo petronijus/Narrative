@@ -1,0 +1,188 @@
+{
+  "scenario": "list-level-plain-paragraph",
+  "tag": "eve14f66",
+  "recordedAt": "2026-10-13T21:00:26.544Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.296 (Claude Code)",
+  "fixture": {
+    "deckId": "zQhfj6xIQ6yk",
+    "title": "Levels eve14f66",
+    "body": "NHBiXao94tXIzkZgW6T2H"
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "In the Narrative deck \"Levels eve14f66\" (deckId zQhfj6xIQ6yk), the body text on the first slide is a bulleted list. Keep the bullets, but make the third paragraph (\"Source: annual report\") plain text without a bullet.",
+        "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_slide,mcp__narrative-eval__text_list,mcp__narrative-eval__query_object",
+              "max_results": 4
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "zQhfj6xIQ6yk",
+              "slide": {
+                "index": 0
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "5OrQauTKSnw6GYR_AbHnG",
+              "index": 0,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "NHBiXao94tXIzkZgW6T2H",
+                  "type": "text",
+                  "x": 120,
+                  "y": 280,
+                  "width": 1680,
+                  "height": 400,
+                  "rotation": 0,
+                  "text": "Revenue up 12%\n\nCosts flat\n\nSource: annual report",
+                  "fontSize": 28,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "listLevels": [
+                    {
+                      "list": "bullet",
+                      "bulletChar": "–",
+                      "indent": 36,
+                      "hanging": 36
+                    }
+                  ]
+                }
+              ],
+              "animations": [],
+              "notes": ""
+            },
+            "text": "{\"id\":\"5OrQauTKSnw6GYR_AbHnG\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"NHBiXao94tXIzkZgW6T2H\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"Revenue up 12%\\n\\nCosts flat\\n\\nSource: annual report\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"listLevels\":[{\"list\":\"bullet\",\"bulletChar\":\"–\",\"indent\":36,\"hanging\":36}]}],\"animations\":[],\"notes\":\"\"}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "zQhfj6xIQ6yk",
+              "request": "Remove the bullet from \"Source: annual report\" on slide 1"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_0FFVe61iDy6K2cei"
+            },
+            "text": "{\"runId\":\"run_0FFVe61iDy6K2cei\"}"
+          },
+          {
+            "tool": "text_list",
+            "command": "text.list",
+            "input": {
+              "deckId": "zQhfj6xIQ6yk",
+              "target": {
+                "slide": "5OrQauTKSnw6GYR_AbHnG",
+                "object": "NHBiXao94tXIzkZgW6T2H"
+              },
+              "range": {
+                "match": "Source: annual report"
+              },
+              "kind": "none"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "paragraphs": 1
+            },
+            "text": "{\"paragraphs\":1}"
+          },
+          {
+            "tool": "query_object",
+            "command": "query.object",
+            "input": {
+              "deckId": "zQhfj6xIQ6yk",
+              "slide": "5OrQauTKSnw6GYR_AbHnG",
+              "object": "NHBiXao94tXIzkZgW6T2H"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slide": {
+                "id": "5OrQauTKSnw6GYR_AbHnG",
+                "index": 0
+              },
+              "stackIndex": 0,
+              "object": {
+                "id": "NHBiXao94tXIzkZgW6T2H",
+                "type": "text",
+                "x": 120,
+                "y": 280,
+                "width": 1680,
+                "height": 400,
+                "rotation": 0,
+                "text": "Revenue up 12%\n\nCosts flat\n\nSource: annual report",
+                "fontSize": 28,
+                "fontWeight": "normal",
+                "color": "#000000",
+                "align": "left",
+                "opacity": 1,
+                "listLevels": [
+                  {
+                    "list": "bullet",
+                    "bulletChar": "–",
+                    "indent": 36,
+                    "hanging": 36
+                  }
+                ],
+                "paragraphs": [
+                  {
+                    "runs": [
+                      {
+                        "text": "Revenue up 12%"
+                      }
+                    ]
+                  },
+                  {
+                    "runs": [
+                      {
+                        "text": "Costs flat"
+                      }
+                    ]
+                  },
+                  {
+                    "runs": [
+                      {
+                        "text": "Source: annual report"
+                      }
+                    ],
+                    "list": "none"
+                  }
+                ]
+              },
+              "animations": []
+            },
+            "text": "{\"slide\":{\"id\":\"5OrQauTKSnw6GYR_AbHnG\",\"index\":0},\"stackIndex\":0,\"object\":{\"id\":\"NHBiXao94tXIzkZgW6T2H\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"Revenue up 12%\\n\\nCosts flat\\n\\nSource: annual report\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"listLevels\":[{\"list\":\"bullet\",\"bulletChar\":\"–\",\"indent\":36,\"hanging\":36}],\"paragraphs\":[{\"runs\":[{\"text\":\"Revenue up 12%\"}]},{\"runs\":[{\"text\":\"Costs flat\"}]},{\"runs\":[{\"text\":\"Source: annual report\"}],\"list\":\"none\"}]},\"animations\":[]}"
+          }
+        ],
+        "finalText": "I removed the bullet from \"Source: annual report\" on the first slide, so it's now plain text. \"Revenue up 12%\" and \"Costs flat\" still have their \"–\" bullets. I checked the text box afterwards to confirm the change, but didn't look at a rendered image of the slide.\n\nThe bullets are set once for the whole text box, so the third line now has its own \"no list\" setting that overrides that.\n\nIf you want it back, undoing this run (`run_0FFVe61iDy6K2cei`) restores the bullet.",
+        "turns": 6,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

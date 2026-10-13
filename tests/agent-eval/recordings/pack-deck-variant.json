@@ -1,0 +1,289 @@
+{
+  "scenario": "pack-deck-variant",
+  "tag": "ev6b6b7f",
+  "recordedAt": "2026-10-13T21:10:42.063Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.296 (Claude Code)",
+  "fixture": {
+    "folderId": "U6Q4zyFKIWcf",
+    "deckId": "wX6LgRTMATgC",
+    "title": "Pack variant ev6b6b7f",
+    "slideIds": ["OwMxj3LrB-7sbRGt3-IJo", "vM5A7LCV3kj4xtK9_dXmV"]
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "Switch the Narrative deck \"Pack variant ev6b6b7f\" (deckId wX6LgRTMATgC) to the dark version of its brand.",
+        "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__style_pack_get,mcp__narrative-eval__style_deck_apply,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_deck",
+              "max_results": 4
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
+          {
+            "tool": "query_deck",
+            "command": "query.deck",
+            "input": {
+              "deckId": "wX6LgRTMATgC"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slideCount": 2,
+              "slides": [
+                {
+                  "id": "OwMxj3LrB-7sbRGt3-IJo",
+                  "index": 0,
+                  "title": "Annual review",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0,
+                  "layout": {
+                    "packId": "example",
+                    "layoutId": "title"
+                  }
+                },
+                {
+                  "id": "vM5A7LCV3kj4xtK9_dXmV",
+                  "index": 1,
+                  "title": "Highlights",
+                  "transition": "none",
+                  "objectCount": 4,
+                  "animationCount": 0,
+                  "layout": {
+                    "packId": "example",
+                    "layoutId": "title-bullets"
+                  }
+                }
+              ],
+              "guides": [],
+              "meta": {}
+            },
+            "text": "{\"slideCount\":2,\"slides\":[{\"id\":\"OwMxj3LrB-7sbRGt3-IJo\",\"index\":0,\"title\":\"Annual review\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0,\"layout\":{\"packId\":\"example\",\"layoutId\":\"title\"}},{\"id\":\"vM5A7LCV3kj4xtK9_dXmV\",\"index\":1,\"title\":\"Highlights\",\"transition\":\"none\",\"objectCount\":4,\"animationCount\":0,\"layout\":{\"packId\":\"example\",\"layoutId\":\"title-bullets\"}}],\"guides\":[],\"meta\":{}}"
+          },
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__deck_list",
+              "max_results": 1
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
+          {
+            "tool": "deck_list",
+            "command": "deck.list",
+            "input": {
+              "query": "Pack variant ev6b6b7f",
+              "limit": 5
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "decks": [
+                {
+                  "id": "wX6LgRTMATgC",
+                  "title": "Pack variant ev6b6b7f",
+                  "folderId": "U6Q4zyFKIWcf",
+                  "updatedAt": "2026-10-13T21:10:24.036Z",
+                  "role": "owner"
+                }
+              ],
+              "nextCursor": null
+            },
+            "text": "{\"decks\":[{\"id\":\"wX6LgRTMATgC\",\"title\":\"Pack variant ev6b6b7f\",\"folderId\":\"U6Q4zyFKIWcf\",\"updatedAt\":\"2026-10-13T21:10:24.036Z\",\"role\":\"owner\"}],\"nextCursor\":null}"
+          },
+          {
+            "tool": "style_pack_get",
+            "command": "style.pack.get",
+            "input": {
+              "folderId": "U6Q4zyFKIWcf",
+              "part": "summary"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "part": "summary",
+              "value": {
+                "id": "example",
+                "name": "Example",
+                "variants": [
+                  {
+                    "axis": "background",
+                    "default": "light",
+                    "values": ["light", "dark"]
+                  }
+                ],
+                "surfaces": ["picture-dark"],
+                "colors": {
+                  "navy": "#001e50",
+                  "white": "#ffffff",
+                  "grey": "#7a8590",
+                  "red": "#e4002b"
+                },
+                "fonts": {
+                  "head": "Inter",
+                  "text": "Inter"
+                },
+                "textStyles": {
+                  "title": "Title 64px",
+                  "body": "Body 32px",
+                  "footer": "Footer 18px"
+                },
+                "layouts": [
+                  "title: The opening slide: the deck title and a subtitle.",
+                  "title-bullets: A headline and up to six bullet points.",
+                  "picture: A full-bleed picture with a short statement on it."
+                ],
+                "components": ["pagination (pagination)", "headline (headline)"],
+                "furniture": ["pagenum", "footer"],
+                "archetypeMap": {
+                  "cover": ["title"],
+                  "content": ["title-bullets"],
+                  "picture": ["picture"]
+                },
+                "editorial": {
+                  "titleMode": "action-title",
+                  "title": {
+                    "maxWords": 12,
+                    "trailingPeriod": "forbid"
+                  },
+                  "languages": ["en"]
+                }
+              }
+            },
+            "text": "{\"part\":\"summary\",\"value\":{\"id\":\"example\",\"name\":\"Example\",\"variants\":[{\"axis\":\"background\",\"default\":\"light\",\"values\":[\"light\",\"dark\"]}],\"surfaces\":[\"picture-dark\"],\"colors\":{\"navy\":\"#001e50\",\"white\":\"#ffffff\",\"grey\":\"#7a8590\",\"red\":\"#e4002b\"},\"fonts\":{\"head\":\"Inter\",\"text\":\"Inter\"},\"textStyles\":{\"title\":\"Title 64px\",\"body\":\"Body 32px\",\"footer\":\"Footer 18px\"},\"layouts\":[\"title: The opening slide: the deck title and a subtitle.\",\"title-bullets: A headline and up to six bullet points.\",\"picture: A full-bleed picture with a short statement on it.\"],\"components\":[\"pagination (pagination)\",\"headline (headline)\"],\"furniture\":[\"pagenum\",\"footer\"],\"archetypeMap\":{\"cover\":[\"title\"],\"content\":[\"title-bullets\"],\"picture\":[\"picture\"]},\"editorial\":{\"titleMode\":\"action-title\",\"title\":{\"maxWords\":12,\"trailingPeriod\":\"forbid\"},\"languages\":[\"en\"]}}}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "wX6LgRTMATgC",
+              "request": "Switch the deck to the dark version of its brand"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_jYXoxJRFLP0Dp4E0"
+            },
+            "text": "{\"runId\":\"run_jYXoxJRFLP0Dp4E0\"}"
+          },
+          {
+            "tool": "style_deck_apply",
+            "command": "style.deck.apply",
+            "input": {
+              "deckId": "wX6LgRTMATgC",
+              "variant": {
+                "background": "dark"
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slides": 2,
+              "unmatched": [],
+              "surfaceReset": [],
+              "guidesAdded": 7
+            },
+            "text": "{\"slides\":2,\"unmatched\":[],\"surfaceReset\":[],\"guidesAdded\":7}"
+          },
+          {
+            "tool": "query_deck",
+            "command": "query.deck",
+            "input": {
+              "deckId": "wX6LgRTMATgC"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slideCount": 2,
+              "slides": [
+                {
+                  "id": "OwMxj3LrB-7sbRGt3-IJo",
+                  "index": 0,
+                  "title": "Annual review",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0,
+                  "layout": {
+                    "packId": "example",
+                    "layoutId": "title"
+                  }
+                },
+                {
+                  "id": "vM5A7LCV3kj4xtK9_dXmV",
+                  "index": 1,
+                  "title": "Highlights",
+                  "transition": "none",
+                  "objectCount": 4,
+                  "animationCount": 0,
+                  "layout": {
+                    "packId": "example",
+                    "layoutId": "title-bullets"
+                  }
+                }
+              ],
+              "guides": [
+                {
+                  "id": "cDqCHzS_qK3-vVi5-M4A9",
+                  "orientation": "vertical",
+                  "position": 120
+                },
+                {
+                  "id": "cI-T6MJTsaLF5PD9Yw4su",
+                  "orientation": "vertical",
+                  "position": 1800
+                },
+                {
+                  "id": "V07O-MyfEbIcZj0uyDTvJ",
+                  "orientation": "vertical",
+                  "position": 930
+                },
+                {
+                  "id": "jZGeNBzA-oGi4y-kTtXp8",
+                  "orientation": "vertical",
+                  "position": 990
+                },
+                {
+                  "id": "j3S8HQNH1NqhSJ0oJTREe",
+                  "orientation": "horizontal",
+                  "position": 80
+                },
+                {
+                  "id": "TW3jOqNcAJ_N_lXYcXaDg",
+                  "orientation": "horizontal",
+                  "position": 1000
+                },
+                {
+                  "id": "00iQsVQ9Aje9iSnzZJWpT",
+                  "orientation": "horizontal",
+                  "position": 300
+                }
+              ],
+              "meta": {
+                "variant": {
+                  "background": "dark"
+                }
+              }
+            },
+            "text": "{\"slideCount\":2,\"slides\":[{\"id\":\"OwMxj3LrB-7sbRGt3-IJo\",\"index\":0,\"title\":\"Annual review\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0,\"layout\":{\"packId\":\"example\",\"layoutId\":\"title\"}},{\"id\":\"vM5A7LCV3kj4xtK9_dXmV\",\"index\":1,\"title\":\"Highlights\",\"transition\":\"none\",\"objectCount\":4,\"animationCount\":0,\"layout\":{\"packId\":\"example\",\"layoutId\":\"title-bullets\"}}],\"guides\":[{\"id\":\"cDqCHzS_qK3-vVi5-M4A9\",\"orientation\":\"vertical\",\"position\":120},{\"id\":\"cI-T6MJTsaLF5PD9Yw4su\",\"orientation\":\"vertical\",\"position\":1800},{\"id\":\"V07O-MyfEbIcZj0uyDTvJ\",\"orientation\":\"vertical\",\"position\":930},{\"id\":\"jZGeNBzA-oGi4y-kTtXp8\",\"orientation\":\"vertical\",\"position\":990},{\"id\":\"j3S8HQNH1NqhSJ0oJTREe\",\"orientation\":\"horizontal\",\"position\":80},{\"id\":\"TW3jOqNcAJ_N_lXYcXaDg\",\"orientation\":\"horizontal\",\"position\":1000},{\"id\":\"00iQsVQ9Aje9iSnzZJWpT\",\"orientation\":\"horizontal\",\"position\":300}],\"meta\":{\"variant\":{\"background\":\"dark\"}}}"
+          }
+        ],
+        "finalText": "I switched \"Pack variant ev6b6b7f\" to the dark version of its brand. When I checked the deck afterwards, its background setting read `dark`.\n\n- **Slides:** both slides (\"Annual review\" and \"Highlights\") were re-laid with the dark colours. They kept their content and layouts, and neither slide was left out.\n- **Guides:** this also added 7 alignment guides from the brand's grid to the deck by default. They only help with lining things up while editing. I can remove them if you don't want them.\n\nTo undo it, revert run `run_jYXoxJRFLP0Dp4E0` (one step).",
+        "turns": 9,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

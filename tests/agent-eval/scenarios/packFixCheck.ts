@@ -10,7 +10,8 @@ export default defineScenario({
   covers: ['query.check'],
   maxTurns: 14,
   replay: {
-    reason: 'not recorded yet: record it with `just eval --filter pack- --record`, then set true',
+    reason:
+      'live only: the agent measures the text with query.check, and the memory world has no renderer',
   },
   async setup(world) {
     const fx = await packDeck(world, 'Pack fix')

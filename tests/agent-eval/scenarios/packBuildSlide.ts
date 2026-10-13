@@ -10,7 +10,8 @@ export default defineScenario({
   covers: ['style.pack.get', 'slide.applyLayout', 'style.deck.apply', 'query.check'],
   maxTurns: 14,
   replay: {
-    reason: 'not recorded yet: record it with `just eval --filter pack- --record`, then set true',
+    reason:
+      'live only: the agent measures the text with query.check, and the memory world has no renderer',
   },
   async setup(world) {
     return packDeck(world, 'Pack build')

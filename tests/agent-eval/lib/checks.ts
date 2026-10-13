@@ -153,8 +153,10 @@ export interface DeckOutline {
     transition: string
     objectCount: number
     animationCount: number
+    layout?: { packId: string; layoutId: string; surface?: string }
   }>
   guides: unknown[]
+  meta: { variant?: Record<string, string>; fields?: Record<string, string>; lang?: string }
 }
 
 export function readDeck(world: World, deckId: string): Promise<DeckOutline> {

@@ -1,4 +1,4 @@
-import { Checks, norm, plainText, readSlide } from '../lib/checks.js'
+import { Checks, norm, plainText, readDeck, readSlide } from '../lib/checks.js'
 import { defineScenario } from '../lib/types.js'
 import { deckRef } from './helpers.js'
 import { packDeck } from './packHelpers.js'
@@ -9,9 +9,7 @@ export default defineScenario({
   title: "Switch a deck to its style pack's dark variant without losing content",
   covers: ['style.deck.apply'],
   maxTurns: 8,
-  replay: {
-    reason: 'not recorded yet: record it with `just eval --filter pack- --record`, then set true',
-  },
+  replay: true,
   async setup(world) {
     const fx = await packDeck(world, 'Pack variant', 2)
     await world.run({ deckId: fx.deckId }, 'slide.applyLayout', {
@@ -29,12 +27,8 @@ export default defineScenario({
   steps: (fx) => [`Switch the Narrative deck ${deckRef(fx)} to the dark version of its brand.`],
   async grade({ world, fixture: fx }) {
     const c = new Checks()
-    const deck = await world.run<{ slides: Array<{ background?: { color?: number } }> }>(
-      { deckId: fx.deckId },
-      'query.deck',
-      {},
-    )
-    void deck
+    const deck = await readDeck(world, fx.deckId)
+    c.eq("the deck's variant is dark", deck.meta.variant?.['background'], 'dark')
     for (const [i, slot, text] of [
       [0, 'title', 'Annual review'],
       [1, 'bullets', 'Record year'],
@@ -45,8 +39,9 @@ export default defineScenario({
         `slide ${i + 1} keeps its ${slot}`,
         obj !== undefined && norm(plainText(obj)).includes(norm(text)),
       )
-      const bg = (slide as unknown as { background?: { color?: number } }).background
-      c.eq(`slide ${i + 1} is on the dark background (navy)`, bg?.color, 0x001e50)
+      // query.slide gives colours as "#rrggbb".
+      const bg = slide.background as { color?: string } | null
+      c.eq(`slide ${i + 1} is on the dark background (navy)`, bg?.color, '#001e50')
     }
     return c.done()
   },
