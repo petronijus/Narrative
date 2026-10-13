@@ -290,7 +290,9 @@ export class RunManager implements AgentRunService {
       if (run.targetKey !== targetKey) {
         throw new CommandError(
           'conflict',
-          `run '${args.runId}' works on ${run.targetKey}, not ${targetKey}`,
+          targetKey === 'account'
+            ? `run '${args.runId}' works on ${run.targetKey}; this command changes no deck or master (a folder or account change, not part of that run): call it without runId`
+            : `run '${args.runId}' works on ${run.targetKey}, not ${targetKey}`,
         )
       }
       this.current.set(this.currentKey(args.session, targetKey), run.id)

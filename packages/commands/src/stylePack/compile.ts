@@ -141,6 +141,9 @@ export function compileStylePack(
   collectRefs({ textStyles: pack.textStyles, components: pack.components }, used)
   collectRefs(pack.layouts, used)
   collectRefs(pack.furniture, used)
+  // A logo per role value is chosen by the colour its keys name: they are drawn with.
+  for (const asset of Object.values(pack.assets))
+    for (const key of Object.keys(asset.byRole?.files ?? {})) collectRefs(key, used)
 
   // Axis values layouts pin as their surface (a declared surface of that id wins).
   const pinnedValues = new Set<string>()

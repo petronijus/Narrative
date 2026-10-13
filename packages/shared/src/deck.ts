@@ -132,9 +132,10 @@ export interface Slide {
   collapsed?: boolean
   /**
    * The style pack layout the slide follows (A4.4): written by
-   * `slide.applyLayout`, restyled by `style.deck.apply`, cleared when the
-   * slide stops following it. Its `surface` (a photo tone, a blue band) is
-   * where the slide's colour tokens resolve (A4.2d).
+   * `slide.applyLayout` (replaced by the next one), restyled by
+   * `style.deck.apply`; nothing detaches a slide from its layout yet. Its
+   * `surface` (a photo tone, a blue band) is where the slide's colour
+   * tokens resolve (A4.2d).
    */
   layout?: SlideLayoutRef
 }

@@ -58,6 +58,7 @@ import { exampleStylePack } from '@narrative/shared'
 import { parseStylePack } from '../stylePack/parse.js'
 import { previousOfUpdate } from '../stylePack/change.js'
 import { compileStylePack } from '../stylePack/compile.js'
+import { storedStylePack } from '../stylePack/parse.js'
 import { CommandError } from '../errors.js'
 import { applyInsertPlan, planForMaster } from '../insert/plan.js'
 import { objectsOf, requireObjects, resolveSlide } from '../refs.js'
@@ -1359,7 +1360,7 @@ export function createDomainFakes(
           family: f.family ?? '',
           weight: f.weight ?? 400,
         }))
-        const plan = compileStylePack(pack, { tokens: readFolderTokens(doc), fonts })
+        const plan = compileStylePack(storedStylePack(pack), { tokens: readFolderTokens(doc), fonts })
         const counts = {
           colors: { created: 0, updated: 0 },
           textStyles: { created: 0, updated: 0 },
@@ -1370,7 +1371,7 @@ export function createDomainFakes(
             const fields = parseNewTokenFields(category, t.fields)
             if (category === 'textStyles') fields['builtin'] = false
             fields['origin'] = t.origin
-            if (t.exists) updateFolderToken(doc, category, t.id, fields)
+            if (t.exists) updateFolderToken(doc, category, t.id, fields, { replace: true })
             else addFolderToken(doc, category, t.id, fields)
             counts[category][t.exists ? 'updated' : 'created']++
           }

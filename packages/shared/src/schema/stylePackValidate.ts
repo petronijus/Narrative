@@ -158,6 +158,10 @@ export function validateStylePack(pack: StylePack): PackIssue[] {
 
   const refs: Array<{ path: string; ref: string }> = []
   colorRefs(pack, '', refs)
+  // A logo per role value is keyed by colour: the keys are references too.
+  for (const [aid, asset] of Object.entries(pack.assets))
+    for (const key of Object.keys(asset.byRole?.files ?? {}))
+      if (!key.startsWith('#')) refs.push({ path: `assets.${aid}.byRole.files.${key}`, ref: key })
   for (const { path, ref } of refs) {
     if (ref.startsWith('color:')) {
       const id = ref.slice('color:'.length)

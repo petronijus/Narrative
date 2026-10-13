@@ -44,6 +44,23 @@ describe('style pack', () => {
     )
   })
 
+  it("checks a logo's per-colour file keys: a colour reference, of a pack colour", () => {
+    const pack = exampleStylePack()
+    pack.assets['logo'] = {
+      name: 'Logo',
+      byRole: {
+        role: 'text',
+        files: { 'color:navy': { assetId: 'a1' }, 'color:purple': { assetId: 'a2' } },
+      },
+    }
+    expect(paths(pack)).toEqual(['assets.logo.byRole.files.color:purple'])
+    const shape = exampleStylePack() as unknown as Record<string, unknown>
+    shape['assets'] = {
+      logo: { name: 'Logo', byRole: { role: 'text', files: { white: { assetId: 'a' } } } },
+    }
+    expect(StylePackSchema.safeParse(shape).success).toBe(false)
+  })
+
   it('needs every role used covered by exactly one axis, in every value', () => {
     const pack = exampleStylePack()
     delete pack.tokens.axes[0]!.values[1]!.roles.accent

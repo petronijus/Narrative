@@ -39,12 +39,17 @@ function packMap(doc: Y.Doc): Y.Map<unknown> {
   return doc.getMap<unknown>('stylePack')
 }
 
-/** A plain value as stored: objects become Y.Maps (deep), arrays stay plain values. */
+/**
+ * A plain value as stored: objects become Y.Maps (deep), arrays stay plain
+ * values. A `null` member is left out: under a key a merge patch creates,
+ * null means absent (RFC 7386), as `mergeStylePackPatch` — the result the
+ * caller validated — has it.
+ */
 function toY(value: unknown): unknown {
   if (!isPlainObject(value)) return value
   const m = new Y.Map<unknown>()
   for (const [k, v] of Object.entries(value)) {
-    if (k === '__proto__' || v === undefined) continue
+    if (k === '__proto__' || v === undefined || v === null) continue
     m.set(k, toY(v))
   }
   return m

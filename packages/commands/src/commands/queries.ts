@@ -15,6 +15,7 @@ import {
   getSlideNotesText,
   listDeckGuides,
   listSlides,
+  readDeckMeta,
   yMapToAnimationStep,
   type AnimationsMutationContext,
 } from '@narrative/slide-model'
@@ -110,6 +111,20 @@ function titleGuess(slide: Slide): string | undefined {
   return best.text.length > TITLE_MAX ? `${best.text.slice(0, TITLE_MAX - 1)}…` : best.text
 }
 
+/** The pack layout a slide follows (A4.4). */
+const SlideLayoutOutput = z.object({
+  packId: z.string(),
+  layoutId: z.string(),
+  surface: z.string().optional(),
+})
+
+/** The deck's meta (A4.2d): its pack variant, footer field values and language. */
+const DeckMetaOutput = z.object({
+  variant: z.record(z.string(), z.string()).optional(),
+  fields: z.record(z.string(), z.string()).optional(),
+  lang: z.string().optional(),
+})
+
 export const queryDeck = defineCommand({
   ...query,
   id: 'query.deck',
@@ -117,7 +132,8 @@ export const queryDeck = defineCommand({
   description:
     "A compact outline of the whole deck, built to fit a model's context: every slide with its id, 0-based " +
     'index, name, a title guessed from its largest text, outline indent, skipped flag, transition kind and object ' +
-    "/ animation counts, plus the deck's alignment guides. Start here, then read one slide with query.slide. " +
+    "/ animation counts and its style pack layout, plus the deck's alignment guides and its meta (pack variant, " +
+    'footer fields, language; set with style.deck.apply). Start here, then read one slide with query.slide. ' +
     'Slides are 1920 x 1080 px.',
   input: z.strictObject({}),
   output: z.object({
@@ -134,11 +150,13 @@ export const queryDeck = defineCommand({
         transition: z.string(),
         objectCount: z.number(),
         animationCount: z.number(),
+        layout: SlideLayoutOutput.optional(),
       }),
     ),
     guides: z.array(GuideOutput),
+    meta: DeckMetaOutput,
   }),
-  implementedWith: ['listSlides', 'listDeckGuides'],
+  implementedWith: ['listSlides', 'listDeckGuides', 'readDeckMeta'],
   examples: [{ title: 'Outline the deck', input: {} }],
   handler(ctx) {
     const deck = requireDeck(ctx)
@@ -158,9 +176,11 @@ export const queryDeck = defineCommand({
           transition: s.transition.kind,
           objectCount: s.objects.length,
           animationCount: s.animations.length,
+          ...(s.layout !== undefined ? { layout: s.layout } : {}),
         }
       }),
       guides: listDeckGuides(getDeckGuidesCtx(deck.doc)),
+      meta: readDeckMeta(deck.doc),
     }
   },
 })
@@ -171,7 +191,8 @@ export const querySlide = defineCommand({
   title: 'Read slide',
   description:
     'Everything on one slide: every object with all its properties in stacking order (first = backmost), the ' +
-    'animation steps in play order, the transition, the background (null = default white) and the speaker notes ' +
+    'animation steps in play order, the transition, the background (null = default white), the style pack layout ' +
+    'it follows (slide.applyLayout) and the speaker notes ' +
     'as plain text (slide.notes.get has them as Markdown with their formatting). Text bodies come as plain `text` (blank line between paragraphs) plus `paragraphs` with runs ' +
     'and list attributes when formatted; colours as "#rrggbb" or { $token }. For one object use query.object. ' +
     'It also reads a component master: target the component (componentId) and read slide { index: 0 } — edit ' +
@@ -188,6 +209,7 @@ export const querySlide = defineCommand({
     background: z.record(z.string(), z.unknown()).nullable(),
     objects: z.array(ObjectOutputSchema),
     animations: z.array(StepOutput),
+    layout: SlideLayoutOutput.optional(),
     notes: z.string(),
   }),
   implementedWith: ['listSlides', 'yMapToPlainObject', 'getParagraphDeltas', 'getSlideNotesText'],
@@ -224,6 +246,7 @@ export const querySlide = defineCommand({
           : (toJsonForModel(slide.background) as Record<string, unknown>),
       objects: objectList as Array<z.input<typeof ObjectOutputSchema>>,
       animations: animations as Array<z.input<typeof StepOutput>>,
+      ...(slide.layout !== undefined ? { layout: slide.layout } : {}),
       notes: getSlideNotesText(deck, slide.id) ?? '',
     }
   },

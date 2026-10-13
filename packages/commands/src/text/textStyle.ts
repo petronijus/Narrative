@@ -172,6 +172,15 @@ export function textStyleFields(
     fields['lineHeight'] = undefined
   if (style.lineHeight !== undefined && style.lineSpacing === undefined && !skip.has('lineSpacing'))
     fields['lineSpacing'] = undefined
+  // A width, list levels and a shrink floor exist on a linked box only
+  // because its style set them (a person's own value is an override): a
+  // style that does not set them — or no longer does, after an edit or a
+  // style pack compile — takes them off the box.
+  if (target === 'text') {
+    for (const key of ['fontStretch', 'listLevels', 'minFontSize'] as const) {
+      if (!skip.has(key) && !(key in fields)) fields[key] = undefined
+    }
+  }
   return fields
 }
 

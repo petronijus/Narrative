@@ -57,6 +57,19 @@ describe('folder style pack', () => {
     expect(expected).not.toHaveProperty('name')
   })
 
+  it('stores no null a patch puts inside a subtree it creates, as the plain merge has it', () => {
+    const doc = new Y.Doc()
+    setStylePack(doc, pack)
+    const patch = {
+      layouts: { c: { name: 'C', surface: null, regions: [] } },
+      editorial: { voice: { tone: 'plain', extra: null } },
+    }
+    patchStylePack(doc, patch)
+    const stored = readStylePack(doc)
+    expect(stored).toEqual(mergeStylePackPatch(pack, patch))
+    expect(JSON.stringify(stored)).not.toContain('null')
+  })
+
   it('merges two peers changing different colours', () => {
     const a = new Y.Doc()
     setStylePack(a, pack)

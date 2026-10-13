@@ -151,6 +151,9 @@ export function plainObjectToYMap<T extends SlideObject>(obj: T): Y.Map<unknown>
   // protože SlideObject diskriminované union nemá index signature.
   const entries = Object.entries(obj as unknown as Record<string, unknown>)
   for (const [key, value] of entries) {
+    // An absent optional field is no entry at all (the schema's
+    // exactOptional fields), as an update's `undefined` deletes one.
+    if (value === undefined) continue
     yMap.set(key, value)
   }
 

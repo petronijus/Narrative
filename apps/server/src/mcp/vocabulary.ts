@@ -91,8 +91,8 @@ export const SHARED_FIELDS: readonly SharedField[] = [
   },
   {
     description:
-      'Structured body: paragraphs, each with its list attributes (list "bullet"|"number", level 0..8, bulletChar, numberFormat, startAt) and either plain `text` or formatted `runs`.',
-    note: 'As { paragraphs }, each paragraph has its list attributes (list "bullet"|"number", level 0..8, bulletChar, numberFormat, startAt) and either plain `text` (one unformatted run) or formatted `runs`, in order; a run’s `text` may hold "\\n" as a soft line break.',
+      'Structured body: paragraphs, each with its list attributes (list "bullet"|"number"|"none", level 0..8, bulletChar, numberFormat, startAt; without `list` a paragraph takes its level\'s default from the box\'s listLevels) and either plain `text` or formatted `runs`.',
+    note: 'As { paragraphs }, each paragraph has its list attributes (list "bullet"|"number"|"none", level 0..8, bulletChar, numberFormat, startAt; without `list` a paragraph takes its level\'s default from the box\'s listLevels) and either plain `text` (one unformatted run) or formatted `runs`, in order; a run’s `text` may hold "\\n" as a soft line break.',
   },
   { description: 'Unformatted paragraph text (shorthand for one run)', note: '' },
   { description: 'Run text; "\\n" is a soft line break', note: '' },

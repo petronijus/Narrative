@@ -15,7 +15,9 @@ import {
   listDeckGuides,
   listSlides,
   readDeckMeta,
+  setSlideLayout,
 } from '@narrative/slide-model'
+import type { StylePack } from '@narrative/shared'
 import { harness } from '../testing/harness.js'
 
 function objectsOn(h: ReturnType<typeof harness>, slideId: string) {
@@ -94,6 +96,17 @@ describe('slide.applyLayout', () => {
     expect(again.text).toBe('Look')
   })
 
+  it('refuses a stored pack that is not valid, naming what is wrong', () => {
+    const h = harness()
+    const broken = structuredClone(h.ctx.stylePack!) as StylePack
+    ;(broken.layouts[0] as unknown as Record<string, unknown>)['surface'] = null
+    h.ctx.stylePack = broken
+    const e = h.fail('slide.applyLayout', { slide: 's1', layoutId: 'title' })
+    expect(e.code).toBe('conflict')
+    expect(e.message).toContain('stored style pack is not valid')
+    expect(e.message).toContain('layouts.0.surface')
+  })
+
   it('refuses a layout the pack does not have', () => {
     const h = harness()
     const e = h.fail('slide.applyLayout', { slide: 's1', layoutId: 'nope' })
@@ -135,6 +148,29 @@ describe('style.deck.apply', () => {
     expect(listDeckGuides(getDeckGuidesCtx(h.ctx.deck!.doc)).length).toBe(
       guidesBefore + out.guidesAdded,
     )
+  })
+
+  it("re-lays a slide whose surface the layout no longer offers on its default; leaves another pack's alone", () => {
+    const h = harness()
+    const pack = structuredClone(h.ctx.stylePack!) as StylePack
+    const title = pack.layouts.find((l) => l.id === 'title')!
+    title.surface = { default: 'picture-dark', choose: ['picture-dark'] }
+    h.ctx.stylePack = pack
+    h.run('slide.applyLayout', { slide: 's1', layoutId: 'title' })
+    h.run('slide.applyLayout', { slide: 's2', layoutId: 'title' })
+    const deck = h.ctx.deck!
+    // s1 was on a surface the pack has since dropped; s2 came from another pack.
+    setSlideLayout(deck, 's1', { packId: pack.id, layoutId: 'title', surface: 'gone' })
+    setSlideLayout(deck, 's2', { packId: 'other', layoutId: 'title' })
+    const out = h.run('style.deck.apply', {}) as {
+      slides: number
+      unmatched: string[]
+      surfaceReset: string[]
+    }
+    expect(out).toMatchObject({ slides: 1, unmatched: ['s2'], surfaceReset: ['s1'] })
+    expect(listSlides(deck).find((s) => s.id === 's1')?.layout).toMatchObject({
+      surface: 'picture-dark',
+    })
   })
 
   it('refuses a variant the pack does not have', () => {

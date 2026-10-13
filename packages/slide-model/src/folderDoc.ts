@@ -300,10 +300,18 @@ export function updateFolderToken(
   category: TokenCategory,
   id: string,
   patch: Record<string, unknown>,
+  opts: { replace?: boolean } = {},
 ): boolean {
   const m = categoryMap(doc, category)?.get(id)
   if (!(m instanceof Y.Map)) return false
-  doc.transact(() => setFields(m, patch))
+  doc.transact(() => {
+    // `replace`: the token becomes exactly `patch` (a style pack compile:
+    // a field the pack stopped setting must not linger from before).
+    if (opts.replace === true) {
+      for (const key of [...m.keys()]) if (key !== 'id' && !(key in patch)) m.delete(key)
+    }
+    setFields(m, patch)
+  })
   return true
 }
 

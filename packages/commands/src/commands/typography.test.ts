@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { createUndoManager, readParagraphAttrsForRange } from '@narrative/slide-model'
 import type { TableObject } from '@narrative/shared'
 import { harness, type Harness } from '../testing/harness.js'
-import { FIXTURE_FONT_FAMILY, FIXTURE_PAGE_NUMBER_STYLE_ID } from '../testing/fixtureTokens.js'
+import {
+  FIXTURE_FONT_FAMILY,
+  FIXTURE_PAGE_NUMBER_STYLE_ID,
+  FIXTURE_VARIABLE_FAMILY,
+} from '../testing/fixtureTokens.js'
 import { propagateTextStyles, textStyleFieldsFromObject } from '../text/textStyle.js'
 
 /** Inline formatting of a body as [text, attributes] runs. */
@@ -13,6 +17,19 @@ const runs = (h: Harness, slide = 's1', id = 't1') =>
   ])
 
 describe('text.setBoxTypography', () => {
+  it("sets a width within the family's wdth axis and refuses one outside it", () => {
+    const h = harness()
+    const set = (style: Record<string, unknown>) =>
+      h.run('text.setBoxTypography', { slide: 's1', objects: ['t1'], style })
+    set({ fontFamily: FIXTURE_VARIABLE_FAMILY, fontStretch: 130 })
+    expect(h.plain('s1', 't1')['fontStretch']).toBe(130)
+    expect(() => set({ fontStretch: 150 })).toThrow(/widths 100–130/)
+    // A family without a width axis is drawn at 100 only.
+    expect(() => set({ fontFamily: FIXTURE_FONT_FAMILY, fontStretch: 125 })).toThrow(/no width axis/)
+    set({ fontFamily: FIXTURE_FONT_FAMILY, fontStretch: 100 })
+    expect(h.plain('s1', 't1')['fontStretch']).toBe(100)
+  })
+
   it('sets the box value and removes the inline formatting that would hide it', () => {
     const h = harness()
     // t1 is "Quarterly results" with "results" bold inline.

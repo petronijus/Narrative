@@ -133,6 +133,7 @@ export const stylePackEdit = defineCommand({
     'earlier compile made is updated; tokens and masters people made are left alone) and names the fonts the ' +
     'folder still needs. The result is validated whole; nothing is written when it is not valid. `previous`: for ' +
     'an update, the update that undoes it; for set/delete, the pack before (set it back; null: there was none). ' +
+    'Undo a compile: put the pack back, compile again (what a first compile created stays). ' +
     'Only when the user asked for a change to the brand. Needs the editor role in the folder.',
   input: z.discriminatedUnion('op', [
     z.strictObject({ op: z.literal('set'), pack: z.record(z.string(), z.unknown()) }),

@@ -55,6 +55,7 @@ import {
   textStyleFieldsFromObject,
 } from '../text/textStyle.js'
 import { RUN_ATTR_KEYS, overridesAfter, snappedWeightForFamily } from '../text/typography.js'
+import { stretchRangeFor } from '../text/fontWeights.js'
 import { clearCellOverrides } from './tables.js'
 
 const textEditor = {
@@ -108,7 +109,8 @@ export const textSetBoxTypography = defineCommand({
   title: 'Set box typography',
   description:
     "Set text boxes' own typography — fontFamily, fontWeight, fontSize, italic, underline, color, align, vAlign, " +
-    'lineHeight, letterSpacing, textTransform, paragraph spacing, minFontSize (the shrink floor) — as the ' +
+    'lineHeight, letterSpacing, textTransform, paragraph spacing, minFontSize (the shrink floor), fontStretch ' +
+    "(width %, within a variable folder font's wdth range) — as the " +
     'Inspector does: inline formatting of ' +
     'the same attributes is removed so the new value shows in the whole box; a new fontFamily without fontWeight ' +
     'moves the weight to the nearest cut the family has; on a box linked to a folder text style the fields you ' +
@@ -133,6 +135,10 @@ export const textSetBoxTypography = defineCommand({
     {
       title: 'Centre two boxes and colour them navy',
       input: { slide: 's1', objects: ['t1', 't2'], style: { align: 'center', color: '#1b2a4a' } },
+    },
+    {
+      title: 'Set a title in the extended width of a variable font',
+      input: { slide: 's1', objects: ['t1'], style: { fontFamily: 'Fabrikam Type', fontStretch: 130 } },
     },
     {
       title: 'Let a shrinking box go no smaller than 20 px',
@@ -165,6 +171,25 @@ export const textSetBoxTypography = defineCommand({
           style['fontFamily'] as string | undefined,
         )
         if (weight !== undefined) patch['fontWeight'] = weight
+      }
+      const stretch = style['fontStretch']
+      if (typeof stretch === 'number' && stretch !== 100) {
+        const family = (style['fontFamily'] ?? map.get('fontFamily')) as string | undefined
+        if (ctx.folderFonts === undefined) {
+          throw new CommandError(
+            'conflict',
+            "the folder's fonts cannot be read here, so their widths are unknown",
+          )
+        }
+        const range = stretchRangeFor(family, ctx.folderFonts ?? [])
+        if (range === null || stretch < range[0] || stretch > range[1]) {
+          throw new CommandError(
+            'invalid_input',
+            range === null
+              ? `'${family ?? 'the default font'}' has no width axis in this folder; only fontStretch 100 is drawn`
+              : `'${family}' is drawn at widths ${range[0]}–${range[1]}; fontStretch ${stretch} is outside it`,
+          )
+        }
       }
       if (typeof map.get('textStyleId') === 'string') {
         const overrides = overridesAfter(map.get('textStyleOverrides'), Object.keys(patch))

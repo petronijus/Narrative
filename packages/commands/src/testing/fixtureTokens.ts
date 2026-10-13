@@ -83,12 +83,17 @@ export function createFixtureStylePack(): StylePack {
   return exampleStylePack()
 }
 
-/** The fixture folder's uploaded fonts: one family with a light and a semibold cut. */
+/**
+ * The fixture folder's uploaded fonts: one family with a light and a
+ * semibold cut, and a variable family with weight and width axes (A4.2c).
+ */
 export const FIXTURE_FONT_FAMILY = 'Brand Sans'
+export const FIXTURE_VARIABLE_FAMILY = 'Fabrikam Type'
 
 export function createFixtureFolderFonts(): FontFaceWeight[] {
   return [
     { family: FIXTURE_FONT_FAMILY, weight: 300 },
     { family: FIXTURE_FONT_FAMILY, weight: 600 },
+    { family: FIXTURE_VARIABLE_FAMILY, weight: 400, axes: { wght: [100, 900], wdth: [100, 130] } },
   ]
 }

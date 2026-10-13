@@ -255,7 +255,11 @@ export const PackAssetSchema = z.strictObject({
   name: z.string().min(1).max(80),
   /** Per value of a role: a logo in dark blue on light backgrounds, white on dark ones. */
   byRole: z
-    .strictObject({ role: ColorRoleSchema, files: z.record(z.string(), AssetSourceSchema) })
+    .strictObject({
+      role: ColorRoleSchema,
+      /** Keyed by the colour the role takes where the file is drawn (`color:white`). */
+      files: z.record(ColorRefSchema, AssetSourceSchema),
+    })
     .optional(),
   file: AssetSourceSchema.optional(),
 })

@@ -200,7 +200,7 @@ export {
   layoutBrief,
   packSummary,
 } from './commands/stylePacks.js'
-export { parseStylePack } from './stylePack/parse.js'
+export { parseStylePack, storedStylePack } from './stylePack/parse.js'
 export { planLayout, type LayoutPlan, type SlotContent } from './stylePack/layout.js'
 export {
   checkDeck,

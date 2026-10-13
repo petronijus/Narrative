@@ -329,6 +329,27 @@ export const tokenCreate = defineCommand({
         color: { $token: 'colors.brandBlue' },
       },
     },
+    {
+      title: 'Add a text colour that turns white on dark decks',
+      input: {
+        category: 'colors',
+        name: 'Ink',
+        value: '#1b2a4a',
+        byVariant: { axis: 'background', values: { dark: '#ffffff' } },
+      },
+    },
+    {
+      title: 'Add a body style whose bullets are red dashes, smaller one level down',
+      input: {
+        category: 'textStyles',
+        name: 'Body list',
+        size: 28,
+        levels: [
+          { list: 'bullet', bulletChar: '–', bulletColor: '#e4002b', indent: 36, hanging: 36 },
+          { list: 'bullet', bulletChar: '–', indent: 72, hanging: 36, fontSize: 24 },
+        ],
+      },
+    },
   ],
   async handler(ctx, input) {
     const { category, ...fields } = input
@@ -381,6 +402,10 @@ export const tokenUpdate = defineCommand({
     {
       title: 'Body text may shrink to fit, never below 18 px',
       input: { category: 'textStyles', tokenId: 'body', minSize: 18 },
+    },
+    {
+      title: 'Make the brand colour 80% opaque and drop its per-variant values',
+      input: { category: 'colors', tokenId: 'brandBlue', value: '#1b4fd8cc', byVariant: null },
     },
   ],
   async handler(ctx, input) {

@@ -125,13 +125,29 @@ export function StylePackTab({ folderId, editable }: { folderId: string; editabl
     await edit({ op: 'set', pack: parsed })
   }
 
-  const exportPack = () => {
+  // The pack as the server holds it, through the agent's door (style.pack.get).
+  const exportPack = async () => {
     if (pack == null) return
-    const blob = new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' })
+    let value: { id: string } | null
+    try {
+      ;({ value } = await api.runFolderCommand<{ value: { id: string } | null }>(
+        folderId,
+        'style.pack.get',
+        { part: 'pack' },
+      ))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The export failed')
+      return
+    }
+    if (value === null) {
+      setError('The folder has no style pack')
+      return
+    }
+    const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${pack.id}.stylepack.json`
+    a.download = `${value.id}.stylepack.json`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -216,7 +232,7 @@ export function StylePackTab({ folderId, editable }: { folderId: string; editabl
               size="sm"
               variant="outline"
               className="gap-1.5"
-              onClick={exportPack}
+              onClick={() => void exportPack()}
               data-action="stylePack.export"
             >
               <Download className="h-4 w-4" aria-hidden="true" />

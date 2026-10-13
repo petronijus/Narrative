@@ -32,6 +32,7 @@ import {
 import {
   compileStylePack,
   linkedTextFields,
+  storedStylePack,
   parseNewTokenFields,
   parseStylePack,
   previousOfUpdate,
@@ -115,7 +116,7 @@ export function createStylePacksService(deps: ServiceDeps): StylePackService {
 
       // 1. Tokens: one transaction on the folder document.
       const tokenResult = await writeLiveDoc(deps, 'folder', args.folderId, (doc) => {
-        const plan = compileStylePack(pack, { tokens: readFolderTokens(doc), fonts })
+        const plan = compileStylePack(storedStylePack(pack), { tokens: readFolderTokens(doc), fonts })
         const counts = {
           colors: { created: 0, updated: 0 },
           textStyles: { created: 0, updated: 0 },
@@ -128,7 +129,8 @@ export function createStylePacksService(deps: ServiceDeps): StylePackService {
             if (category === 'textStyles') fields['builtin'] = false
             fields['origin'] = t.origin
             if (t.exists) {
-              updateFolderToken(doc, category, t.id, fields)
+              // The token is the pack's: what the pack no longer sets goes.
+              updateFolderToken(doc, category, t.id, fields, { replace: true })
               counts[category].updated++
             } else {
               addFolderToken(doc, category, t.id, fields)

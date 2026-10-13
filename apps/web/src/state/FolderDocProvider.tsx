@@ -43,6 +43,33 @@ import { hocuspocusAuthOptions } from './hocuspocusAuth.js'
 /** The writer the subtree changes tokens with; null until the folder is known. */
 const FolderTokenWriterContext = createContext<FolderTokenWriter | null>(null)
 
+/**
+ * The folder's style pack, read once per change for the whole subtree
+ * (`useFolderStylePack`): every component that calls `useCommand` reads it,
+ * and a listener and a JSON copy of the pack each would multiply with them.
+ */
+const FolderStylePackContext = createContext<StylePack | null | undefined>(undefined)
+
+function FolderStylePackSnapshot({ children }: { children: React.ReactNode }) {
+  const ctx = useContext(FolderDocContext)
+  const doc = ctx !== null && ctx.synced ? ctx.doc : undefined
+  const [pack, setPack] = useState<StylePack | null | undefined>(() =>
+    doc === undefined ? undefined : (readStylePack(doc) as StylePack | null),
+  )
+  useEffect(() => {
+    if (doc === undefined) {
+      setPack(undefined)
+      return
+    }
+    const map = doc.getMap('stylePack')
+    const read = (): void => setPack(readStylePack(doc) as StylePack | null)
+    read()
+    map.observeDeep(read)
+    return () => map.unobserveDeep(read)
+  }, [doc])
+  return <FolderStylePackContext value={pack}>{children}</FolderStylePackContext>
+}
+
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
@@ -142,7 +169,9 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
 
   return (
     <FolderDocContext value={value ?? placeholderRef.current}>
-      <FolderTokenWriterContext value={writer}>{children}</FolderTokenWriterContext>
+      <FolderTokenWriterContext value={writer}>
+        <FolderStylePackSnapshot>{children}</FolderStylePackSnapshot>
+      </FolderTokenWriterContext>
     </FolderDocContext>
   )
 }
@@ -298,21 +327,5 @@ export type { TokenUsage } from '../api/client.js'
  * The editor's commands read it as `ctx.stylePack`.
  */
 export function useFolderStylePack(): StylePack | null | undefined {
-  const ctx = useContext(FolderDocContext)
-  const doc = ctx !== null && ctx.synced ? ctx.doc : undefined
-  const [pack, setPack] = useState<StylePack | null | undefined>(() =>
-    doc === undefined ? undefined : (readStylePack(doc) as StylePack | null),
-  )
-  useEffect(() => {
-    if (doc === undefined) {
-      setPack(undefined)
-      return
-    }
-    const map = doc.getMap('stylePack')
-    const read = (): void => setPack(readStylePack(doc) as StylePack | null)
-    read()
-    map.observeDeep(read)
-    return () => map.unobserveDeep(read)
-  }, [doc])
-  return pack
+  return useContext(FolderStylePackContext)
 }

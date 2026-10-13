@@ -32,6 +32,7 @@ import { requireDeck, resolveSlide, objectsOf, SlideRefSchema } from '../refs.js
 import { CommandError } from '../errors.js'
 import type { CommandContext } from '../types.js'
 import { planLayout, type LayoutPlan, type SlotContent } from '../stylePack/layout.js'
+import { storedStylePack } from '../stylePack/parse.js'
 import { TextBodyInputSchema, writePlan } from '../text/body.js'
 
 const layoutCommand = {
@@ -61,7 +62,7 @@ function packAndTokens(ctx: CommandContext): { pack: StylePack; tokens: FolderTo
       'conflict',
       'the folder has no tokens; compile its pack first (style.pack.edit { op: "compile" })',
     )
-  return { pack: ctx.stylePack, tokens: ctx.folderTokens }
+  return { pack: storedStylePack(ctx.stylePack), tokens: ctx.folderTokens }
 }
 
 /** Write a layout plan onto one slide (inside the command's transaction). */
@@ -178,7 +179,7 @@ export const styleDeckApply = defineCommand({
     'variant, one value per pack axis (style.pack.get "summary" lists them) — its colours follow; `fields` ' +
     "fills the footer's fields (null clears one); `lang` picks the footer language; `guides` (default true) " +
     "adds the pack's grid as guides. A slide whose layout this pack does not have is left as it is and " +
-    'listed. Undo: one step.',
+    'listed; one on a surface its layout no longer offers goes to the default (listed). Undo: one step.',
   input: z.strictObject({
     variant: z.record(z.string().min(1).max(48), z.string().min(1).max(48)).optional(),
     fields: z.record(z.string().min(1).max(48), z.string().max(400).nullable()).optional(),
@@ -192,6 +193,11 @@ export const styleDeckApply = defineCommand({
   output: z.object({
     slides: z.number().describe('Slides re-laid'),
     unmatched: z.array(z.string()).describe('Slides whose layout the pack does not have'),
+    surfaceReset: z
+      .array(z.string())
+      .describe(
+        "Slides back on their layout's default surface: the one they had is no longer offered",
+      ),
     guidesAdded: z.number(),
   }),
   implementedWith: [
@@ -243,14 +249,30 @@ export const styleDeckApply = defineCommand({
 
     let relaid = 0
     const unmatched: string[] = []
+    const surfaceReset: string[] = []
     const slides = listSlides(deck)
     slides.forEach((s, index) => {
       const ref = s.layout
       if (ref === undefined) return
-      if (!pack.layouts.some((l) => l.id === ref.layoutId)) {
+      const layout = pack.layouts.find((l) => l.id === ref.layoutId)
+      // Another pack's layout of the same id (a slide copied in) is not this one.
+      if (layout === undefined || ref.packId !== pack.id) {
         unmatched.push(s.id)
         return
       }
+      // A surface the layout no longer offers (the pack was edited): its default.
+      const offered =
+        ref.surface !== undefined &&
+        layout.surface !== undefined &&
+        !('fixed' in layout.surface) &&
+        layout.surface.choose.includes(ref.surface)
+      if (
+        ref.surface !== undefined &&
+        !offered &&
+        layout.surface !== undefined &&
+        !('fixed' in layout.surface)
+      )
+        surfaceReset.push(s.id)
       const slide = resolveSlide(deck, { id: s.id })
       const plan = planLayout({
         pack,
@@ -259,7 +281,7 @@ export const styleDeckApply = defineCommand({
         meta: nextMeta,
         objects: objectsOf(deck, slide).objects.toArray(),
         current: ref,
-        ...(ref.surface !== undefined ? { surface: ref.surface } : {}),
+        ...(offered ? { surface: ref.surface } : {}),
         slideNumber: index + 1,
       })
       executePlan(deck, s.id, plan)
@@ -301,7 +323,7 @@ export const styleDeckApply = defineCommand({
           guidesAdded++
         }
     }
-    return { slides: relaid, unmatched, guidesAdded }
+    return { slides: relaid, unmatched, surfaceReset, guidesAdded }
   },
 })
 

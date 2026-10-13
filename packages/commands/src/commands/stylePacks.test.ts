@@ -158,4 +158,27 @@ describe('style.pack.edit', () => {
       name: 'Title (Example)',
     })
   })
+
+  it('a compile takes off a compiled token what the pack no longer sets', async () => {
+    const c = ctx()
+    await run(c, 'style.pack.edit', { op: 'compile' })
+    const body = () =>
+      (
+        c.services.snapshot() as {
+          folderTokens: Array<[string, ReturnType<typeof readFolderTokens>]>
+        }
+      ).folderTokens.find(([id]) => id === FIXTURE_FOLDER_ID)![1].textStyles[
+        'p-example-textStyle-body'
+      ]
+    expect(body()).toMatchObject({ minSize: 24 })
+    expect(body()?.levels).toHaveLength(2)
+    await run(c, 'style.pack.edit', {
+      op: 'update',
+      patch: { textStyles: { body: { levels: null, minSize: null } } },
+    })
+    await run(c, 'style.pack.edit', { op: 'compile' })
+    expect(body()).toMatchObject({ name: 'Body (Example)', size: 32 })
+    expect(body()?.levels).toBeUndefined()
+    expect(body()?.minSize).toBeUndefined()
+  })
 })

@@ -18,6 +18,7 @@ import {
   type TextMeasurement,
 } from '../services/render.js'
 import { checkDeck, type CheckFinding } from '../stylePack/check.js'
+import { storedStylePack } from '../stylePack/parse.js'
 import { serverCommand, targetDeckId } from './serverShared.js'
 
 /** Findings one answer lists; the counts cover all of them. */
@@ -103,6 +104,7 @@ export const queryCheck = defineCommand({
         'not_found',
         "the deck's folder has no style pack to check against (style.pack.get reads it)",
       )
+    const pack = storedStylePack(ctx.stylePack)
     const all = listSlides(deck)
     const picked =
       input.slides === 'all'
@@ -126,7 +128,7 @@ export const queryCheck = defineCommand({
         `the deck has ${picked.length} slides; one check takes at most ${MAX_MEASURE_SLIDES} — name them in parts`,
       )
     const report = checkDeck({
-      pack: ctx.stylePack,
+      pack,
       tokens: ctx.folderTokens ?? null,
       meta: readDeckMeta(deck.doc),
       slides: picked,
@@ -138,7 +140,7 @@ export const queryCheck = defineCommand({
       (a, b) => order(a) - order(b) || (a.index ?? -1) - (b.index ?? -1),
     )
     return {
-      pack: ctx.stylePack.id,
+      pack: pack.id,
       slides: picked.length,
       fitVerified: report.fitVerified,
       errors: report.errors,

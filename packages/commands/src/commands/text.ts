@@ -250,7 +250,8 @@ export const textList = defineCommand({
     'Turn paragraphs into a bullet or numbered list, change nesting, glyph or numbering, or remove the list — on ' +
     'the paragraphs a range touches (omit `range` for every paragraph; a range of length 0 targets the paragraph ' +
     'containing it), exactly like the Inspector list controls. `kind`: "bullet" | "number" | "none" (removes the ' +
-    'list and its level/glyph/numbering); `toggle`: the editor toolbar button (removes the list if every targeted ' +
+    "list and its level/glyph/numbering; on a box with listLevels it writes list \"none\" so the level's default " +
+    'list no longer applies); `toggle`: the editor toolbar button (removes the list if every targeted ' +
     'paragraph already has that kind, else applies it); `level` 0..8 sets nesting, `indent` +1/-1 shifts it; ' +
     '`bulletChar` (implies bullet; null = default glyph), `numberFormat` (implies number), `startAt` (restart ' +
     'numbering; null clears). To write new list text use text.set with list paragraphs.',
