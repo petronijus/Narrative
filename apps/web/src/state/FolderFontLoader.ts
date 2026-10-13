@@ -52,7 +52,8 @@ export function faceRanges(font: Pick<FolderFontSummary, 'weight' | 'axes'>): {
   const wght = font.axes?.wght
   const wdth = font.axes?.wdth
   return {
-    weight: wght !== undefined ? `${Math.round(wght[0])} ${Math.round(wght[1])}` : String(font.weight),
+    weight:
+      wght !== undefined ? `${Math.round(wght[0])} ${Math.round(wght[1])}` : String(font.weight),
     stretch: wdth !== undefined ? `${wdth[0]}% ${wdth[1]}%` : '100%',
   }
 }

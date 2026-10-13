@@ -144,10 +144,7 @@ export const fontAxesBackfill: DataMigration = {
         const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
         const axes = parseFontMetadata(ab as ArrayBuffer).axes ?? {}
         if (axes.wght !== undefined || axes.wdth !== undefined) report.variable++
-        await deps.db
-          .update(mediaAssets)
-          .set({ fontAxes: axes })
-          .where(eq(mediaAssets.id, row.id))
+        await deps.db.update(mediaAssets).set({ fontAxes: axes }).where(eq(mediaAssets.id, row.id))
       } catch (err) {
         deps.log.warn({ err, assetId: row.id }, 'font axes data migration: font failed')
         report.failed.push(row.id)

@@ -280,9 +280,7 @@ export function planLayout(args: PlanArgs): LayoutPlan {
         update.push({
           id: sameSlot.id,
           patch: { ...geometry, ...fields },
-          ...(given !== undefined && !isAssetContent(given)
-            ? { body: planFromBody(given) }
-            : {}),
+          ...(given !== undefined && !isAssetContent(given) ? { body: planFromBody(given) } : {}),
         })
         continue
       }

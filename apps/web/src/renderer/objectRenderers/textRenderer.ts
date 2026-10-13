@@ -357,7 +357,10 @@ export function buildStyleOpts(data: TextObject, scale = 1): any {
     fontSize: data.fontSize,
     fontWeight: data.fontWeight,
     fontStyle: data.italic === true ? 'italic' : 'normal',
-    fill: colorWithAlpha(resolveColour(data.color), (data.colorAlpha ?? 1) * resolveAlpha(data.color)),
+    fill: colorWithAlpha(
+      resolveColour(data.color),
+      (data.colorAlpha ?? 1) * resolveAlpha(data.color),
+    ),
     align: data.align,
     // Room in the rasterised texture for ink outside the line boxes.
     //
