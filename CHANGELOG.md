@@ -4,6 +4,17 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.11.1 — Style packs, deployable (2026-10-14)
+
+0.11.0 was tagged but never deployed: its server image did not build.
+
+### Fixed
+
+- The server image builds again: the style-pack bootstrap tools, which
+  run on a developer machine and need a browser, are left out of it.
+
+---
+
 ## 0.11.0 — Style packs (2026-10-13)
 
 Agentic phase A4 (style packs), steps A4.2b–A4.8, which closes the phase: a

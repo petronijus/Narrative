@@ -1,7 +1,8 @@
 # Handoff A4 — style packs: a folder's brand, laid out and checked
 
 **Status:** done. A4.2b–A4.8, the blocker and the review fixes shipped as
-**0.11.0** on 2026-10-13 (the verification is in the plan's "Where we
+**0.11.1** on 2026-10-14 (0.11.0, tagged the day before, never deployed:
+its server image did not build) (the verification is in the plan's "Where we
 stand"); A4.1 in 0.10.31, A4.2a in 0.10.32.
 **Date:** 2026-10-13
 
@@ -21,16 +22,16 @@ and check slides against its rules.
 | A4.0  | tool-count measurement; Petr chose fewer tools (seven for the phase)                       | —                                                   | —        |
 | A4.1  | `slot`, `role`, `component` on objects; stamp provenance; restamp                          | `component.create`, `component.restamp`             | 0.10.31  |
 | A4.2a | text autofit: grow with the text, shrink to fit, shrink floor                              | `object.update` `autofit`, `minFontSize`, `minSize` | 0.10.32  |
-| A4.2b | list levels on boxes and styles                                                            | `text.list`, `listLevels`, style `levels`           | 0.11.0   |
-| A4.2c | variable font axes, `fontStretch`                                                          | `text.setBoxTypography` `fontStretch`               | 0.11.0   |
-| A4.2d | deck meta (variant, fields, lang), slide layout, colour tokens per variant and surface     | `token.*` `byVariant` / `bySurface`                 | 0.11.0   |
-| A4.2e | `lineSpacing` and `align` on text styles                                                   | `token.*`                                           | 0.11.0   |
-| A4.3  | the pack: schema, validation, folder storage, MCP resource                                 | `style.pack.get`, `style.pack.edit`                 | 0.11.0   |
-| A4.4  | compile to tokens and masters; layouts                                                     | `slide.applyLayout`, `style.deck.apply`             | 0.11.0   |
-| A4.5  | the brand check, measured on the render page                                               | `query.check`                                       | 0.11.0   |
-| A4.6  | Folder Settings → Style pack                                                               | (through `style.pack.edit`)                         | 0.11.0   |
-| A4.7  | master reader, five brand bootstraps (Contoso, Fabrikam, Tailspin, Woodgrove, Adatum)                        | `just style-pack`, `just style-pack-import`         | 0.11.0   |
-| A4.8  | `build-with-pack` playbook, `restyle-lite` for packs, eval scenarios, `FINISHED_PHASES A4` | —                                                   | 0.11.0   |
+| A4.2b | list levels on boxes and styles                                                            | `text.list`, `listLevels`, style `levels`           | 0.11.1   |
+| A4.2c | variable font axes, `fontStretch`                                                          | `text.setBoxTypography` `fontStretch`               | 0.11.1   |
+| A4.2d | deck meta (variant, fields, lang), slide layout, colour tokens per variant and surface     | `token.*` `byVariant` / `bySurface`                 | 0.11.1   |
+| A4.2e | `lineSpacing` and `align` on text styles                                                   | `token.*`                                           | 0.11.1   |
+| A4.3  | the pack: schema, validation, folder storage, MCP resource                                 | `style.pack.get`, `style.pack.edit`                 | 0.11.1   |
+| A4.4  | compile to tokens and masters; layouts                                                     | `slide.applyLayout`, `style.deck.apply`             | 0.11.1   |
+| A4.5  | the brand check, measured on the render page                                               | `query.check`                                       | 0.11.1   |
+| A4.6  | Folder Settings → Style pack                                                               | (through `style.pack.edit`)                         | 0.11.1   |
+| A4.7  | master reader, five brand bootstraps (Contoso, Fabrikam, Tailspin, Woodgrove, Adatum)                        | `just style-pack`, `just style-pack-import`         | 0.11.1   |
+| A4.8  | `build-with-pack` playbook, `restyle-lite` for packs, eval scenarios, `FINISHED_PHASES A4` | —                                                   | 0.11.1   |
 
 ## Pitfalls found closing it
 

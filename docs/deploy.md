@@ -342,7 +342,7 @@ image: stay on the mirror (any later Chainguard build is a `crane copy` away).
 On production that is the state since 2026-10-10: the cached copy was
 removed after 0.10.19 ran healthy for 17 hours.
 
-## Releasing style packs — 0.11.0
+## Releasing style packs — 0.11.1 (0.11.0 never deployed)
 
 Agentic A4 ([plan](./plans/a4-style-packs.md),
 [handoff](./handoff/A4-style-packs.md)). No new image, service, env var or
@@ -364,7 +364,7 @@ style-pack-import private/packs/<brand>.json <folderId>
 https://<domain>`, with a personal access token in `NARRATIVE_TOKEN`). The
 brand fonts and logos are uploaded on the MacBook (HANDOVER.md).
 
-**After deploying:** `/version.json` names 0.11.0; the server log shows the
+**After deploying:** `/version.json` names 0.11.1; the server log shows the
 data migration completed; Folder Settings of a folder shows the **Style
 pack** tab ("This folder has no style pack" until one is imported); a slide with a text
 box set to grow with its text, in Inter, renders: right-click → **Export as

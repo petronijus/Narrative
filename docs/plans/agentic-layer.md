@@ -2,7 +2,7 @@
 
 Status: **accepted**, 2026-09-26. **A0–A4 done**: A4 (style packs: a
 folder's brand as a pack, layouts, the brand check, five brand bootstraps)
-released as 0.11.0 on 2026-10-13 — step log and final state in
+released as 0.11.1 on 2026-10-14 — step log and final state in
 [`a4-style-packs.md`](./a4-style-packs.md). Next: A5 (deck builder and
 restyle, §10). A3 (the render
 worker: the agent sees slides, PNG export, server cards, before/after and

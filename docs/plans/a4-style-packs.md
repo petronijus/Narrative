@@ -422,7 +422,7 @@ no deploy, test at the end"):**
 
 **Stopped 2026-10-13 00:40, committed and pushed unreleased; finished
 2026-10-13 evening (the blocker, the reviews, the test round) and released
-as 0.11.0.**
+as 0.11.1 (0.11.0, tagged first, never deployed: its server image did not build).**
 
 - **The blocker, fixed:** not the token colour. HTMLText measures and
   rasterises with the family's `@font-face` CSS put into the document, so
