@@ -9,9 +9,10 @@ every coding agent (Claude Code, Cursor, Codex, …); humans start at
 Read before changing code: `docs/testing-strategy.md` (what the suites
 cover), `docs/agents.md` (areas and their owners), `SETUP.md` (setup,
 toolchain, troubleshooting). The agentic layer is planned in
-`docs/plans/agentic-layer.md` (A0–A3 done; handoffs in `docs/handoff/`);
-the phase in progress, A4 (style packs), is planned in
-`docs/plans/a4-style-packs.md`, its status in that file's "Where we
+`docs/plans/agentic-layer.md` (A0–A4 done; handoffs in `docs/handoff/`;
+next: A5, the deck builder and restyle, its row in that plan's §10). A4
+(style packs, released in 0.11.0) is recorded in
+`docs/plans/a4-style-packs.md`, its final state in that file's "Where we
 stand". Folder
 sharing (folder roles, linked component media) is planned in
 `docs/plans/folder-sharing.md` (ADR 0013); faster test loops in

@@ -342,6 +342,34 @@ image: stay on the mirror (any later Chainguard build is a `crane copy` away).
 On production that is the state since 2026-10-10: the cached copy was
 removed after 0.10.19 ran healthy for 17 hours.
 
+## Releasing style packs — 0.11.0
+
+Agentic A4 ([plan](./plans/a4-style-packs.md),
+[handoff](./handoff/A4-style-packs.md)). No new image, service, env var or
+secret. One schema migration and one data migration:
+
+- **0035** adds `media_assets.font_axes` (jsonb, nullable): the weight and
+  width axis ranges of a variable font, read on upload. Additive, no
+  constraint: it cannot fail on existing rows.
+- **Data migration `2026-10-12-font-axes`** runs in the background after
+  start. It reads every stored font from MinIO once and records its axes
+  (`{}` for a static font). Watch for `data migration: completed` with a
+  report of `fonts`, `variable` and `failed`. A font in `failed` keeps
+  working: it is drawn at its own weight, only without a width range.
+
+The style packs themselves are not part of the deploy. The five brand
+packs live in the private overlay (`just style-pack`). Each goes into a
+production folder only at Petr's go, brand by brand (`just
+style-pack-import private/packs/<brand>.json <folderId>
+https://<domain>`, with a personal access token in `NARRATIVE_TOKEN`). The
+brand fonts and logos are uploaded on the MacBook (HANDOVER.md).
+
+**After deploying:** `/version.json` names 0.11.0; the server log shows the
+data migration completed; Folder Settings of a folder shows the **Style
+pack** tab ("This folder has no style pack" until one is imported); a slide with a text
+box set to grow with its text, in Inter, renders: right-click → **Export as
+PNG** downloads within seconds (before 0.11.0 it timed out).
+
 ## Access
 
 The VM is reachable only through the Proxmox host (`pve`), which is the jump

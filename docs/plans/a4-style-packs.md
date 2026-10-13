@@ -420,37 +420,67 @@ no deploy, test at the end"):**
   packs, eval scenarios `pack-build-slide`, `pack-deck-variant`,
   `pack-fix-check` (memory world models packs), `FINISHED_PHASES += A4`.
 
-**Stopped 2026-10-13 00:40, committed and pushed unreleased (not deployed,
-not released). Where the final test round stood:**
+**Stopped 2026-10-13 00:40, committed and pushed unreleased; finished
+2026-10-13 evening (the blocker, the reviews, the test round) and released
+as 0.11.0.**
 
-- Green: `just check` (typecheck, lint, docs, every unit test, capabilities);
-  `just style-pack all` (five packs valid, every layout lays out);
-  e2e `style-pack` "Folder Settings shows the pack, compiles it and edits a
-  colour"; e2e `query-render` 8/8.
-- **Open blocker — a text box with `autofit` and a token colour never
-  settles on the render page** (so `query.render`, `query.check`'s
-  measurement and thumbnails of pack slides time out; the editor canvas
-  showed such a slide blank). Reproduced without packs: one text box,
-  `autofit: 'grow-down'` or `'shrink'`, colour `{ $token }` (any colour
-  token, no variants needed) → `query.render` "did not finish in time";
-  the same box with a literal colour, or a token colour without autofit,
-  renders in ~1.2 s. The render page reports `not-settled` after 30 s with
-  `rasters: 674` in 337 passes: the box is rasterised again on every settle
-  pass. No resolver loop (5 swaps, one `repaintColours` and one layout
-  publish per object): look at what re-arms the HTMLText raster each pass —
-  `repaintColours` (now rebuilding the HTML for list levels) or
-  `applyAutofit` against the token-resolved style (`buildStyleOpts` →
-  `resolveAlpha`), likely a style that never compares equal so every
-  `renderNow` re-rasterises. Check whether 0.10.32 (A4.2a, autofit) already
-  has it with token colours. Fix it first, then rerun e2e `style-pack`
-  ("passes the brand check, measured").
-- Not yet run: the full `just e2e`, `just e2e-affected`, `just eval`
-  (the three pack scenarios are live-only until recorded: `just eval
---filter pack- --record`, then set `replay: true`), `just pptx-roundtrip`
-  on the Proseware deck, the `agent-parity` and `code-reviewer` reviews, a
-  `just load` / `just size` look.
+- **The blocker, fixed:** not the token colour. HTMLText measures and
+  rasterises with the family's `@font-face` CSS put into the document, so
+  every measurement of text in an embedded face (the bundled Inter, every
+  folder font) added `FontFace` objects that loaded at once and fired
+  `document.fonts` `loadingdone`; `SceneGraph.relayoutAutofitText` treated
+  each as news and re-laid every autofit box out, which measured again: the
+  render page never settled on a slide with an autofit box in such a face
+  (since 0.10.32). `createFontLoadFilter` (renderer/fontChanges.ts) lets a
+  load through only for a face whose descriptors have not loaded before.
+  Regression e2e: `query-render` "an autofit text box in an embedded face
+  settles" (fails without the fix).
+- **Reviews.** `agent-parity`: `query.deck` returns the deck's `meta`,
+  `query.deck` / `query.slide` each slide's `layout`; `fontStretch` in
+  `text.setBoxTypography`'s description and validated against the family's
+  `wdth` range; `list: "none"` and level inheritance in the body vocabulary
+  and `text.list`; token examples for `byVariant`, alpha and `levels`;
+  `fontStretch` in the PPTX matrix, `Slide.layout` / `DeckMeta` documented
+  as not carried; Folder Settings' export goes through `style.pack.get`;
+  three new eval scenarios (`pack-edit-colour`,
+  `list-level-plain-paragraph`, `token-by-variant`). `code-reviewer`: a
+  merge patch's nulls inside a new subtree are no longer stored
+  (`folderPack.toY`); a compile replaces its tokens' fields
+  (`updateFolderToken` `{ replace: true }`) and linked text drops a width,
+  levels and floor its style stopped setting; a bullet under a numbered
+  level exports with its glyph; the stored pack is validated where it is
+  used (`storedStylePack`: layout, check, compile); `style.deck.apply`
+  re-lays a slide whose surface is gone on the default (`surfaceReset`) and
+  leaves another pack's layout alone; logo `byRole.files` keys are colour
+  references, validated and compiled; one style-pack snapshot per folder
+  provider instead of one per `useCommand`. Compile stays an op of
+  `style.pack.edit` (A4.0: few tools); its description says how it is
+  undone (pack back, compile again; what a first compile created stays).
+- **Harness fixes found on the way:** `just eval` could not start
+  (`packHelpers` imports `@narrative/shared`; the script now passes the
+  eval's tsconfig to tsx); recording needs `replay: true` first; replay
+  pairs listed records by name, type and value instead of by position (the
+  live folder lists its colours in document order); the memory world
+  checks a named run's scope as the server does, and the server's message
+  for a deck run on a folder command says to drop `runId`; `just size`
+  builds with `NODE_ENV=production` (the dev `.env` made it measure React's
+  development bundle, 800 kB first paint instead of 727); the render-page
+  "never shows as a collaborator" e2e waits for the editor's own entry
+  before counting (it read 0 on a loaded machine).
+- **Verified:** `just check`; `just integration` 109/109; full `just e2e`
+  213 passed after the blocker fix — later full runs on a machine at load
+  30–46 (another session's Flutter tests) failed 10–12 specs, every one
+  green when rerun with two workers; `just pptx-roundtrip` on the Proseware
+  deck: 49 slides, 0 differences; `just style-pack all`; `just size`:
+  first paint 726.99 kB (+4 kB, the pack validation), Tiptap 132.81 kB
+  (pre-existing); `just eval` 66/66, $9.51, 20m28s, with
+  `pack-deck-variant`, `pack-edit-colour`, `list-level-plain-paragraph`
+  and `token-by-variant` recorded; `pack-build-slide` and `pack-fix-check`
+  stay live-only (the agent measures with `query.check`; the memory world
+  has no renderer). Not run: `just load`, `just lighthouse` (no hot edit or
+  render-path change beyond the font-load filter), `just mutate` (broken
+  since 2026-09-26).
 - The packs themselves live only in the private overlay
   (`private/packs/`, regenerated by `just style-pack`; not committed there).
-- Next: the blocker, the rest of the test round, then a release (0.11.0)
-  and, at Petr's go per brand, `just style-pack-import` into production
-  folders plus the MacBook font/logo handover.
+- Next: at Petr's go per brand, `just style-pack-import` into production
+  folders plus the MacBook font/logo handover (HANDOVER.md).

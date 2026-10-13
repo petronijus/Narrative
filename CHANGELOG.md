@@ -4,10 +4,11 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
-## Unreleased
+## 0.11.0 — Style packs (2026-10-13)
 
-Agentic phase A4 (style packs), steps A4.2b–A4.8: a folder can hold its
-brand as a style pack, and agents build, restyle and check slides with it.
+Agentic phase A4 (style packs), steps A4.2b–A4.8, which closes the phase: a
+folder can hold its brand as a style pack, and agents build, restyle and
+check slides with it.
 
 ### Added
 
@@ -46,6 +47,9 @@ brand as a style pack, and agents build, restyle and check slides with it.
   variable fonts with a `wdth` axis (Inspector → Width), line spacing and
   alignment; colour tokens gain alpha and per-variant and per-surface
   values.
+- Agents read a deck's pack variant, footer fields and language
+  (`query.deck` → `meta`) and the pack layout each slide follows
+  (`query.deck`, `query.slide` → `layout`).
 - Bootstrap of five brand packs (Contoso, Fabrikam, Tailspin, Woodgrove, Adatum)
   from their sources, `just style-pack`, and their import into a folder
   through the command API, `just style-pack-import`.
@@ -57,6 +61,28 @@ brand as a style pack, and agents build, restyle and check slides with it.
 - PowerPoint export draws colours on the deck's variant and each slide's
   surface; list levels and the new text fields round-trip through
   Narrative's own extension.
+
+### Fixed
+
+- A slide with a text box that fits its text (0.10.32) never finished
+  drawing on the render page when the box used an embedded face (Inter or
+  a folder font): its picture for agents (`query.render`), the brand check,
+  PNG export and server thumbnails timed out. Each measurement of the text
+  loaded its faces again, and every load laid the box out again; a box is
+  now laid out again only when a face it has not seen arrives.
+- A text box's width (`fontStretch`) is accepted only within the range of
+  its variable folder font's width axis, with a message naming the range.
+- Compiling a pack again takes off its tokens (and the text linked to
+  them) what the pack no longer sets: a removed colour, list levels, width
+  or shrink floor no longer lingers. Undo a compile by putting the pack
+  back and compiling again.
+- A slide on a surface its layout no longer offers is restyled on the
+  layout's default surface, and one laid out with another pack's layout is
+  left alone; `style.deck.apply` lists both.
+- A stored pack that is not valid is refused with its problems named
+  before it is used to lay out, check or compile.
+- PowerPoint export: a bullet under a numbered list level is written with
+  its glyph, so PowerPoint no longer numbers it.
 
 ---
 
