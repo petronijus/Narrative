@@ -128,9 +128,11 @@ e2e-smoke *args:
 e2e-affected *args:
     tools/dev/e2e-affected.py {{ args }}
 
-# Bundle budgets (size-limit)
+# The dev `.env` sets NODE_ENV=development, which Vite would otherwise build
+# with (React's development bundle, ~75 kB more first paint).
+# Bundle budgets (size-limit) on a production build
 size:
-    pnpm size
+    NODE_ENV=production pnpm size
 
 # Agent eval: headless Claude Code against the dev stack — costs subscription usage (`--filter`, `--record`, `--keep`)
 eval *args: _stack

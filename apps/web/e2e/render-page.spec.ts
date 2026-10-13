@@ -256,6 +256,9 @@ test('opened with a render token, as the worker does: paints, and never shows as
   const collaborators = page
     .getByRole('list', { name: 'Connected collaborators' })
     .getByRole('listitem')
+  // The editor's own entry first: counted before its awareness arrived
+  // (a loaded machine), `before` was 0 and the editor itself the "extra" one.
+  await expect(collaborators).not.toHaveCount(0, { timeout: 15_000 })
   const before = await collaborators.count()
 
   const token = await renderToken(page.request, deckId)
