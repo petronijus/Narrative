@@ -334,10 +334,15 @@ function paragraphProps(
     ? pxToEmu(look?.indent ?? 0)
     : em(level * INDENT_PER_LEVEL_EM + (isList ? MARKER_HANG_EM : 0))
   const indent = !isList ? 0 : pxIndent ? -pxToEmu(look?.hanging ?? 0) : -em(MARKER_HANG_EM)
+  // A bullet without a glyph of its own inherits its level's from the
+  // lstStyle — but a numbered level would hand PowerPoint its numbering
+  // instead: then the glyph Narrative draws is written.
+  const ownGlyphNeeded =
+    attrs.list === 'bullet' && attrs.bulletChar === undefined && look?.list === 'number'
+  const glyph = ownGlyphNeeded ? defaultBulletGlyph(level) : attrs.bulletChar
   let bullet: XmlChild
   if (attrs.list === 'bullet') {
-    // No glyph of its own: inherit the level's default from the lstStyle.
-    bullet = attrs.bulletChar !== undefined ? el('a:buChar', { char: attrs.bulletChar }) : null
+    bullet = glyph !== undefined ? el('a:buChar', { char: glyph }) : null
   } else if (attrs.list === 'number') {
     bullet = el('a:buAutoNum', {
       type: AUTONUM.toXml(attrs.numberFormat ?? 'decimal'),
@@ -350,7 +355,12 @@ function paragraphProps(
     'a:pPr',
     { marL, indent, lvl: level > 0 ? level : undefined },
     bullet,
-    paragraphExt(own, nativeParagraphAttrs(attrs)),
+    paragraphExt(
+      own,
+      nativeParagraphAttrs(
+        ownGlyphNeeded && glyph !== undefined ? { ...attrs, bulletChar: glyph } : attrs,
+      ),
+    ),
   )
 }
 

@@ -346,6 +346,8 @@ export async function matrixDeck(): Promise<ImportedDeck> {
       }),
       fontSize: 28,
       fontWeight: 400,
+      // A4.2c: a width on a variable face (extension only).
+      fontStretch: 125,
       color: 0x101010,
       align: 'left',
       listLevels: [
@@ -363,6 +365,24 @@ export async function matrixDeck(): Promise<ImportedDeck> {
         },
         { list: 'bullet', indent: 80, hanging: 24 },
       ],
+    },
+    {
+      id: 'tx-numlevel',
+      type: 'text',
+      ...frame(100, 980, 800, 80),
+      // A bullet with no glyph of its own under a numbered level: written
+      // with the glyph Narrative draws, or PowerPoint would number it.
+      text: rich((t) => {
+        t.insert(0, 'Numbered by its level')
+        t.insert(21, PARAGRAPH_SEP)
+        t.insert(22, 'Bullet under numbers')
+        t.insert(42, PARAGRAPH_SEP, { list: 'bullet' })
+      }),
+      fontSize: 24,
+      fontWeight: 400,
+      color: 0x101010,
+      align: 'left',
+      listLevels: [{ list: 'number', numberFormat: 'decimal' }],
     },
     {
       id: 'tx4',

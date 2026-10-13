@@ -49,6 +49,21 @@ describe('pptx round trip: model → export → import', () => {
       }
   })
 
+  it('writes the glyph of a bullet under a numbered level, so PowerPoint does not number it', async () => {
+    const zip = await JSZip.loadAsync(await exportInMemory(await matrixDeck()))
+    const xml = (
+      await Promise.all(
+        Object.keys(zip.files)
+          .filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+          .map((n) => zip.file(n)!.async('string')),
+      )
+    ).join('')
+    const para = /<a:p>(?:(?!<\/a:p>).)*Bullet under numbers/s.exec(xml)?.[0]
+    expect(para).toBeDefined()
+    expect(para).toMatch(/<a:buChar char="[^"]+"\/>/)
+    expect(para).not.toContain('a:buAutoNum')
+  })
+
   it('takes its zip entries from the package, not the clock', async () => {
     // What made the check above flaky: entries stamped with the moment they
     // were written, so two exports a zip time tick apart differed.
