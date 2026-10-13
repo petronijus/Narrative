@@ -18,6 +18,7 @@ vi.mock('pixi.js', () => ({ FontStylePromiseCache: pixi.fontCss, Cache: pixi.Cac
 import {
   _resetFontChangesForTests,
   announceFontFamilyChanged,
+  createFontLoadFilter,
   isEmbeddableFamilyName,
   removeHtmlTextFace,
   setHtmlTextFace,
@@ -103,5 +104,31 @@ describe('fontChanges', () => {
       bytes: ttf(3),
     })
     expect(pixi.fontCss.size).toBe(0)
+  })
+})
+
+describe('createFontLoadFilter', () => {
+  const face = (family: string, weight = '400', status: FontFaceLoadStatus = 'loaded') =>
+    ({
+      family,
+      weight,
+      style: 'normal',
+      stretch: 'normal',
+      unicodeRange: 'U+0-10FFFF',
+      status,
+    }) as FontFace
+
+  it('reports a face once, however often the same face loads again', () => {
+    const isNews = createFontLoadFilter()
+    expect(isNews([face('Inter', '100 900')])).toBe(true)
+    // HTMLText's measurements add the same faces to the document again.
+    expect(isNews([face('Inter', '100 900'), face('Inter', '100 900')])).toBe(false)
+    expect(isNews([face('Inter', '100 900'), face('Inter', '700')])).toBe(true)
+  })
+
+  it('ignores faces that did not load', () => {
+    const isNews = createFontLoadFilter()
+    expect(isNews([face('Brand', '400', 'error')])).toBe(false)
+    expect(isNews([face('Brand', '400')])).toBe(true)
   })
 })

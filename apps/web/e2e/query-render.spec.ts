@@ -295,3 +295,55 @@ test('refuses a slide that does not exist', async ({ request }) => {
   const body = (await res.json()) as { ok: boolean; error?: { code: string } }
   expect(body.error?.code).toBe('not_found')
 })
+
+test('an autofit text box in an embedded face settles', async ({ request }) => {
+  // Regression (A4, 2026-10-13): HTMLText's measurements load the faces it
+  // embeds again, each load re-laid autofit boxes out, which measured again:
+  // the render page never settled and the look timed out.
+  test.setTimeout(120_000)
+  const folder = await request.post(`${API}/commands`, {
+    headers: { Origin: WEB_ORIGIN },
+    data: { target: {}, command: 'folder.create', input: { name: `Autofit token ${Date.now()}` } },
+  })
+  const folderId = ((await folder.json()) as { result: { id: string } }).result.id
+  try {
+    const token = await request.post(`${API}/commands`, {
+      headers: { Origin: WEB_ORIGIN },
+      data: {
+        target: { folderId },
+        command: 'token.create',
+        input: { category: 'colors', name: 'Ink', value: '#43A047' },
+      },
+    })
+    const { tokenId } = ((await token.json()) as { result: { tokenId: string } }).result
+    const deck = await request.post(`${API}/commands`, {
+      headers: { Origin: WEB_ORIGIN },
+      data: { target: {}, command: 'deck.create', input: { title: 'Autofit token', folderId } },
+    })
+    deckId = ((await deck.json()) as { result: { id: string } }).result.id
+    for (const autofit of ['grow-down', 'shrink'] as const) {
+      await command(request, 'object.create', {
+        slide: { index: 0 },
+        id: autofit,
+        object: {
+          type: 'text',
+          x: autofit === 'shrink' ? 1000 : 200,
+          y: 200,
+          width: 600,
+          height: 120,
+          text: 'Green ink in a box that fits itself to its text',
+          fontSize: 72,
+          fontFamily: 'Inter',
+          autofit,
+          color: { $token: `colors.${tokenId}` },
+        },
+      })
+    }
+    const { out } = await look(request, { slide: { index: 0 } })
+    expect(out.slides).toHaveLength(1)
+  } finally {
+    if (deckId !== '') await request.delete(`${API}/decks/${deckId}`).catch(() => undefined)
+    deckId = ''
+    await request.delete(`${API}/folders/${folderId}`, { headers: { Origin: WEB_ORIGIN } })
+  }
+})

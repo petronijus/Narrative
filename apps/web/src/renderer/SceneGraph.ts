@@ -44,7 +44,7 @@ import {
   tokenColoursDiffer,
   type ColourResolverFn,
 } from './colourResolver.js'
-import { subscribeFontFamilyChanges } from './fontChanges.js'
+import { createFontLoadFilter, subscribeFontFamilyChanges } from './fontChanges.js'
 import { fontFamilyNames } from '@narrative/slide-model'
 import type { SlideObject, SlideObjectType, ObjectChangeSet } from '@narrative/shared'
 import type { ObjectBounds } from './types'
@@ -177,11 +177,17 @@ export class SceneGraph {
     // A webfont that finished loading changes how text lays out, but Pixi
     // keeps a node's measured bounds until its text or style changes: an
     // autofit box measured against the stand-in face would keep that
-    // height or scale. Lay them out again in the face that is there now.
-    // (Folder fonts reach their boxes through refreshTextNodesUsingFamily.)
+    // height or scale. Lay them out again in the face that is there now —
+    // once per face: HTMLText's own measurements load the faces it embeds
+    // again and again (createFontLoadFilter). (Folder fonts reach their
+    // boxes through refreshTextNodesUsingFamily.)
     const fonts = typeof document === 'undefined' ? undefined : document.fonts
     if (fonts !== undefined && typeof fonts.addEventListener === 'function') {
-      const relayout = (): void => this.relayoutAutofitText()
+      const isNews = createFontLoadFilter()
+      const relayout = (event: Event): void => {
+        const faces = (event as Partial<FontFaceSetLoadEvent>).fontfaces ?? []
+        if (isNews(faces)) this.relayoutAutofitText()
+      }
       fonts.addEventListener('loadingdone', relayout)
       this.unsubscribeFontLoads = () => fonts.removeEventListener('loadingdone', relayout)
     } else {
