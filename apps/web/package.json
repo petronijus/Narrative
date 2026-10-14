@@ -35,7 +35,7 @@
     {
       "name": "Tiptap + ProseMirror vendor chunk",
       "path": "dist/assets/vendor-tiptap-*.js",
-      "limit": "120 KB",
+      "limit": "122 KB",
       "gzip": true
     },
     {

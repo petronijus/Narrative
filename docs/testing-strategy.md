@@ -191,12 +191,12 @@
 > Bundle budgets enforced via `size-limit` (`pnpm size`). Property-based CRDT convergence,
 > server lifecycle/leak coverage, multi-client e2e collab, destructive-
 > flow coverage, sampled-thumbnail visual regression all active.
-> Lighthouse + Stryker mutation testing wired in (opt-in) — but **Stryker is
-> broken as of 2026-09-26**: the dry run crashes with `Cannot destructure
-property 'moduleGraph' of 'project.server' as it is undefined`
-> (`@stryker-mutator/vitest-runner` 8.7.1 does not support vitest 4.1.7).
-> `pnpm --filter @narrative/slide-model mutate` produces no report until the
-> runner is upgraded. Pre-existing; not caused by A0.
+> Lighthouse + Stryker mutation testing wired in (opt-in). Stryker was
+> broken 2026-09-26 → 2026-10-14 (runner 8.x vs vitest 4); fixed with
+> Stryker 10, a fresh `node_modules` (a stale nested `@babel/parser` 7 under
+> `@babel/core` 8 broke its instrumenter) and a run from the repo root (the
+> sandbox has to keep the repo's layout — see `stryker.config.json`).
+> Baseline 2026-10-14: 49% (`mutations.ts` 65%, `slides.ts` 26%).
 >
 > Added in agentic-layer A1 (2026-09-27):
 >
@@ -265,7 +265,11 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 >
 > ⚠️ Red as of 2026-09-26, all pre-existing at `4e3c503`: `pnpm size`
 > (Tiptap chunk 132.64 kB gz vs a 120 kB budget — still exactly that on
-> 2026-09-27 at A1; total first paint 633.9 of 800 kB, was 605.45 at A0); the real-deck PPTX round
+> 2026-09-27 at A1; 120.89 kB on 2026-10-14 once the vendor groups got
+> priorities: Rolldown's manualChunks let `@tiptap/y-tiptap` pull yjs and
+> lib0 into vendor-tiptap; the remaining 0.89 kB is Tiptap's own code (the
+> notes' Link mark stays: PowerPoint import writes links), so the limit went
+> to 122 kB the same day, Petr's call; total first paint 633.9 of 800 kB, was 605.45 at A0); the real-deck PPTX round
 > trip (5 differences, AGENTS.md requires 0); `m16-component-flows.spec.ts`
 > (hardcoded Drafts folder id, fails on any other database — fixed in
 > A2.12b, 2026-09-30: the spec seeds its own folder and component).
@@ -416,7 +420,7 @@ All six items landed:
 
 1. **Procedural-texture leak test** — ⏸ deferred. Blocked on the shared procedural-texture lifecycle landing (see memory note `procedural-texture-leak.md`). Add the test in the same PR that fixes the leak so they ship together.
 2. ✅ **Destructive-flow e2e** — `apps/web/e2e/destructive-flows.spec.ts`. Five tests covering deck delete + share-link cascade, share-link revoke happy-path + IDOR-guard regression (Tier 1 fix), folder delete cascade, Drafts-folder protection.
-3. ✅ **Mutation-testing pilot** — Stryker config at `packages/slide-model/stryker.config.json`. Run via `pnpm --filter @narrative/slide-model mutate`. Targets `mutations.ts` + `slides.ts` (highest-stakes files). HTML report → `reports/mutation/`. Threshold guidance: high=80%, low=60%, no break-build (informational; surface dead tests rather than gate).
+3. ✅ **Mutation-testing pilot** — Stryker config at `packages/slide-model/stryker.config.json`. Run via `just mutate` (from the repo root, see the config's `root_comment`). Targets `mutations.ts` + `slides.ts` (highest-stakes files). HTML report → `reports/mutation/`. Threshold guidance: high=80%, low=60%, no break-build (informational; surface dead tests rather than gate).
 4. ✅ **Multi-client e2e harness** — `apps/web/e2e/multi-client-collab.spec.ts`. Two scenarios: three browser contexts each adding slides + objects in parallel converge through real Hocuspocus sync; one context goes offline via `setOffline(true)`, peer makes changes, reconnect triggers Hocuspocus initial-sync handshake. Asserts deep-equal `listSlides()` snapshots across all contexts. The e2e analog to the unit-level CRDT property test from Tier B.1.
 5. ✅ **Lighthouse CI** — `.lighthouserc.json` + `pnpm lighthouse` script. Audits the editor route on a built preview server. Budgets: performance ≥ 0.7, FCP < 2.5s, LCP < 4s, TBT < 600ms, CLS < 0.1, TTI < 5s. Currently `warn`-level (not `error`) so it's informational; promote after one or two PR cycles confirm CI stability.
 
@@ -464,8 +468,14 @@ in a container with a supported base image.
   in a full server-suite rerun (1,133 passed / 1 skipped). A wait-for timeout
   under load, not a regression; not fixed. Rerun the server suite before
   blaming your change.
-- `multi-client-collab` e2e, "three clients … converge" — flaky as of
-  2026-09-26 (AGENTS.md records the numbers).
+- `multi-client-collab` e2e — flaky 2026-09-26 → 2026-10-14. Both tests
+  drove their clients as soon as the test API existed, which arrives with
+  the document (DeckShell) while the editor route (DeckEditor) is a
+  separate lazy module still loading: three cold loads at once outran the
+  15 s wait, and a client set offline mid-load failed the route import, so
+  the error boundary unmounted its document. The spec now waits for the
+  artboard and opens its clients one after another; 40/40 under 6
+  workers.
 
 ### Diagnostic probes are not tests
 
