@@ -3,10 +3,10 @@
   "version": "0.12.1",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@9.15.9",
+  "packageManager": "pnpm@12.11.2",
   "engines": {
     "node": ">=24.15.0",
-    "pnpm": ">=9.0.0"
+    "pnpm": ">=12.11.2"
   },
   "scripts": {
     "dev": "concurrently --kill-others-on-fail -n web,server,worker,render -c blue,green,magenta,cyan \"pnpm --filter web dev\" \"pnpm --filter server dev\" \"pnpm --filter @narrative/video-worker dev\" \"pnpm --filter @narrative/render-worker dev\"",
@@ -39,15 +39,5 @@
     "prettier": "^3.9.10",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "@swc/core",
-      "msgpackr-extract"
-    ],
-    "overrides": {
-      "undici-types@>=7.28.0": "7.27.2"
-    }
   }
 }

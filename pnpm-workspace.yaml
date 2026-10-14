@@ -1,3 +1,32 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+
+# pnpm settings (pnpm 11+ reads them here: `.npmrc` is for registry auth
+# only, and package.json's "pnpm" field is ignored).
+
+# A flat node_modules: the Windows symlink issue (ADR 0001), and scripts
+# that reach into the root node_modules (apps/web's `node
+# ../../node_modules/vitest/vitest.mjs`, the Stryker sandbox, the eval's
+# browser lookup).
+nodeLinker: hoisted
+shamefullyHoist: true
+packageImportMethod: copy
+linkWorkspacePackages: true
+strictPeerDependencies: false
+
+# Supply-chain guard: a version is installed only once it is a day old
+# (pnpm's default, stated so it is not lost by accident). A dependency sweep
+# that lands on something fresher waits a day or pins the previous release.
+minimumReleaseAge: 1440
+
+overrides:
+  'undici-types@>=7.28.0': 7.27.2
+
+# Dependencies whose install scripts may run; any other with a build script
+# fails the install (strictDepBuilds). The images install with
+# --ignore-scripts.
+allowBuilds:
+  esbuild: true
+  '@swc/core': true
+  msgpackr-extract: true

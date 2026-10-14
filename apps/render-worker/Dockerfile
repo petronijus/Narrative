@@ -6,11 +6,11 @@
 # ── Stage 1: builder ─────────────────────────────────────────────────────────
 FROM node:24-bookworm-slim AS builder
 
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+RUN corepack enable && corepack prepare pnpm@12.11.2 --activate
 
 WORKDIR /app
 
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/render-worker/package.json  apps/render-worker/package.json
 COPY packages/shared/package.json     packages/shared/package.json
 
@@ -26,11 +26,11 @@ RUN pnpm --filter @narrative/render-worker build
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 FROM node:24-bookworm-slim
 
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+RUN corepack enable && corepack prepare pnpm@12.11.2 --activate
 
 WORKDIR /app
 
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/render-worker/package.json  apps/render-worker/package.json
 COPY packages/shared/package.json     packages/shared/package.json
 

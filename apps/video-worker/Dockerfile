@@ -1,15 +1,15 @@
 # ── Stage 1: builder ─────────────────────────────────────────────────────────
 FROM node:24-alpine AS builder
 
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+RUN corepack enable && corepack prepare pnpm@12.11.2 --activate
 
 WORKDIR /app
 
 # Copy workspace manifests first to maximise Docker layer cache hits.
-# .npmrc carries `node-linker=hoisted` + `shamefully-hoist=true` so
+# pnpm-workspace.yaml carries `nodeLinker: hoisted` + `shamefullyHoist: true` so
 # packages/shared (which type-imports yjs without declaring it as its
 # own dep) can resolve modules from the root node_modules.
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/video-worker/package.json   apps/video-worker/package.json
 COPY packages/shared/package.json     packages/shared/package.json
 
@@ -31,12 +31,12 @@ FROM node:24-alpine
 # Pinned to whatever alpine:3.x provides in the node:24-alpine base.
 RUN apk add --no-cache ffmpeg
 
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+RUN corepack enable && corepack prepare pnpm@12.11.2 --activate
 
 WORKDIR /app
 
 # Copy workspace manifests for prod install
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/video-worker/package.json   apps/video-worker/package.json
 COPY packages/shared/package.json     packages/shared/package.json
 

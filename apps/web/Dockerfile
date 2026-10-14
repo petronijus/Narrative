@@ -2,7 +2,7 @@
 # Sestaví Vite produkční build (výstup do apps/web/dist/)
 FROM node:24-alpine AS builder
 
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+RUN corepack enable && corepack prepare pnpm@12.11.2 --activate
 
 WORKDIR /app
 
@@ -16,8 +16,8 @@ COPY packages/commands/package.json      packages/commands/package.json
 
 # --ignore-scripts skips esbuild's postinstall (just verifies platform binary
 # exists — not needed since @esbuild/* platform packages bundle the binary).
-# Also silences pnpm 10's ERR_PNPM_IGNORED_BUILDS when build scripts aren't
-# whitelisted in package.json's `pnpm.onlyBuiltDependencies`.
+# Also keeps pnpm's strict build check (allowBuilds in pnpm-workspace.yaml)
+# out of the image build.
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
 COPY apps/web/    apps/web/
