@@ -25,8 +25,7 @@ export interface MediaUploadResult {
   transcodeStatus?: 'pending' | undefined
   /** Fonts: what the file says about itself. */
   font?:
-    | { family: string; weight: number; style: string; postscriptName: string | null }
-    | undefined
+    { family: string; weight: number; style: string; postscriptName: string | null } | undefined
 }
 
 /**

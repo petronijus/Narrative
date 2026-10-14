@@ -385,8 +385,7 @@ function preparePatch(
   // without moving it would slide the picture inside the frame.
   if (type === 'image' && ('x' in patch || 'y' in patch) && !('imageRect' in patch)) {
     const crop = map.get('imageRect') as
-      | { x?: unknown; y?: unknown; width?: unknown; height?: unknown }
-      | undefined
+      { x?: unknown; y?: unknown; width?: unknown; height?: unknown } | undefined
     const oldX = map.get('x')
     const oldY = map.get('y')
     if (crop !== undefined && typeof crop.x === 'number' && typeof crop.y === 'number') {

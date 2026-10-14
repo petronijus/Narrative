@@ -65,7 +65,7 @@ describe('render sessions', () => {
     const a = sessionTokenFor(args, JOB, start)
     // A job every 100 s keeps the session going…
     let t = start
-    for (; t + 100_000 + JOB <= start + SESSION_MAX_MS; ) {
+    for (; t + 100_000 + JOB <= start + SESSION_MAX_MS;) {
       sessionJobEnded(a, t)
       t += 100_000
       expect(sessionTokenFor(args, JOB, t)).toBe(a)

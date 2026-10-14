@@ -139,8 +139,7 @@ test('idle CPU/GPU profile — 10s window', { tag: '@serial' }, async ({ page })
     window.__yUpdateOrigins = [] as Array<{ when: number; origin: unknown }>
     // Find Yjs doc via test API if available
     const doc = w.__narrative_test_api?.getYDoc?.() as
-      | { on?: (ev: string, fn: (...a: unknown[]) => void) => void }
-      | undefined
+      { on?: (ev: string, fn: (...a: unknown[]) => void) => void } | undefined
     if (doc && typeof doc.on === 'function') {
       doc.on('update', (_update: unknown, origin: unknown) => {
         // @ts-expect-error - test-only globals
@@ -405,8 +404,7 @@ test('idle CPU/GPU profile — 10s window', { tag: '@serial' }, async ({ page })
       __narrative_perf?: { app?: { ticker?: unknown } }
     }
     const app = w.__narrative_perf?.app as
-      | { ticker?: { started?: boolean; FPS?: number; _requestId?: number | null } }
-      | undefined
+      { ticker?: { started?: boolean; FPS?: number; _requestId?: number | null } } | undefined
     if (!app || !app.ticker) return { state: 'no app/ticker' }
     return {
       started: app.ticker.started ?? null,

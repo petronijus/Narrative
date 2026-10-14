@@ -93,7 +93,7 @@ below that match it.
 | `apps/server/src/pptx/**`                                                                                                             | `just pptx-roundtrip <real deck>` — target 0 differences; **5 pre-existing on 2026-09-26** (0.9.26–0.9.29, not bisected): add none (`apps/server/src/pptx/README.md`) |
 | Auth, sharing, folders, cascade-delete                                                                                                | `just e2e -g "destructive-flows"`                                                                                                                                     |
 | Yjs mutations, Hocuspocus, sync                                                                                                       | `just e2e -g "multi-client-collab"` (flaky 2026-09-26 → 2026-10-14: its clients were driven before the editor route had loaded; 40/40 under 6 workers since)          |
-| Bundle entry points, dynamic imports, vendor chunks                                                                                   | `just size` (Tiptap chunk 120.89 of 122 kB gz on 2026-10-14 — limit raised from 120 after yjs/lib0 moved back to vendor-yjs; grow no chunk)                           |
+| Bundle entry points, dynamic imports, vendor chunks                                                                                   | `just size` (Tiptap chunk 129.63 of 131 kB gz on 2026-10-14 — Tiptap 3.32 grew it; first paint fell 737 → 615 kB the same day; grow no chunk)                         |
 | Hot edit / awareness / doc-growth paths                                                                                               | `just load` (warns on > 20% drift from a local `baselines.json`, copied from `tests/load/baselines.example.json` after a clean run)                                   |
 | Editor render path (FCP / LCP / TTI)                                                                                                  | `just lighthouse`                                                                                                                                                     |
 | `packages/slide-model/src/{mutations,slides}.ts` deep changes                                                                         | `just mutate` (~2 min; 49% on 2026-10-14: `mutations.ts` 65%, `slides.ts` 26%) — informational, never gating                                                          |
@@ -156,7 +156,7 @@ tools/dev/          formatter, docs check, git hook scripts, toolchain doctor
   and reads the diff in the terminal. Never `--no-verify`, never force-push.
 - **Commit only when Petr says so** ("commit", "push", "ship", "merge",
   "hotovo", "nasaď"); approval to build something is not approval to commit.
-- Toolchain: Node ≥ 24.4 (the 24 LTS line the images run), pnpm 9.15.4 (`packageManager`), Docker with
+- Toolchain: Node ≥ 24.4 (the 24 LTS line the images run), pnpm 9.15.9 (`packageManager`), Docker with
   compose, xmllint (PPTX schema tests), python3 ≥ 3.9 (hooks, docs check).
   `just doctor` checks them.
 - Formatting is automatic (pre-commit hook): Prettier (`.prettierrc`) and

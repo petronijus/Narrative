@@ -298,8 +298,7 @@ export function planInsert(
     obj['x'] = num(obj['x']) + dx
     obj['y'] = num(obj['y']) + dy
     const crop = obj['imageRect'] as
-      | { x: number; y: number; width: number; height: number }
-      | undefined
+      { x: number; y: number; width: number; height: number } | undefined
     if (crop !== undefined) obj['imageRect'] = { ...crop, x: crop.x + dx, y: crop.y + dy }
     objects.push(obj as unknown as SlideObject)
     for (const c of cells) cellBodies.push({ objectId: obj['id'] as string, ...c })

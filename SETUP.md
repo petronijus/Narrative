@@ -7,7 +7,7 @@ something's broken — file an issue, don't paper over it.
 ## Prerequisites
 
 - **Node.js ≥ 24.4 built with TypeScript support** (`node -v`; `engines` in `package.json`). Node 24 is the Active LTS and the line the Docker images run (`node:24-alpine`); 24.4 added `fs.promises.mkdtempDisposable`, which the server's URL downloads use. `pnpm lint` loads the TypeScript parity table through Node's built-in type stripping, on by default in every Node 24. Was ≥ 22.18 from A2.1 (2026-09-28) until 2026-10-09, ≥ 22 before. The version alone is not enough: check `node -p process.features.typescript` prints `strip` (or `transform`), not `false` — a distro build can leave type stripping out (see "`pnpm lint` fails with `ERR_UNKNOWN_FILE_EXTENSION`" below)
-- **pnpm 9.15.4** (the `packageManager` pin) — via Corepack: `corepack enable && corepack prepare pnpm@9.15.4 --activate`
+- **pnpm 9.15.9** (the `packageManager` pin) — via Corepack: `corepack enable && corepack prepare pnpm@9.15.9 --activate`
 - **Docker** with the Compose plugin (`docker compose version`), logged in to GHCR once: `docker login ghcr.io -u petronijus` with a token that has `read:packages`. MinIO's official images are gone, and the dev stack's MinIO is a private mirror there ([docs/storage.md → MinIO image](docs/storage.md#minio-image))
 - **just, lefthook, gitleaks** — the task runner and the git hooks (macOS: `brew install just lefthook gitleaks`; Linux: the distro packages or the projects' release binaries). **xmllint** for the PPTX schema tests (`libxml2`). **python3 ≥ 3.9** for the Claude Code hooks and the docs check (standard library only). For secrets: **sops, age** and the 1Password CLI `op`.
 

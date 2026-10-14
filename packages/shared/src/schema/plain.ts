@@ -33,9 +33,7 @@ export type PlainTableObject = {
 
 /** {@link SlideObject} with every text body as a plain string. */
 export type PlainSlideObject =
-  | Exclude<SlideObject, TextObject | TableObject>
-  | PlainTextObject
-  | PlainTableObject
+  Exclude<SlideObject, TextObject | TableObject> | PlainTextObject | PlainTableObject
 
 /** The {@link PlainSlideObject} variant for one `type`. */
 export type PlainSlideObjectOf<T extends SlideObjectType> = Extract<PlainSlideObject, { type: T }>

@@ -6,7 +6,7 @@
 # ── Stage 1: builder ─────────────────────────────────────────────────────────
 FROM node:24-bookworm-slim AS builder
 
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 WORKDIR /app
 
@@ -26,7 +26,7 @@ RUN pnpm --filter @narrative/render-worker build
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 FROM node:24-bookworm-slim
 
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 WORKDIR /app
 

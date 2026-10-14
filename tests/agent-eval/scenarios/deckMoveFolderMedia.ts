@@ -122,8 +122,7 @@ export default defineScenario({
 
     const slide = await readSlide(world, { deckId: fx.deckId }, { index: 1 })
     const picture = slide.objects.find((o) => o.type === 'image') as
-      | { assetId?: string }
-      | undefined
+      { assetId?: string } | undefined
     if (!c.ok('the stamped picture is still on slide 2', picture?.assetId !== undefined)) {
       return c.done()
     }

@@ -2,7 +2,7 @@
 # Instaluje všechny deps (incl. devDeps) a kompiluje TypeScript → dist/
 FROM node:24-alpine AS builder
 
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 WORKDIR /app
 
@@ -29,7 +29,7 @@ RUN pnpm --filter @narrative/server build
 # Minimální image — node_modules z builderu (prod-only deps via prune), dist, drizzle
 FROM node:24-alpine AS runtime
 
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 WORKDIR /app
 

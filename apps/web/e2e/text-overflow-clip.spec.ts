@@ -53,8 +53,7 @@ test('text taller than its box is not clipped away', async ({ page }) => {
     page.evaluate((id) => {
       const sg = window.__narrative_scene_graph
       const container = sg?.getContainer(id) as unknown as
-        | { children?: { height?: number; constructor?: { name?: string } }[] }
-        | undefined
+        { children?: { height?: number; constructor?: { name?: string } }[] } | undefined
       const kids = container?.children ?? []
       const textNode = kids.find((c) => c.constructor?.name === 'HTMLText')
       const maskNode = kids.find((c) => c.constructor?.name === 'Graphics')

@@ -39,8 +39,7 @@ export interface RenderUpload extends RenderTarget {
  * master's (`/folder/:f/component/:c/render`, for the master's card).
  */
 export type RenderPage =
-  | { kind: 'deck'; deckId: string }
-  | { kind: 'component'; componentId: string; folderId: string }
+  { kind: 'deck'; deckId: string } | { kind: 'component'; componentId: string; folderId: string }
 
 /** The page's path (no query). */
 export function renderPagePath(page: RenderPage): string {

@@ -58,8 +58,7 @@ export default defineScenario({
     const context = callsOf(transcript, 'editor.context', { ok: true })
     c.ok('asked editor_context what the user is looking at', context.length > 0)
     const seen = context.at(-1)?.result as
-      | { activeSlideId?: string; selectedObjectIds?: string[] }
-      | undefined
+      { activeSlideId?: string; selectedObjectIds?: string[] } | undefined
     c.eq(
       'editor_context reported the open slide and selection',
       seen && { slide: seen.activeSlideId, selected: seen.selectedObjectIds },

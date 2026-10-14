@@ -661,8 +661,7 @@ export class SceneGraph {
     // (mask) and filter sprites do not.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const textChild = container.children.find((c) => (c as any).anchor !== undefined) as
-      | { alpha: number }
-      | undefined
+      { alpha: number } | undefined
     if (textChild === undefined) return
     textChild.alpha = faded ? 0 : 1
     this.markDirty()
@@ -720,8 +719,7 @@ export class SceneGraph {
     // stand-in. Every style and mask rebuilt below must start from the face
     // that is installed now.
     const textRendererForMetrics = getRenderer('text') as
-      | { forgetFontMetrics?: (f: string) => void }
-      | undefined
+      { forgetFontMetrics?: (f: string) => void } | undefined
     textRendererForMetrics?.forgetFontMetrics?.(family)
 
     let touched = 0
@@ -816,8 +814,7 @@ export class SceneGraph {
    */
   refreshSlideNumberTexts(): void {
     const textRenderer = getRenderer('text') as
-      | { refreshSlideNumberText?: (n: Container) => boolean }
-      | undefined
+      { refreshSlideNumberText?: (n: Container) => boolean } | undefined
     if (textRenderer?.refreshSlideNumberText === undefined) return
     let touched = 0
     const walk = (c: Container): void => {

@@ -2330,11 +2330,7 @@ export function PositionSection({ obj, patch, disabled }: PositionSectionProps) 
 // ---------------------------------------------------------------------------
 
 export type FilledShape =
-  | RectangleObject
-  | EllipseObject
-  | TriangleObject
-  | PolygonObject
-  | PathObject
+  RectangleObject | EllipseObject | TriangleObject | PolygonObject | PathObject
 
 interface AppearanceSectionProps {
   obj: FilledShape

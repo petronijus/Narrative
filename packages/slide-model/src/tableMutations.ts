@@ -354,9 +354,7 @@ function writeMerges(
   merges: ReadonlyArray<MergeArea>,
 ): void {
   type Want =
-    | { kind: 'plain' }
-    | { kind: 'origin'; m: MergeArea }
-    | { kind: 'covered'; m: MergeArea }
+    { kind: 'plain' } | { kind: 'origin'; m: MergeArea } | { kind: 'covered'; m: MergeArea }
   const want: Want[][] = []
   for (let r = 0; r < rowCount; r++) {
     const row: Want[] = []
@@ -1111,16 +1109,7 @@ export function setRangeCellStyle(
  *                  sides — see `inside`).
  */
 export type TableBorderPreset =
-  | 'none'
-  | 'all'
-  | 'outer'
-  | 'inside'
-  | 'top'
-  | 'bottom'
-  | 'left'
-  | 'right'
-  | 'insideH'
-  | 'insideV'
+  'none' | 'all' | 'outer' | 'inside' | 'top' | 'bottom' | 'left' | 'right' | 'insideH' | 'insideV'
 
 export type TableCellEdge = 'top' | 'right' | 'bottom' | 'left'
 type CellEdge = TableCellEdge

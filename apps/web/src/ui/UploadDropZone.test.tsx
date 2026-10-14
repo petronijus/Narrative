@@ -222,8 +222,7 @@ describe('UploadDropZone', () => {
 
     // Simulate calling onDone — with null objectsCtx it should be a no-op (no throw)
     const onDone = mockStartUpload.mock.calls[0]?.[1]?.onDone as
-      | ((e: UploadEntry) => void)
-      | undefined
+      ((e: UploadEntry) => void) | undefined
     expect(() =>
       onDone?.({
         id: 'x',

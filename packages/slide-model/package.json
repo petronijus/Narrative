@@ -16,13 +16,13 @@
   },
   "dependencies": {
     "@narrative/shared": "workspace:*",
-    "nanoid": "^5.0.9",
-    "yjs": "^13.6.30"
+    "nanoid": "^5.1.16",
+    "yjs": "^13.6.33"
   },
   "devDependencies": {
     "@stryker-mutator/core": "^10.0.0",
     "@stryker-mutator/vitest-runner": "^10.0.0",
-    "fast-check": "^3.23.0",
-    "vitest": "^4.1.7"
+    "fast-check": "^3.23.2",
+    "vitest": "^4.1.11"
   }
 }

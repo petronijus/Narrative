@@ -176,8 +176,7 @@ declare global {
 
 /** A page job's outcome for the render worker (a reason it can map, never a thrown error). */
 export type PageJobOutcome<T> =
-  | { ok: true; value: T }
-  | { ok: false; reason: RenderErrorReason; detail: string }
+  { ok: true; value: T } | { ok: false; reason: RenderErrorReason; detail: string }
 
 class PageJobError extends Error {
   constructor(

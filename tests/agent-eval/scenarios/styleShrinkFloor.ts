@@ -63,8 +63,7 @@ export default defineScenario({
   async grade({ world, fixture: fx, notes }) {
     const c = new Checks()
     const style = (await textStylesOf(world, fx.folderId)).find((s) => s.name === 'Body') as
-      | { minSize?: number }
-      | undefined
+      { minSize?: number } | undefined
     c.eq('the Body style has the floor', style?.minSize, FLOOR)
     const slide = await readSlide(world, { deckId: fx.deckId }, { index: 0 })
     const body = objectById(slide, fx.body)

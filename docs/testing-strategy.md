@@ -269,7 +269,8 @@
 > priorities: Rolldown's manualChunks let `@tiptap/y-tiptap` pull yjs and
 > lib0 into vendor-tiptap; the remaining 0.89 kB is Tiptap's own code (the
 > notes' Link mark stays: PowerPoint import writes links), so the limit went
-> to 122 kB the same day, Petr's call; total first paint 633.9 of 800 kB, was 605.45 at A0); the real-deck PPTX round
+> to 122 kB the same day, Petr's call, and to 131 kB that evening with
+> Tiptap 3.23 → 3.32 (129.63 kB; first paint 737 → 615 kB with Vite 8.3); total first paint 633.9 of 800 kB, was 605.45 at A0); the real-deck PPTX round
 > trip (5 differences, AGENTS.md requires 0); `m16-component-flows.spec.ts`
 > (hardcoded Drafts folder id, fails on any other database — fixed in
 > A2.12b, 2026-09-30: the spec seeds its own folder and component).

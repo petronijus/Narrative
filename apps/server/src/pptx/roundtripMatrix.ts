@@ -913,19 +913,17 @@ export function withProvenance(deck: ImportedDeck): ImportedDeck {
     ...deck,
     slides: deck.slides.map((slide) => ({
       ...slide,
-      objects: slide.objects.map(
-        (o, i): SlideObject => ({
-          ...o,
-          slot: `slot-${i}`,
-          role: i % 2 === 0 ? 'body' : 'furniture',
-          component: {
-            id: 'cmp-matrix',
-            objectId: `master-${i}`,
-            instance: `stamp-${slide.id}`,
-            origin: { x: o.x - 10, y: o.y - 20 },
-          },
-        }),
-      ),
+      objects: slide.objects.map((o, i): SlideObject => ({
+        ...o,
+        slot: `slot-${i}`,
+        role: i % 2 === 0 ? 'body' : 'furniture',
+        component: {
+          id: 'cmp-matrix',
+          objectId: `master-${i}`,
+          instance: `stamp-${slide.id}`,
+          origin: { x: o.x - 10, y: o.y - 20 },
+        },
+      })),
     })),
   }
 }

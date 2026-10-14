@@ -25,11 +25,7 @@ export type AgentRunStatus = 'open' | 'closed' | 'reverted'
  * - `not_document`: the run did not target a document (account/folder work).
  */
 export type NotRevertibleReason =
-  | 'reverted'
-  | 'nothing_to_revert'
-  | 'unloaded'
-  | 'expired'
-  | 'not_document'
+  'reverted' | 'nothing_to_revert' | 'unloaded' | 'expired' | 'not_document'
 
 export interface AgentRunSummary {
   id: string
@@ -64,8 +60,7 @@ export interface AgentRunSummary {
  * implicitly and never through these service calls.
  */
 export type RunDocument =
-  | { kind: 'deck'; deckId: string }
-  | { kind: 'component'; componentId: string }
+  { kind: 'deck'; deckId: string } | { kind: 'component'; componentId: string }
 
 export interface StartRunArgs {
   userId: string

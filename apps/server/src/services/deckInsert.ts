@@ -402,8 +402,7 @@ export async function rewriteForTarget(
       for (const record of records) {
         forEachRecord(record, (rec, set) => {
           const link = getField(rec, 'hyperlink') as
-            | { kind?: unknown; slideId?: unknown }
-            | undefined
+            { kind?: unknown; slideId?: unknown } | undefined
           if (link === undefined || link === null || link.kind !== 'slide') return
           const to =
             typeof link.slideId === 'string' ? args.slideIdMap.get(link.slideId) : undefined

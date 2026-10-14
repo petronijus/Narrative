@@ -15,9 +15,9 @@
   },
   "dependencies": {
     "@narrative/shared": "workspace:*",
-    "gsap": "^3.12.5"
+    "gsap": "^3.15.0"
   },
   "devDependencies": {
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.11"
   }
 }

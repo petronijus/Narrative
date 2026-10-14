@@ -74,8 +74,7 @@ export default defineScenario({
       )
       c.eq('its role is furniture', slot?.role, 'furniture')
       const box = master.objects.find((o) => o.id === slot?.objectId) as
-        | (MasterObject & { isSlideNumber?: boolean })
-        | undefined
+        (MasterObject & { isSlideNumber?: boolean }) | undefined
       c.ok('it shows the slide number', box?.isSlideNumber === true)
       c.ok(
         'it sits in the bottom-right corner',
