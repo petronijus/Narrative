@@ -24,11 +24,15 @@ tag="${1:?usage: ship.sh vX.Y.Z}"
 root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 cd "$root"
 
+# A release setting: the environment, then the private overlay
+# (private/release.env: the build host and the VM), then infra/release.env.
 setting() {
-  local name="$1" value
+  local name="$1" value file
   value="${!name:-}"
-  [[ -n "$value" ]] || value="$(sed -n "s/^${name}=//p" infra/release.env | tail -n 1)"
-  [[ -n "$value" ]] || { echo "✗ ${name} is set neither in the environment nor in infra/release.env" >&2; exit 1; }
+  for file in private/release.env infra/release.env; do
+    [[ -n "$value" || ! -f "$file" ]] || value="$(sed -n "s/^${name}=//p" "$file" | tail -n 1)"
+  done
+  [[ -n "$value" ]] || { echo "✗ ${name} is set neither in the environment nor in private/release.env or infra/release.env" >&2; exit 1; }
   printf '%s' "$value"
 }
 builder="$(setting NARRATIVE_BUILDER)"
@@ -88,7 +92,7 @@ PREFLIGHT
 echo "→ Building and deploying ${tag} on ${builder} (tooling ${tooling:0:7})"
 # ssh hands the remote shell one command string, so the arguments go into it
 # (both validated above: a vX.Y.Z tag and a 40-hex commit).
-remote_args="$(printf '%q %q' "$tag" "$tooling")"
+remote_args="$(printf '%q %q %q' "$tag" "$tooling" "$vm")"
 remote_script="$(git show "${tooling}:infra/scripts/remote-release.sh" 2>/dev/null)" ||
   fail "HEAD ${tooling:0:7} has no infra/scripts/remote-release.sh" "deploy from a checkout of current main"
 {

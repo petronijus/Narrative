@@ -40,9 +40,9 @@ describe('scopeHtmlTextCss', () => {
   })
 
   it('leaves declarations untouched', () => {
-    const css = 'div { font-family: "Proseware Pro", sans-serif; line-height: 142px }'
+    const css = 'div { font-family: "Brand Sans", sans-serif; line-height: 142px }'
     expect(scopeHtmlTextCss(css)).toContain(
-      'font-family: "Proseware Pro", sans-serif; line-height: 142px',
+      'font-family: "Brand Sans", sans-serif; line-height: 142px',
     )
   })
 })
@@ -51,7 +51,7 @@ describe('HTMLTextStyle.cssStyle once the scope is installed', () => {
   it('emits no rule that could match a div outside the measurement SVG', () => {
     const style = new HTMLTextStyle({
       fontSize: 158,
-      fontFamily: 'Proseware Pro',
+      fontFamily: 'Brand Sans',
       lineHeight: 142,
       wordWrap: true,
       wordWrapWidth: 986,

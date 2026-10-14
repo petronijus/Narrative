@@ -102,22 +102,22 @@ describe('pickPrimaryFamily', () => {
 
 describe('variable faces (A4.2c)', () => {
   const fabrikam = [
-    { family: 'Fabrikam Type', weight: 400, axes: { wght: [300, 700], wdth: [100, 130] } },
+    { family: 'Acme Type', weight: 400, axes: { wght: [300, 700], wdth: [100, 130] } },
   ] as Array<FontFaceWeight>
 
   it('a variable face covers every standard weight in its range', () => {
-    expect(allowedWeightsFor('Fabrikam Type', fabrikam)).toEqual([300, 400, 500, 600, 700])
+    expect(allowedWeightsFor('Acme Type', fabrikam)).toEqual([300, 400, 500, 600, 700])
   })
 
   it('the widths a family can be drawn at are its faces’ wdth ranges', () => {
-    expect(stretchRangeFor('Fabrikam Type', fabrikam)).toEqual([100, 130])
+    expect(stretchRangeFor('Acme Type', fabrikam)).toEqual([100, 130])
     expect(
-      stretchRangeFor('Fabrikam Type', [
+      stretchRangeFor('Acme Type', [
         ...fabrikam,
-        { family: 'Fabrikam Type', weight: 400, axes: { wdth: [75, 100] } },
+        { family: 'Acme Type', weight: 400, axes: { wdth: [75, 100] } },
       ]),
     ).toEqual([75, 130])
     expect(stretchRangeFor('Inter', fabrikam)).toBeNull()
-    expect(stretchRangeFor('Fabrikam Type', [{ family: 'Fabrikam Type', weight: 400 }])).toBeNull()
+    expect(stretchRangeFor('Acme Type', [{ family: 'Acme Type', weight: 400 }])).toBeNull()
   })
 })

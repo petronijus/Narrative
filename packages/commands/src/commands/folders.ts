@@ -123,7 +123,7 @@ export const folderCreate = defineCommand({
   undoneBy: 'folder.delete',
   confirm: 'never',
   routes: [POST('/folders')],
-  examples: [{ title: 'A folder for a new client', input: { name: 'Fabrikam 2027' } }],
+  examples: [{ title: 'A folder for a new client', input: { name: 'Acme 2027' } }],
   async handler(ctx, input) {
     return requireServices(ctx).folders.create({
       userId: ctx.actor.userId,
@@ -149,7 +149,7 @@ export const folderRename = defineCommand({
   undoneBy: 'folder.rename',
   confirm: 'never',
   routes: [PATCH('/folders/:id')],
-  examples: [{ title: 'Rename the folder', input: { name: 'Fabrikam — archive' } }],
+  examples: [{ title: 'Rename the folder', input: { name: 'Acme — archive' } }],
   async handler(ctx, input) {
     return requireServices(ctx).folders.rename({
       userId: ctx.actor.userId,

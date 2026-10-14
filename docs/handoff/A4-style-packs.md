@@ -30,7 +30,7 @@ and check slides against its rules.
 | A4.4  | compile to tokens and masters; layouts                                                     | `slide.applyLayout`, `style.deck.apply`             | 0.11.1   |
 | A4.5  | the brand check, measured on the render page                                               | `query.check`                                       | 0.11.1   |
 | A4.6  | Folder Settings → Style pack                                                               | (through `style.pack.edit`)                         | 0.11.1   |
-| A4.7  | master reader, five brand bootstraps (Contoso, Fabrikam, Tailspin, Woodgrove, Adatum)                        | `just style-pack`, `just style-pack-import`         | 0.11.1   |
+| A4.7  | master reader, five brand bootstraps (Contoso, Fabrikam, Tailspin, Wingtip, Wingtip Labs)  | `just style-pack`, `just style-pack-import`         | 0.11.1   |
 | A4.8  | `build-with-pack` playbook, `restyle-lite` for packs, eval scenarios, `FINISHED_PHASES A4` | —                                                   | 0.11.1   |
 
 ## Pitfalls found closing it
@@ -58,7 +58,7 @@ true })`: a field the pack stopped setting must leave the token, and
 ## Open
 
 - Production imports of the brand packs, brand by brand at Petr's go, and
-  the MacBook font and logo uploads (`HANDOVER.md`).
+  the MacBook font and logo uploads (`private/HANDOVER.md`).
 - `pack-build-slide` and `pack-fix-check` are live-only: the agent
   measures text with `query.check`, and the memory world has no renderer.
 - The MCP `tools/list` is at about 199.9 of its 200 kB budget. A holistic

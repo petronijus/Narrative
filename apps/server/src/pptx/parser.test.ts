@@ -2675,7 +2675,7 @@ describe('parsePptx — layout/master inheritance', () => {
   })
 
   /** Title placeholder whose own lstStyle restyles size + tracking but says
-   *  nothing about line spacing — the Proseware deck's "Now we need to make the
+   *  nothing about line spacing — the reference deck's "Now we need to make the
    *  experience even more awesome!" slide. */
   const TITLE_RESIZED_ON_SLIDE = `${SLIDE_OPEN}
       <p:sp>
@@ -2816,7 +2816,7 @@ describe('parsePptx — paragraph outline level', () => {
     ${SLIDE_CLOSE}`
 
   it('drops the level of a plain paragraph whose level has no margin', async () => {
-    // The Proseware deck's headline: lvl 1 selects defaultTextStyle's level 2,
+    // The reference deck's headline: lvl 1 selects defaultTextStyle's level 2,
     // whose marL is 0, so PowerPoint draws it flush at the frame edge. The
     // level used to be kept and rendered as a 1.5 em indent — 108 px off.
     const buf = await makeFixture({
@@ -2973,7 +2973,7 @@ describe('parsePptx — slide-number fields, no-wrap and inherited placeholder f
     ${SLIDE_CLOSE}`
 
   it("fills a placeholder that declares no fill with its layout placeholder's", async () => {
-    // The Proseware deck's black corner mark: the slide copy carries only the
+    // The reference deck's black corner mark: the slide copy carries only the
     // path, the black is on the layout. It came in fill-less — an invisible
     // shape you could only find by clicking it.
     const buf = await makeFixture({ slideXml: markOnSlide(''), layoutXml: LAYOUT_BLACK_MARK })

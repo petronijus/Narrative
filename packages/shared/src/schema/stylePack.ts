@@ -80,7 +80,7 @@ export const PackAxisSchema = z.strictObject({
         name: z.string().min(1).max(80),
         /** The roles this axis governs; each role is governed by exactly one axis. */
         roles: RolesSchema,
-        /** Woodgrove "best on": a warning, not a rule. */
+        /** Wingtip "best on": a warning, not a rule. */
         recommendedWith: z.record(PackIdSchema, z.array(PackIdSchema)).optional(),
       }),
     )
@@ -161,7 +161,7 @@ export const PackTextStyleSchema = z.strictObject({
   minSize: PositivePx.optional(),
   weight: Weight.optional(),
   stretch: Stretch.optional(),
-  /** CSS, × font size (Woodgrove). Exclusive with lineSpacing. */
+  /** CSS, × font size (Wingtip). Exclusive with lineSpacing. */
   lineHeight: z.number().positive().max(10).optional(),
   /** PowerPoint, × the font's normal line (Contoso 0.9, Fabrikam 1.1). */
   lineSpacing: z.number().positive().max(10).optional(),

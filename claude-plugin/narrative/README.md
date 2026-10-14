@@ -2,7 +2,7 @@
 
 The `narrative` skill teaches Claude Code how to work with Narrative decks
 through Narrative's MCP server: read and address decks, make targeted edits,
-find and replace, translate, shorten and restyle — the Woodgrove way.
+find and replace, translate, shorten and restyle.
 
 ## Install
 

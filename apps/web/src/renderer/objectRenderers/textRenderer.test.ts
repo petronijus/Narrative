@@ -65,11 +65,11 @@ describe('buildStyleOpts — Pixi HTMLText cache + CSS bridge', () => {
     const doc = new Y.Doc()
     const text = doc.getText('t')
     text.insert(0, 'a', { fontFamily: "O'Brien Sans" })
-    text.insert(1, 'b', { fontFamily: 'Proseware Pro' })
+    text.insert(1, 'b', { fontFamily: 'Brand Sans' })
     const opts = buildStyleOpts(
       makeText({ fontFamily: 'X</style><img src=x>', text } as Partial<TextObject>),
     )
-    expect(opts.fontFamily).toEqual(['Arial', 'Proseware Pro'])
+    expect(opts.fontFamily).toEqual(['Arial', 'Brand Sans'])
     // The override's quoted stack cannot end the <style> either.
     expect(opts.cssOverrides[0]).not.toContain('<')
   })
@@ -78,18 +78,17 @@ describe('buildStyleOpts — Pixi HTMLText cache + CSS bridge', () => {
     const doc = new Y.Doc()
     const text = doc.getText('t')
     text.insert(0, 'Run ')
-    text.insert(4, 'Wide', { fontFamily: 'Proseware Pro' })
-    text.insert(8, ' more', { fontFamily: '"Proseware Pro", Druk Wide' })
+    text.insert(4, 'Wide', { fontFamily: 'Brand Sans' })
+    text.insert(8, ' more', { fontFamily: '"Brand Sans", Druk Wide' })
     const opts = buildStyleOpts(makeText({ fontFamily: 'Inter', text } as Partial<TextObject>))
-    expect(opts.fontFamily).toEqual(['Inter', 'Proseware Pro', 'Druk Wide'])
+    expect(opts.fontFamily).toEqual(['Inter', 'Brand Sans', 'Druk Wide'])
   })
 
   it('emits a cssOverrides entry that re-declares font-family with CSS-safe quoting', () => {
     const opts = buildStyleOpts(makeText({ fontFamily: 'Northwind Sans ST Pro 60 Black' }))
     expect(Array.isArray(opts.cssOverrides)).toBe(true)
     const decl = opts.cssOverrides.find((s: string) => s.startsWith('font-family:')) as
-      | string
-      | undefined
+      string | undefined
     expect(decl).toBeDefined()
     // The override must wrap the multi-word + digit-containing family
     // in double quotes; without quotes, CSS tokenises "60" as a number

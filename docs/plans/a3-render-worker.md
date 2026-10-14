@@ -425,7 +425,7 @@ opt-in skipped); the full eval live (53/53, $7.32), `look-at-slide` and
 `export-png-slide` again after the last description change.
 
 **After 0.10.24** (production, the same day): `query.render` showed single
-slides of the Proseware deck correctly, but a sheet came back blank — six empty
+slides of the reference deck correctly, but a sheet came back blank — six empty
 tiles, or a white picture. The kernel log showed the worker's Chromium
 OOM-killed at the 900 MB limit (one slide of that deck peaked at 899 MiB and
 stayed at ~750 MiB); a dead GPU process leaves empty canvases and no error.
@@ -436,7 +436,7 @@ the worker restarts Chromium), and the limit is 1200 MB (Petr). Measured
 locally first: neither a small GPU budget nor the production image alone
 reproduced it — only the production deck on the 2.9 GB VM did.
 
-**Speed, 0.10.26–0.10.28.** With the memory fixed, a sheet of the Proseware
+**Speed, 0.10.26–0.10.28.** With the memory fixed, a sheet of the reference
 deck still ran past its deadline: a slide took 9–15 s. The worker now logs
 each job's timings (pages/renderTimings.ts, with settleScene's phases), and
 production said: loads 0.8 s, settle 10 ms, capture 9.7–12 s. Locally, the

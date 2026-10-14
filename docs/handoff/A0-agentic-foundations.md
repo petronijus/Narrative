@@ -277,9 +277,9 @@ failures in `m16-component-flows.spec.ts`, pre-existing (below).
   differences** (still exactly these 5 after the parity-fix pass), and the
   same 5 on a clean `4e3c503` checkout: `fillStyle.centerY`,
   `text.length`, and `fontSize` 27.99 → 28. CLAUDE.md requires 0, and the
-  0.9.25 CHANGELOG entry recorded 0 on the Proseware deck, so something between
+  0.9.25 CHANGELOG entry recorded 0 on the reference deck, so something between
   0.9.25 and 0.9.29 regressed it. Not bisected; the deck used was not
-  recorded in the report (unverified whether it is the Proseware deck).
+  recorded in the report (unverified whether it is the reference deck).
 - **`m16-component-flows.spec.ts` hardcodes a drafts folder id**
   (`const FOLDER_ID = 'drafts-958e2b33e6952467a1fbe3c71fc802e6'`, line 27)
   and fails on any database where Drafts has another id.

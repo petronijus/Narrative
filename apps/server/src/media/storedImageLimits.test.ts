@@ -18,7 +18,7 @@ function solid(width: number, height: number, format: 'png' | 'jpeg', alpha = 1)
 }
 
 describe('fitWithinStoredImageLimits', () => {
-  it('scales the Proseware deck background (9903×14853, 147 MP) under the pixel budget', () => {
+  it('scales the reference deck background (9903×14853, 147 MP) under the pixel budget', () => {
     const fit = fitWithinStoredImageLimits(9903, 14853)
     expect(fit.width * fit.height).toBeLessThanOrEqual(MAX_STORED_IMAGE_PIXELS)
     // Aspect ratio survives to within a pixel.

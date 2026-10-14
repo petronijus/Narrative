@@ -7,7 +7,7 @@
  * for its own line spacing, so the frame IS the reference measurement. On
  * slide 4 of the reference deck that frame is 600 units tall for 8 lines at
  * 60px with two 20px paragraph gaps: 8 × 60 × 1.162 + 40 = 597.8, where
- * 1.162 is Proseware Pro's normal line height in ems. We rendered the same text
+ * 1.162 is Brand Sans's normal line height in ems. We rendered the same text
  * at a flat 1.2 and got 616 — 3% tall, and once clipping was removed it
  * simply spilled past the frame.
  *
@@ -90,8 +90,7 @@ test('an spAutoFit frame renders at the height PowerPoint sized it to', async ({
         const o = api.getObject(id, sid) as { type?: string; height?: number } | null
         if (o === null || o.type !== 'text' || Math.round(o.height ?? 0) !== 600) continue
         const c = sg.getContainer(id) as unknown as
-          | { children?: { height?: number; constructor?: { name?: string } }[] }
-          | undefined
+          { children?: { height?: number; constructor?: { name?: string } }[] } | undefined
         const tn = (c?.children ?? []).find((k) => k.constructor?.name === 'HTMLText')
         const textH = Math.round(tn?.height ?? 0)
         if (textH === 0) return null

@@ -56,10 +56,10 @@ describe('deck meta', () => {
     const doc = new Y.Doc()
     const seen: unknown[] = []
     const off = subscribeDeckMeta(doc, (m) => seen.push(m))
-    setDeckMeta(doc, { variant: { background: 'dc' }, fields: { client: 'Contoso' }, lang: 'de' })
+    setDeckMeta(doc, { variant: { background: 'dc' }, fields: { client: 'Acme' }, lang: 'de' })
     expect(readDeckMeta(doc)).toEqual({
       variant: { background: 'dc' },
-      fields: { client: 'Contoso' },
+      fields: { client: 'Acme' },
       lang: 'de',
     })
     setDeckMeta(doc, { fields: null })

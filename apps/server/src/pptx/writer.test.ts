@@ -202,7 +202,7 @@ describe('buildDeckUpdate', () => {
 
   it("stores PPTX degrees as the model's radians, normalised to (−π, π]", async () => {
     // Regression: `rotation` went into the doc in degrees. The renderer reads
-    // radians, so the Proseware deck's "(barely)" (rot 352.97°, a 7° counter-
+    // radians, so the reference deck's "(barely)" (rot 352.97°, a 7° counter-
     // clockwise tilt) rendered at 352.97 rad ≡ +63.6° clockwise.
     const parsed: ParsedPptx = {
       ...BASE,

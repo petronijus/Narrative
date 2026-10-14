@@ -304,7 +304,7 @@ All three goals are now covered there, along with:
 - every capability callable by an agent through one command registry;
 - an MCP server, so Claude Code and claude.ai drive Narrative (an in-app
   agent is deferred);
-- Woodgrove style packs;
+- Wingtip style packs;
 - a parity guard.
 
 The plan runs in phases A0–A5:

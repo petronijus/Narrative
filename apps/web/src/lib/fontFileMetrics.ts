@@ -7,7 +7,7 @@
  * PowerPoint's "single" line spacing is `hhea.ascender − hhea.descender +
  * hhea.lineGap`, in ems. Chrome's `line-height: normal` agrees for most
  * fonts, but when a font sets OS/2 `USE_TYPO_METRICS` the browser switches
- * to the typo metrics and the two part ways: Proseware Pro declares hhea
+ * to the typo metrics and the two part ways: Brand Sans declares hhea
  * 964/−198/0 (1.162 em) and typo 704/−198/75 (0.977 em), so a frame
  * PowerPoint sized for 1.162 would be laid out here at 0.977 — 16% shorter,
  * far worse than the flat 1.2 this replaces. The canvas `fontBoundingBox`

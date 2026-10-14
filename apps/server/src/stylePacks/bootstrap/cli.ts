@@ -1,51 +1,64 @@
 /**
- * stylePacks/bootstrap/cli.ts — `just style-pack <brand> [brain repo] [out dir]`
- * (agentic A4.7): build a brand's style pack from its sources in the
- * woodgrove-ai-brain checkout, check it whole and write it as JSON into the
- * private overlay (`private/packs/<id>.json`; client IP never enters the
- * public repo). Putting a pack into a folder is `style.pack.edit` — the
- * Folder Settings import, or the command API — at Petr's go per brand.
+ * stylePacks/bootstrap/cli.ts — `just style-pack <brand> [sources] [out dir]`
+ * (agentic A4.7): build a brand's style pack from its sources, check it
+ * whole and write it as JSON into the private overlay
+ * (`private/packs/<id>.json`). Which brands exist, and the rules each
+ * brand's pack follows, live in the overlay too (`private/bootstrap/index.ts`:
+ * `brands` and `defaultSources`): a client's brand never enters the public
+ * repo, only the generic builders here (templatePack, measureHtml, common).
+ * Putting a pack into a folder is `style.pack.edit` — the Folder Settings
+ * import, or the command API (`just style-pack-import`).
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { StylePack } from '@narrative/shared'
 import { checkPack, tryPack } from './common.js'
 import type { BootstrapResult } from './templatePack.js'
-import { buildContosoPack } from './vw.js'
-import { buildFabrikamPack } from './fabrikam.js'
-import { buildTailspinPack } from './tailspin.js'
-import { buildWoodgrovePack, buildAdatumPack } from './woodgrove.js'
 
-type Build = (brain: string) => StylePack | BootstrapResult | Promise<BootstrapResult>
+/** One brand's builder: the sources' root in, its pack (and the files the pack names) out. */
+export type BrandBuild = (sources: string) => StylePack | BootstrapResult | Promise<BootstrapResult>
 
-const BRANDS: Readonly<Record<string, Build>> = {
-  vw: buildContosoPack,
-  fabrikam: buildFabrikamPack,
-  tailspin: buildTailspinPack,
-  woodgrove: buildWoodgrovePack,
-  adatum: buildAdatumPack,
+const OVERLAY = resolve(import.meta.dirname, '../../../../../private')
+const BRANDS_MODULE = join(OVERLAY, 'bootstrap/index.ts')
+
+async function loadBrands(): Promise<{
+  brands: Readonly<Record<string, BrandBuild>>
+  defaultSources?: string
+}> {
+  if (!existsSync(BRANDS_MODULE)) {
+    console.error(`no brands: ${BRANDS_MODULE} is missing (the private overlay, SETUP.md)`)
+    process.exit(2)
+  }
+  return (await import(pathToFileURL(BRANDS_MODULE).href)) as {
+    brands: Readonly<Record<string, BrandBuild>>
+    defaultSources?: string
+  }
 }
 
 async function main(): Promise<void> {
-  const [brand, brainArg, outArg] = process.argv.slice(2)
+  const { brands: BRANDS, defaultSources } = await loadBrands()
+  const [brand, sourcesArg, outArg] = process.argv.slice(2)
   const build = brand === undefined ? undefined : BRANDS[brand]
   if (build === undefined && brand !== 'all') {
-    console.error(`usage: style-pack <${Object.keys(BRANDS).join('|')}|all> [brain repo] [out dir]`)
+    console.error(`usage: style-pack <${Object.keys(BRANDS).join('|')}|all> [sources] [out dir]`)
     process.exit(2)
   }
   const given = (v: string | undefined) => (v === undefined || v === '' ? undefined : v)
-  const brain = resolve(
-    given(brainArg) ?? join(homedir(), 'Documents/Dev/Woodgrove/internal/woodgrove-ai-brain'),
-  )
-  const out = resolve(given(outArg) ?? join(import.meta.dirname, '../../../../../private/packs'))
+  const sourcesDir = given(sourcesArg) ?? defaultSources
+  if (sourcesDir === undefined) {
+    console.error('no sources: pass them, or set defaultSources in the overlay')
+    process.exit(2)
+  }
+  const sources = resolve(sourcesDir)
+  const out = resolve(given(outArg) ?? join(OVERLAY, 'packs'))
   mkdirSync(out, { recursive: true })
 
   let failed = false
   for (const [id, fn] of Object.entries(BRANDS)) {
     if (brand !== 'all' && id !== brand) continue
-    const built = await fn(brain)
+    const built = await fn(sources)
     const result: BootstrapResult = 'pack' in built ? built : { pack: built, files: {} }
     const checked = checkPack(result.pack)
     if ('issues' in checked) {

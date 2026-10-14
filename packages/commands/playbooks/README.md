@@ -1,8 +1,7 @@
 # Playbooks
 
 Instructions for an AI agent that drives Narrative through its commands.
-They are Narrative's own, written with the Woodgrove skill library presentation
-skills as inspiration (docs/plans/agentic-layer.md §4.4, §8).
+They are Narrative's own (docs/plans/agentic-layer.md §4.4, §8).
 
 The same files feed two surfaces, so they never drift apart:
 

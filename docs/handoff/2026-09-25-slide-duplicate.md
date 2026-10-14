@@ -43,13 +43,13 @@ only after a very long time. The shortcut only exposed it: the thumbnail menu's
    (background = opening pass, urgent = anything after), one render in flight.
    Gotcha found on the way: the order effect first runs with an **empty** list
    (before sync) — only a non-empty run counts as the opening.
-   Measured on the Proseware deck: copy's thumbnail 12 s → 1.7 s.
+   Measured on the reference deck: copy's thumbnail 12 s → 1.7 s.
 
 ## Verified
 
 - `pnpm typecheck`, `pnpm lint` (no new warnings), `pnpm -r test`: 1,632 tests,
   32 skipped.
-- Real Proseware ch1-ch2 deck (local), slide 7 duplicated: canvas draws, no render
+- Real reference deck (local), slide 7 duplicated: canvas draws, no render
   error, texts survive a reload, thumbnail ~1.7 s after Ctrl+D.
 - New e2e `apps/web/e2e/slide-duplicate.spec.ts` (image slide → Mod+D → the copy
   draws the image and an edit on it reaches the canvas) passes.

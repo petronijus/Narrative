@@ -77,10 +77,7 @@ export interface ImageBackground {
 }
 
 export type SlideBackground =
-  | ColorBackground
-  | LinearGradientBackground
-  | RadialGradientBackground
-  | ImageBackground
+  ColorBackground | LinearGradientBackground | RadialGradientBackground | ImageBackground
 
 /** Canonical default — near-white, readable in both themes. */
 export const DEFAULT_BACKGROUND: SlideBackground = {
@@ -185,7 +182,7 @@ export interface SlideLayoutRef {
 /**
  * Deck-wide settings at the document root's `meta` map (A4.2d): the
  * deck's style variant — one value per axis of its folder's pack (Contoso's
- * background; Woodgrove's theme and accent) — the values of the pack's footer
+ * background; Wingtip's theme and accent) — the values of the pack's footer
  * fields, and the deck's language.
  */
 export interface DeckMeta {

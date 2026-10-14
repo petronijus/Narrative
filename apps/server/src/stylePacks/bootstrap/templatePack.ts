@@ -500,7 +500,7 @@ export async function templatePack(
       furniture.push('pagenum')
 
     // A divider that sets its small line as the title and its big words as
-    // the subtitle (Fabrikam's Trenner): the big text is the slide's title.
+    // the subtitle (Fabrikam's divider): the big text is the slide's title.
     const titlePh = content.find((p) => p.type === 'title' || p.type === 'ctrTitle')
     const subPh = content.find((p) => p.type === 'subTitle')
     const swapped =
@@ -626,7 +626,7 @@ export async function templatePack(
       return s
     }
     // A thin single line just under the title is its message: a subtitle
-    // (Tailspin's "Botschaft" line, Fabrikam's subline).
+    // (Tailspin's message line, Fabrikam's subline).
     const messageLine = (p: MasterPlaceholder): boolean =>
       titlePh !== undefined &&
       p.type === 'body' &&

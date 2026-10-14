@@ -270,8 +270,8 @@ describe('RenderService.exportPng', () => {
   })
 
   it('passes on the fonts the worker could not load', async () => {
-    const { service } = setup(async (data) => ({ ...rendered(data), failedFonts: ['Proseware Pro'] }))
-    expect((await ask(service)).failedFonts).toEqual(['Proseware Pro'])
+    const { service } = setup(async (data) => ({ ...rendered(data), failedFonts: ['Brand Sans'] }))
+    expect((await ask(service)).failedFonts).toEqual(['Brand Sans'])
   })
 
   it('ranks a job by the slides its caller has in flight: a light user goes ahead of a heavy one', async () => {

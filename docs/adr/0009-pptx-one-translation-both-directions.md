@@ -15,7 +15,7 @@ writes PowerPoint from its own option objects, plus a post-processing pass
 that patched the XML it could not produce. Every meaning had to be kept in
 step by hand in two vocabularies that never met — and they drifted:
 rotation units, gradient angles, paragraph breaks, bullet glyphs, crops,
-custom geometry, line ends. On the Proseware client deck, import → export →
+custom geometry, line ends. On a real client deck, import → export →
 import changed **6 173** values in 61 kinds. An exported deck opened in
 PowerPoint looked broken, and the same file imported back into Narrative was
 not the deck that had been exported.
@@ -72,8 +72,8 @@ converts through inches, and it owns the XML it writes.
 
 ## Consequences
 
-- The Proseware deck round-trips with **0** differences (was 6 173); the
-  feature matrix with 0. LibreOffice renders the export of the Proseware deck
+- The reference deck round-trips with **0** differences (was 6 173); the
+  feature matrix with 0. LibreOffice renders the export of the reference deck
   about five times closer to the original than the pptxgenjs export (mean RMSE
   0.033 vs 0.163 per slide).
 - Building the invariant exposed importer bugs that PowerPoint decks hit on

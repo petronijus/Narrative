@@ -89,7 +89,7 @@ describe('mcpPublicConfigFromEnv', () => {
 
   it('takes PUBLIC_API_URL over https, or plain http on loopback only', () => {
     const defaults = { apiPort: 3001, isProd: true, spaOrigin: 'https://narrative.example' }
-    for (const base of ['http://narrative.example/api', 'http://192.168.20.150:3001', 'ftp://x']) {
+    for (const base of ['http://narrative.example/api', 'http://192.168.1.50:3001', 'ftp://x']) {
       expect(() => mcpPublicConfigFromEnv({ PUBLIC_API_URL: base }, defaults), base).toThrow(
         /PUBLIC_API_URL must be an https URL/,
       )

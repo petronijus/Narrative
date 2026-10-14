@@ -96,7 +96,7 @@ export function createFixtureStylePack(): StylePack {
  * semibold cut, and a variable family with weight and width axes (A4.2c).
  */
 export const FIXTURE_FONT_FAMILY = 'Brand Sans'
-export const FIXTURE_VARIABLE_FAMILY = 'Fabrikam Type'
+export const FIXTURE_VARIABLE_FAMILY = 'Acme Type'
 
 export function createFixtureFolderFonts(): FontFaceWeight[] {
   return [

@@ -1,4 +1,4 @@
-# Agentic Narrative: every capability callable by an agent, plus Woodgrove style packs
+# Agentic Narrative: every capability callable by an agent, plus Wingtip style packs
 
 Status: **accepted**, 2026-09-26. **A0–A5 done**, the plan's last
 phase: A5 (a whole deck built from a deck spec, a deck restyled into
@@ -30,11 +30,11 @@ decisions are recorded in §12.
 This plan is based on two read-only surveys done on 2026-09-26:
 
 - a full capability inventory of this repo at `00890b0` (v0.9.29);
-- the presentation skills in the Woodgrove skill library
-  (`Woodgrove/internal/woodgrove-ai-brain`, commit `29f9367`): litware-fabrikam-pptx,
+- the presentation skills in the internal skill library
+  (`Wingtip/internal/the internal sources`, commit `29f9367`): litware-fabrikam-pptx,
   litware-fabrikam-html, litware-contoso-presentation, tailspinr-pptx, html-presentation-slides,
   html-document, html-to-pptx, global-deck-editing-enable,
-  gamma-deck-builder, adatum-analysis / adatum-key-insights,
+  gamma-deck-builder, wingtip-labs-analysis / wingtip-labs-key-insights,
   presentation-narrative-standard.
 
 ## 1. Goals
@@ -45,12 +45,13 @@ This plan is based on two read-only surveys done on 2026-09-26:
    "export", or "insert that other deck after slide 4 and restyle it to
    match".
 2. **Brand styles as data, owned by Narrative.** Decks in Narrative must
-   be able to look the way Woodgrove's current decks look (Fabrikam, Contoso, Tailspin, the Woodgrove house style, Adatum). The skill library are the
+   be able to look the way Wingtip's current decks look (Fabrikam, Contoso, Tailspin
+   Tailspin, the Wingtip house style, Wingtip Labs). The skill library are the
    **inspiration and the starting material**, not a source Narrative
    stays in sync with. Narrative's own **style packs** and its own
    mechanics (the playbooks the MCP server serves, the `narrative`
    skill) become the
-   way Woodgrove builds decks. An agent uses a pack to build and restyle decks
+   way Wingtip builds decks. An agent uses a pack to build and restyle decks
    and to check them against the brand.
 3. **Parity cannot silently rot.** When a feature is added, it has to
    reach the agent surface too, or the build fails. A dedicated
@@ -64,7 +65,7 @@ This plan is based on two read-only surveys done on 2026-09-26:
 
 ## 2. Non-goals (for this plan)
 
-- Charts as an object type. The Contoso `graph` layout and Adatum decks need
+- Charts as an object type. The Contoso `graph` layout and Wingtip Labs decks need
   them, but a chart object is a separate feature. Once it exists, it goes
   through the parity machinery like any other feature.
 - Version history and comments. These are separate milestones. Section 6
@@ -150,7 +151,7 @@ This plan is based on two read-only surveys done on 2026-09-26:
 - **Fabrikam (50 layouts × light/dark) and Tailspin (22 layouts)** can be read from
   their `.pptx` masters. Their slot geometry is already extracted in the
   survey's scratch output.
-- **The Woodgrove house style, Fabrikam HTML and Adatum** are CSS tokens plus
+- **The Wingtip house style, Fabrikam HTML and Wingtip Labs** are CSS tokens plus
   class recipes, sized with viewport units. They convert to fixed
   1920×1080 regions: 1vw = 19.2 px, 1vh = 10.8 px.
 - **`presentation-narrative-standard` is the storyline stage upstream of
@@ -159,7 +160,7 @@ This plan is based on two read-only surveys done on 2026-09-26:
   notes. That table maps directly onto the deck spec.
 - **The skills contradict each other in places.** Fabrikam HTML and Fabrikam PPTX
   differ in title size, footer position, rings, margins and bullets. The
-  Woodgrove `template.html` contradicts its own SKILL.md. Each pack has to name
+  Wingtip `template.html` contradicts its own SKILL.md. Each pack has to name
   one source of truth (§7.4).
 
 ## 4. Architecture
@@ -289,7 +290,7 @@ else that is not a person clicking.
 ### 4.4 Agent guidance: playbooks over MCP
 
 Narrative does not run a model. What it provides is **guidance**, so any
-Claude client driving it builds decks the Woodgrove way:
+Claude client driving it builds decks the house way:
 
 - **Playbooks** live as markdown in `packages/commands/playbooks/`: build
   deck, edit, restyle, insert-and-restyle, fix slide, translate, shorten.
@@ -300,7 +301,7 @@ Claude client driving it builds decks the Woodgrove way:
 - The **`narrative` Claude Code skill** is generated from the same files,
   so the skill and the prompts never drift apart. It ships from this repo as
   the plugin `claude-plugin/narrative/` (decision 2026-09-27: everything
-  Narrative stays in the Narrative repo, nothing in woodgrove-plugins).
+  Narrative stays in the Narrative repo, nothing in an internal plugin repo).
 - **Style packs** are served as **MCP resources**: tokens, layouts,
   editorial rules. The agent reads the active pack before it builds.
 - **Tool descriptions** come from the registry and are written for a
@@ -522,7 +523,7 @@ condensed here:
   - colours and colour roles (for example Contoso allows only
     `{dark_blue, white}` as text colours);
   - theme slots;
-  - **variants** (Fabrikam light/dark, Contoso white/nh/dc, Woodgrove dark/light × one
+  - **variants** (Fabrikam light/dark, Contoso white/nh/dc, Wingtip dark/light × one
     of 8 accents);
   - chart palette.
 - `fonts`: the role (`head`, `text`, `text_bold`, `display`), weights,
@@ -536,7 +537,7 @@ condensed here:
 - `furniture`: the slide chrome the pack draws, not the author: logo
   placements per layout, a footer template with fields
   (`Page {page} | Creation date: {created} | …`), page number,
-  classification marking, rules, and decoration (Adatum spheres and
+  classification marking, rules, and decoration (Wingtip Labs spheres and
   rings).
 - `layouts[]`: `id`, `family`, `variant`, `tone`, `purpose`,
   `needsPicture`, `background`, and `regions[]`. Each region has a `slot`,
@@ -554,7 +555,7 @@ condensed here:
   dpi, default focus, whether scrims are allowed, an AI-label rule, and
   icon style.
 - `editorial`:
-  - title mode: `action-title` for Fabrikam, Contoso and Adatum; `label +
+  - title mode: `action-title` for Fabrikam, Contoso and Wingtip Labs; `label +
 message-subtitle` for Tailspin;
   - title word limits and "no trailing period";
   - no caps, no italics;
@@ -599,7 +600,7 @@ command layer and the parity check.
    reuses `isSlideNumber`; other furniture (logo, footer) is placed from the
    layout data. Furniture may be locked for people in the editor; agents
    ignore locks (§12, decision 9).
-5. **Font stretch** (a `wdth` axis) on text, for Fabrikam Type.
+5. **Font stretch** (a `wdth` axis) on text, for Acme Type.
 6. **Deck-level variant** (Contoso's rule of one variant per deck), with
    `style.deck.setVariant`.
 7. **Schema debt found by the survey:** add `textStyleId` to `TextObject`.
@@ -632,16 +633,16 @@ that Narrative mirrors the skills. So:
   covered by the parity machinery like every other feature, so an agent
   can edit a pack too ("make the Contoso accent a touch darker", "add a
   three-column layout").
-- The long-term way Woodgrove builds decks is Narrative's own playbooks and
+- The long-term way Wingtip builds decks is Narrative's own playbooks and
   the `narrative` skill (§4.4, §4.5), not the per-client brain skills.
 
-| Pack          | Bootstrap from                                                                                                             | Visual reference to match                                                    |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Contoso 2026       | `layouts.json` → pack, almost field for field; the Contoso deck spec informs Narrative's own DeckSpec                           | `VW_Master_2026_{DE,EN}.pptx`                                                |
-| Fabrikam          | new PPTX master/layout reader (extends the M28 parser; ADR 0009 "one translation both directions")                         | `Audi_Template.pptx`, **not** the HTML skill (they disagree; see the survey) |
-| Tailspin | the same master reader, plus the diagram builders as components                                                            | `tailspinr-master.pptx`                                                          |
-| Woodgrove house   | hand-authored from `test-presentation.html`, **not** `references/template.html` (v1 contradicts SKILL.md v1.8); vw/vh → px | `test-presentation.html` / SKILL.md v1.8                                     |
-| Adatum        | extends Woodgrove: lime accent, decoration, chart palette                                                                      | `adatum-deck-design.md`                                                      |
+| Pack          | Bootstrap from                                                                                                                  | Visual reference to match                                                    |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Contoso 2026  | `layouts.json` → pack, almost field for field; the Contoso deck spec informs Narrative's own DeckSpec                           | `VW_Master_2026_{DE,EN}.pptx`                                                |
+| Fabrikam      | new PPTX master/layout reader (extends the M28 parser; ADR 0009 "one translation both directions")                              | `Audi_Template.pptx`, **not** the HTML skill (they disagree; see the survey) |
+| Tailspin      | the same master reader, plus the diagram builders as components                                                                 | `tailspinr-master.pptx`                                                          |
+| Wingtip house | hand-authored from `test-presentation.html`, **not** `references/template.html` (v1 contradicts SKILL.md v1.8); contoso/vh → px | `test-presentation.html` / SKILL.md v1.8                                     |
+| Wingtip Labs  | extends Wingtip: lime accent, decoration, chart palette                                                                         | `wingtip-labs-deck-design.md`                                                |
 
 **The PPTX master reader is a real deliverable.** It turns a client
 master's layouts into pack layout data (and its theme into tokens).
@@ -658,7 +659,7 @@ explicit call, recorded in the pack's provenance notes:
 
 - **Fabrikam:** the PPTX master wins. The HTML skill's values become a
   separate `web` variant, if anyone wants it.
-- **Woodgrove:** SKILL.md v1.8 and `test-presentation.html` win.
+- **Wingtip:** SKILL.md v1.8 and `test-presentation.html` win.
 - **Contoso:** `layouts.json` wins over the off-by-one level comment in
   `vw_deck.py`.
 - **Tailspin:** the master theme wins over the dashboard-builder ramp
@@ -668,7 +669,7 @@ explicit call, recorded in the pack's provenance notes:
 
 ### 7.5 Brand/QA checker (`query.check`)
 
-This ports `vw check_deck.py` into a pack-driven checker. It reports
+This ports `contoso check_deck.py` into a pack-driven checker. It reports
 errors and warnings per slide and per object:
 
 - **Fit:** the rendered height from the render worker is compared with
@@ -694,7 +695,7 @@ treats it as a failure, as the Contoso checker does.
 ### 7.6 Fonts, masters and rights
 
 **Decision (2026-09-26): Narrative may host the brand fonts** (Contoso Head/Text
-Office, Fabrikam Type, Northwind Sans ST Pro) as folder fonts.
+Office, Acme Type, Northwind Sans ST Pro) as folder fonts.
 
 - Brand fonts are uploaded as **folder fonts** of the client's folder.
   They are scoped to the folder. **Changed 2026-10-12 (Petr):** a deck
@@ -706,8 +707,8 @@ Office, Fabrikam Type, Northwind Sans ST Pro) as folder fonts.
   closed by folder sharing before A4 started.
 - **Contoso Head/Text Office** are not in the brain repo (the skill
   deliberately links rather than ships them); they have to be uploaded
-  from Woodgrove's own font files.
-- **Fabrikam Type:** the variable font is uploaded whole, not the latin subset
+  from Wingtip's own font files.
+- **Acme Type:** the variable font is uploaded whole, not the latin subset
   the HTML skill embeds, so German and other diacritics outside the subset
   render correctly.
 - The render worker loads folder fonts exactly as the editor does, so fit
@@ -775,7 +776,7 @@ stored on the run, so a deck can be rebuilt with another pack.
 3. **Build:** `style.buildFromSpec`, applied directly (or into a fork
    when the user switched propose mode on).
 4. **Check:** `query.check`. Fix the errors: edit, group or split before
-   shrinking type, as the Contoso and Woodgrove composition rules say.
+   shrinking type, as the Contoso and Wingtip composition rules say.
 5. **Look:** `query.render` on each slide at full size, then a contact
    sheet of the whole deck for pacing and repetition (Contoso's two-pass
    review). Whatever looks wrong goes back to step 4, and the agent looks
@@ -1010,7 +1011,7 @@ with vitest 4) were already red at `4e3c503`.
 | **A1 Server host, identity, MCP** | Personal access tokens: hashed, scoped, with expiry, created in account settings, accepted in `authPreHandler` and the tus upload handler (never on the WebSocket — agents write through the server host; security review 2026-09-27). ServerHost with single-transaction wrapping. Runs and changesets (`agent_runs` / `agent_ops`), `agent.revert`, the Agent activity popover. `activeSlideId` in awareness; `editor.context`, `editor.show`; the agent as an awareness peer. **Component commands the agent works with (§7.2 item 8):** `component.list`, `component.get` with the slot map, `component.stamp` with slot content, editing a master (the host opens `component:<id>`). `POST /api/commands` (batch). Rate limit (`@fastify/rate-limit`). **`/api/mcp`**: tools from the registry with annotations, elicitation for confirmations, the first playbooks as MCP prompts, and the `narrative` Claude Code skill as a plugin in this repo (`claude-plugin/narrative/`). Then MCP OAuth for claude.ai connectors. | **Done 2026-09-27.** MCP ships here, per the 2026-09-26 decision: Claude Code can drive Narrative with every command A0 wrapped. Security review (`security-reviewer`). Agent edits to a component master are runs like any other (listed and revertible in the master editor's Agent activity popover). `tools/list` compacted from 235 KB to ≈ 148 KB.                   |
 | **A2 Extraction**                 | Move every web-only item in Appendix B into commands and switch the UI over. Turn the lint rule on per directory as each is migrated. Move **token seeding and text-style propagation to the server**: a Hocuspocus extension, or a command run on token update, so propagation reaches decks nobody has open. Add the notes API, `deck.duplicate`, `slide.copyTo` / `object.copyTo` (the clipboard becomes a thin UI over them), `text.set` with formatting, and `table.cell.setText` (not added, A2.10 2026-09-29: the text commands take `target.cell`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | **Done 2026-09-30** (A2.13; A2.1–A2.12a released in 0.10.2–0.10.14, A2.12b + A2.13 to ship as 0.10.15): no A2 known-missing entry, `ONE_DOOR_PENDING` empty, 129 commands. Plan and steps: `a2-extraction.md`; handoff `docs/handoff/A2-extraction.md`. The biggest phase. Each extracted command appears in MCP automatically. Done when the known-missing list is empty. |
 | **A3 Render worker**              | Headless Chromium worker; `/render` route under the production CSP, reading the live document. Thumbnails for unopened decks. `deck.exportPng` (`deck.exportPdf` moved to A5, Petr 2026-10-10). `query.render` with single slide, contact sheet, region crop and before/after. Text-fit measurement API.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | The agent can see what it built. Also three user-facing features apart from agents.                                                                                                                                                                                                                                                                                        |
-| **A4 Style packs**                | Pack schema and validator. The slide-model changes in §7.2 (component provenance and slots, `component.create`, `component.restamp`). `style.pack.*` CRUD and the Style pack tab in Folder Settings. Packs served as MCP resources. **The pack compiler: a pack becomes folder tokens, folder fonts and its short list of components (pagination, headline, subline, copy, recurring column/grid); layouts stay pack data.** PPTX master/layout reader turning client masters into layout data (in the parser, so ordinary imports keep layouts too). Bootstrap Contoso, Fabrikam, Tailspin, Woodgrove and Adatum into their folders; upload their brand fonts. Deck-scoped font access for shared-deck editors. Pack-driven `query.check`. `style.deck.applyPack`, `slide.applyLayout`.                                                                                                                                                                                                                                                         | Visual target: the decks Woodgrove builds today.                                                                                                                                                                                                                                                                                                                               |
+| **A4 Style packs**                | Pack schema and validator. The slide-model changes in §7.2 (component provenance and slots, `component.create`, `component.restamp`). `style.pack.*` CRUD and the Style pack tab in Folder Settings. Packs served as MCP resources. **The pack compiler: a pack becomes folder tokens, folder fonts and its short list of components (pagination, headline, subline, copy, recurring column/grid); layouts stay pack data.** PPTX master/layout reader turning client masters into layout data (in the parser, so ordinary imports keep layouts too). Bootstrap Contoso, Fabrikam, Tailspin, Wingtip and Wingtip Labs into their folders; upload their brand fonts. Deck-scoped font access for shared-deck editors. Pack-driven `query.check`. `style.deck.applyPack`, `slide.applyLayout`.                                                                                                                                                                                                                                   | Visual target: the decks Wingtip builds today.                                                                                                                                                                                                                                                                                                                             |
 | **A5 Deck builder + restyle**     | Deck spec and `style.deck.apply { spec }` (decided instead of a `style.buildFromSpec` tool, D1). The build playbook, modelled on `presentation-narrative-standard`, with the render-and-look loop. `style.deck.apply { relayout }` over `deck.insertFrom` (instead of `style.slides.restyle`, D2). `deck.exportPdf`. The full eval suite. Done 2026-10-14 (`a5-deck-builder.md`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | The "whole deck from a brief" goal.                                                                                                                                                                                                                                                                                                                                        |
 
 A1 follow-up (2026-09-28, after v0.10.0, unreleased): `tools/list` compacted
@@ -1050,7 +1051,7 @@ and gets one holistic review before the MCP work. Step log:
 
 ## 12. Decisions (Petr, 2026-09-26)
 
-1. **Fonts:** yes. Narrative may host Contoso Head/Text Office, Fabrikam Type and
+1. **Fonts:** yes. Narrative may host Contoso Head/Text Office, Acme Type and
    Northwind Sans ST Pro as folder fonts (§7.6).
 2. **Autonomy:** the agent applies changes directly, for every kind of
    run. Propose mode stays as an opt-in (§6). Irreversible commands still
@@ -1058,7 +1059,7 @@ and gets one holistic review before the MCP work. Step log:
 3. **MCP:** now, and it is the only agent surface. It ships in A1, right
    after the foundations, and grows with every command A2 extracts (§10).
 4. **Style packs:** the skill library are inspiration only. The goal is
-   that the visual Woodgrove uses today works in Narrative too; after
+   that the visual Wingtip uses today works in Narrative too; after
    bootstrap, packs are owned and edited in Narrative, and Narrative's own
    playbooks and skill become how decks are built (§7.3).
 5. **Model cost:** none for Narrative. The model runs in the user's

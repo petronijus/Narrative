@@ -61,7 +61,7 @@ Measured on the Linux desktop (24 threads) on 2026-09-30:
   callback redirect on Playwright's own Chromium (now a real loopback
   listener); the pixel-budget spec needs ~25 s a zoom level there (its own
   timeout); `slide-clipboard` needs an absolute `IMGPROXY_ENDPOINT`, which
-  the overlay's dev env lacks (HANDOVER); the other seven passed alone, i.e.
+  the overlay's dev env lacks (private/HANDOVER.md); the other seven passed alone, i.e.
   load.
 
 ## What running in parallel found

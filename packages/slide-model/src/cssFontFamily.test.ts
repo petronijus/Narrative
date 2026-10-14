@@ -5,14 +5,14 @@ describe('quoteCssFamilyName', () => {
   it('leaves identifiers and generic families bare, quotes everything else', () => {
     expect(quoteCssFamilyName('Inter')).toBe('Inter')
     expect(quoteCssFamilyName('sans-serif')).toBe('sans-serif')
-    expect(quoteCssFamilyName('Proseware Pro')).toBe('"Proseware Pro"')
+    expect(quoteCssFamilyName('Brand Sans')).toBe('"Brand Sans"')
     expect(quoteCssFamilyName('Northwind Sans ST Pro 60 Black', "'")).toBe(
       "'Northwind Sans ST Pro 60 Black'",
     )
   })
 
   it('re-quotes a quoted name safely, and keeps a quoted generic a name', () => {
-    expect(quoteCssFamilyName('"Proseware Pro"')).toBe('"Proseware Pro"')
+    expect(quoteCssFamilyName('"Brand Sans"')).toBe('"Brand Sans"')
     expect(quoteCssFamilyName("'serif'")).toBe('"serif"')
   })
 
@@ -29,8 +29,8 @@ describe('quoteCssFamilyName', () => {
 
 describe('fontFamilyNames', () => {
   it('splits a stack into unquoted names, in order, each once', () => {
-    expect(fontFamilyNames(' "Proseware Pro", Arial, \'Proseware Pro\' , sans-serif,, ')).toEqual([
-      'Proseware Pro',
+    expect(fontFamilyNames(' "Brand Sans", Arial, \'Brand Sans\' , sans-serif,, ')).toEqual([
+      'Brand Sans',
       'Arial',
       'sans-serif',
     ])

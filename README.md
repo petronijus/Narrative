@@ -30,9 +30,8 @@ person uses in the editor.
 
 ## ✨ What it is
 
-Narrative is the deck tool of [Woodgrove Digital](https://woodgrove.com)'s design
-department, built for small teams (up to ~15 editors at once) on their own
-infrastructure. Every deck is a **Yjs document** synced live through
+Narrative is a collaborative presentation editor built for small teams (up
+to ~15 editors at once) on their own infrastructure. Every deck is a **Yjs document** synced live through
 Hocuspocus and drawn by a **PixiJS** renderer; every change — from a person,
 a script or a model — goes through **one command registry**, so an agent can
 do precisely what a person can, and every agent run can be reverted from the
@@ -47,16 +46,16 @@ editor.
 | Area                      | What you get                                                                                                                                                                          |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 👥 **Live collaboration** | Yjs CRDT documents over Hocuspocus: cursors, selections and edits of everyone in the deck as they happen; per-run undo for agents                                                     |
-| 🖼 **Canvas**             | Text, shapes, lines and arrows, editable paths, images with crop and masks, video, tables, groups, guides, gradients, shadows, page numbers, object locks                             |
+| 🖼 **Canvas**              | Text, shapes, lines and arrows, editable paths, images with crop and masks, video, tables, groups, guides, gradients, shadows, page numbers, object locks                             |
 | 🎬 **Animation**          | Builds and slide transitions from a JSON DSL compiled to GSAP, a timeline panel, **Magic Move** between slides ([M13](docs/handoff/M13-magic-move.md))                                |
 | 🧩 **Components**         | Reusable masters stamped into decks, with media the master owns ([ADR 0012](docs/adr/0012-component-owned-media.md))                                                                  |
 | 🎨 **Style packs**        | A folder's brand — fonts, colour and text-style tokens, layouts, grid — that agents build into and check against ([A4](docs/plans/a4-style-packs.md))                                 |
 | 📊 **PowerPoint**         | Import and export through one translation in both directions: editable text, real tables, theme fonts and colours ([ADR 0009](docs/adr/0009-pptx-one-translation-both-directions.md)) |
 | 📤 **Export**             | PPTX, PNG per slide (headless Chromium render worker, [A3](docs/plans/a3-render-worker.md)) and PDF                                                                                   |
-| 📽 **Present**            | Full-screen presenting with presenter view, a pop-out window and share links that present                                                                                             |
+| 📽 **Present**             | Full-screen presenting with presenter view, a pop-out window and share links that present                                                                                             |
 | 🔐 **Sharing**            | Google sign-in, folders with roles, deck shares, invites and revocable links ([ADR 0013](docs/adr/0013-folder-sharing-roles.md), [auth](docs/auth.md))                                |
 | 🤖 **Agents**             | Every capability is an MCP tool; irreversible actions are confirmed by a person, never by the model ([`docs/mcp.md`](docs/mcp.md))                                                    |
-| 🏗 **Deck builder**       | _Built, not released yet_: a whole deck from a brief in the folder's brand, restyling other brands' slides into it (CHANGELOG → [Unreleased](CHANGELOG.md))                           |
+| 🏗 **Deck builder**        | _Built, not released yet_: a whole deck from a brief in the folder's brand, restyling other brands' slides into it (CHANGELOG → [Unreleased](CHANGELOG.md))                           |
 
 <table>
   <tr>
@@ -105,7 +104,7 @@ The rules every change keeps are in [`AGENTS.md`](AGENTS.md) → Hard rules.
 
 ## 🚀 Quick start
 
-You need Node ≥ 24.4 with type stripping, pnpm 9.15.4, Docker with Compose
+You need Node ≥ 24.4 with type stripping, pnpm 9.15.9, Docker with Compose
 (logged in to GHCR once for the MinIO mirror), `just`, `lefthook`,
 `gitleaks`, `xmllint` and python3 — `just doctor` checks all of it and prints
 the fix. [SETUP.md](SETUP.md) is the full first-run guide.

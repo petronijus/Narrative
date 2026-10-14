@@ -45,7 +45,7 @@ function buildPath(data: PathObject): GraphicsPath | null {
   // hole in that outer subpath (earcut with holes). Without this the
   // outer fill and each inner fill draw independently in the same
   // colour, producing a solid silhouette with no visible holes — the
-  // exact AFRY-badge bug. For multi-subpath shapes whose subpaths are
+  // exact letterform-badge bug. For multi-subpath shapes whose subpaths are
   // NOT nested (dot grids on slide 8), containsPolygon's bounds check
   // fast-rejects in O(1) per pair so the path renders as before.
   const wantClose = data.closed === true

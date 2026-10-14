@@ -143,7 +143,7 @@ export const VALID_OBJECTS: { [T in SlideObjectType]: PlainSlideObjectOf<T> } = 
     strokeAlpha: 0.5,
     strokeWidth: 1,
     isSlideNumber: false,
-    hyperlink: { kind: 'url', href: 'https://woodgrove.com/', target: '_blank' },
+    hyperlink: { kind: 'url', href: 'https://example.com/', target: '_blank' },
   },
   image: {
     ...base,

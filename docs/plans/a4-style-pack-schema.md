@@ -29,10 +29,10 @@ Parent plan: [`a4-style-packs.md`](./a4-style-packs.md); format sketch:
   `OBJECT_ROLES` (table in §2); no new role is needed.
 - **Recurring blocks are few.** Contoso's title+subtitle box is identical on 9
   content families; Fabrikam's action title on ~20 layouts; Tailspin's
-  title+subheadline on every content layout; Woodgrove/Adatum's section label
+  title+subheadline on every content layout; Wingtip/Wingtip Labs's section label
   on every content slide. That is the component list; everything else is
   layout data.
-- **Woodgrove is flow layout.** `clamp()` sizes evaluated at the 1920×1080 PDF
+- **Wingtip is flow layout.** `clamp()` sizes evaluated at the 1920×1080 PDF
   viewport all hit their maximum (body 17 px, hero 58 px, cover 160 px);
   region rects must be measured from a render, not computed by hand.
 
@@ -52,20 +52,13 @@ type Rect = [number, number, number, number]
 /**
  * 'role:text' — a colour role, resolved per variant/surface;
  * 'color:dark_blue' — a pack colour; '#RRGGBB' or '#RRGGBBAA' — a literal
- * (Woodgrove/Adatum need alpha: rgba(255,255,255,0.6) → '#FFFFFF99').
+ * (Wingtip/Wingtip Labs need alpha: rgba(255,255,255,0.6) → '#FFFFFF99').
  */
 type ColorRef = `role:${ColorRole}` | `color:${Id}` | `#${string}`
 
 /** Fixed vocabulary, so a restyle maps a user's accent to the other pack's accent. */
 type ColorRole =
-  | 'background'
-  | 'surface'
-  | 'text'
-  | 'textSecondary'
-  | 'textMuted'
-  | 'line'
-  | 'accent'
-  | 'onAccent'
+  'background' | 'surface' | 'text' | 'textSecondary' | 'textMuted' | 'line' | 'accent' | 'onAccent'
 
 interface StylePack {
   schemaVersion: 1
@@ -114,7 +107,7 @@ interface PackTokens {
 }
 
 interface PackAxis {
-  id: Id // 'background' (Contoso), 'theme', 'accent' (Woodgrove)
+  id: Id // 'background' (Contoso), 'theme', 'accent' (Wingtip)
   name: string
   default: Id
   values: Array<{
@@ -122,7 +115,7 @@ interface PackAxis {
     name: string
     /** The roles this axis governs. Each role is governed by exactly one axis. */
     roles: Partial<Record<ColorRole, ColorRef>> // never a role: ref (no cycles)
-    /** Woodgrove "best on": a warning, not a rule. */
+    /** Wingtip "best on": a warning, not a rule. */
     recommendedWith?: Record<Id, Id[]> // { theme: ['dark'] }
   }>
 }
@@ -136,7 +129,7 @@ error. `background` and `text` must be governed by some axis.
 
 ```ts
 interface PackFontFace {
-  family: string // the folder font family: 'Contoso Text Office', 'Fabrikam Type', 'Northwind Sans Display'
+  family: string // the folder font family: 'Contoso Text', 'Acme Type', 'Northwind Sans Display'
   weight: number // 100..900
   stretch?: number // wdth 50..200 — Fabrikam Extended 130, Wide 105, Normal 100
   fallbacks: string[] // CSS generic last: ['Arial', 'sans-serif']
@@ -162,13 +155,13 @@ interface PackTextStyle {
   minSize?: Px
   weight?: number
   stretch?: number // override the face
-  /** CSS, × font size (Woodgrove). Exclusive with lineSpacing. */
+  /** CSS, × font size (Wingtip). Exclusive with lineSpacing. */
   lineHeight?: number
   /** PowerPoint spcPct, × the font's normal line (Contoso 0.9, Fabrikam 1.1, Tailspin 1.0). */
   lineSpacing?: number
-  letterSpacing?: Px // Woodgrove em values × size at bootstrap
+  letterSpacing?: Px // Wingtip em values × size at bootstrap
   color: ColorRef // almost always 'role:text' / 'role:textSecondary'
-  textTransform?: 'uppercase' // Woodgrove/Adatum labels, big statement
+  textTransform?: 'uppercase' // Wingtip/Wingtip Labs labels, big statement
   align?: 'left' | 'center' | 'right'
   spaceBefore?: Px
   spaceAfter?: Px
@@ -233,17 +226,16 @@ type FurnitureItem =
   | {
       kind: 'shape'
       shape: 'ellipse' | 'rect'
-      rect: Rect // Adatum spheres/rings
+      rect: Rect // Wingtip Labs spheres/rings
       fill?:
-        | ColorRef
-        | { radial: Array<{ offset: number; color: ColorRef }>; center: [number, number] }
+        ColorRef | { radial: Array<{ offset: number; color: ColorRef }>; center: [number, number] }
       stroke?: { color: ColorRef; width: Px }
       radius?: Px
     }
 
 interface PackAsset {
   name: string
-  /** Per value of a role: Contoso logo in dark blue / white, Woodgrove logo dark / light. */
+  /** Per value of a role: Contoso logo in dark blue / white, Wingtip logo dark / light. */
   byRole?: { role: ColorRole; files: Record<ColorRef, AssetSource> }
   file?: AssetSource
 }
@@ -290,7 +282,7 @@ interface PackRegion {
   aspect?: number // image slots, w/h of the frame
   focus?: 'center' | 'top' | 'bottom' | 'left' | 'right'
   maxLines?: number
-  maxChars?: number // Fabrikam cover "maximal zwei Zeilen"; Adatum headline ≤ 12 words → editorial
+  maxChars?: number // Fabrikam cover "maximal zwei Zeilen"; Wingtip Labs headline ≤ 12 words → editorial
   required?: boolean
   fillOrder?: number // reading order for an unslotted content array (Fabrikam fill_content)
 }
@@ -314,7 +306,7 @@ interface PackComponent {
     textStyle?: Id
     fill?: ColorRef
     stroke?: { color: ColorRef; width: Px }
-    radius?: Px // a shape's corners (added in A4.7: Woodgrove's label pill)
+    radius?: Px // a shape's corners (added in A4.7: Wingtip's label pill)
     autofit?: 'grow-down' | 'fixed'
     isSlideNumber?: true
     text?: string
@@ -346,11 +338,11 @@ interface PackImagery {
 interface PackEditorial {
   titleMode: 'action-title' | 'label+message' // Tailspin: label + message subtitle
   title: { maxWords?: number; maxLines?: number; trailingPeriod: 'forbid' | 'allow' }
-  allCaps: 'forbid' | 'styles-only' // Woodgrove caps only through textTransform
+  allCaps: 'forbid' | 'styles-only' // Wingtip caps only through textTransform
   italics: 'forbid'
   underline?: 'forbid'
-  accentBudget?: { color: ColorRef; perSlide: number } // Fabrikam red once; Adatum lime
-  eyebrows: 'none' | 'minimal' | 'furniture' // Fabrikam minimal; Woodgrove label is furniture/component
+  accentBudget?: { color: ColorRef; perSlide: number } // Fabrikam red once; Wingtip Labs lime
+  eyebrows: 'none' | 'minimal' | 'furniture' // Fabrikam minimal; Wingtip label is furniture/component
   minBodySize?: Px
   recommendedBodySize?: Px // Contoso 28 / 36 px (14 / 18 pt)
   typography: {
@@ -361,7 +353,7 @@ interface PackEditorial {
     ellipsis: boolean
     emoji: 'forbid'
   }
-  replace?: Array<{ pattern: string; with?: string; level: 'error' | 'warn'; note?: string }> // Adatum 'Woodgrove', banned phrases
+  replace?: Array<{ pattern: string; with?: string; level: 'error' | 'warn'; note?: string }> // Wingtip Labs 'Wingtip', banned phrases
   register?: 'du' | 'Sie' | 'audience'
   languages: Lang[]
   bilingual?: { marker: '{de|en}'; order: Lang[] } // Contoso
@@ -412,22 +404,22 @@ interface PackProvenance {
   bootstrap: { tool: string; version: string; at: string }
   sources: Array<{ repo: string; commit: string; path: string }>
   calls: Array<{ topic: string; decision: string; why?: string }> // §7.4
-  derivedFrom?: { packId: Id; at: string } // Adatum ← Woodgrove
+  derivedFrom?: { packId: Id; at: string } // Wingtip Labs ← Wingtip
 }
 ```
 
 ### 1.9 §7.1 fields dropped or replaced
 
-| §7.1 field                        | Fate                                                                                                           |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `tokens` theme slots              | dropped: only a real-master export needs `bg1/tx1/accent6`, and that is withdrawn; `calls` records the mapping |
-| `layouts[].variant`, `tone`       | replaced by `surface` (cuts share geometry, see facts)                                                         |
-| `layouts[].needsPicture`          | derived from required image regions                                                                            |
-| `editorial.bulletGlyphs`          | derived from the text styles' levels                                                                           |
-| `imagery.iconStyle`               | dropped: no brand states one                                                                                   |
-| `qa` `[SOURCE NEEDED]` / Rigorous | deck-level proof standard (deck spec, §8.1), not a brand rule                                                  |
-| `fonts` roles as a closed list    | open record, `head` + `text` required: Woodgrove needs `display`, Fabrikam `head` at wdth 130                          |
-| a pack `extends` another          | not a field: Adatum is a copy of Woodgrove with `derivedFrom` — a live parent would restyle another folder's decks |
+| §7.1 field                        | Fate                                                                                                                   |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `tokens` theme slots              | dropped: only a real-master export needs `bg1/tx1/accent6`, and that is withdrawn; `calls` records the mapping         |
+| `layouts[].variant`, `tone`       | replaced by `surface` (cuts share geometry, see facts)                                                                 |
+| `layouts[].needsPicture`          | derived from required image regions                                                                                    |
+| `editorial.bulletGlyphs`          | derived from the text styles' levels                                                                                   |
+| `imagery.iconStyle`               | dropped: no brand states one                                                                                           |
+| `qa` `[SOURCE NEEDED]` / Rigorous | deck-level proof standard (deck spec, §8.1), not a brand rule                                                          |
+| `fonts` roles as a closed list    | open record, `head` + `text` required: Wingtip needs `display`, Fabrikam `head` at wdth 130                            |
+| a pack `extends` another          | not a field: Wingtip Labs is a copy of Wingtip with `derivedFrom` — a live parent would restyle another folder's decks |
 
 ## 2. Mapping per brand
 
@@ -436,7 +428,7 @@ Conversions: **inches** × 144 (Contoso `box_in`; `box_px` at 1280 × 1.5);
 ×1.0001); **EMU** → rect fraction = value / `sldSz` per axis (exact canvas
 edges for Tailspin's odd size); `spcPct` / 100 000 → `lineSpacing`; `spcPts` /
 100 → pt; `marL` → `indent`, −`indent` → `hanging`; `buSzPct` / 100 000 →
-`scale`; **vw/vh** → × 19.2 / × 10.8; `clamp(a, b, c)` evaluated at 1920;
+`scale`; **contoso/vh** → × 19.2 / × 10.8; `clamp(a, b, c)` evaluated at 1920;
 `em` × the element's px size; `rgba` → `#RRGGBBAA`; flow-layout regions
 measured with `getBoundingClientRect` in headless Chrome at 1920×1080.
 
@@ -472,7 +464,7 @@ styles (22 before dropping the furniture artefacts), 2 components
 | Source                                                                          | Pack                                                                                                                                                              |
 | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | theme1/theme2 `clrScheme` via each master's rels                                | colours; axis `theme` {light, dark}: `background` = bg1, `text` = tx1, `surface` = accent1, `line` = accent2, `textMuted` = accent3, `accent` = accent6 `#F50537` |
-| `fontScheme` Fabrikam Type Extended / Wide                                          | `fonts.head` {Fabrikam Type, 400, stretch 130}, `text` {stretch 105}, `textNormal` {100}, `textBold` {700, 105}                                                       |
+| `fontScheme` Acme Type Extended / Wide                                          | `fonts.head` {Acme Type, 400, stretch 130}, `text` {stretch 105}, `textNormal` {100}, `textBold` {700, 105}                                                       |
 | master `bodyStyle` lvl1–9 (`›` accent6/tx1/accent3, 150 %, marL 0.236 in steps) | `textStyles.body.levels`, `bullet.scale: 1.5`                                                                                                                     |
 | layout placeholders (`type`, idx, xfrm, `bodyPr`)                               | regions; `title`/`ctrTitle` → title, `subTitle` → subtitle, `pic` → picture, `ftr` → furniture                                                                    |
 | light/dark layout pairs (by name, not idx)                                      | one layout; drift < 0.5 px → light geometry                                                                                                                       |
@@ -510,7 +502,7 @@ No pagination: the Fabrikam master has no slide number.
 **Pack:** ≈ 20 layouts / ≈ 70 regions, 1 variant + 1 surface, ≈ 10 text
 styles, 4 components (pagination, headline, stat-cards, band).
 
-### Woodgrove house — SKILL.md 1.8 + `test-presentation.html`
+### Wingtip house — SKILL.md 1.8 + `test-presentation.html`
 
 | Source                                     | Pack                                                                                                          |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
@@ -531,17 +523,17 @@ SKILL.md decides type rules and the test deck decides geometry.
 **Pack:** ≈ 15 layouts / ≈ 150 regions, 2 × 8 = 16 deck variants,
 ≈ 20 text styles, 3 components (label, headline + divider rule, stats-row).
 
-### Adatum — `adatum-deck-design.md` (copy of Woodgrove, `derivedFrom`)
+### Wingtip Labs — `wingtip-labs-deck-design.md` (copy of Wingtip, `derivedFrom`)
 
-| Source                                   | Pack                                                                                     |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `--accent #CBFF00`, dark only            | axes `theme` {dark}, `accent` {lime}                                                     |
-| competitor tints, faint red marker       | `chart.series` ramp (white 55 % → 12 %, soft blue, soft amber), `highlight: role:accent` |
-| spheres + rings, 2–3 per slide, off-edge | per-layout `decor` shapes (rects may leave the canvas)                                   |
-| label `Adatum · <CLIENT>`, tagline       | furniture templates with field `client`                                                  |
-| insight story-grid 0.95fr / 1.1fr        | layout `insight` (measured)                                                              |
-| `Woodgrove` hyphenated, headline ≤ 12 words  | `editorial.replace`, `title.maxWords: 12`                                                |
-| glass `backdrop-filter`                  | approximated by `role:surface` fill (no backdrop blur in the renderer)                   |
+| Source                                    | Pack                                                                                     |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `--accent #CBFF00`, dark only             | axes `theme` {dark}, `accent` {lime}                                                     |
+| competitor tints, faint red marker        | `chart.series` ramp (white 55 % → 12 %, soft blue, soft amber), `highlight: role:accent` |
+| spheres + rings, 2–3 per slide, off-edge  | per-layout `decor` shapes (rects may leave the canvas)                                   |
+| label `Wingtip Labs · <CLIENT>`, tagline  | furniture templates with field `client`                                                  |
+| insight story-grid 0.95fr / 1.1fr         | layout `insight` (measured)                                                              |
+| `Wingtip` hyphenated, headline ≤ 12 words | `editorial.replace`, `title.maxWords: 12`                                                |
+| glass `backdrop-filter`                   | approximated by `role:surface` fill (no backdrop blur in the renderer)                   |
 
 **Pack:** ≈ 6 layouts, 1 variant, ≈ 12 text styles, 2 components
 (insight-head, stats-row).
@@ -562,7 +554,7 @@ path-addressed error (`layouts[4].regions[2].textStyle`):
 3. **Variants:** `axes[].default` is one of its values; `recommendedWith`
    names real axes and values; `surface.choose.default` ∈ `choose`.
 4. **Geometry:** region rects inside [0, 1] with w, h > 0 (furniture and
-   decor may leave the canvas — Adatum spheres bleed); a component placed in
+   decor may leave the canvas — Wingtip Labs spheres bleed); a component placed in
    a region fits it (± 1 px); grid lines ascending and inside the canvas.
 5. **Regions:** `type: 'text'` has `textStyle` or `component`; `image`
    has no `textStyle`; slots unique per layout; `item` ≤ `items.count` and
@@ -592,8 +584,8 @@ bytes. The source `layouts.json` (355 KB) shrinks ~11× because layouts are
 stored once, not per cut.
 
 Estimates from region counts (≈ 200 B per region including layout
-overhead): Fabrikam ≈ 65 KB JSON (≈ 95 KB nested), Tailspin ≈ 18 KB, Woodgrove ≈ 30 KB,
-Adatum ≈ 20 KB. The folder-doc cap (`MAX_DOC_BYTES`) is 32 MB.
+overhead): Fabrikam ≈ 65 KB JSON (≈ 95 KB nested), Tailspin ≈ 18 KB, Wingtip ≈ 30 KB,
+Wingtip Labs ≈ 20 KB. The folder-doc cap (`MAX_DOC_BYTES`) is 32 MB.
 
 **Recommendation: the folder document**, root map `stylePack`: top-level
 parts as nested Y.Maps (so `op: 'update'` patches touch leaves and two
@@ -628,9 +620,9 @@ Field names the slide model should adopt so the compiler and
 { axis: string; values: Record<string, string> }` and
   `bySurface?: Record<string, string>`; `value` stays the default.
   `resolveTokenValue(ref, tokens, ctx?: { variant, surface })`. Colours
-  accept `#RRGGBBAA` (or a separate `alpha`) for Woodgrove/Adatum.
+  accept `#RRGGBBAA` (or a separate `alpha`) for Wingtip/Wingtip Labs.
 - **Deck meta:** root `meta` Y.Map: `variant: Record<axisId, valueId>`
-  (Woodgrove needs two axes), `fields: Record<string, string>` (footer
+  (Wingtip needs two axes), `fields: Record<string, string>` (footer
   department, CSD, date, client, classification), `lang?: string`.
 - **Slide provenance (A4.4 writes it):** `slide.layout?: { packId,
 layoutId, surface? }` — `surface` replaces the planned `variant`, since

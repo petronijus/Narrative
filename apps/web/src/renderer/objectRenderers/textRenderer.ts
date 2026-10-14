@@ -287,7 +287,7 @@ function collectRunFontFamilies(data: TextObject): string[] {
  * asset Cache (`getFontCss`), and an SVG image sees no other font: a family
  * left out paints in a fallback face wherever the font is not installed (the
  * render worker always). Pixi also scans the run markup, but its pattern
- * stops at the first space or quote, so a run in "Proseware Pro" was never
+ * stops at the first space or quote, so a run in "Brand Sans" was never
  * embedded; the names are given here instead. The `font-family` rule Pixi
  * writes from this array is replaced by `cssOverrides` (below) — but Pixi
  * writes it unescaped into a `<style>` set through innerHTML, so a name
@@ -758,8 +758,7 @@ function fontMetricsFor(data: TextObject): { ascent: number; descent: number } {
   const shorthand = `${data.italic === true ? 'italic ' : ''}${weight} ${fontSize}px ${family}`
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const measure = (CanvasTextMetrics as any)?.measureFont as
-    | ((font: string) => { ascent: number; descent: number })
-    | undefined
+    ((font: string) => { ascent: number; descent: number }) | undefined
   const out = { ascent: Math.ceil(fontSize * 1.0), descent: Math.ceil(fontSize * 0.4) }
   if (typeof measure === 'function') {
     try {

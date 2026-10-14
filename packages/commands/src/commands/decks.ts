@@ -192,7 +192,7 @@ export const deckDuplicate = defineCommand({
     { title: 'Copy the deck next to the original', input: {} },
     {
       title: 'Copy it into another folder under a new title',
-      input: { title: 'Pitch — Fabrikam version', folderId: 'folder_fixture' },
+      input: { title: 'Pitch — Acme version', folderId: 'folder_fixture' },
     },
   ],
   async handler(ctx, input) {

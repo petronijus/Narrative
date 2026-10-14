@@ -12,7 +12,7 @@
  * - `lineSpacing` — a multiple of the **font's own normal line height**.
  *   PowerPoint semantics: `<a:lnSpc><a:spcPct val="75000"/>` is 0.75, and
  *   100% means "whatever this font says a line is" (ascender − descender +
- *   line gap; 1.162 em for Proseware Pro, 1.15 for Calibri, 1.2 for Inter).
+ *   line gap; 1.162 em for Brand Sans, 1.15 for Calibri, 1.2 for Inter).
  *
  * The importer used to fold the second into the first with a flat ×1.2,
  * which is only right for fonts whose normal happens to be 1.2 em, and the
@@ -26,7 +26,7 @@
  * 1. **Declared** — the font file's own `hhea` metrics, registered by the
  *    folder-font loader from the bytes it installs (`fontFileMetrics.ts`).
  *    This is what PowerPoint uses, and it is the only source that is right
- *    for fonts that set USE_TYPO_METRICS: Proseware Pro declares 1.162 em in
+ *    for fonts that set USE_TYPO_METRICS: Brand Sans declares 1.162 em in
  *    hhea while the browser's `line-height: normal` gives 0.977 for it.
  * 2. **Measured** — a hidden span in the font at a reference size with
  *    `line-height: normal`, for system fonts and anything the loader could
@@ -62,7 +62,7 @@ export const FALLBACK_NORMAL_RATIO = 1.2
  * Reference size for the probe. Chrome rounds a line box to whole pixels, so
  * the ratio is quantised to 1/PROBE_PX: at 100px that is 1%, which showed up
  * as an 8-line frame landing 6px short of PowerPoint's height (1.15 instead
- * of Proseware Pro's 1.162). At 1000px the quantum is 0.1%, and the fractional
+ * of Brand Sans's 1.162). At 1000px the quantum is 0.1%, and the fractional
  * px value we then hand to CSS and Pixi is honoured as written.
  */
 const PROBE_PX = 1000
@@ -271,7 +271,7 @@ export function effectiveLineHeightMultiple(src: LineMetricsSource): number {
  * The font's ascent and descent as the browser lays text out with them, in
  * ems — the "content area" CSS centres in each line box. Read from canvas
  * `fontBoundingBox*`, which reports exactly the metrics layout uses (typo for
- * a USE_TYPO_METRICS face such as Proseware Pro: 0.704 + 0.198, hhea otherwise).
+ * a USE_TYPO_METRICS face such as Brand Sans: 0.704 + 0.198, hhea otherwise).
  * Undefined where there is no canvas (jsdom), so callers can fall back.
  */
 function browserFontBox(
@@ -328,7 +328,7 @@ function browserFontBox(
  *
  * `descent_ppt` is the file's hhea descent when the loader read the file,
  * else the browser's own (the two agree for fonts without USE_TYPO_METRICS),
- * which reduces the offset to plain half-leading. On the Proseware deck's
+ * which reduces the offset to plain half-leading. On the reference deck's
  * "We made it to our first Camp!" (72 px, exactly 65 pt) this is 32.5 px —
  * the gap between our render and PowerPoint's.
  *

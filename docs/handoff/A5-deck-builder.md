@@ -81,4 +81,4 @@ one, and exports a deck as a PDF; a person exports PDFs from the editor.
 - The agent path of renders has no per-command budget beyond the queue's
   in-flight caps (pre-existing for PNG, noted by the A5.6 review).
 - Brand pack imports to production folders and the MacBook font and logo
-  uploads, from A4 (`HANDOVER.md`), still wait for Petr's go.
+  uploads, from A4 (`private/HANDOVER.md`), still wait for Petr's go.

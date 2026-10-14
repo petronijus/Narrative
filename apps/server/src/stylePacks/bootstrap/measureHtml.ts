@@ -1,6 +1,6 @@
 /**
  * stylePacks/bootstrap/measureHtml.ts — an HTML deck measured as a browser
- * lays it out (agentic A4.7): the Woodgrove house deck places its content in
+ * lays it out (agentic A4.7): an agency's house deck places its content in
  * flow (vw/vh, clamp(), flex and grid), so its layouts are read from the
  * render, not from the CSS. Each slide is shown in turn at 1920×1080 in
  * headless Chromium with transitions off, and every element whose class

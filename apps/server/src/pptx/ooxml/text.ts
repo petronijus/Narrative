@@ -57,7 +57,7 @@ export function isBoldWeight(w: TextObject['fontWeight'] | number | undefined): 
 
 /**
  * First family of a CSS font-family stack, unquoted: the one face PowerPoint
- * can be told to use. "Proseware Pro Regular" stays as it is.
+ * can be told to use. "Brand Sans Regular" stays as it is.
  */
 export function primaryFamily(stack: string): string {
   const first = stack.split(',')[0] ?? ''

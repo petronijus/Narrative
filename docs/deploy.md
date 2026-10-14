@@ -362,7 +362,7 @@ packs live in the private overlay (`just style-pack`). Each goes into a
 production folder only at Petr's go, brand by brand (`just
 style-pack-import private/packs/<brand>.json <folderId>
 https://<domain>`, with a personal access token in `NARRATIVE_TOKEN`). The
-brand fonts and logos are uploaded on the MacBook (HANDOVER.md).
+brand fonts and logos are uploaded on the MacBook (private/HANDOVER.md).
 
 **After deploying:** `/version.json` names 0.11.1; the server log shows the
 data migration completed; Folder Settings of a folder shows the **Style
@@ -399,8 +399,9 @@ just deploy v0.10.18
 ```
 
 `just deploy` (`infra/scripts/ship.sh`) does not build on the machine it runs
-on. The **build host** — `NARRATIVE_BUILDER` in `infra/release.env`, the
-always-on x86_64 homelab VM 105 on the LAN, logged in to GHCR — does the work,
+on. The **build host** — `NARRATIVE_BUILDER` in the private overlay's
+`private/release.env` (with `NARRATIVE_VM`, the production VM; the public
+`infra/release.env` holds only the domain), the always-on x86_64 homelab VM 105 on the LAN, logged in to GHCR — does the work,
 so a slow uplink, an Apple Silicon CPU, a missing Docker or a stale
 `infra/.env.prod` on the deploying machine no longer matter (each of them
 stopped the 0.10.18 deploy from a MacBook on 2026-10-07/09).

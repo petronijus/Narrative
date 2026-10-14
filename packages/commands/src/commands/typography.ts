@@ -138,7 +138,7 @@ export const textSetBoxTypography = defineCommand({
     },
     {
       title: 'Set a title in the extended width of a variable font',
-      input: { slide: 's1', objects: ['t1'], style: { fontFamily: 'Fabrikam Type', fontStretch: 130 } },
+      input: { slide: 's1', objects: ['t1'], style: { fontFamily: 'Acme Type', fontStretch: 130 } },
     },
     {
       title: 'Let a shrinking box go no smaller than 20 px',

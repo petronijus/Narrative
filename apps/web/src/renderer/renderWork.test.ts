@@ -48,19 +48,19 @@ describe('renderWork', () => {
     const settle = () => new Promise((r) => setTimeout(r, 0))
     trackRenderWork(Promise.reject(new Error('404'))).catch(() => {})
     trackRenderWork(Promise.reject(new Error('expired')), {
-      font: { key: 'f1', family: 'Proseware Pro' },
+      font: { key: 'f1', family: 'Brand Sans' },
     }).catch(() => {})
     trackRenderWork(Promise.reject(new Error('gone')), {
-      font: { key: 'f2', family: 'Proseware Pro' },
+      font: { key: 'f2', family: 'Brand Sans' },
     }).catch(() => {})
     await settle()
     expect(failedRenderWork()).toBe(1)
-    expect(failedRenderFonts()).toEqual(['Proseware Pro'])
+    expect(failedRenderFonts()).toEqual(['Brand Sans'])
     // f1 loads on retry; f2 (another face of the family) is still missing.
-    trackRenderWork(Promise.resolve(), { font: { key: 'f1', family: 'Proseware Pro' } })
+    trackRenderWork(Promise.resolve(), { font: { key: 'f1', family: 'Brand Sans' } })
     await settle()
-    expect(failedRenderFonts()).toEqual(['Proseware Pro'])
-    trackRenderWork(Promise.resolve(), { font: { key: 'f2', family: 'Proseware Pro' } })
+    expect(failedRenderFonts()).toEqual(['Brand Sans'])
+    trackRenderWork(Promise.resolve(), { font: { key: 'f2', family: 'Brand Sans' } })
     await settle()
     expect(failedRenderFonts()).toEqual([])
     expect(failedRenderWork()).toBe(1)

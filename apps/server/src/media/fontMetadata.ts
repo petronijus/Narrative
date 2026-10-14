@@ -7,7 +7,7 @@
  * Uses the official `name` table for the family + postscript name and
  * the `OS/2` table for weight + italic bit. A variable font (an `fvar`
  * table) is listed as its default instance, with the ranges of its weight
- * and width axes (A4.2c: text set at a width — Fabrikam Type Extended is
+ * and width axes (A4.2c: text set at a width — Acme Type Extended is
  * `wdth` 130 — needs a face that has it).
  */
 
@@ -57,8 +57,7 @@ export function parseFontMetadata(buf: ArrayBuffer): FontMetadata {
   // we trust the name. Defaults to 400 when nothing reliable exists.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const os2 = (font.tables as any).os2 as
-    | { usWeightClass?: number; fsSelection?: number }
-    | undefined
+    { usWeightClass?: number; fsSelection?: number } | undefined
   const subfamilyName = pickName(font.names as unknown as OpenTypeNames, [
     'preferredSubfamily',
     'fontSubfamily',
@@ -86,8 +85,7 @@ export function parseFontMetadata(buf: ArrayBuffer): FontMetadata {
 function variableAxes(font: opentype.Font): FontAxes | undefined {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- opentype.js does not type fvar
   const fvar = (font.tables as any).fvar as
-    | { axes?: Array<{ tag?: string; minValue?: number; maxValue?: number }> }
-    | undefined
+    { axes?: Array<{ tag?: string; minValue?: number; maxValue?: number }> } | undefined
   const out: FontAxes = {}
   for (const axis of fvar?.axes ?? []) {
     const { tag, minValue, maxValue } = axis

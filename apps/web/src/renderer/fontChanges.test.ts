@@ -41,11 +41,11 @@ describe('fontChanges', () => {
     subscribeFontFamilyChanges((family) => seen.push(family))
     announceFontFamilyChanged('Inter')
     announceFontFamilyChanged('Inter')
-    announceFontFamilyChanged('Proseware Pro')
+    announceFontFamilyChanged('Brand Sans')
     expect(seen).toEqual([])
     // The render page waits for the redraw: it is render work until delivered.
     await whenRenderWorkIdle()
-    expect(seen).toEqual(['Inter', 'Proseware Pro'])
+    expect(seen).toEqual(['Inter', 'Brand Sans'])
   })
 
   it('lets Pixi rebuild the CSS of a family it embeds itself (the bundled Inter)', async () => {
@@ -60,33 +60,33 @@ describe('fontChanges', () => {
     subscribeFontFamilyChanges((family) => seen.push(family))
     setHtmlTextFace({
       key: 'a',
-      family: 'Proseware Pro',
+      family: 'Brand Sans',
       weight: '400',
       style: 'normal',
       bytes: ttf(1),
     })
     setHtmlTextFace({
       key: 'b',
-      family: 'Proseware Pro',
+      family: 'Brand Sans',
       weight: '700',
       style: 'italic',
       bytes: ttf(2),
     })
-    const css = await pixi.fontCss.get('Proseware Pro')!
+    const css = await pixi.fontCss.get('Brand Sans')!
     expect(css.match(/@font-face/g)).toHaveLength(2)
-    expect(css).toContain('font-family: "Proseware Pro"; font-weight: 700; font-style: italic;')
+    expect(css).toContain('font-family: "Brand Sans"; font-weight: 700; font-style: italic;')
     expect(css).toContain("src: url('data:font/ttf;base64,")
-    expect(pixi.cache.get('Proseware Pro-and-url')).toEqual({ entries: [] })
+    expect(pixi.cache.get('Brand Sans-and-url')).toEqual({ entries: [] })
     await whenRenderWorkIdle()
-    expect(seen).toEqual(['Proseware Pro'])
+    expect(seen).toEqual(['Brand Sans'])
     // Registered CSS is not dropped by its own announcement.
-    expect(pixi.fontCss.has('Proseware Pro')).toBe(true)
+    expect(pixi.fontCss.has('Brand Sans')).toBe(true)
 
     removeHtmlTextFace('b')
-    expect((await pixi.fontCss.get('Proseware Pro')!).match(/@font-face/g)).toHaveLength(1)
+    expect((await pixi.fontCss.get('Brand Sans')!).match(/@font-face/g)).toHaveLength(1)
     removeHtmlTextFace('a')
-    expect(pixi.fontCss.has('Proseware Pro')).toBe(false)
-    expect(pixi.cache.has('Proseware Pro-and-url')).toBe(false)
+    expect(pixi.fontCss.has('Brand Sans')).toBe(false)
+    expect(pixi.cache.has('Brand Sans-and-url')).toBe(false)
   })
 
   it('gives Pixi only names it can write into its SVG unescaped', () => {

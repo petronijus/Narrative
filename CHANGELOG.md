@@ -143,7 +143,7 @@ check slides with it.
 - Agents read a deck's pack variant, footer fields and language
   (`query.deck` → `meta`) and the pack layout each slide follows
   (`query.deck`, `query.slide` → `layout`).
-- Bootstrap of five brand packs (Contoso, Fabrikam, Tailspin, Woodgrove, Adatum)
+- Bootstrap of five brand packs (Contoso, Fabrikam, Tailspin, Wingtip, Wingtip Labs)
   from their sources, `just style-pack`, and their import into a folder
   through the command API, `just style-pack-import`.
 
@@ -332,7 +332,7 @@ built together and tested as one.
 - **The render worker's timings say where a slide's settle goes**: waiting
   for loads and fonts, waiting for text rasters (and how many), drawing
   frames, waiting for animation frames — and the capture separately. On
-  production a slide of the Proseware deck spent 9–12 s settling and capturing
+  production a slide of the reference deck spent 9–12 s settling and capturing
   after its pictures had loaded in under a second (0.10.26 timings); this
   names the part to make faster.
 
@@ -345,7 +345,7 @@ built together and tested as one.
 - **A contact sheet draws its slides with preview-size pictures** (600 px)
   instead of the 2560-px display ones: a tile is at most ~700 px wide, and
   loading, decoding and holding full pictures for it was what made a sheet
-  of a photo-heavy deck slow on the render worker (a slide of the Proseware
+  of a photo-heavy deck slow on the render worker (a slide of the reference
   deck took 9–15 s on production, so a sheet of two ran past its deadline).
   Single slides and regions keep the full pictures.
 - **The render worker logs where each job's time went**: the page's steps
@@ -361,7 +361,7 @@ built together and tested as one.
 
 - **A contact sheet of a photo-heavy deck came back blank.** The render
   worker's browser ran out of its 900 MB on production (one slide of the
-  Proseware deck peaked right at the limit) and the kernel killed it; the
+  reference deck peaked right at the limit) and the kernel killed it; the
   picture was then empty, with no error. Now the render page frees the
   previous slide's pictures as soon as it moves on, composes looks on CPU
   canvases, and a lost WebGL context fails the job (the browser restarts)
@@ -422,7 +422,7 @@ built together and tested as one.
   installed.** Two causes: text drawn before its folder font finished
   loading was never redrawn (the font loader never reached the canvas), and
   a font set on part of a text — as imported PowerPoint decks have it —
-  was never embedded when its name has a space ("Proseware Pro"). Seen in the
+  was never embedded when its name has a space ("Brand Sans"). Seen in the
   PNG export (the server has no fonts installed), in shared links and for
   anyone without the deck's fonts on their machine. Table cells and the
   text inside components are redrawn too, and a font no longer falls back
@@ -535,7 +535,7 @@ rollback.
   TypeScript targets ES2025. URL downloads hold their temporary directory,
   file handle and per-user download slot with `using` / `await using`, so
   the slot is freed even when removing the directory fails. Every dev
-  machine needs Node 24 (HANDOVER.md).
+  machine needs Node 24 (private/HANDOVER.md).
 - **MinIO runs from a GHCR mirror of Chainguard's build**
   (`ghcr.io/petronijus/minio:RELEASE.2026-09-22T19-25-18Z`, pinned by
   digest), for `minio` and the `minio-init` job alike: MinIO deleted
@@ -546,7 +546,7 @@ rollback.
   every start. Every machine needs `docker login ghcr.io` once (`just doctor`
   checks it), and `just services` no longer falls back to a cached
   `minio/mc`. Production switches with the next deploy (`docs/deploy.md`,
-  "Releasing the MinIO image switch"; HANDOVER.md).
+  "Releasing the MinIO image switch"; private/HANDOVER.md).
 - **Every folder command says who may run it**, in one of three sentences
   ("Any member of the folder." / "Needs the editor role in the folder." /
   "Only the folder's owners.") — a test over every folder-scoped command pins
@@ -1922,7 +1922,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
   not set its own. The importer took the style's line whenever the shape had
   no colour for it — including when the shape said explicitly that it has no
   line (`<a:ln><a:noFill/>`), and it took an `idx="0"` reference ("none") as
-  the theme's first line. The Proseware deck's slide 7 wireframe drew 33 grey
+  the theme's first line. The reference deck's slide 7 wireframe drew 33 grey
   boxes with a 1 px red accent outline PowerPoint never shows. A declared
   fill of either kind now wins over the style, and index 0 means none. The
   deck has to be imported again to pick it up.
@@ -1938,7 +1938,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
 ### Fixed
 
 - **Text is spaced for the size it is set in.** A line's height — single
-  spacing, or a multiple such as the Proseware titles' 68 % — was always
+  spacing, or a multiple such as the reference deck's titles' 68 % — was always
   computed from the frame's default size. Text set smaller than that default
   came out with its lines far apart: slide 3's title (60 pt text in a frame
   whose default is 88 pt) ran ~45 % too loose against PowerPoint. Each
@@ -1963,7 +1963,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
   cannot (a radius per corner, numeric font weights, video playback
   settings, …) is written as close as PowerPoint can draw it and kept
   exactly in Narrative's own extension inside the file, which applies only
-  while the shape is unedited in PowerPoint. On the Proseware deck,
+  while the shape is unedited in PowerPoint. On the reference deck,
   import → export → import changed 6 173 values before and changes none now;
   LibreOffice renders the export about five times closer to the original.
 - **Exported pictures are cropped as Narrative shows them.** A picture was
@@ -1989,14 +1989,14 @@ gains the OAuth discovery and client-IP blocks. Checklist:
   by default, or the layout's) were ignored, so imported text sat at the very
   edge of its box. The frame is now the area the text is laid out in.
 - **Ellipses, triangles, polygons and paths with text keep their shape.**
-  Only rectangles kept their geometry under their text; the Proseware deck's red
+  Only rectangles kept their geometry under their text; the reference deck's red
   "Wireframe" circle came in as white text on nothing.
 - **Character references in the XML are decoded.** `&#233;`, `&#x2014;` and
   line breaks written as references came in as literal `&#…;` text.
 - **Table cells after a horizontal merge land in their own column** instead
   of one further right (the last one fell off the table). Cell borders keep
   their dash and transparency; picture fills in cells are imported.
-- **Letter spacing and caps from the slide master apply.** The Proseware title
+- **Letter spacing and caps from the slide master apply.** The reference deck's title
   style's −8 pt tracking was ignored, so titles ran wider than in
   PowerPoint.
 - **Slides without a transition have none.** `<p:transition>` carrying only
@@ -2022,7 +2022,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
   the marker is an inline-block with a first line of its own, so the
   paragraph's hanging −1.6 em outdent moved the glyph a second time — out of
   its gutter and off the left edge. The gutter was there, the marker was
-  not; imported PowerPoint lists (the Proseware deck's slide 8) and lists made
+  not; imported PowerPoint lists (the reference deck's slide 8) and lists made
   in the editor alike. The marker now resets `text-indent`. The list smoke
   test used to pass on "the frame has more ink than before", which the
   indent alone satisfied; it now counts ink in the marker gutter itself and
@@ -2030,7 +2030,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
 
 ---
 
-## 0.9.23 — The Proseware header, complete (2026-09-23)
+## 0.9.23 — The reference deck header, complete (2026-09-23)
 
 ### Fixed
 
@@ -2045,12 +2045,12 @@ gains the OAuth discovery and client-IP blocks. Checklist:
 - **Slide numbers import as live slide numbers.** A frame holding only
   `<a:fld type="slidenum">` becomes a text object with `isSlideNumber`, which
   the renderer fills with the slide's number and the exporter writes back as
-  a field. Keynote writes the field with no cached text, so the Proseware
+  a field. Keynote writes the field with no cached text, so the reference
   header's "2" used to come in as an empty rectangle. A number inside other
   text keeps its cached digits.
 - **Placeholders inherit their layout's fill.** A slide shape bound to a
   placeholder that declares no fill of its own now takes the layout/master
-  placeholder's fill, as PowerPoint does; the Proseware deck's black corner mark
+  placeholder's fill, as PowerPoint does; the reference deck's black corner mark
   carries only its path on the slide and came in invisible.
 
 ### Added
@@ -2073,7 +2073,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
   import dialog used to open on a folder picker with the current folder
   preselected and wait for Import — a question the page had already
   answered. Inside a folder it now opens already uploading into it
-  ("Importing into Proseware"), with no folder list and no confirm click; it
+  ("Importing into Acme"), with no folder list and no confirm click; it
   still shows the upload progress, the result and the missing-font uploads,
   and offers Retry if the import fails. A drop on the folders home keeps
   the picker, since there it is a real choice.
@@ -2088,7 +2088,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
   box is usually taller than the glyphs it holds. PowerPoint puts all of the
   spare height above the glyphs — the baseline sits the font's descent above
   the bottom of the line box — while CSS splits it half above and half below.
-  With generous spacing the difference is large: the Proseware deck's
+  With generous spacing the difference is large: the reference deck's
   "We made it to our first Camp!" (72 px on exactly 65 pt lines) sat 32 px
   higher here than in PowerPoint. Because the difference is the same for
   every line of a frame, it is one translation of the laid-out text,
@@ -2104,7 +2104,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
 
 - **A plain paragraph at a deeper outline level is no longer indented.** In
   PowerPoint `lvl` only selects the level whose `marL` applies; on the
-  Proseware headline (`lvl="1"`, level-2 `marL` 0, `indent` 0) that is no
+  reference-deck headline (`lvl="1"`, level-2 `marL` 0, `indent` 0) that is no
   indent at all, but the importer kept the level and the renderer drew it as
   a 1.5 em indent — 108 px to the right. The level's margin is now resolved
   down PowerPoint's chain (paragraph, shape, layout/master placeholder,
@@ -2160,7 +2160,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
   degrees; re-import them to correct rotated objects.
 - **Placeholder text keeps its template line spacing.** A slide that restyled
   a title's size in its own `lstStyle` stopped the search there, so the
-  layout's `lnSpc` (68% on the Proseware deck's title layout) was never read and
+  layout's `lnSpc` (68% on the reference deck's title layout) was never read and
   the text laid out at the font's full normal line height — 47% taller than
   PowerPoint and off the bottom of the slide. Line spacing is now inherited
   down the whole chain — paragraph, the shape's `lstStyle`, the layout and
@@ -2340,7 +2340,7 @@ for linux/amd64` — having already overwritten `:latest` with them. The
   Inspector.
 - **The font's normal line height comes from the font file.** For a font
   that sets USE_TYPO_METRICS the browser's `line-height: normal` uses the
-  typo metrics (0.977 em for Proseware Pro) while PowerPoint uses hhea (1.162),
+  typo metrics (0.977 em for Brand Sans) while PowerPoint uses hhea (1.162),
   so the browser is the wrong source for exactly the fonts that need it. The
   folder-font loader reads `hhea` from the bytes it installs and registers
   it ahead of measurement; measurement remains for system fonts. On the
@@ -2529,7 +2529,7 @@ for linux/amd64` — having already overwritten `:latest` with them. The
   with `spAutoFit` carries the height PowerPoint computed for its own line
   spacing; we then lay the text out taller and mask the overflow. Three
   independent causes, measured on one reported slide: the importer maps "100%
-  line spacing" to a fixed 1.2 rather than reading the font (Proseware Pro's own
+  line spacing" to a fixed 1.2 rather than reading the font (Brand Sans's own
   metrics give 1.162), paragraph space-before is applied to the first
   paragraph where PowerPoint omits it, and the renderer hard-clips the
   overflow where PowerPoint never clips at all. 597.8 units of content in
@@ -3011,7 +3011,7 @@ server, so the SPA bundle stays clean.
 ### Infrastructure
 
 - **VM 103 `narrative`** on Proxmox `pve` — Ubuntu 24.04 cloud image provisioned via `qm create` + cloud-init from this machine over SSH (Proxmox MCP can inspect but not create). 4 vCPU / 4 GB RAM / 40 GB disk on the `data` lvmthin pool. `petr` user, ed25519 key auth, NOPASSWD sudo, Docker 29.4.3 + Compose v5.1.3, qemu-guest-agent reporting IP to Proxmox.
-- **OPNsense dnsmasq static reservation** — `BC:24:11:18:A0:ED → 192.0.2.147` so the LAN IP stays put and the Cloudflare Tunnel public-hostname mapping (`narrative.example.com → 192.0.2.147:80`) doesn't break on lease renewal.
+- **OPNsense dnsmasq static reservation** — the VM's MAC → `192.0.2.147` so the LAN IP stays put and the Cloudflare Tunnel public-hostname mapping (`narrative.example.com → 192.0.2.147:80`) doesn't break on lease renewal.
 
 ### Removed
 

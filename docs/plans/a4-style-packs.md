@@ -18,7 +18,8 @@ editing the result with the normal tools (§7):
 - **a checker** — `query.check` reports what breaks the brand, the fit
   measured by the render worker (A3's `overflow`).
 
-Five packs are bootstrapped into their folders: Contoso 2026, Fabrikam, Tailspin, Woodgrove house, Adatum. Done when the A4 part of `knownMissing.ts`
+Five packs are bootstrapped into their folders: Contoso 2026, Fabrikam, Tailspin
+Tailspin, Wingtip house, Wingtip Labs. Done when the A4 part of `knownMissing.ts`
 is empty, the five packs build a slide of every layout that `query.check`
 passes, and `A4` is in `FINISHED_PHASES`.
 
@@ -44,22 +45,22 @@ passes, and `A4` is in `FINISHED_PHASES`.
 
 ## What is there already (surveyed 2026-10-12)
 
-| §7.2 item                                    | State                                                                                                                                                                                                                                         |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 layout / slot / component provenance       | missing. A stamp has no link to its master (`stampComponent.ts` "The result has no link to the component"); named master objects act as slots (`components.ts` `slotsOf`, `stampMaster`)                                                      |
-| 2 autofit                                    | missing; PPTX import ignores `spAutoFit`/`normAutofit`, export writes `<a:noAutofit/>`                                                                                                                                                        |
-| 3 per-level list styles on text-style tokens | missing; list attributes live per paragraph (`ParagraphAttrs`) and a legacy frame-wide `listStyle`; no bullet colour, scale, indent                                                                                                           |
-| 4 furniture                                  | partial: `isSlideNumber` (`object.slideNumber.set`), `locked` (editor-only); no `role: 'furniture'`                                                                                                                                           |
-| 5 font stretch (`wdth`)                      | missing in text objects, the renderer and the folder font model (family, weight, style, postscriptName)                                                                                                                                       |
-| 6 deck-level variant                         | missing; the deck Y.Doc root holds `slides` and `guides` only                                                                                                                                                                                 |
-| 7 `textStyleId`                              | done (A0)                                                                                                                                                                                                                                     |
-| 8 component commands                         | `component.list/get/rename/delete/stamp/promote` exist; `component.create` (wraps `POST /folders/:id/components`) and `component.restamp` are the two A4 entries of `knownMissing.ts`                                                         |
-| grid                                         | deck guides only (`guide.add/update/remove`); no margins or columns                                                                                                                                                                           |
-| MCP resources                                | playbooks and `narrative://capabilities`; no pack resources                                                                                                                                                                                   |
-| tools/list                                   | 184,714 of 185,500 bytes (138 tools) after A3 — no room for A4's tools                                                                                                                                                                        |
-| source material                              | the skill library at `29f9367` (HEAD on this Mac): Contoso `layouts.json` (58 layouts, 23 families, grid, palette, fonts) and both masters; `Audi_Template.pptx`; `tailspinr-master.pptx`; Woodgrove `test-presentation.html` + SKILL.md 1.8; Adatum design doc |
-| fonts                                        | Contoso Head/Text Office, Fabrikam Type VF 4.04 and Northwind Sans ST Pro are installed on the MacBook (`~/Library/Fonts`), none in the brain repo                                                                                                      |
-| image pools                                  | Fabrikam (293 files) and Contoso (134) on the Woodgrove shared Drive, reachable through the Drive desktop mount                                                                                                                                            |
+| §7.2 item                                    | State                                                                                                                                                                                                                                                      |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 layout / slot / component provenance       | missing. A stamp has no link to its master (`stampComponent.ts` "The result has no link to the component"); named master objects act as slots (`components.ts` `slotsOf`, `stampMaster`)                                                                   |
+| 2 autofit                                    | missing; PPTX import ignores `spAutoFit`/`normAutofit`, export writes `<a:noAutofit/>`                                                                                                                                                                     |
+| 3 per-level list styles on text-style tokens | missing; list attributes live per paragraph (`ParagraphAttrs`) and a legacy frame-wide `listStyle`; no bullet colour, scale, indent                                                                                                                        |
+| 4 furniture                                  | partial: `isSlideNumber` (`object.slideNumber.set`), `locked` (editor-only); no `role: 'furniture'`                                                                                                                                                        |
+| 5 font stretch (`wdth`)                      | missing in text objects, the renderer and the folder font model (family, weight, style, postscriptName)                                                                                                                                                    |
+| 6 deck-level variant                         | missing; the deck Y.Doc root holds `slides` and `guides` only                                                                                                                                                                                              |
+| 7 `textStyleId`                              | done (A0)                                                                                                                                                                                                                                                  |
+| 8 component commands                         | `component.list/get/rename/delete/stamp/promote` exist; `component.create` (wraps `POST /folders/:id/components`) and `component.restamp` are the two A4 entries of `knownMissing.ts`                                                                      |
+| grid                                         | deck guides only (`guide.add/update/remove`); no margins or columns                                                                                                                                                                                        |
+| MCP resources                                | playbooks and `narrative://capabilities`; no pack resources                                                                                                                                                                                                |
+| tools/list                                   | 184,714 of 185,500 bytes (138 tools) after A3 — no room for A4's tools                                                                                                                                                                                     |
+| source material                              | the skill library at `29f9367` (HEAD on this Mac): Contoso `layouts.json` (58 layouts, 23 families, grid, palette, fonts) and both masters; `Audi_Template.pptx`; `tailspinr-master.pptx`; Wingtip `test-presentation.html` + SKILL.md 1.8; Wingtip Labs design doc |
+| fonts                                        | Contoso Head/Text Office, Acme Type VF 4.04 and Northwind Sans ST Pro are installed on the MacBook (`~/Library/Fonts`), none in the brain repo                                                                                                              |
+| image pools                                  | Fabrikam (293 files) and Contoso (134) on the Wingtip shared Drive, reachable through the Drive desktop mount                                                                                                                                              |
 
 ## Where packs live
 
@@ -286,10 +287,10 @@ JSON import/export of the whole pack for the rest.
     `theme1.xml`) → tokens; recurring blocks (title, subtitle, divider) →
     component candidates. The master wins over the Fabrikam HTML skill; Tailspin's
     theme wins over the dashboard ramp (§7.4).
-  - **Woodgrove** by hand from `test-presentation.html` + SKILL.md 1.8 (vw/vh
-    → px); **Adatum** extends it (lime accent, decoration, chart palette).
+  - **Wingtip** by hand from `test-presentation.html` + SKILL.md 1.8 (contoso/vh
+    → px); **Wingtip Labs** extends it (lime accent, decoration, chart palette).
 - Fonts uploaded into each brand folder from the MacBook's installed
-  faces (Fabrikam Type VF whole, not the latin subset).
+  faces (Acme Type VF whole, not the latin subset).
 - Into production: create the folders, `style.pack.edit` (set, then compile), upload
   the fonts — through the command API with a personal access token, at
   Petr's go per brand.
@@ -337,7 +338,7 @@ description, `basics.md`, eval scenarios `component-restamp` and
 `component-create-pagination`, not yet run). tools/list 187,928 of
 188,000 bytes, 140 tools. Verified: `just check`; `just e2e -g
 "component"` 14 passed; `multi-client-collab` green on rerun (its known
-flake once); `just pptx-roundtrip` on the Proseware deck 0 differences
+flake once); `just pptx-roundtrip` on the reference deck 0 differences
 (`just mutate` broken since 2026-09-26). `just eval` at `2c103a9`: 58/58
 passed, $8.42, 19m46s — `component-restamp` and
 `component-create-pagination` passed on their first live run;
@@ -367,7 +368,7 @@ field, the export anchor). tools/list 188,673 bytes (budget 189,000).
 Verified: `just check`; `text-autofit` 20/20 repeated; `just e2e` with two
 workers 207 passed, 2 failed (canvas-sharpness, htmltext-texture-isolation)
 that passed 3/3 alone — the machine was at load 62 from a kernel build;
-`just pptx-roundtrip` on the Proseware deck 0 differences.
+`just pptx-roundtrip` on the reference deck 0 differences.
 
 **A4.2b–A4.8 built (2026-10-12/13, unreleased; Petr: "the whole of A4,
 no deploy, test at the end"):**
@@ -406,16 +407,16 @@ no deploy, test at the end"):**
 - **A4.7:** the master reader (each master's own theme and `clrMap`,
   layouts no slide uses, inherited placeholder geometry and levels, group
   transforms, SVG blips), a generic template mapper (Fabrikam, Tailspin), Contoso from
-  `layouts.json`, Woodgrove measured from the render in headless Chromium,
-  Adatum derived from Woodgrove and computed from its spec. `just style-pack`
+  `layouts.json`, Wingtip measured from the render in headless Chromium,
+  Wingtip Labs derived from Wingtip and computed from its spec. `just style-pack`
   validates each pack, lays out every layout on an empty slide and checks
   it; `just style-pack-import` puts one into a folder over the command API
   (pack, compile, logos into a pack master, asset ids). Sizes: Contoso 23
-  layouts / 86 regions, Fabrikam 31 / 194, Tailspin 21 / 81, Woodgrove 13 / 126,
-  Adatum 5 / 42. Left out and recorded in each pack's `calls`: the Contoso logo
-  (master artwork), Tailspin's WMF logo and freeform waves, Woodgrove's Data Story
+  layouts / 86 regions, Fabrikam 31 / 194, Tailspin 21 / 81, Wingtip 13 / 126,
+  Wingtip Labs 5 / 42. Left out and recorded in each pack's `calls`: the Contoso logo
+  (master artwork), Tailspin's WMF logo and freeform waves, Wingtip's Data Story
   and Hero Case Study (not in the test deck). The fonts come from the
-  MacBook (HANDOVER.md); production imports wait for Petr, brand by brand.
+  MacBook (private/HANDOVER.md); production imports wait for Petr, brand by brand.
 - **A4.8:** the `build-with-pack` playbook, `restyle-lite` rewritten for
   packs, eval scenarios `pack-build-slide`, `pack-deck-variant`,
   `pack-fix-check` (memory world models packs), `FINISHED_PHASES += A4`.
@@ -470,7 +471,7 @@ as 0.11.1 (0.11.0, tagged first, never deployed: its server image did not build)
 - **Verified:** `just check`; `just integration` 109/109; full `just e2e`
   213 passed after the blocker fix — later full runs on a machine at load
   30–46 (another session's Flutter tests) failed 10–12 specs, every one
-  green when rerun with two workers; `just pptx-roundtrip` on the Proseware
+  green when rerun with two workers; `just pptx-roundtrip` on the reference
   deck: 49 slides, 0 differences; `just style-pack all`; `just size`:
   first paint 726.99 kB (+4 kB, the pack validation), Tiptap 132.81 kB
   (pre-existing); `just eval` 66/66, $9.51, 20m28s, with
@@ -483,4 +484,4 @@ as 0.11.1 (0.11.0, tagged first, never deployed: its server image did not build)
 - The packs themselves live only in the private overlay
   (`private/packs/`, regenerated by `just style-pack`; not committed there).
 - Next: at Petr's go per brand, `just style-pack-import` into production
-  folders plus the MacBook font/logo handover (HANDOVER.md).
+  folders plus the MacBook font/logo handover (private/HANDOVER.md).

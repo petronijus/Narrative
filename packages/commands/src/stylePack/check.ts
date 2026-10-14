@@ -1,9 +1,8 @@
 /**
  * stylePack/check.ts — the brand checker behind `query.check` (agentic A4.5,
- * docs/plans/agentic-layer.md §7.5): a deck against its folder's style pack,
- * ported from Contoso's `check_deck.py` and the Fabrikam HTML checker. Pure: the
- * command hands it the slides as stored, the pack, the folder's tokens, the
- * deck's meta and the render worker's measurement of the text.
+ * docs/plans/agentic-layer.md §7.5): a deck against its folder's style pack.
+ * Pure: the command hands it the slides as stored, the pack, the folder's
+ * tokens, the deck's meta and the render worker's measurement of the text.
  *
  * Rules (`QA_RULE_IDS`), each at the level the pack's `qa.rules` gives it,
  * else its default (shared QA_RULE_DEFAULT_LEVELS):

@@ -31,7 +31,7 @@ cd "${CLAUDE_PROJECT_DIR:?}" || exit 1
 [[ "${busy:-0}" -gt 0 ]] && exit 0
 
 if ! command -v just >/dev/null 2>&1; then
-  echo "stop-gate: \`just\` is not installed on this machine, so \`just check\` did not run (HANDOVER.md → developer harness)." >&2
+  echo "stop-gate: \`just\` is not installed on this machine, so \`just check\` did not run (private/HANDOVER.md → developer harness)." >&2
   exit 0
 fi
 

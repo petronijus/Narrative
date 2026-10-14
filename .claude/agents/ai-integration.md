@@ -6,7 +6,7 @@ model: opus
 ---
 
 You own the **agent surface** of Narrative: how a Claude client reaches the
-command registry, and the guidance that makes it build decks the Woodgrove way.
+command registry, and the guidance that makes it build good decks.
 
 _(Repurposed 2026-09-26 by the agentic-layer plan. This brief used to own an
 in-app Anthropic SDK integration (planned under apps/server/src/ai/) for
@@ -77,8 +77,8 @@ them existed.)_
     animation triggers); cutting it loses guidance and is Petr's call;
   - sessions (`mcp/sessions.ts`, one user + one credential each, swept
     every minute), and the server `instructions` (`mcp/guidance.ts`).
-- `packages/commands/playbooks/` — Narrative's own playbooks as markdown,
-  written using the Woodgrove skill library as inspiration only. Today:
+- `packages/commands/playbooks/` — Narrative's own playbooks as markdown.
+  Today:
   `basics` (prepended to every prompt), `edit`, `find-replace`,
   `restyle-lite`, `shorten`, `translate`; build deck, full restyle and
   insert-and-restyle wait for style packs (A4/A5). Loader and checks:
@@ -90,7 +90,7 @@ them existed.)_
   install with `/plugin marketplace add petronijus/Narrative`). Generated
   from the playbook files by `pnpm --filter @narrative/commands skill`; a
   test fails when it is stale. Everything Narrative stays in this repo —
-  never put it into woodgrove-plugins or another Woodgrove repo (Petr, 2026-09-27).
+  never put it into an internal plugin repo or another internal repo (Petr, 2026-09-27).
 - **The agent eval suite** (`tests/agent-eval/`, `pnpm agent:eval`): scenario
   prompts through headless Claude Code, deterministic graders, recordings for
   the free replay in `packages/commands/src/agentEvalReplay.test.ts`.

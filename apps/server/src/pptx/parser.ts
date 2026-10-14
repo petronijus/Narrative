@@ -1133,7 +1133,7 @@ interface PlaceholderEntry {
   /**
    * The placeholder's own `<p:spPr>` fill. A slide shape bound to this
    * placeholder that declares no fill of its own inherits it, as PowerPoint
-   * does — the Proseware deck's black corner mark is a body placeholder whose
+   * does — the reference deck's black corner mark is a body placeholder whose
    * slide copy carries only the path, the black living on the layout.
    */
   fill?: PlaceholderFill
@@ -2429,7 +2429,7 @@ function parseShape(
   // takes nothing from `fillRef`; one whose `<a:ln>` declares a fill takes
   // no outline colour from `lnRef` — `<a:ln><a:noFill/></a:ln>` with an
   // accent `lnRef` is "no outline", and drawing the accent colour put a red
-  // frame round every grey box of the Proseware deck's wireframes.
+  // frame round every grey box of the reference deck's wireframes.
   // `styleFontColor` is captured here and consumed in the text-parsing block
   // below as the fall-back run colour when `<a:rPr><a:solidFill>` is absent.
   let styleFontColor: number | undefined
@@ -3068,7 +3068,7 @@ function parseShape(
     // outline level whose `marL` applies. Narrative renders `level` as a fixed
     // per-level indent, so on a plain paragraph the level is kept only when
     // that level's margin, resolved down the same chain PowerPoint uses, is
-    // actually non-zero. Keeping it unconditionally pushed the Proseware deck's
+    // actually non-zero. Keeping it unconditionally pushed the reference deck's
     // "We made it to our first Camp!" (lvl 1, marL 0, indent 0) 108 px right.
     const shapeLstStyle =
       txBody !== undefined ? findFirst(getChildren(txBody, 'p:txBody'), 'a:lstStyle') : undefined

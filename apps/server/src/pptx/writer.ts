@@ -724,7 +724,7 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     // from a separate `<a:solidFill>` child (or `<a:lnRef>` style ref).
     // A line with `<a:noFill/>` (or no fill child at all) means "draw
     // no stroke" even though `w` is set — common on PPTX vector logos
-    // where the design is a pure silhouette (e.g. the AFRY letterforms
+    // where the design is a pure silhouette (e.g. a badge's letterforms
     // in the audit fixture). The previous code fabricated a 0x111111
     // stroke at the declared width whenever `strokeColor` was undefined,
     // producing a thin near-black outline that thickened the imported
@@ -1165,8 +1165,7 @@ function backgroundForSlide(
 ): ColorBackground | LinearGradientBackground | RadialGradientBackground | ImageBackground | null {
   // Background details OOXML cannot hold, for the kind they were written for.
   const ext = narrative?.['background'] as
-    | { kind: string; radius?: number; fit?: 'cover' | 'contain' }
-    | undefined
+    { kind: string; radius?: number; fit?: 'cover' | 'contain' } | undefined
   if (parsedBg.kind === 'solid' && parsedBg.color !== undefined) {
     return { kind: 'color', color: parsedBg.color, alpha: parsedBg.alpha ?? 1 }
   }

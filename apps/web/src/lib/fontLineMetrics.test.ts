@@ -27,7 +27,7 @@ beforeEach(() => {
 describe('normalLineHeightRatio', () => {
   it('falls back where the browser cannot lay text out', () => {
     // jsdom has no layout engine: the probe measures 0 → fallback.
-    expect(normalLineHeightRatio('Proseware Pro', 400, false)).toBe(FALLBACK_NORMAL_RATIO)
+    expect(normalLineHeightRatio('Brand Sans', 400, false)).toBe(FALLBACK_NORMAL_RATIO)
   })
 })
 
@@ -81,16 +81,16 @@ describe('effectiveLineHeightMultiple', () => {
 
 describe('registerDeclaredLineMetrics', () => {
   it('declared file metrics win over measurement and the fallback', () => {
-    registerDeclaredLineMetrics('Proseware Pro Regular', 400, 'normal', {
+    registerDeclaredLineMetrics('Brand Sans Regular', 400, 'normal', {
       lineHeight: 1.162,
       descent: 0.2,
     })
-    expect(normalLineHeightRatio('Proseware Pro Regular', 400, false)).toBeCloseTo(1.162, 6)
+    expect(normalLineHeightRatio('Brand Sans Regular', 400, false)).toBeCloseTo(1.162, 6)
     // Keyed by weight and style: the italic face is still unknown here.
-    expect(normalLineHeightRatio('Proseware Pro Regular', 400, true)).toBe(FALLBACK_NORMAL_RATIO)
+    expect(normalLineHeightRatio('Brand Sans Regular', 400, true)).toBe(FALLBACK_NORMAL_RATIO)
     // And it flows through the resolver: 0.75 × 1.162 × 158.
     expect(
-      resolveLineHeightPx({ fontSize: 158, fontFamily: 'Proseware Pro Regular', lineSpacing: 0.75 }),
+      resolveLineHeightPx({ fontSize: 158, fontFamily: 'Brand Sans Regular', lineSpacing: 0.75 }),
     ).toBeCloseTo(0.75 * 1.162 * 158, 4)
   })
 
@@ -109,11 +109,11 @@ describe('weight matching', () => {
     expect(numericWeight(300)).toBe(300)
     expect(numericWeight(undefined)).toBe(400)
     // The reported case: object says "normal", the installed face says 400.
-    registerDeclaredLineMetrics('Proseware Pro Regular', 400, 'normal', {
+    registerDeclaredLineMetrics('Brand Sans Regular', 400, 'normal', {
       lineHeight: 1.162,
       descent: 0.2,
     })
-    expect(normalLineHeightRatio('Proseware Pro Regular', 'normal', false)).toBeCloseTo(1.162, 6)
+    expect(normalLineHeightRatio('Brand Sans Regular', 'normal', false)).toBeCloseTo(1.162, 6)
   })
 
   it('falls back to the nearest declared weight of the same family and style', () => {
@@ -129,14 +129,14 @@ describe('weight matching', () => {
 
 describe('forgetMeasuredLineHeight', () => {
   it('drops measurements but keeps what the font file declared', () => {
-    registerDeclaredLineMetrics('Proseware Pro Regular', 400, 'normal', {
+    registerDeclaredLineMetrics('Brand Sans Regular', 400, 'normal', {
       lineHeight: 1.162,
       descent: 0.2,
     })
     // jsdom measures nothing, so the only thing there is to forget is the
     // declared ratio — which must survive: it describes the file, not a probe.
-    forgetMeasuredLineHeight('Proseware Pro Regular')
-    expect(normalLineHeightRatio('Proseware Pro Regular', 400, false)).toBeCloseTo(1.162, 6)
+    forgetMeasuredLineHeight('Brand Sans Regular')
+    expect(normalLineHeightRatio('Brand Sans Regular', 400, false)).toBeCloseTo(1.162, 6)
     // Unknown families are a no-op, not an error.
     expect(() => forgetMeasuredLineHeight(undefined)).not.toThrow()
   })
@@ -161,18 +161,18 @@ describe('powerpointLineOffsetPx', () => {
     )
   }
 
-  it('puts the Proseware deck headline where PowerPoint does', () => {
-    // Proseware Pro: the browser lays it out with typo 0.704 / 0.198 (the font
+  it('puts the reference deck headline where PowerPoint does', () => {
+    // Brand Sans: the browser lays it out with typo 0.704 / 0.198 (the font
     // sets USE_TYPO_METRICS); PowerPoint uses hhea, descent 0.198. The
     // headline is 72 px with exactly 65 pt lines = 130 px at 1920.
     browserReports(0.704, 0.198)
-    registerDeclaredLineMetrics('Proseware Pro Regular', 400, 'normal', {
+    registerDeclaredLineMetrics('Brand Sans Regular', 400, 'normal', {
       lineHeight: 1.162,
       descent: 0.198,
     })
     const offset = powerpointLineOffsetPx({
       fontSize: 72,
-      fontFamily: 'Proseware Pro Regular',
+      fontFamily: 'Brand Sans Regular',
       lineHeight: 130 / 72,
     })
     // PowerPoint baseline 130 − 14.256; CSS baseline (130 − 64.944)/2 + 50.688.

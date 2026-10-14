@@ -34,7 +34,7 @@ Narrative's own.
   headers, image tags, measured numbers) is the source of truth to record.
 - Check what is actually deployed before writing that something ships:
   `curl -s https://narrative.bastla.com/version.json` and, when it matters,
-  `ssh petr@192.168.20.147 'docker ps --format "{{.Names}}|{{.Image}}"'`.
+  `ssh "$NARRATIVE_VM" 'docker ps --format "{{.Names}}|{{.Image}}"'`.
 
 ## 1. The doc surface — visit ALL of it
 

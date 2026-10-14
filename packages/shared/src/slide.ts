@@ -56,8 +56,7 @@ export function isTokenRef(v: unknown): v is TokenRef {
  * - 'url'   → open `href` in the named browsing context (`_blank` default).
  */
 export type ObjectHyperlink =
-  | { kind: 'slide'; slideId: string }
-  | { kind: 'url'; href: string; target?: '_self' | '_blank' }
+  { kind: 'slide'; slideId: string } | { kind: 'url'; href: string; target?: '_self' | '_blank' }
 
 /**
  * A4.1: what an object is for, small and generic on purpose — what a
@@ -578,7 +577,7 @@ export interface TextObject extends BaseSlideObject {
   minFontSize?: number
   /**
    * The width the box's type is set at, % of normal (CSS `font-stretch`, a
-   * variable font's `wdth` axis; A4.2c): Fabrikam Type Extended is 130. Drawn
+   * variable font's `wdth` axis; A4.2c): Acme Type Extended is 130. Drawn
    * from the folder face whose width range holds it; absent = 100.
    */
   fontStretch?: number

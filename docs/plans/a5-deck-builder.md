@@ -70,7 +70,7 @@ eval. The evidence, with `file:line`:
   - furniture is regenerated from `meta.fields` (`:346-483`).
 - **`archetypeMap` is never resolved in code.** It is only validated,
   summarised (`commands/stylePacks.ts:62`) and named in the playbook. All
-  five brand packs fill it (Contoso, Fabrikam, Tailspin, Woodgrove; Adatum through Woodgrove).
+  five brand packs fill it (Contoso, Fabrikam, Tailspin, Wingtip; Wingtip Labs through Wingtip).
 - **No home for the spec's provenance and narrative fields.**
   `SlideLayoutRef` is `{packId, layoutId, surface}` (`shared/src/deck.ts:144`).
   There is no archetype, message or claim provenance; `DeckMeta` has no title
@@ -126,7 +126,7 @@ eval. The evidence, with `file:line`:
     (`:238`, `:260-261`);
   - (d) several regions with the same role take objects in object order,
     not by position (`:215-221`).
-- **Slot names differ between packs** (Contoso `bullets2`, Woodgrove `hero-title`), so
+- **Slot names differ between packs** (Contoso `bullets2`, Wingtip `hero-title`), so
   across packs only roles carry content. `family` values are pack-local.
   `archetypeMap` is the shared vocabulary between packs.
 - **Nothing classifies objects at run time.** `titleGuess` is outline-only.
@@ -161,8 +161,8 @@ eval. The evidence, with `file:line`:
     protocol;
   - it does not run "look again after fixing";
   - it builds slide by slide.
-- The procedure to model is `presentation-narrative-standard` (Woodgrove core
-  plugin; the brain copy is in `woodgrove-ai-brain/strategy/skills/`):
+- The procedure to model is `presentation-narrative-standard` (an internal
+  plugin; the brain copy is in the internal skill library):
   - phases: 10 scoping questions, then shift / belief gap / controlling
     idea, then **three genuinely different directions**, then a per-slide
     table `# | title (≤10 w) | body (≤25 w) | format | claim | move`;
@@ -173,7 +173,7 @@ eval. The evidence, with `file:line`:
   - Its format archetypes (title-reveal, compare-and-contrast, data-viz,
     big-quote, …) are not Narrative's `ARCHETYPES` (`stylePack.ts:454`),
     so a mapping is needed.
-- The Contoso precedent (`woodgrove-ai-brain/clients/LITWARE/skills/litware-contoso-presentation/references/example_deck.py`):
+- The Contoso precedent (the Contoso reference script):
   - `Deck(variant, lang, title, classification).footer(...)`;
   - `add(family).set(slot=…)` with `(text, level)` paragraphs and
     `{de|en}` text;
@@ -232,7 +232,7 @@ type SpecPicture = { assetId: string; focus?: 'center' | 'top' | 'bottom' | 'lef
   - `x`/`w` are column indices of `grid.columns` (`[from, to]`);
   - `y` is a band name (`title`, `subtitle`, `content`, `footer`) plus an
     offset in px;
-  - this is enough for the Contoso and Woodgrove "drawn" cases (a box per column,
+  - this is enough for the Contoso and Wingtip "drawn" cases (a box per column,
     a rule under the title band).
 - **`{de|en}`:** a run's text `"Umsatz{de|en}Revenue"` keeps the part for
   `lang` (the Contoso convention); without `lang` the first part.
@@ -466,7 +466,7 @@ right`, absent = centred) is drawn by the renderer's fit
 - **Verified:**
   - eval `restyle-no-provenance` (a plain deck classified and laid out);
   - eval on a PPTX insert (live);
-  - `just pptx-roundtrip` on the Proseware deck (0 differences: the hint is
+  - `just pptx-roundtrip` on the reference deck (0 differences: the hint is
     not stored).
 - **Release.**
 
@@ -604,7 +604,7 @@ earlier layout's object of its role, a component part still showing its
 master's text counts as empty, content of the wrong kind or for a missing
 slot is refused, `archetype` reaches query.slide / query.deck, query.check
 unmeasured has no slide cap so rhythm reaches big decks), full e2e green
-(214), the Proseware deck round-trips with 0 differences, two new live-only
+(214), the reference deck round-trips with 0 differences, two new live-only
 eval scenarios (pack-archetype-cover, pack-plain-slide-roles) pass with the
 other pack ones (tools/list 193.8 of 194.2 kB). A5.2 done: the spec lives in `packages/commands/src/stylePack/deckSpec.ts`
 (not `shared`: its slot text is the commands' text body), `planBuild` in
@@ -645,7 +645,7 @@ the same layout keeps a picture's crop and focus. A5.5 done: the parser
 names the placeholder a slide shape fills (`placeholderType`, "obj" when
 untyped), the writer reports it per slide by object id, and
 `deck.importPptx` / `deck.insertFrom` return it as `placeholders` (not
-stored: the Proseware deck still round-trips with 0 differences);
+stored: the reference deck still round-trips with 0 differences);
 `restyle-lite` points at it, and the new `insert-restyle` playbook covers
 "insert deck B and make it ours" (insert, relayout by archetype, judgment
 for the rest, check, look). tools/list 198.9 of 199.0 kB. Their eval

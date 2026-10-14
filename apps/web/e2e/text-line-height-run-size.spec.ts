@@ -3,7 +3,7 @@
  *
  * A line is as tall as the fonts on it, not as the frame's default size.
  *
- * PowerPoint's line spacing — "single", or a multiple such as the Proseware
+ * PowerPoint's line spacing — "single", or a multiple such as a real
  * deck's 68 % titles — is a multiple of the text on the line. An imported
  * title whose frame default is 88 pt but whose text is set at 60 pt is
  * spaced for 60 pt. We used to lay every line out at the frame's size: the
@@ -28,8 +28,7 @@ async function renderedHeight(page: Page, id: string): Promise<number> {
   for (let i = 0; i < 40 && h === 0; i++) {
     h = await page.evaluate((objectId) => {
       const c = window.__narrative_scene_graph?.getContainer(objectId) as unknown as
-        | { children?: { height?: number; constructor?: { name?: string } }[] }
-        | undefined
+        { children?: { height?: number; constructor?: { name?: string } }[] } | undefined
       const node = (c?.children ?? []).find((k) => k.constructor?.name === 'HTMLText')
       return Math.round((node?.height ?? 0) * 10) / 10
     }, id)

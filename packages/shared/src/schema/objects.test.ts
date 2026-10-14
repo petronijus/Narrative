@@ -162,9 +162,9 @@ describe('hyperlinks', () => {
   it('stores the sanitised form of a safe href', () => {
     const out = RectangleObjectSchema.parse({
       ...rect,
-      hyperlink: { kind: 'url', href: 'woodgrove.com/work' },
+      hyperlink: { kind: 'url', href: 'example.com/work' },
     })
-    expect(out.hyperlink).toEqual({ kind: 'url', href: 'https://woodgrove.com/work' })
+    expect(out.hyperlink).toEqual({ kind: 'url', href: 'https://example.com/work' })
   })
 })
 
