@@ -1239,9 +1239,10 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
     const origin = req.headers.origin
     // Only echo Origin back if it's in the allowlist — never reflect arbitrary
     // origins, which would let any cross-origin caller through.
+    // The answer depends on Origin either way: caches must key on it.
+    reply.raw.setHeader('Vary', 'Origin')
     if (origin !== undefined && allowedOrigins.includes(origin)) {
       reply.raw.setHeader('Access-Control-Allow-Origin', origin)
-      reply.raw.setHeader('Vary', 'Origin')
     } else {
       reply.raw.setHeader('Access-Control-Allow-Origin', defaultOrigin)
     }

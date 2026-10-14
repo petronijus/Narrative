@@ -104,10 +104,9 @@ export function acquireComponentDoc(
   // real session from the `narrative_session` cookie on the WS upgrade.
   // See `docs/adr/0005-server-side-session-cookies.md`.
   const provider = new HocuspocusProvider({
-    url: HOCUSPOCUS_URL,
     name: `component:${componentId}`,
     document: doc,
-    ...hocuspocusAuthOptions(opts.search ?? ''),
+    ...hocuspocusAuthOptions(HOCUSPOCUS_URL, opts.search ?? ''),
     // No awareness: the render worker's browser must not show up as a peer.
     ...(opts.presence === false ? { awareness: null } : {}),
     onAuthenticationFailed() {

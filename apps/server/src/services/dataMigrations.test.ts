@@ -27,6 +27,7 @@ import {
   runDataMigrations,
   type DataMigration,
 } from './dataMigrations.js'
+import { releaseHocuspocus } from '../test-support/hocuspocus.js'
 
 let hp: Hocuspocus
 let persistence: MemoryPersistence
@@ -34,13 +35,13 @@ let open: Array<{ disconnect: () => Promise<void> }>
 
 beforeEach(() => {
   persistence = new MemoryPersistence()
-  hp = new Hocuspocus({ quiet: true, stopOnSignals: false, extensions: [persistence] })
+  hp = new Hocuspocus({ quiet: true, extensions: [persistence] })
   open = []
 })
 
 afterEach(async () => {
   for (const c of open) await c.disconnect()
-  await hp.destroy?.()
+  await releaseHocuspocus(hp)
 })
 
 async function openDoc(name: string): Promise<Y.Doc> {

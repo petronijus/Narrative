@@ -28,11 +28,12 @@ import {
   updateFolderToken,
 } from '@narrative/slide-model'
 import type { TextObject } from '@narrative/shared'
-import { MemoryPersistence, quietLog } from '../test-support/agentWorld.js'
+import { MemoryPersistence, eventually, quietLog } from '../test-support/agentWorld.js'
 import { scriptedDb } from '../test-support/scriptedDb.js'
 import { serviceErrorOf } from '../test-support/serviceErrors.js'
 import { documentName } from './liveDocs.js'
 import { TOKEN_PROPAGATION_ORIGIN, createTokensService, ensureFolderTokens } from './tokens.js'
+import { releaseHocuspocus } from '../test-support/hocuspocus.js'
 
 const USER = 'u1'
 const FOLDER = 'f1'
@@ -51,13 +52,13 @@ let open: Array<{ disconnect: () => Promise<void> }>
 
 beforeEach(() => {
   persistence = new MemoryPersistence()
-  hp = new Hocuspocus({ quiet: true, stopOnSignals: false, extensions: [persistence] })
+  hp = new Hocuspocus({ quiet: true, extensions: [persistence] })
   open = []
 })
 
 afterEach(async () => {
   for (const c of open) await c.disconnect()
-  await hp.destroy?.()
+  await releaseHocuspocus(hp)
 })
 
 /** The folder document: a Brand colour, and a Title style in it (plus a Body style). */
@@ -399,12 +400,21 @@ describe('token propagation', () => {
   it('merges changes made while a propagation runs into one more run', async () => {
     store('folder', FOLDER, folderDoc())
     store('deck', 'd1', deckDoc())
-    await openDoc('folder', FOLDER)
+    const folder = await openDoc('folder', FOLDER)
+    const folderDocument = hp.documents.get(documentName('folder', FOLDER))!
+    const held = folderDocument.directConnectionsCount
     const deck = await openDoc('deck', 'd1')
     const deckWrites = originsOf(deck)
     // Three changes at once: the first run, then ONE run for the other two.
     // The three folder checks run concurrently: three folder reads, then
-    // three role reads.
+    // three role reads. The first run's deck list is held until the other
+    // two changes are written and queued, so they are made while it runs —
+    // however long the stores of three writes to one document take (they
+    // queue behind each other since Hocuspocus 4).
+    let releaseFirstRun!: () => void
+    const firstRunDecks = new Promise<unknown[]>((resolve) => {
+      releaseFirstRun = () => resolve([{ id: 'd1' }])
+    })
     const { tokens } = service([
       [folderRow],
       [folderRow],
@@ -412,12 +422,12 @@ describe('token propagation', () => {
       [{ role: 'editor' }],
       [{ role: 'editor' }],
       [{ role: 'editor' }],
-      [{ id: 'd1' }],
+      firstRunDecks as unknown as unknown[],
       [],
       [{ id: 'd1' }],
       [],
     ])
-    const results = await Promise.all(
+    const pending = Promise.all(
       [26, 28, 32].map((size) =>
         tokens.update({
           userId: USER,
@@ -428,8 +438,23 @@ describe('token propagation', () => {
         }),
       ),
     )
-    // The last two were carried by the same run, which read the folder afresh.
-    expect(results[1]!.propagated).toBe(results[2]!.propagated)
+    // A writer leaves the folder document only after its write is stored,
+    // and queues its propagation right after: the folder back to the one
+    // direct connection this test holds (openDoc), with the last value in
+    // place, means all three changes are queued.
+    await eventually(
+      () =>
+        readFolderTokens(folder).textStyles['body']?.['size'] === 32 &&
+        folderDocument.directConnectionsCount === held,
+    )
+    await new Promise((r) => setTimeout(r, 0))
+    releaseFirstRun()
+    const results = await pending
+    // One change started the first run; the two made while it ran were
+    // carried by ONE more run, which read the folder afresh. Which change
+    // came first is the order their stores finished in, not the call order.
+    const runs = new Set(results.map((r) => r.propagated))
+    expect(runs.size).toBe(2)
     expect(byId(deck, 'para')['fontSize']).toBe(32)
     expect(deckWrites.length).toBeLessThanOrEqual(2)
   })

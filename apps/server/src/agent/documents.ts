@@ -31,6 +31,7 @@
 
 import type { Document, Hocuspocus } from '@hocuspocus/server'
 import { subsystemLogger } from '../observability/logger.js'
+import { transactDirect } from '../hocuspocus/directWrite.js'
 
 const log = subsystemLogger('agent')
 
@@ -157,7 +158,7 @@ export function createAgentDocuments(
         async transact(fn) {
           let applied = false
           try {
-            await connection.transact((doc) => {
+            await transactDirect(connection, (doc) => {
               fn(doc)
               applied = true
             })

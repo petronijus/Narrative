@@ -40,6 +40,7 @@ import { createDecksService } from './decks.js'
 import { createComponentsService, RESTAMP_ELSEWHERE } from './components.js'
 import { createPptxService } from './pptx.js'
 import { closeConnectionsForDocument, closeDeckConnections } from '../hocuspocus/connections.js'
+import { releaseHocuspocus } from '../test-support/hocuspocus.js'
 
 // Moving a deck copies the media it links from its old folder
 // (services/localiseMedia.ts, its own tests against Postgres); here that the
@@ -85,7 +86,6 @@ beforeEach(() => {
   persistence = new MemoryPersistence()
   hp = new Hocuspocus({
     quiet: true,
-    stopOnSignals: false,
     unloadImmediately: false,
     debounce: 10,
     maxDebounce: 50,
@@ -94,7 +94,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
-  await hp.destroy?.()
+  await releaseHocuspocus(hp)
 })
 
 function deps(db: ServiceDeps['db']): ServiceDeps {

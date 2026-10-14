@@ -117,9 +117,8 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
 
     // The session cookie, or on a share-link visit the page's share_token,
     // exactly like the deck's document (state/hocuspocusAuth.ts).
-    const authOptions = hocuspocusAuthOptions(window.location.search)
+    const authOptions = hocuspocusAuthOptions(HOCUSPOCUS_URL, window.location.search)
     const provider = new HocuspocusProvider({
-      url: HOCUSPOCUS_URL,
       name: `folder:${folderId}`,
       document: doc,
       ...authOptions,

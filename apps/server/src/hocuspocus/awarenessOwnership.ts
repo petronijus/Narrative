@@ -55,6 +55,7 @@
  * ids at all (fail closed).
  */
 
+import { isTransactionOrigin } from '@hocuspocus/server'
 import type { Document, Extension, afterLoadDocumentPayload } from '@hocuspocus/server'
 
 type Log = { warn: (obj: object, msg: string) => void }
@@ -107,6 +108,19 @@ function principalOfSocket(
   return undefined
 }
 
+/**
+ * The socket an awareness update came through. Hocuspocus 4 gives the update
+ * a structured origin — `{ source: 'connection', connection }` for a
+ * client's, `{ source: 'local' | 'redis' }` otherwise; 2.x passed the socket
+ * itself. Ownership is tracked per socket either way; anything but a
+ * connection's update is no socket (the server's own writes, the awareness
+ * timeout's `'timeout'`).
+ */
+function socketOfOrigin(origin: unknown): unknown {
+  if (!isTransactionOrigin(origin)) return undefined
+  return origin.source === 'connection' ? origin.connection.webSocket : undefined
+}
+
 function socketIsLive(document: Document, socket: unknown): boolean {
   return document.getConnections().some((c) => c.webSocket === socket)
 }
@@ -125,7 +139,8 @@ export function trackAwarenessOwnership(document: Document, log?: Log): void {
   tracked.set(document, state)
   const serverClientId = document.awareness.clientID
 
-  document.awareness.on('update', (change: AwarenessChange, origin: unknown) => {
+  document.awareness.on('update', (change: AwarenessChange, transactionOrigin: unknown) => {
+    const origin = socketOfOrigin(transactionOrigin)
     const principal = principalOfSocket(document, state, origin)
     // `undefined`: not a connection (the server's own writes, Hocuspocus'
     // cleanup of a closed connection, the awareness timeout).

@@ -43,6 +43,7 @@ import {
 import { lookupSession } from '../auth/session.js'
 import {
   createOnAuthenticate,
+  PEER_ADDRESS_HEADER,
   WS_FAILED_AUTH_LIMIT,
   WS_TOO_MANY_ATTEMPTS,
   type WsAuthDeps,
@@ -60,17 +61,27 @@ const sessions = vi.mocked(lookupSession)
 const PAT = `nrt_${'k'.repeat(43)}`
 const COOKIE = { cookie: 'narrative_session=good-session' }
 
+/**
+ * A hook payload as Hocuspocus 4 builds it: headers as `Headers`, the peer
+ * address in the header the server's onUpgrade writes (`ip`).
+ */
 function payload(
-  over: Partial<WsAuthPayload> & { params?: Record<string, string>; ip?: string } = {},
+  over: Omit<Partial<WsAuthPayload>, 'requestHeaders'> & {
+    params?: Record<string, string>
+    ip?: string
+    requestHeaders?: Record<string, string>
+  } = {},
 ): WsAuthPayload {
-  const { params, ip, ...rest } = over
+  const { params, ip, requestHeaders, ...rest } = over
   return {
     documentName: 'deck:d1',
     token: 'cookie',
     requestParameters: new URLSearchParams(params ?? {}),
-    requestHeaders: {},
-    request: { socket: { remoteAddress: ip ?? '203.0.113.7' } },
-    connection: { readOnly: true },
+    requestHeaders: new Headers({
+      ...requestHeaders,
+      [PEER_ADDRESS_HEADER]: ip ?? '203.0.113.7',
+    }),
+    connectionConfig: { readOnly: true },
     context: {},
     ...rest,
   }
@@ -154,14 +165,14 @@ describe('browser paths', () => {
       deckIdResolved: 'd1',
       role: 'editor',
     })
-    expect(data.connection.readOnly).toBe(false)
+    expect(data.connectionConfig.readOnly).toBe(false)
   })
 
   it('makes a viewer connection read-only', async () => {
     deckAccess.mockResolvedValue({ role: 'viewer', reason: 'direct' })
-    const data = payload({ requestHeaders: COOKIE, connection: { readOnly: false } })
+    const data = payload({ requestHeaders: COOKIE, connectionConfig: { readOnly: false } })
     await onAuthenticate()(data)
-    expect(data.connection.readOnly).toBe(true)
+    expect(data.connectionConfig.readOnly).toBe(true)
   })
 
   it('refuses a connection with no cookie, or an unknown one', async () => {
@@ -186,7 +197,7 @@ describe('browser paths', () => {
       shareToken: 'link-123',
     })
     expect(data.context.userId).not.toContain('link')
-    expect(data.connection.readOnly).toBe(true)
+    expect(data.connectionConfig.readOnly).toBe(true)
   })
 
   it("admits a share link read-only to its deck's folder document, never to a component", async () => {
@@ -202,7 +213,7 @@ describe('browser paths', () => {
       userId: expect.stringMatching(/^share:[0-9a-f]{8}$/),
       shareToken: 'link-123',
     })
-    expect(folder.connection.readOnly).toBe(true)
+    expect(folder.connectionConfig.readOnly).toBe(true)
 
     // A component admits no share link (resolveComponentAccess: only a
     // render token minted for that master — permissions.integration.test.ts).
@@ -291,7 +302,7 @@ describe('failed-attempt throttle', () => {
     deckAccess.mockResolvedValue({ role: 'viewer', reason: 'share-link' })
     const fresh = payload({ params: { share_token: `nrr_${'f'.repeat(43)}` } })
     await hook(fresh)
-    expect(fresh.connection.readOnly).toBe(true)
+    expect(fresh.connectionConfig.readOnly).toBe(true)
     // Something shaped otherwise still counts.
     deckAccess.mockResolvedValue(null)
     await expect(hook(payload({ params: { share_token: 'nrr_short' } }))).rejects.toThrow(
@@ -317,5 +328,28 @@ describe('failed-attempt throttle', () => {
     await expect(
       hook(payload({ ip: '10.0.0.5', requestHeaders: { 'cf-connecting-ip': '192.0.2.44' } })),
     ).rejects.toThrow(WS_TOO_MANY_ATTEMPTS)
+  })
+})
+
+describe('one connection per socket and document', () => {
+  const live = (socketIds: string[]) => ({
+    documents: new Map([
+      ['deck:d1', { getConnections: () => socketIds.map((socketId) => ({ socketId })) }],
+    ]),
+  })
+
+  it('refuses a socket that already holds the document under another session key', async () => {
+    await expect(
+      onAuthenticate()(
+        payload({ requestHeaders: COOKIE, socketId: 's1', instance: live(['s0', 's1']) }),
+      ),
+    ).rejects.toThrow('Forbidden')
+    expect(deckAccess).not.toHaveBeenCalled()
+  })
+
+  it('admits the same document on another socket', async () => {
+    await expect(
+      onAuthenticate()(payload({ requestHeaders: COOKIE, socketId: 's2', instance: live(['s1']) })),
+    ).resolves.toMatchObject({ role: 'editor' })
   })
 })

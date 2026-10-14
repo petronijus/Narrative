@@ -14,7 +14,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
-import { Hocuspocus } from '@hocuspocus/server'
+import { Server } from '@hocuspocus/server'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import { getTableName, type Table } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
@@ -55,7 +55,7 @@ function slowDb(role: 'editor' | 'viewer'): Database {
   return { select } as unknown as Database
 }
 
-let server: Hocuspocus | null = null
+let server: Server | null = null
 let provider: HocuspocusProvider | null = null
 
 afterEach(async () => {
@@ -67,7 +67,10 @@ afterEach(async () => {
 
 describe('onAuthenticate context', () => {
   it('reaches the connection even when onConnect finishes while the hook awaits the database', async () => {
-    server = new Hocuspocus({
+    server = new Server({
+      // A free port: `listen(0)` would fall back to the configured default
+      // (Hocuspocus 4 reads a falsy port argument as "none").
+      port: 0,
       quiet: true,
       stopOnSignals: false,
       onAuthenticate: createOnAuthenticate({ db: slowDb('editor'), bypass: true }),
@@ -75,7 +78,7 @@ describe('onAuthenticate context', () => {
         await delay(10)
       },
     })
-    await server.listen(0)
+    await server.listen()
     let synced!: () => void
     const whenSynced = new Promise<void>((r) => (synced = r))
     provider = new HocuspocusProvider({
@@ -87,7 +90,7 @@ describe('onAuthenticate context', () => {
     })
     await whenSynced
 
-    const connections = server.documents.get('deck-ctx')!.getConnections()
+    const connections = server.hocuspocus.documents.get('deck-ctx')!.getConnections()
     expect(connections).toHaveLength(1)
     expect(connections[0]!.context).toMatchObject({
       userId: 'dev-user',
@@ -103,8 +106,8 @@ describe('onAuthenticate context', () => {
       documentName: 'deck:d1',
       token: 'cookie',
       requestParameters: new URLSearchParams(),
-      requestHeaders: {},
-      connection: { readOnly: false },
+      requestHeaders: new Headers({}),
+      connectionConfig: { readOnly: false },
       context: { preset: 'kept' } as Record<string, unknown>,
     }
     const additions = await hook(data)
@@ -114,6 +117,6 @@ describe('onAuthenticate context', () => {
       deckIdResolved: 'd1',
       role: 'viewer',
     })
-    expect(data.connection.readOnly).toBe(true)
+    expect(data.connectionConfig.readOnly).toBe(true)
   })
 })

@@ -49,14 +49,19 @@ const deckAccess = vi.mocked(resolveDeckAccess)
 const DB = {} as Database
 const COOKIE = { cookie: 'narrative_session=good-session' }
 
-function payload(over: Partial<WsAuthPayload> & { params?: Record<string, string> } = {}) {
-  const { params, ...rest } = over
+function payload(
+  over: Omit<Partial<WsAuthPayload>, 'requestHeaders'> & {
+    params?: Record<string, string>
+    requestHeaders?: Record<string, string>
+  } = {},
+) {
+  const { params, requestHeaders, ...rest } = over
   return {
     documentName: 'component:comp-1',
     token: 'cookie',
     requestParameters: new URLSearchParams(params ?? {}),
-    requestHeaders: COOKIE,
-    connection: { readOnly: false },
+    requestHeaders: new Headers(requestHeaders ?? COOKIE),
+    connectionConfig: { readOnly: false },
     context: {} as Record<string, unknown>,
     ...rest,
   } satisfies WsAuthPayload
@@ -80,7 +85,7 @@ describe('onAuthenticate — component:<id>', () => {
       shareToken: null,
     })
     expect(data.context).toMatchObject({ userId: 'member', componentId: 'comp-1', role: 'editor' })
-    expect(data.connection.readOnly).toBe(false)
+    expect(data.connectionConfig.readOnly).toBe(false)
     expect(folderAccess).not.toHaveBeenCalled()
     expect(deckAccess).not.toHaveBeenCalled()
   })
@@ -89,7 +94,7 @@ describe('onAuthenticate — component:<id>', () => {
     componentAccess.mockResolvedValueOnce({ role: 'owner', reason: 'folder' })
     const data = payload()
     await authenticate()(data)
-    expect(data.connection.readOnly).toBe(false)
+    expect(data.connectionConfig.readOnly).toBe(false)
   })
 
   it('connects a folder viewer to the master read-only', async () => {
@@ -97,7 +102,7 @@ describe('onAuthenticate — component:<id>', () => {
     const data = payload()
     await authenticate()(data)
     expect(data.context).toMatchObject({ role: 'viewer' })
-    expect(data.connection.readOnly).toBe(true)
+    expect(data.connectionConfig.readOnly).toBe(true)
   })
 
   it('refuses a user outside the folder, a deck-only guest included, and a missing component', async () => {
@@ -122,7 +127,7 @@ describe('onAuthenticate — component:<id>', () => {
     const token = `nrr_${'r'.repeat(43)}`
     const data = payload({ requestHeaders: {}, params: { share_token: token } })
     await authenticate()(data)
-    expect(data.connection.readOnly).toBe(true)
+    expect(data.connectionConfig.readOnly).toBe(true)
     expect(data.context).toMatchObject({ componentId: 'comp-1', role: 'viewer', shareToken: token })
     expect(data.context['userId']).not.toContain(token)
   })

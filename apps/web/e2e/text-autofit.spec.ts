@@ -139,9 +139,15 @@ test('a growing box is as tall as its text, and keeps its height as the person t
         .toBe(true)
     }
     expect(await bodyText()).toBe('One line')
-    const back = (await boxState(page, id))!
-    expect(Math.abs(back.drawn - oneLine.drawn)).toBeLessThanOrEqual(1)
-    expect(Math.abs(back.stored - oneLine.stored)).toBeLessThanOrEqual(1)
+    // The last undo's height lands with the next layout, not with the text.
+    await expect
+      .poll(async () => {
+        const back = (await boxState(page, id))!
+        return (
+          Math.abs(back.drawn - oneLine.drawn) <= 1 && Math.abs(back.stored - oneLine.stored) <= 1
+        )
+      })
+      .toBe(true)
   } finally {
     await page.request.delete(`${API_BASE}/decks/${deckId}`)
   }

@@ -280,7 +280,7 @@ const deckThumbnails = createDeckThumbnailScheduler({
   hocuspocus: () => hocuspocus,
 })
 
-const hocuspocus = createHocuspocusServer({
+const hocuspocusServer = createHocuspocusServer({
   port: HOCUSPOCUS_PORT,
   db,
   bypass: bypassAuth,
@@ -299,6 +299,9 @@ const hocuspocus = createHocuspocusServer({
     deckThumbnails.cardChanged({ kind: 'component', id: componentId })
   },
 })
+// The document engine (documents, connections, direct connections) every
+// service works with; the WebSocket server around it only listens and closes.
+const hocuspocus = hocuspocusServer.hocuspocus
 
 // The web app's public origin: OAuth redirects back to it, and agents hand
 // users links into it (editor.present.link).
@@ -412,7 +415,7 @@ const shutdown = async (signal: string) => {
   }
 
   try {
-    await hocuspocus.destroy()
+    await hocuspocusServer.destroy()
     console.log('[server] Hocuspocus closed')
   } catch (err) {
     console.error('[server] Error closing Hocuspocus:', err)
@@ -460,7 +463,7 @@ await Promise.all([
   app.listen({ port: API_PORT, host: HOST }).then(() => {
     console.log(`[server] Fastify API running on http://${HOST}:${API_PORT}`)
   }),
-  hocuspocus.listen().then(() => {
+  hocuspocusServer.listen().then(() => {
     console.log(`[server] Hocuspocus WS running on ws://${HOST}:${HOCUSPOCUS_PORT}`)
   }),
 ])

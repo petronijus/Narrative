@@ -37,6 +37,7 @@ import {
 import { MemoryPersistence, quietLog } from '../test-support/agentWorld.js'
 import { scriptedDb } from '../test-support/scriptedDb.js'
 import { serviceErrorOf } from '../test-support/serviceErrors.js'
+import { releaseHocuspocus } from '../test-support/hocuspocus.js'
 
 const send = vi.fn().mockResolvedValue({})
 vi.mock('../media/s3Client.js', () => ({
@@ -63,12 +64,12 @@ let persistence: MemoryPersistence
 beforeEach(() => {
   send.mockClear()
   persistence = new MemoryPersistence()
-  hp = new Hocuspocus({ quiet: true, stopOnSignals: false, extensions: [persistence] })
+  hp = new Hocuspocus({ quiet: true, extensions: [persistence] })
   accessMock.mockResolvedValue({ role: 'editor', reason: 'direct' })
 })
 
 afterEach(async () => {
-  await hp.destroy?.()
+  await releaseHocuspocus(hp)
 })
 
 /** Source deck: slides S1..S3. S1 holds an image and links to S2 and S3, and has notes. */

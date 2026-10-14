@@ -16,7 +16,8 @@
 
 import * as Y from 'yjs'
 import {
-  Hocuspocus,
+  Server,
+  type Hocuspocus,
   type Extension,
   type onLoadDocumentPayload,
   type onStoreDocumentPayload,
@@ -181,7 +182,12 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
   const persistence = new MemoryPersistence()
   const roles = new Map<string, Role>()
   const principalKeys = createAgentPrincipalKeys(TEST_AGENT_PRINCIPAL_KEY_SECRET)
-  const hocuspocus = new Hocuspocus({
+  // The WebSocket server (listen / destroy) around the document engine the
+  // services use (`hocuspocus`), as in production since Hocuspocus 3.
+  const server = new Server({
+    // A free port: `listen(0)` would fall back to the configured default
+    // (Hocuspocus 4 reads a falsy port argument as "none").
+    port: 0,
     quiet: true,
     stopOnSignals: false,
     // The production lifecycle settings (hocuspocus/index.ts), with a short debounce.
@@ -208,10 +214,11 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
       const userId = data.token
       const role = roles.get(`${data.documentName}|${userId}`)
       if (role === undefined) throw new Error('Forbidden')
-      data.connection.readOnly = role === 'viewer'
+      data.connectionConfig.readOnly = role === 'viewer'
       return { userId, role }
     },
   })
+  const hocuspocus = server.hocuspocus
   const access: AgentAccess = {
     deckRole: async (deckId, userId) => roles.get(`${deckId}|${userId}`) ?? null,
     componentRole: async (componentId, userId) =>
@@ -343,7 +350,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     },
     async connect(documentName, userId) {
       if (!listening) {
-        await hocuspocus.listen(0)
+        await server.listen()
         listening = true
       }
       const doc = new Y.Doc()
@@ -352,16 +359,10 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
       let synced!: () => void
       const whenSynced = new Promise<void>((resolve) => (synced = resolve))
       const provider = new HocuspocusProvider({
-        url: `ws://127.0.0.1:${hocuspocus.address.port}`,
+        url: `ws://127.0.0.1:${server.address.port}`,
         name: documentName,
         document: doc,
         token: userId,
-        // Every provider in this one Node process shares a BroadcastChannel,
-        // so without this each client would relay the others' awareness to
-        // the server over its own socket — something browsers of DIFFERENT
-        // users never do (same-browser tabs of one user do, and
-        // hocuspocus/awarenessOwnership.ts allows that).
-        broadcast: false,
         onSynced: () => synced(),
         onStateless: ({ payload }) => stateless.push(payload),
       })
@@ -385,7 +386,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     async destroy() {
       for (const c of clients) c.disconnect()
       await runtime.shutdown()
-      await hocuspocus.destroy()
+      await server.destroy()
     },
   }
 }

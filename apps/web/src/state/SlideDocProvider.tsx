@@ -273,7 +273,7 @@ function HocuspocusSlideProvider({
 
     // The session cookie, or on a share-link visit the page's share_token
     // (state/hocuspocusAuth.ts — the auth frame is always sent).
-    const authOptions = hocuspocusAuthOptions(location.search)
+    const authOptions = hocuspocusAuthOptions(HOCUSPOCUS_URL, location.search)
 
     // Last non-null local awareness state, kept so a reconnect can restore
     // it (see restoredLocalState). Fed by the awareness 'update' listener
@@ -281,7 +281,6 @@ function HocuspocusSlideProvider({
     let lastLocalState: PeerAwarenessState | null = null
 
     const provider = new HocuspocusProvider({
-      url: HOCUSPOCUS_URL,
       name: deckId,
       document: doc,
       ...authOptions,

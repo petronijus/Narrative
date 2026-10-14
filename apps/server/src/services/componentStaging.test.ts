@@ -23,6 +23,7 @@ import type { ImageObject, RectangleObject, SlideObject } from '@narrative/share
 import { MemoryPersistence, quietLog } from '../test-support/agentWorld.js'
 import { scriptedDb } from '../test-support/scriptedDb.js'
 import { serviceErrorOf } from '../test-support/serviceErrors.js'
+import { releaseHocuspocus } from '../test-support/hocuspocus.js'
 
 const send = vi.fn().mockResolvedValue({})
 vi.mock('../media/s3Client.js', () => ({
@@ -53,13 +54,13 @@ beforeEach(() => {
   send.mockClear()
   vi.mocked(carryLinkedMediaAfterWrite).mockClear()
   persistence = new MemoryPersistence()
-  hp = new Hocuspocus({ quiet: true, stopOnSignals: false, extensions: [persistence] })
+  hp = new Hocuspocus({ quiet: true, extensions: [persistence] })
 })
 
 afterEach(async () => {
   await editor?.disconnect()
   editor = null
-  await hp.destroy?.()
+  await releaseHocuspocus(hp)
 })
 
 const image = (id: string, assetId: string): ImageObject => ({

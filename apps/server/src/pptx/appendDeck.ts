@@ -55,6 +55,7 @@ import {
   type StagedDeckMedia,
 } from './importDeck.js'
 import { hydrateSlideDoc } from '@narrative/slide-model'
+import { transactDirect } from '../hocuspocus/directWrite.js'
 
 /**
  * Standard result shape — kept in sync with `AppendPptxResult` on the client
@@ -238,7 +239,7 @@ export async function appendPptxToDeck(args: {
     try {
       const connection = await hocuspocus.openDirectConnection(deckId)
       try {
-        await connection.transact((doc) => {
+        await transactDirect(connection, (doc) => {
           documentTouched = true
           doc.transact(() => {
             const out = writeStagedPptx(staged, doc, insertAt)

@@ -185,12 +185,14 @@ describe('trackAwarenessRedaction', () => {
       webSocket: {},
       readOnly: true,
       context: { userId: 'share:abcd1234', shareToken: 'tok' },
+      messageAddress: 'deck1',
       send: (m: Uint8Array) => viewerSent.push(m),
     }
     const editor = {
       webSocket: {},
       readOnly: false,
       context: { userId: 'ed' },
+      messageAddress: 'deck1',
       send: (m: Uint8Array) => editorSent.push(m),
     }
     document.addConnection(viewer as unknown as Connection)

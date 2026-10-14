@@ -144,15 +144,31 @@ function makeFakeHocuspocus(
   getHocuspocusInstance.mockReturnValue({
     openDirectConnection: async () => {
       if (behaviour === 'openFails') throw new Error('document failed to load')
+      // The live document as transactDirect sees it (hocuspocus/directWrite.ts):
+      // the write is the callback's first transaction on it.
+      const transact = doc.transact.bind(doc)
+      let written = false
+      const document = Object.assign(doc, {
+        name: 'deck',
+        getConnectionsCount: () => 0,
+        transact: (f: (tr: Y.Transaction) => void, origin?: unknown) => {
+          if (!written) {
+            written = true
+            seen = committed.get('media_assets')?.length ?? 0
+            events.push('doc:write')
+          }
+          return transact(f, origin)
+        },
+      })
       return {
-        transact: async (fn: (d: Y.Doc) => void) => {
-          seen = committed.get('media_assets')?.length ?? 0
-          events.push('doc:write')
-          fn(doc)
-          // Hocuspocus 2.15.3 runs the store hooks AFTER the callback has
-          // already mutated (and broadcast) the document, and rethrows their
-          // failure — so a rejected transact can mean "the slides are there".
-          if (behaviour === 'storeFails') throw new Error('onStoreDocument failed')
+        document,
+        context: {},
+        instance: {
+          // The store hooks run AFTER the callback has mutated (and broadcast)
+          // the document; a store that rejects can mean "the slides are there".
+          storeDocumentHooks: async () => {
+            if (behaviour === 'storeFails') throw new Error('onStoreDocument failed')
+          },
         },
         disconnect: async () => {
           events.push('doc:disconnect')

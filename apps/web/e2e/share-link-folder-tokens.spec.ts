@@ -185,19 +185,22 @@ test.describe('share-link folder tokens', () => {
     // The share token rides in the upgrade URL, as the web passes it. The
     // auth frame (`token`) is what makes Hocuspocus run onAuthenticate at
     // all; on the share-token path the server ignores its value.
+    const url = new URL(WS_URL)
+    url.searchParams.set('share_token', shareToken)
     const provider = new HocuspocusProvider({
-      url: WS_URL,
+      url: url.toString(),
       name: `folder:${folderId}`,
       document: doc,
-      parameters: { share_token: shareToken },
       token: 'share-link',
-      onMessage: ({ event }) => {
-        const bytes = new Uint8Array(event.data as ArrayBuffer)
-        const frame = readFrame(bytes)
-        if (frame.type === MESSAGE_SYNC_STATUS)
-          syncStatuses.push(readVarUint(bytes, frame.body)[0] === 1)
-      },
       onAuthenticationFailed: ({ reason }) => denied.push(reason),
+    })
+    // The provider's own message event (the configuration's `onMessage`
+    // also reaches its socket, which passes the raw MessageEvent).
+    provider.on('message', ({ event }: { event: MessageEvent }) => {
+      const bytes = new Uint8Array(event.data as ArrayBuffer)
+      const frame = readFrame(bytes)
+      if (frame.type === MESSAGE_SYNC_STATUS)
+        syncStatuses.push(readVarUint(bytes, frame.body)[0] === 1)
     })
     try {
       await expect

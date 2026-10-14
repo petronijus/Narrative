@@ -40,7 +40,6 @@
  */
 
 import { createHash } from 'node:crypto'
-import type { IncomingHttpHeaders } from 'node:http'
 import type { Database } from '../db/client.js'
 import {
   resolveDeckAccess,
@@ -79,16 +78,43 @@ export interface WsAuthDeps {
   failedAuthLimiter?: FixedWindowLimiter
 }
 
+/**
+ * The header carrying the upgrade request's peer address into the hooks.
+ * Hocuspocus 4 hands hooks a web `Request`, which has no socket; the
+ * server's `onUpgrade` (hocuspocus/index.ts) still sees the Node request and
+ * writes the socket's address here — always, over whatever a client sent —
+ * before the Request is built from it.
+ */
+export const PEER_ADDRESS_HEADER = 'x-narrative-peer-address'
+
 /** The subset of Hocuspocus' `onAuthenticatePayload` this hook reads and writes. */
 export interface WsAuthPayload {
   documentName: string
   token: string
   requestParameters: URLSearchParams
-  requestHeaders: IncomingHttpHeaders
-  /** The upgrade request; only its peer address is read. */
-  request?: { socket?: { remoteAddress?: string | undefined } | undefined }
-  connection: { readOnly: boolean }
+  requestHeaders: Headers
+  connectionConfig: { readOnly: boolean }
   context: Record<string, unknown>
+  /** The connecting socket (Hocuspocus' `socketId`). */
+  socketId?: string
+  /** The engine: which connections the document already has. */
+  instance?: {
+    documents: Map<string, { getConnections(): ReadonlyArray<{ socketId: string }> }>
+  }
+}
+
+/**
+ * Whether this socket already holds a connection to the document. Hocuspocus
+ * 4 lets one socket open a document again under another session key
+ * (`name\0sessionId`, session-aware providers); each passes onAuthenticate
+ * and becomes one more connection every broadcast fans out to — thousands on
+ * one socket from one share link. Our provider opens a document once per
+ * socket (it does not enable session awareness), so a second one is refused.
+ */
+function socketAlreadyConnected(data: WsAuthPayload): boolean {
+  if (data.socketId === undefined) return false
+  const document = data.instance?.documents.get(data.documentName)
+  return document?.getConnections().some((c) => c.socketId === data.socketId) ?? false
 }
 
 /**
@@ -113,8 +139,7 @@ interface WsPrincipal {
  * access token, an MCP OAuth token or code, an upload session token?
  */
 function presentsAgentCredential(data: WsAuthPayload): boolean {
-  const header = data.requestHeaders['authorization']
-  const value = Array.isArray(header) ? header[0] : header
+  const value = data.requestHeaders.get('authorization') ?? undefined
   const bearer = value === undefined ? undefined : /^Bearer[ \t]+(\S+)/i.exec(value)?.[1]
   return looksLikeNarrativeCredential(data.token) || looksLikeNarrativeCredential(bearer)
 }
@@ -144,13 +169,19 @@ async function resolvePrincipal(data: WsAuthPayload, deps: WsAuthDeps): Promise<
   // BYPASS_AUTH (dev only): `dev-user`, or the synthetic identity the
   // `narrative_dev_as` cookie names (auth/devIdentity.ts).
   if (deps.bypass) {
-    return { userId: devSubFromCookieHeader(data.requestHeaders['cookie']), shareToken: null }
+    return {
+      userId: devSubFromCookieHeader(data.requestHeaders.get('cookie') ?? undefined),
+      shareToken: null,
+    }
   }
 
   // Authenticated path. The actual identity comes from the
   // `narrative_session` HttpOnly cookie carried on the WS upgrade, which is
   // same-origin with the SPA so the browser sends it automatically.
-  const rawId = readCookieFromHeader(data.requestHeaders['cookie'], SESSION_COOKIE_NAME)
+  const rawId = readCookieFromHeader(
+    data.requestHeaders.get('cookie') ?? undefined,
+    SESSION_COOKIE_NAME,
+  )
   if (!rawId) throw new Error('Invalid credentials')
   const session = await lookupSession(deps.db, rawId)
   if (!session) throw new Error('Invalid credentials')
@@ -167,7 +198,7 @@ export function createOnAuthenticate(deps: WsAuthDeps) {
     })
 
   /**
-   * Hocuspocus 2.15 builds a connection's context by merging what each hook
+   * Hocuspocus (2.15 through 4.x) builds a connection's context by merging what each hook
    * RETURNS into `hookPayload.context`, replacing that object with a spread
    * copy after every hook. `onConnect` and `onAuthenticate` of one
    * connection can overlap (the auth message arrives while the async
@@ -181,8 +212,8 @@ export function createOnAuthenticate(deps: WsAuthDeps) {
    */
   return async function onAuthenticate(data: WsAuthPayload): Promise<Record<string, unknown>> {
     const ip = clientIpFromHeaders(
-      data.requestHeaders,
-      data.request?.socket?.remoteAddress,
+      Object.fromEntries(data.requestHeaders),
+      data.requestHeaders.get(PEER_ADDRESS_HEADER) ?? undefined,
       deps.clientIpHeader,
     )
     if (failures.isBlocked(ip)) {
@@ -192,6 +223,13 @@ export function createOnAuthenticate(deps: WsAuthDeps) {
 
     const before = new Map(Object.entries(data.context))
     try {
+      if (socketAlreadyConnected(data)) {
+        log.warn(
+          { doc: data.documentName, ip },
+          'refused a second connection of one socket to a document',
+        )
+        throw new Error('Forbidden')
+      }
       await authenticate(data)
     } catch (err) {
       // A well-formed render token is checked in memory (no database cost
@@ -214,7 +252,7 @@ function createAuthenticate(deps: WsAuthDeps) {
   const { db } = deps
 
   return async function authenticate(data: WsAuthPayload): Promise<void> {
-    const { documentName, connection } = data
+    const { documentName, connectionConfig } = data
     const { userId, shareToken } = await resolvePrincipal(data, deps)
 
     if (documentName.startsWith('folder:')) {
@@ -236,7 +274,7 @@ function createAuthenticate(deps: WsAuthDeps) {
       // (services/tokens.ts validates them and carries a change into the
       // folder's decks), which writes over its own direct connection. A
       // browser writing raw updates would bypass both.
-      connection.readOnly = true
+      connectionConfig.readOnly = true
 
       log.info(
         { doc: documentName, user: displayId, role: access.role, reason: access.via },
@@ -260,7 +298,7 @@ function createAuthenticate(deps: WsAuthDeps) {
       // A render token's connection ends with the token.
       if (access.reason === 'render' && shareToken) data.context.shareToken = shareToken
 
-      connection.readOnly = access.role === 'viewer'
+      connectionConfig.readOnly = access.role === 'viewer'
 
       log.info(
         { doc: documentName, user: displayId, role: access.role, reason: access.reason },
@@ -299,7 +337,7 @@ function createAuthenticate(deps: WsAuthDeps) {
 
     // Mark connection as readOnly for viewer role.
     // Hocuspocus won't accept update messages from readOnly connections.
-    connection.readOnly = access.role === 'viewer'
+    connectionConfig.readOnly = access.role === 'viewer'
 
     log.info(
       { doc: documentName, user: displayId, role: access.role, reason: access.reason },

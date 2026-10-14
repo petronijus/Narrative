@@ -23,10 +23,11 @@ import { setHocuspocusInstance } from './presence.js'
 interface FakeConn {
   context: Record<string, unknown>
   close: ReturnType<typeof vi.fn>
+  webSocket: { close: ReturnType<typeof vi.fn> }
 }
 
 function conn(context: Record<string, unknown>): FakeConn {
-  return { context, close: vi.fn() }
+  return { context, close: vi.fn(), webSocket: { close: vi.fn() } }
 }
 
 /** Build a fake Hocuspocus whose documents map yields the given connections. */
@@ -202,6 +203,7 @@ describe('CONN-1 connection teardown helpers', () => {
       close: vi.fn(() => {
         throw new Error('socket already gone')
       }),
+      webSocket: { close: vi.fn() },
     }
     setHocuspocusInstance(fakeServer({ 'deck:d1': [throwing, ok] }))
 
@@ -209,8 +211,11 @@ describe('CONN-1 connection teardown helpers', () => {
     const closed = closeUserConnections('u1')
     expect(closed).toBe(1)
     expect(ok.close).toHaveBeenCalledOnce()
-    // The close event passed is the 4403 "Access revoked" frame.
+    // The close event passed is the 4403 "Access revoked" frame …
     expect(ok.close).toHaveBeenCalledWith({ code: 4403, reason: 'Access revoked' })
+    // … and the socket itself closes with it (Hocuspocus 4's Connection.close
+    // only takes the connection off the document).
+    expect(ok.webSocket.close).toHaveBeenCalledWith(4403, 'Access revoked')
   })
 
   it("closeUserFolderConnections closes one user's connections on the folder, its components and decks", () => {
