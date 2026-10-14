@@ -390,8 +390,14 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
   }
 }
 
-/** Resolve once `predicate` holds, polling (WebSocket delivery is asynchronous). */
-export async function eventually(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+/**
+ * Resolve once `predicate` holds, polling (WebSocket delivery is asynchronous).
+ * The limit ends a hang, it does not measure speed (vitest.timeouts.ts): the
+ * wait returns the moment the condition holds, and 2 s was crossed on a busy
+ * machine (editor.test.ts at a load of 30–40, 2026-09-28 and 2026-10-14).
+ * 15 s stays inside the 30 s test limit.
+ */
+export async function eventually(predicate: () => boolean, timeoutMs = 15_000): Promise<void> {
   const start = Date.now()
   while (!predicate()) {
     if (Date.now() - start > timeoutMs) throw new Error('condition not met in time')

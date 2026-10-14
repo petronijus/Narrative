@@ -104,7 +104,7 @@ The rules every change keeps are in [`AGENTS.md`](AGENTS.md) → Hard rules.
 
 ## 🚀 Quick start
 
-You need Node ≥ 24.4 with type stripping, pnpm 9.15.9, Docker with Compose
+You need Node ≥ 24.15 with type stripping, pnpm 9.15.9, Docker with Compose
 (logged in to GHCR once for the MinIO mirror), `just`, `lefthook`,
 `gitleaks`, `xmllint` and python3 — `just doctor` checks all of it and prints
 the fix. [SETUP.md](SETUP.md) is the full first-run guide.

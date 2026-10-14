@@ -156,7 +156,7 @@ tools/dev/          formatter, docs check, git hook scripts, toolchain doctor
   and reads the diff in the terminal. Never `--no-verify`, never force-push.
 - **Commit only when Petr says so** ("commit", "push", "ship", "merge",
   "hotovo", "nasaď"); approval to build something is not approval to commit.
-- Toolchain: Node ≥ 24.4 (the 24 LTS line the images run), pnpm 9.15.9 (`packageManager`), Docker with
+- Toolchain: Node ≥ 24.15 (the 24 LTS line the images run), pnpm 9.15.9 (`packageManager`), Docker with
   compose, xmllint (PPTX schema tests), python3 ≥ 3.9 (hooks, docs check).
   `just doctor` checks them.
 - Formatting is automatic (pre-commit hook): Prettier (`.prettierrc`) and

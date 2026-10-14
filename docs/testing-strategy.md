@@ -467,8 +467,9 @@ in a container with a supported base image.
   "condition not met in time" during a full `pnpm -r test` on 2026-09-28,
   while the web and server suites ran in parallel. It passed 5/5 alone and
   in a full server-suite rerun (1,133 passed / 1 skipped). A wait-for timeout
-  under load, not a regression; not fixed. Rerun the server suite before
-  blaming your change.
+  under load, not a regression. Seen again on 2026-10-14 at a load of 30–40;
+  `eventually` (test-support/agentWorld.ts) now waits up to 15 s instead of
+  2 s, like the suite's own limits (vitest.timeouts.ts).
 - `multi-client-collab` e2e — flaky 2026-09-26 → 2026-10-14. Both tests
   drove their clients as soon as the test API existed, which arrives with
   the document (DeckShell) while the editor route (DeckEditor) is a
