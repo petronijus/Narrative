@@ -625,13 +625,35 @@ that on its own.
 
 ## Environment secrets
 
-`infra/.env.prod` lives only on the VM at `/opt/narrative/infra/.env.prod`
-(chmod 600, gitignored). It is **never rsynced** (excluded in the rsync
-command). If you need to edit it:
+The **source of truth** is the SOPS-encrypted `private/config/env.prod.sops`
+in the private overlay (cloned into `./private`); the dev `.env` comes from
+`private/config/env.sops` the same way. The age private key is fetched from
+1Password at runtime, never written to disk; the public recipient is in the
+overlay's `.sops.yaml`. Prereqs: `sops`, `age`, the 1Password CLI.
+
+| Target | Encrypted (overlay)            | Materializes to     |
+| ------ | ------------------------------ | ------------------- |
+| `dev`  | `private/config/env.sops`      | `./.env`            |
+| `prod` | `private/config/env.prod.sops` | `./infra/.env.prod` |
 
 ```bash
-ssh petr@192.0.2.147 'nano /opt/narrative/infra/.env.prod'
+./scripts/secrets-decrypt.sh [dev|prod]   # materialize the env file (default dev)
+./scripts/secrets-edit.sh    [dev|prod]   # decrypt → $EDITOR → re-encrypt in place
 ```
+
+On the VM the file is `/opt/narrative/infra/.env.prod` (chmod 600,
+gitignored) and is **never rsynced** (excluded in the rsync command), so a
+changed prod secret has to be carried there:
+
+```bash
+./scripts/secrets-edit.sh prod      # edit + re-encrypt; commit the .sops in ./private
+./scripts/secrets-decrypt.sh prod   # infra/.env.prod locally (build-push.sh reads it too)
+scp infra/.env.prod narrative:/opt/narrative/infra/.env.prod
+ssh narrative 'cd /opt/narrative && ./infra/scripts/deploy.sh prod'
+```
+
+An ad-hoc edit made on the VM (e.g. `USE_SHARED_TUNNEL=1`) goes back into
+`env.prod.sops` with `secrets-edit.sh prod`, or the next rebuild loses it.
 
 Key secrets and where they come from:
 
@@ -840,7 +862,7 @@ ssh petr@192.0.2.147 '/opt/narrative/infra/scripts/backup.sh \
 
 ## Troubleshooting
 
-### Deploy fails at "Stahuji prebuilt images z GHCR…"
+### Deploy fails at "Pulling prebuilt app images from GHCR…"
 
 Either the host is not logged in to GHCR (the packages are private) or the tag
 does not exist because `build-push.sh` was never run for it:
@@ -850,11 +872,16 @@ ssh petr@192.0.2.147 'docker login ghcr.io -u petronijus'   # one-time, needs a 
 NARRATIVE_TAG=v0.9.3 infra/scripts/build-push.sh            # on the build machine
 ```
 
-If the pull itself fails on space, clean up:
+If the pull itself fails on space, drop old release images (keeps the
+current tag, `latest`, two more and whatever a container runs):
 
 ```bash
-ssh petr@192.0.2.147 'docker system prune -af --volumes'
+ssh petr@192.0.2.147 'cd /opt/narrative && ./infra/scripts/prune-images.sh --current <live tag> --builder-cache'
 ```
+
+Never `docker system prune --volumes` here: with the stack stopped it
+deletes every named volume — Postgres, MinIO and Redis data included,
+wherever a `*_DATA_PATH` is not set to a host path.
 
 ### `build-push.sh` fails to resolve a workspace package
 

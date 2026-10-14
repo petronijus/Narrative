@@ -205,6 +205,9 @@ bump version:
       node -e 'const fs=require("fs"),f=process.argv[1],p=JSON.parse(fs.readFileSync(f));p.version=process.argv[2];fs.writeFileSync(f,JSON.stringify(p,null,2)+"\n")' "$f" "{{ version }}"
     done
     pnpm --filter @narrative/commands skill
+    # The README's release badge (perl: the same in-place edit on GNU and BSD).
+    perl -pi -e 's#(img\.shields\.io/badge/release-)\d+\.\d+\.\d+#${1}{{ version }}#' README.md
+    grep -q "badge/release-{{ version }}-" README.md || { echo "bump: the README release badge was not updated" >&2; exit 1; }
     echo "Versions set to {{ version }}. Next: CHANGELOG section, commit, tag v{{ version }}, push, just deploy v{{ version }} (docs/deploy.md)."
 
 # The build host (infra/release.env) fetches the tag, builds, pushes and deploys; this machine only checks

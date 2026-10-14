@@ -120,16 +120,14 @@ curl http://localhost:3001/health
 
 Open `http://localhost:5173`. With `BYPASS_AUTH=true` you land on the deck list as `dev-user` — no login required.
 
-## 7. Optional: video pipeline
+## 7. Video pipeline
 
-Only needed if you upload videos.
-
-```bash
-cd infra
-docker compose --env-file ../.env up -d media-redis video-worker
-```
-
-`video-worker` is a stub on this branch — see `apps/video-worker/src/processors/transcode.ts`. Running it just verifies the queue connects.
+Uploaded videos are prepared for playback by `apps/video-worker` (ffmpeg, on
+your `PATH`) through the `media-redis` queue. `just dev` already runs the
+worker and `just services` the queue, so there is nothing to start; `just
+dev-lite` leaves both workers out when you do not upload videos. Running the
+worker in a container instead, the pipeline and its env:
+[docs/storage.md → Video pipeline](docs/storage.md#video-pipeline).
 
 ## 8. Optional: real Google OIDC sign-in (skip for normal dev)
 
@@ -138,11 +136,13 @@ JWT validation entirely — that's the recommended dev setup. Only do the steps
 below if you're actively testing the real OIDC flow.
 
 1. https://console.cloud.google.com → APIs & Services → Credentials → Create OAuth 2.0 Client ID → Web app
-2. Authorized redirect URI: `http://localhost:5173/auth/callback`
-3. Copy the Client ID into both `OIDC_CLIENT_ID` and `VITE_OIDC_CLIENT_ID` in `.env`
+2. Authorized redirect URI: `http://localhost:3001/auth/callback` (the server runs the exchange, not the browser)
+3. Copy the client id and secret into `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` in `.env`; set `SESSION_COOKIE_SECRET` (`openssl rand -hex 32`)
 4. Set `OIDC_ALLOWED_EMAILS=your.email@gmail.com` (or `OIDC_ALLOWED_DOMAIN=yourdomain.com`)
 5. Set `BYPASS_AUTH=false` and `VITE_BYPASS_AUTH=false`
-6. Restart `pnpm dev`
+6. Restart `just dev`
+
+How sign-in works and who is let in: [docs/auth.md](docs/auth.md).
 
 ## 9. Optional: drive Narrative from Claude Code (MCP)
 
@@ -254,6 +254,7 @@ the whole lane and skips a tree that already passed it. Subagents in
 - **Pre-commit hooks fail with permission errors** — you ran `pnpm install` as root. Re-clone, install as a normal user.
 - **`minio` (or `minio-init`) cannot pull `ghcr.io/petronijus/minio`** — `denied` / `unauthorized`: this machine is not logged in to GHCR, where the MinIO image is a private mirror (MinIO deleted its own images from Docker Hub in 2026-09). `docker login ghcr.io -u petronijus` with a `read:packages` token, then `just services` again. A compose override that swapped in other MinIO images before 2026-10 can go.
 - **`minio` exits with `Unable to write to the backend`** — its data is not owned by user `65532`. `minio-perms` fixes that before every start; if it did not run (a `docker run` by hand, or `--no-deps`), `docker compose --env-file ../.env up minio-perms` in `infra/`.
+- **A second dev stack on the same machine (another clone, a worktree) breaks the first** — the compose services have fixed `container_name`s (`narrative-postgres`, …) and the project is always `narrative`, so `just services` from another checkout _recreates_ the running containers with that checkout's `.env` (other ports, other passwords) and the first stack loses its database mid-run. Run one stack per machine; a second checkout uses the first one's services and only starts its own `just dev` (Vite moves to the next free port by itself; `API_PORT` / `HOCUSPOCUS_PORT` / `VITE_API_URL` / `VITE_HOCUSPOCUS_URL` in the environment move the server). Seen on 2026-10-14.
 - **Two compose projects (`infra-*` and `narrative-*` containers)** — the compose file has been named `narrative` since 2026-08; containers started before that belong to a project called `infra`, with its own volumes, and hold the ports `just services` needs. Back up what you need, then `cd infra && docker compose -p infra --env-file ../.env down -v` (the Linux desktop was moved on 2026-09-30; its old data is in `backups/2026-09-30-infra-project/`, gitignored).
 - **`docs-check` names a path or recipe that is right in context** (another repo's file, a file a plan will create, a file that was moved) — write the reference so it cannot be misread (a moved file: its old place in plain text), or put `<!-- docs-check: ignore -->` on that line (above a code fence: the whole block). Docs that record history (handoffs, finished plans) are listed in `EXCLUDE` in `tools/dev/docs-check.py`; never exclude a living doc to make the check pass.
 - **Git hooks do not run after pulling the lefthook change (2026-09-30)** — husky had set `core.hooksPath=.husky/_`, which still points git at the deleted husky hooks. `just setup` (unsets it and runs `lefthook install`); `just doctor` reports it.
