@@ -1,9 +1,10 @@
 /**
- * auth/credentialPatterns.ts — every Narrative bearer credential format, for
- * the places that must never keep one — the Sentry scrubber
- * (observability/sentry.ts), the agent audit log (agent/opRedaction.ts) and
- * the agent eval's recordings (tests/agent-eval/lib/report.ts) — and for
- * the WebSocket, which refuses every one of them (hocuspocus/authenticate.ts).
+ * shared/src/credentialPatterns.ts — every Narrative bearer credential
+ * format, for the places that must never keep one — the telemetry scrubber
+ * (telemetryScrub.ts: the server's and the editor's Sentry), the agent audit
+ * log (server agent/opRedaction.ts) and the agent eval's recordings
+ * (tests/agent-eval/lib/report.ts) — and for the WebSocket, which refuses
+ * every one of them (server hocuspocus/authenticate.ts).
  *
  *   nrt_  personal access token          (auth/personalAccessTokens.ts)
  *   nmo_  MCP OAuth access token         (mcp/oauth)

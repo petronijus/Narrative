@@ -24,7 +24,7 @@ import { shareLinks } from '../db/schema.js'
 import { resolveDeckAccess, type DeckRole } from './permissions.js'
 import { closeShareTokenConnections } from '../hocuspocus/connections.js'
 import { isRenderToken, resolveRenderToken } from './renderTokens.js'
-import { looksLikeNarrativeCredential } from './credentialPatterns.js'
+import { looksLikeNarrativeCredential } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
 // Types

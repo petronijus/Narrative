@@ -30,7 +30,7 @@
     "@narrative/shared": "workspace:*",
     "@narrative/slide-model": "workspace:*",
     "@nodable/entities": "^3.1.0",
-    "@sentry/node": "^8.55.2",
+    "@sentry/node": "^11.7.0",
     "@tus/s3-store": "^1.9.1",
     "@tus/server": "^1.10.2",
     "bullmq": "^6.3.14",

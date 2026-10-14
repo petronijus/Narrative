@@ -222,7 +222,7 @@ await app.register(cookie, {
 })
 
 // Sentry — init before routes, dev-gated (silent without SENTRY_DSN)
-await initSentry(app)
+await initSentry()
 
 // Auth plugin — must be registered before routes that use authPreHandler
 if (bypassAuth) {

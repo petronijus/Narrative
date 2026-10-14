@@ -151,3 +151,15 @@ export {
 
 export * from './schema/index.js'
 export { buildImagePdf, jpegInfo, type JpegInfo, type PdfOptions, type PdfPage } from './pdf.js'
+export {
+  CREDENTIAL_PREFIXES,
+  looksLikeNarrativeCredential,
+  maskCredentials,
+  maskShareTokens,
+} from './credentialPatterns.js'
+export {
+  FILTERED,
+  TELEMETRY_DATA_COLLECTION,
+  scrubString,
+  scrubTelemetryPayload,
+} from './telemetryScrub.js'

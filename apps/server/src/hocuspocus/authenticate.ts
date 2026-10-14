@@ -49,7 +49,7 @@ import {
 } from '../auth/permissions.js'
 import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../auth/session.js'
 import { devSubFromCookieHeader } from '../auth/devIdentity.js'
-import { looksLikeNarrativeCredential } from '../auth/credentialPatterns.js'
+import { looksLikeNarrativeCredential } from '@narrative/shared'
 import { isRenderToken } from '../auth/renderTokens.js'
 import { clientIpFromHeaders } from '../http/clientIp.js'
 import { createFixedWindowLimiter, type FixedWindowLimiter } from '../http/fixedWindowLimiter.js'

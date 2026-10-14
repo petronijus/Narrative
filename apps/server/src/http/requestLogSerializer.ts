@@ -7,11 +7,11 @@
  * an editor's, valid until revoked — and the render worker's short-lived
  * `nrr_` tokens, which travel the same way (auth/renderTokens.ts). Both are
  * masked here, as is any other Narrative credential that ends up in a path or
- * query (auth/credentialPatterns.ts).
+ * query (shared/src/credentialPatterns.ts).
  */
 
 import type { FastifyReply, FastifyRequest } from 'fastify'
-import { maskCredentials, maskShareTokens } from '../auth/credentialPatterns.js'
+import { maskCredentials, maskShareTokens } from '@narrative/shared'
 
 const MASK = '***'
 

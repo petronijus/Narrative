@@ -1,15 +1,15 @@
 /**
- * observability/sentry.test.ts — the Sentry scrubber (L7): credential
- * headers, request cookies, personal access tokens and the session cookie
- * never leave the process in an event, a transaction or a breadcrumb.
+ * shared/src/telemetryScrub.test.ts — the telemetry scrubber (L7): credential
+ * headers, request cookies, personal access tokens, share tokens and the
+ * session cookie never leave in an event, a span or a breadcrumb.
  */
 
 import { describe, it, expect } from 'vitest'
-import { FILTERED, scrubSentryPayload, scrubString } from './sentry.js'
+import { FILTERED, scrubString, scrubTelemetryPayload } from './telemetryScrub.js'
 
 const PAT = `nrt_${'Ab9_-'.repeat(8)}xyz`
 
-describe('scrubSentryPayload', () => {
+describe('scrubTelemetryPayload', () => {
   it('filters credential headers in any casing, and request cookies', () => {
     const event = {
       request: {
@@ -24,7 +24,7 @@ describe('scrubSentryPayload', () => {
         cookies: { narrative_session: 'abc' },
       },
     }
-    const out = scrubSentryPayload(event)
+    const out = scrubTelemetryPayload(event)
     expect(out.request.headers).toEqual({
       Authorization: FILTERED,
       cookie: FILTERED,
@@ -51,7 +51,7 @@ describe('scrubSentryPayload', () => {
       breadcrumbs: [{ data: { url: `https://h/api/mcp?token=${PAT}` } }],
       extra: { headers: { AUTHORIZATION: 'Bearer abc' } },
     }
-    const out = JSON.stringify(scrubSentryPayload(event))
+    const out = JSON.stringify(scrubTelemetryPayload(event))
     expect(out).not.toContain(PAT.slice(4))
     expect(out).not.toContain('s3cr3t')
     expect(out).not.toContain('Bearer abc')
@@ -62,11 +62,11 @@ describe('scrubSentryPayload', () => {
   it('handles breadcrumbs, cycles and non-object values without throwing', () => {
     const crumb: Record<string, unknown> = { category: 'http', message: PAT }
     crumb['self'] = crumb
-    const out = scrubSentryPayload(crumb)
+    const out = scrubTelemetryPayload(crumb)
     expect(out['message']).toBe(`nrt_${FILTERED}`)
     expect(out['self']).toBe(FILTERED)
-    expect(scrubSentryPayload(null)).toBeNull()
-    expect(scrubSentryPayload(42)).toBe(42)
+    expect(scrubTelemetryPayload(null)).toBeNull()
+    expect(scrubTelemetryPayload(42)).toBe(42)
   })
 
   it('masks every MCP OAuth credential kind, keeping its prefix', () => {
@@ -81,7 +81,7 @@ describe('scrubSentryPayload', () => {
     expect(scrubString('GET /decks/d1?share_token=example-share-link-id&x=1')).toBe(
       `GET /decks/d1?share_token=${FILTERED}&x=1`,
     )
-    const event = scrubSentryPayload({
+    const event = scrubTelemetryPayload({
       request: {
         url: 'https://n.example/deck/d1?share_token=abc',
         query_string: { share_token: 'abc' },

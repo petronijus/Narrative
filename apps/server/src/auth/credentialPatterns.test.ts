@@ -3,8 +3,8 @@ import {
   CREDENTIAL_PREFIXES,
   looksLikeNarrativeCredential,
   maskCredentials,
-} from './credentialPatterns.js'
-import { scrubString } from '../observability/sentry.js'
+  scrubString,
+} from '@narrative/shared'
 import { redactForAudit } from '../agent/opRedaction.js'
 import { scrubSecrets } from '../../../../tests/agent-eval/lib/report.js'
 
@@ -35,7 +35,7 @@ describe('Narrative credential patterns', () => {
   })
 
   it('covers every prefix a Narrative credential uses', () => {
-    // Update credentialPatterns.ts (and this list) when a new format appears.
+    // Update packages/shared/src/credentialPatterns.ts (and this list) when a new format appears.
     expect([...CREDENTIAL_PREFIXES].sort()).toEqual([
       'nmc',
       'nmo',

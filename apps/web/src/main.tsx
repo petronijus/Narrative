@@ -12,6 +12,7 @@
 
 import { StrictMode } from 'react'
 import { installVersionGuard } from './state/versionGuard.js'
+import { TELEMETRY_DATA_COLLECTION, scrubTelemetryPayload } from '@narrative/shared'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import { App } from './App'
@@ -136,6 +137,10 @@ installVersionGuard()
 const sentryDsn = import.meta.env['VITE_SENTRY_DSN'] as string | undefined
 if (sentryDsn) {
   // Lazy import — Sentry se nenačte pokud DSN není set (tree-shakeable).
+  // What a report may carry is the server's too (@narrative/shared
+  // telemetryScrub.ts): no cookies, bodies, query strings or user fields
+  // collected, and every event, span and breadcrumb scrubbed — a share
+  // link's `share_token` in the page URL included.
   void import('@sentry/react')
     .then(({ init, browserTracingIntegration }) => {
       init({
@@ -144,6 +149,10 @@ if (sentryDsn) {
         integrations: [browserTracingIntegration()],
         tracesSampleRate: 0.1,
         release: __BUILD_VERSION__,
+        dataCollection: TELEMETRY_DATA_COLLECTION,
+        beforeSend: (event) => scrubTelemetryPayload(event),
+        beforeSendSpan: (span) => scrubTelemetryPayload(span),
+        beforeBreadcrumb: (breadcrumb) => scrubTelemetryPayload(breadcrumb),
       })
       console.log('[sentry] Initialized (client)')
     })

@@ -50,7 +50,7 @@ import {
 } from './renderTokens.js'
 import { findShareLink } from './shareLinks.js'
 import { resolveDeckAccess } from './permissions.js'
-import { looksLikeNarrativeCredential, maskCredentials } from './credentialPatterns.js'
+import { looksLikeNarrativeCredential, maskCredentials } from '@narrative/shared'
 import { closeShareTokenConnections } from '../hocuspocus/connections.js'
 import type { Database } from '../db/client.js'
 
