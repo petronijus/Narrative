@@ -4,6 +4,24 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.12.1 — Old reds green (2026-10-14)
+
+### Fixed
+
+- The editor's vendor chunks split as intended again: Yjs and lib0 had
+  been pulled into the Tiptap chunk (Rolldown's manualChunks takes a
+  group's dependencies along); groups with priorities keep them in
+  vendor-yjs. The Tiptap chunk drops from 132.8 to 120.9 kB gz (its limit
+  is now 122 kB).
+
+### Development
+
+- `just mutate` runs again: Stryker 10 (vitest 4 support), started from
+  the repo root so its sandbox keeps the repo's layout. Baseline 49%.
+- `multi-client-collab` e2e is no longer flaky: it waits for the whole
+  editor, not only its document, and opens its clients one after another.
+- Seven files a stale Prettier cache had let through are formatted.
+
 ## 0.12.0 — Deck builder (2026-10-14)
 
 Agentic phase A5, the agentic plan's last: an agent builds a whole deck

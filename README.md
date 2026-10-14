@@ -4,7 +4,7 @@
 
 ### Presentations your team and your agents build together.
 
-[![release](https://img.shields.io/badge/release-0.12.0-c2410c)](CHANGELOG.md)
+[![release](https://img.shields.io/badge/release-0.12.1-c2410c)](CHANGELOG.md)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](tsconfig.base.json)
 [![renderer](https://img.shields.io/badge/renderer-PixiJS-e72264)](docs/adr/0002-renderer-architecture.md)
 [![sync](https://img.shields.io/badge/sync-Yjs%20·%20Hocuspocus-1a1714)](docs/adr/0003-yjs-slide-model.md)
