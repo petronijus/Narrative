@@ -4,7 +4,7 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
-## Unreleased — Deck builder (agentic A5)
+## 0.12.0 — Deck builder (2026-10-14)
 
 Agentic phase A5, the agentic plan's last: an agent builds a whole deck
 from a brief with the folder's brand, restyles another brand's slides into

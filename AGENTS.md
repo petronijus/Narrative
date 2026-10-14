@@ -11,7 +11,7 @@ cover), `docs/agents.md` (areas and their owners), `SETUP.md` (setup,
 toolchain, troubleshooting). The agentic layer is planned in
 `docs/plans/agentic-layer.md` (A0–A5 done, the plan complete; handoffs
 in `docs/handoff/`). A5 (the deck builder, restyle and PDF export; built,
-not released yet) is recorded in `docs/plans/a5-deck-builder.md`, A4
+released in 0.12.0) is recorded in `docs/plans/a5-deck-builder.md`, A4
 (style packs, released in 0.11.1) in `docs/plans/a4-style-packs.md`, each
 final state in that file's "Where we stand". Folder
 sharing (folder roles, linked component media) is planned in

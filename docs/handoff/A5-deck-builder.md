@@ -1,7 +1,7 @@
 # Handoff A5 — deck builder: a whole deck from a brief, any deck into the brand
 
-**Status:** built and verified on 2026-10-14, not released yet (Petr's
-call: the whole of A5 first, the release on his word).
+**Status:** built and verified on 2026-10-14, released in 0.12.0 the same
+day (Petr's call: the whole of A5 first, one release).
 **Date:** 2026-10-14
 
 Plan: [`docs/plans/a5-deck-builder.md`](../plans/a5-deck-builder.md)
