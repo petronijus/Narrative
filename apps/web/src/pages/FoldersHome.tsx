@@ -33,6 +33,9 @@ import { NewDeckDialog } from '../ui/NewDeckDialog.js'
 import { usePptxImport } from '../ui/usePptxImport.js'
 import { FolderShareDialog } from '../ui/FolderShareDialog.js'
 import { canEditFolder, isOwnDrafts, sharedByLabel } from '../state/folderAccess.js'
+// Cut from docs/brand (docs/brand/README.md → Derived files).
+import logoUrl from '../assets/brand/narrative-logo.webp'
+import markUrl from '../assets/brand/narrative-mark.webp'
 
 // ---------------------------------------------------------------------------
 // FoldersHome
@@ -157,7 +160,11 @@ export function FoldersHome() {
 
       {/* Header */}
       <header className="panel border-b border-border px-8 py-4">
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <img src={markUrl} alt="" className="h-7 w-7 rounded-[5px] shadow-sm" />
+            <span className="text-base font-semibold tracking-tight">Narrative</span>
+          </div>
           <div className="flex items-center gap-3">
             <UserMenu />
             <Button
@@ -191,9 +198,15 @@ export function FoldersHome() {
 
       <main className="flex-1 overflow-y-auto px-8 py-6">
         {/* Hero */}
-        <section className="mb-12 mt-12 text-center">
-          <h1 className="text-7xl md:text-8xl font-bold tracking-tight leading-none bg-gradient-to-b from-foreground to-muted-foreground/60 bg-clip-text text-transparent">
-            Narrative
+        <section className="mb-12 mt-10 flex flex-col items-center text-center">
+          <h1>
+            <img
+              src={logoUrl}
+              alt="Narrative"
+              width={600}
+              height={213}
+              className="w-[min(600px,80vw)] h-auto rounded-2xl border border-border shadow-lg"
+            />
           </h1>
           <p className="mt-4 text-base md:text-lg text-muted-foreground/80">
             Pro tool for keynote masters
