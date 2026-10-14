@@ -25,7 +25,16 @@ describe('style pack', () => {
     expect(parsed.error?.issues ?? []).toEqual([])
     expect(validateStylePack(pack)).toEqual([])
     expect(pack.layouts).toHaveLength(8)
-    for (const a of ['cover', 'agenda', 'divider', 'content', 'comparison', 'picture', 'statement', 'closer'])
+    for (const a of [
+      'cover',
+      'agenda',
+      'divider',
+      'content',
+      'comparison',
+      'picture',
+      'statement',
+      'closer',
+    ])
       expect(pack.archetypeMap[a as keyof StylePack['archetypeMap']]?.length, a).toBeGreaterThan(0)
   })
 

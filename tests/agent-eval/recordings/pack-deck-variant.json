@@ -8,10 +8,7 @@
     "folderId": "pfwo7r07qpL0",
     "deckId": "RIRJeEojCcIf",
     "title": "Pack variant ev35356c",
-    "slideIds": [
-      "ILm6IJsZIWMkAcADaXUAU",
-      "ghrQsirq1fLMpj8xp0084"
-    ]
+    "slideIds": ["ILm6IJsZIWMkAcADaXUAU", "ghrQsirq1fLMpj8xp0084"]
   },
   "transcript": {
     "steps": [
@@ -135,15 +132,10 @@
                   {
                     "axis": "background",
                     "default": "light",
-                    "values": [
-                      "light",
-                      "dark"
-                    ]
+                    "values": ["light", "dark"]
                   }
                 ],
-                "surfaces": [
-                  "picture-dark"
-                ],
+                "surfaces": ["picture-dark"],
                 "colors": {
                   "navy": "#001e50",
                   "white": "#ffffff",
@@ -164,24 +156,12 @@
                   "title-bullets: A headline and up to six bullet points.",
                   "picture: A full-bleed picture with a short statement on it."
                 ],
-                "components": [
-                  "pagination (pagination)",
-                  "headline (headline)"
-                ],
-                "furniture": [
-                  "pagenum",
-                  "footer"
-                ],
+                "components": ["pagination (pagination)", "headline (headline)"],
+                "furniture": ["pagenum", "footer"],
                 "archetypeMap": {
-                  "cover": [
-                    "title"
-                  ],
-                  "content": [
-                    "title-bullets"
-                  ],
-                  "picture": [
-                    "picture"
-                  ]
+                  "cover": ["title"],
+                  "content": ["title-bullets"],
+                  "picture": ["picture"]
                 },
                 "editorial": {
                   "titleMode": "action-title",
@@ -189,9 +169,7 @@
                     "maxWords": 12,
                     "trailingPeriod": "forbid"
                   },
-                  "languages": [
-                    "en"
-                  ]
+                  "languages": ["en"]
                 }
               }
             },

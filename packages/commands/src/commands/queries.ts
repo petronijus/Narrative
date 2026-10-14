@@ -123,7 +123,9 @@ const SlideLayoutOutput = z.object({
   packId: z.string(),
   layoutId: z.string(),
   surface: z.string().optional(),
-  archetype: ArchetypeSchema.optional().describe('What the slide does in the deck (cover, content…)'),
+  archetype: ArchetypeSchema.optional().describe(
+    'What the slide does in the deck (cover, content…)',
+  ),
 })
 
 /** The deck's meta (A4.2d): its pack variant, footer field values and language. */

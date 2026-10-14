@@ -114,7 +114,10 @@ export interface WriteResult {
 }
 
 /** What import results say about placeholders: per slide, object id → placeholder type. */
-export type PlaceholderHints = Array<{ slide: string; objects: Array<{ object: string; type: string }> }>
+export type PlaceholderHints = Array<{
+  slide: string
+  objects: Array<{ object: string; type: string }>
+}>
 
 // ---------------------------------------------------------------------------
 // Shape mapper — ParsedShape → SlideObject | null

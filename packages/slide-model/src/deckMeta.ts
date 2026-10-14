@@ -80,7 +80,9 @@ export function subscribeDeckMeta(doc: Y.Doc, listener: (meta: DeckMeta) => void
 /** The deck spec the deck was last built from (A5.3), as stored; null when there is none. */
 export function readDeckSpec(doc: Y.Doc): Record<string, unknown> | null {
   const v = metaMap(doc).get('spec')
-  return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : null
 }
 
 /** Keep the spec the deck was built from, or forget it (`null`); nested in the caller's transaction. */
