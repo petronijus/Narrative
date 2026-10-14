@@ -199,7 +199,7 @@ export function FoldersHome() {
       <main className="flex-1 overflow-y-auto px-8 py-6">
         {/* Hero: a band in the logo's own paper colour (sampled from its
             edges), the logo's edges faded into it, in either theme. */}
-        <section className="-mx-8 -mt-6 mb-10 flex flex-col items-center bg-[#eee0cc] px-8 pb-8 pt-10 text-center">
+        <section className="-mx-8 -mt-6 mb-10 flex flex-col items-center bg-[#efe2cf] px-8 pb-8 pt-10 text-center">
           <h1>
             <img
               src={logoUrl}
@@ -210,7 +210,7 @@ export function FoldersHome() {
               style={{
                 maskImage:
                   'linear-gradient(to right, transparent, #000 3%, #000 97%, transparent), ' +
-                  'linear-gradient(to bottom, transparent, #000 12%, #000 85%, transparent)',
+                  'linear-gradient(to bottom, transparent, #000 16%, #000 85%, transparent)',
                 maskComposite: 'intersect',
               }}
             />
