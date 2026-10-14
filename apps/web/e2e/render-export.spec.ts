@@ -336,3 +336,107 @@ test('the render worker draws the folder fonts, set on a text box and on a run',
   expect(out.failedFonts).toEqual([])
   expectBlockText(PNG.sync.read(Buffer.from(out.slides[0]!.base64, 'base64')))
 })
+
+// ─── deck.exportPdf (A5.6) ──────────────────────────────────────────────────
+
+/** The JPEG of every page of a picture PDF, in page order (the writer puts each page's image after it). */
+function pdfPages(pdf: Buffer): Buffer[] {
+  const text = pdf.toString('latin1')
+  expect(text.startsWith('%PDF-')).toBe(true)
+  const pages: Buffer[] = []
+  for (const m of text.matchAll(/\/Filter \/DCTDecode \/Length (\d+) >>\nstream\n/g)) {
+    const start = m.index + m[0].length
+    pages.push(pdf.subarray(start, start + Number(m[1])))
+  }
+  return pages
+}
+
+/** A pixel of a JPEG, decoded by the browser. */
+async function jpegPixel(
+  page: import('@playwright/test').Page,
+  jpeg: Buffer,
+  x: number,
+  y: number,
+): Promise<{ r: number; g: number; b: number }> {
+  return page.evaluate(
+    async ({ base64, x, y }) => {
+      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }))
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+      const g = canvas.getContext('2d')!
+      g.drawImage(bitmap, 0, 0)
+      const [r, gr, b] = g.getImageData(x, y, 1, 1).data
+      return { r: r!, g: gr!, b: b! }
+    },
+    { base64: jpeg.toString('base64'), x, y },
+  )
+}
+
+test('deck.exportPdf makes a page per slide, the skipped ones left out unless asked for', async ({
+  page,
+}) => {
+  test.setTimeout(240_000)
+  const request = page.request
+  await seedDeck(request)
+  await command(request, 'slide.add', {})
+  await command(request, 'slide.skip', { slide: { index: 2 }, skipped: true })
+  await page.goto('about:blank')
+
+  const linked = await command<{ url: string; pages: number; leftOut: number }>(
+    request,
+    'deck.exportPdf',
+    {},
+  )
+  expect(linked).toMatchObject({ pages: 2, leftOut: 1 })
+  const file = await request.get(linked.url)
+  expect(file.ok()).toBe(true)
+  const pages = pdfPages(await file.body())
+  expect(pages).toHaveLength(2)
+  // Page 1 holds slide 1's red block (JPEG, so near, not exact).
+  expect(near(await jpegPixel(page, pages[0]!, 400, 300), RED)).toBe(true)
+  expect(near(await jpegPixel(page, pages[1]!, 400, 300), RED)).toBe(false)
+
+  const all = await command<{ base64: string; pages: number; leftOut: number }>(
+    request,
+    'deck.exportPdf',
+    { includeSkipped: true, delivery: 'base64' },
+  )
+  expect(all).toMatchObject({ pages: 3, leftOut: 0 })
+  expect(pdfPages(Buffer.from(all.base64, 'base64'))).toHaveLength(3)
+})
+
+async function exportPdfFromToolbar(page: import('@playwright/test').Page): Promise<Buffer> {
+  await page.getByRole('button', { name: /^Export$/ }).click()
+  const download = page.waitForEvent('download', { timeout: 180_000 })
+  await page.getByRole('menuitem', { name: 'Export to PDF' }).click()
+  const file = await download
+  expect(file.suggestedFilename()).toBe('e2e render export.pdf')
+  return readFileSync((await file.path())!)
+}
+
+test('the editor exports the deck as a PDF in the browser, the server only when it must', async ({
+  page,
+}) => {
+  test.setTimeout(240_000)
+  await seedDeck(page.request)
+  const serverPdfs: string[] = []
+  page.on('request', (req) => {
+    if (req.url().includes('/export.pdf')) serverPdfs.push(req.url())
+  })
+  await page.goto(`/deck/${deckId}`)
+  await expect(page.locator('[role="option"][data-slide-id]').first()).toBeVisible({
+    timeout: 30_000,
+  })
+  // Where the hidden render page cannot load, the server builds it.
+  await page.route('**/deck/*/render?*', (route) => route.abort())
+  const fromServer = pdfPages(await exportPdfFromToolbar(page))
+  expect(fromServer).toHaveLength(2)
+  expect(serverPdfs).toHaveLength(1)
+
+  // Where it can, the browser does, and the server is not asked.
+  await page.unroute('**/deck/*/render?*')
+  const pages = pdfPages(await exportPdfFromToolbar(page))
+  expect(pages).toHaveLength(2)
+  expect(near(await jpegPixel(page, pages[0]!, 400, 300), RED)).toBe(true)
+  expect(serverPdfs).toHaveLength(1)
+})

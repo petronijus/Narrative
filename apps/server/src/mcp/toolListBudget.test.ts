@@ -111,6 +111,39 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * A4.5 (2026-10-12): 198,500 → 200,000 for query.check ≈ 1.4 KB (the
  * brand checker; its rules are listed once, in its description):
  * 199,492 bytes in url mode, 145 tools.
+ * A5.0 (2026-10-14), the review before A5 adds tools, no command id
+ * changed: 200,000 → 194,200. Measured in link mode, now the largest:
+ * 199,977 → 193,154 bytes, 145 tools. Nullable fields as one schema with a
+ * null type (−1.0 KB, schemaCompact.ts pass 5) and string-constant unions
+ * as one enum (−0.2, pass 6); the shared descriptions stripped before
+ * compacting too, so definitions they made large inline (−0.3); the file
+ * input and a text `range` as shared shapes, and shapes matched through
+ * `$ref`s (object_create's text body; −2.8); the animation presets, triggers
+ * and rotation units said by the schema rather than both descriptions
+ * (−1.1); the confirmation line shorter per mode (−0.4 in url mode); example
+ * calls that show nothing the schema does not left out (−0.5); token_create's
+ * prose no longer repeating its fields (−0.2). From here it rises per A5
+ * tool change, itemised as before.
+ * A5.1 (2026-10-14): no raise. slide.applyLayout's `archetype`, `unplaced`,
+ * a picture's `focus` and an example by archetype, query.check's rhythm
+ * rule and its cap only when measuring, the image `focus` in the create
+ * schema and `archetype` in the query outputs: 193,802 bytes in link mode,
+ * 145 tools (398 left).
+ * A5.3 (2026-10-14): 194,200 → 199,000 for the build. style.deck.apply's
+ * `spec` and `replace` ≈ 4.0 KB (the deck spec's schema: slides by layout or
+ * archetype, slot content, what is drawn on the grid, notes, message,
+ * claims; its output per built slide) and an example; query.deck's `spec`
+ * and `specSlides` ≈ 0.3; query.slide's `brief` ≈ 0.2: 198,265 bytes in
+ * link mode, 145 tools.
+ * A5.3 review, A5.4, A5.5 (2026-10-14): no raise. style.deck.apply's
+ * `relayout`, `slides`, `restyled`, `spec: null` and removed slides' titles,
+ * query.deck's `specInvalid`, the import results' `placeholders`
+ * (deck.importPptx, deck.insertFrom), with descriptions trimmed: 198,948
+ * bytes in link mode, 145 tools (52 left).
+ * A5.6 (2026-10-14): 199,000 → 200,000 for deck.exportPdf ≈ 1.0 KB
+ * (description trimmed once before measuring): 199,927 bytes in link mode,
+ * 146 tools. Back at the budget A5.0 started from: A5 spent the room it
+ * made. The next room is the table and path tool merges D4 put after A5.
  */
 export const TOOL_LIST_BUDGET_BYTES = 200_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */

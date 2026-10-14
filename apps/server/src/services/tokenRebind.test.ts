@@ -61,8 +61,8 @@ describe('planTokenRebinding', () => {
   })
 
   it('falls back to the literal colour, a detached link, or leaving an effect alone', () => {
-    expect(plan.refs.get('colors.c_accent')).toEqual({ kind: 'literal', value: 0xff8800 })
-    expect(plan.refs.get('textStyles.ts_note')).toEqual({ kind: 'literal', value: 0x777777 })
+    expect(plan.refs.get('colors.c_accent')).toEqual({ kind: 'literal' })
+    expect(plan.refs.get('textStyles.ts_note')).toEqual({ kind: 'literal' })
     expect(plan.textStyleLinks.get('ts_note')).toBeNull()
     expect(plan.refs.get('effectStyles.fx_glow')).toEqual({ kind: 'keep' })
   })
@@ -118,6 +118,114 @@ function deckWithReferences(): Y.Doc {
   void s2
   return deck.doc
 }
+
+describe('across style packs (A5.4)', () => {
+  // Two folders' compiled packs: every role token is called "Text" or
+  // "Accent" in both, so only the compile's origin pairs them right.
+  const contoso:FolderTokensSnapshot = {
+    colors: {
+      'p-contoso-role-text': {
+        id: 'p-contoso-role-text',
+        name: 'Accent',
+        value: '#001e50',
+        byVariant: { axis: 'background', values: { dark: '#ffffff' } },
+        origin: { pack: 'contoso', key: 'role:text' },
+      },
+      'p-contoso-role-accent': {
+        id: 'p-contoso-role-accent',
+        name: 'Text',
+        value: '#00b0f0',
+        origin: { pack: 'contoso', key: 'role:accent' },
+      },
+      'p-contoso-color-blue': {
+        id: 'p-contoso-color-blue',
+        name: 'Blue',
+        value: '#0040c5',
+        origin: { pack: 'contoso', key: 'color:blue' },
+      },
+    },
+    textStyles: {},
+    effectStyles: {},
+  }
+  const fabrikam: FolderTokensSnapshot = {
+    colors: {
+      'p-fabrikam-role-accent': {
+        id: 'p-fabrikam-role-accent',
+        name: 'Accent',
+        value: '#bb0a30',
+        origin: { pack: 'fabrikam', key: 'role:accent' },
+      },
+      'p-fabrikam-role-text': {
+        id: 'p-fabrikam-role-text',
+        name: 'Text',
+        value: '#000000',
+        origin: { pack: 'fabrikam', key: 'role:text' },
+      },
+    },
+    textStyles: {},
+    effectStyles: {},
+  }
+
+  it("pairs a pack's tokens by what they are for, not by their names", () => {
+    const plan = planTokenRebinding(contoso, fabrikam)
+    expect(plan.refs.get('colors.p-contoso-role-text')).toEqual({
+      kind: 'rebind',
+      to: 'colors.p-fabrikam-role-text',
+    })
+    expect(plan.refs.get('colors.p-contoso-role-accent')).toEqual({
+      kind: 'rebind',
+      to: 'colors.p-fabrikam-role-accent',
+    })
+    // Fabrikam has no blue: it becomes the colour it was.
+    expect(plan.refs.get('colors.p-contoso-color-blue')).toEqual({ kind: 'literal' })
+  })
+
+  it("prefers the destination's current pack where an earlier pack left tokens behind", () => {
+    const withOld: FolderTokensSnapshot = {
+      ...fabrikam,
+      colors: {
+        ...fabrikam.colors,
+        'p-aaa-role-text': {
+          id: 'p-aaa-role-text',
+          name: 'Text',
+          value: '#333333',
+          origin: { pack: 'aaa', key: 'role:text' },
+        },
+      },
+    }
+    // By id alone the old pack's token sorts first.
+    expect(planTokenRebinding(contoso, withOld).refs.get('colors.p-contoso-role-text')).toEqual({
+      kind: 'rebind',
+      to: 'colors.p-aaa-role-text',
+    })
+    expect(
+      planTokenRebinding(contoso, withOld, { destPackId: 'fabrikam' }).refs.get('colors.p-contoso-role-text'),
+    ).toEqual({ kind: 'rebind', to: 'colors.p-fabrikam-role-text' })
+  })
+
+  it("literalises a colour as it was drawn: on the deck's variant", () => {
+    const deck = createSlideDoc()
+    deck.doc.getMap('meta').set('variant', { background: 'dark' })
+    const objects = getSlideObjectsCtx(deck, deck.slides.get(0).get('id') as string)!
+    addObjects(objects, [
+      {
+        id: 'r1',
+        type: 'rectangle',
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 10,
+        rotation: 0,
+        opacity: 1,
+        fill: { $token: 'colors.p-contoso-role-text' },
+      } as RectangleObject,
+    ])
+    const onlyBlue: FolderTokensSnapshot = { colors: {}, textStyles: {}, effectStyles: {} }
+    applyTokenRebinding(deck.doc, planTokenRebinding(contoso, onlyBlue))
+    // White, the dark variant's text colour — not the light default navy.
+    expect(objects.objects.get(0).get('fill')).toBe(0xffffff)
+  })
+})
 
 describe('applyTokenRebinding', () => {
   it('rewrites references at every depth and counts what it did', () => {

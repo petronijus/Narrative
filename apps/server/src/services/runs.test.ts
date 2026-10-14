@@ -6,7 +6,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
-import { getSlideObjectsCtx } from '@narrative/slide-model'
+import { exampleStylePack } from '@narrative/shared'
+import { getSlideObjectsCtx, readDeckMeta } from '@narrative/slide-model'
 import type { PeerAwarenessState } from '@narrative/shared'
 import {
   createAgentWorld,
@@ -146,6 +147,39 @@ describe('revert', () => {
     })
     await settle()
     expect(prop(serverDoc, 'r1', 'fill')).toBe(0x00ff00)
+  })
+
+  it("puts the deck's meta back: a reverted style.deck.apply restores variant and fields", async () => {
+    // A folder with the pack and a token (style.deck.apply wants the pack compiled).
+    world.setFolder(
+      'deck1',
+      'f1',
+      { colors: { navy: { name: 'Navy', value: '#001e50' } } },
+      exampleStylePack() as unknown as Record<string, unknown>,
+    )
+    world.grant('f1', 'ed', 'editor')
+    const first = await must({
+      invocation: { command: 'style.deck.apply', input: { variant: { background: 'dark' } } },
+    })
+    await must({
+      invocation: {
+        command: 'style.deck.apply',
+        input: { fields: { client: 'Acme' }, lang: 'de' },
+      },
+    })
+    const doc = world.hocuspocus.documents.get('deck1')!
+    expect(readDeckMeta(doc)).toEqual({
+      variant: { background: 'dark' },
+      fields: { client: 'Acme' },
+      lang: 'de',
+    })
+    const reverted = await world.runtime.runs.revertRun({
+      userId: 'ed',
+      target: { kind: 'deck', deckId: 'deck1' },
+      runId: first.runId!,
+    })
+    expect(reverted).toMatchObject({ revertedChanges: 2, status: 'reverted' })
+    expect(readDeckMeta(doc)).toEqual({})
   })
 
   it('reverts only the last N changes of a run', async () => {
@@ -429,6 +463,19 @@ describe('run lifecycle', () => {
       patch: { hyperlink: 'https://example.com/p' },
       file: { base64: { redacted: 'base64', bytes: 8 } },
     })
+  })
+
+  it('logs a large input as its size and digest, and a long refusal bounded', async () => {
+    await setup()
+    const text = 'Hello, world. '.repeat(6_500)
+    await exec({
+      invocation: { command: 'text.set', input: { target: { slide: 's1', object: 'nope' }, text } },
+    })
+    const op = world.store.ops.at(-1)!
+    expect(op.input).toMatchObject({ truncated: true, bytes: expect.any(Number) })
+    expect(JSON.stringify(op.input)).not.toContain('Hello, world')
+    expect((op.input as { sha256: string }).sha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(op.error?.message.length).toBeLessThanOrEqual(8 * 1024)
   })
 
   it('closes runs left open by a previous process at startup', async () => {

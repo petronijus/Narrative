@@ -83,6 +83,9 @@ export {
   setSlideCollapsed,
   setSlideLayout,
   readSlideLayout,
+  setSlideBrief,
+  setSlideSpecKey,
+  readSlideBrief,
   listSlides,
   getSlideObjectsCtx,
   getSlideAnimationsCtx,
@@ -202,6 +205,7 @@ export {
   createUndoManager,
   endUndoGesture,
   UNDO_CAPTURE_TIMEOUT_MS,
+  undoScope,
 } from './undo.js'
 
 // Component helpers (M16 P5)
@@ -249,10 +253,17 @@ export {
 } from './folderPack.js'
 
 // Deck meta (A4.2d)
-export { readDeckMeta, setDeckMeta, subscribeDeckMeta } from './deckMeta.js'
+export {
+  readDeckMeta,
+  readDeckSpec,
+  setDeckMeta,
+  setDeckSpec,
+  subscribeDeckMeta,
+} from './deckMeta.js'
 export type { DeckMetaPatch } from './deckMeta.js'
 
 // Design tokens (M16 P2)
+export { rewriteTokenRefs, type TokenRefRewrite } from './tokenRefs.js'
 export {
   isTokenRef,
   resolveTokenValue,

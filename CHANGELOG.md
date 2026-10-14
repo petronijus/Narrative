@@ -4,6 +4,55 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## Unreleased — Deck builder (agentic A5)
+
+Agentic phase A5, the agentic plan's last: an agent builds a whole deck
+from a brief with the folder's brand, restyles another brand's slides into
+it, and exports PDFs; so does the editor.
+
+### Added
+
+- **Whole decks from a spec.** `style.deck.apply { spec }` builds a deck
+  in one step, reverted in one: each slide by layout or by kind of slide
+  (cover, agenda, content, comparison, statement, closer, …), its slots,
+  what is drawn on the brand's grid, notes, its message and claims, plus
+  the variant, footer fields and language (`"Umsatz{de|en}Revenue"`). The
+  deck keeps the spec, so it builds again in another variant or pack
+  (`query.deck { spec: true }`; `spec: null` forgets it).
+- **The `build-deck` playbook**: scope in one message, the client's voice
+  asked for, three story directions, a slide-by-slide table approved before
+  anything is written, then the build, the brand check and a look at every
+  slide. **`insert-restyle`**: another deck's slides inserted and made to
+  match.
+- **Restyle into the brand.** `style.deck.apply { relayout: "archetype" }`
+  moves slides laid out with another pack onto this one: the same kind of
+  slide, content by slot and role, colours and text styles by purpose.
+  Slides copied from another folder remember their kind; PowerPoint
+  imports report which placeholder each object filled, as a hint.
+- **Laying out a plain slide.** `slide.applyLayout` moves text and
+  pictures in by role on any slide (give objects a role first), in reading
+  order, into regions of their kind; what has no place stays and is listed.
+  `archetype` picks the pack's layout for a kind of slide.
+- **PDF export.** Export → PDF in the editor for every reader (built in
+  the browser, the server when it cannot), and `deck.exportPdf` for agents
+  (up to 40 slides; skipped slides left out unless asked for).
+- **Picture focus**: a picture that covers a frame of another shape keeps
+  its top, bottom, left or right in view (pack regions, PowerPoint export).
+- The brand check warns when one layout is on most of a deck's slides.
+
+### Changed
+
+- Undo and agent revert put back a deck's variant, footer fields and
+  language.
+- Moving decks or slides between folders pairs a style pack's colours and
+  styles by what they are for before their names, and keeps a colour as it
+  was drawn on the deck's variant.
+- Changing a slide's layout keeps text the new layout has no place for,
+  as PowerPoint does, instead of deleting it.
+- The toolbar's Export button is a menu: PowerPoint (owners) and PDF.
+
+---
+
 ## 0.11.2 — The logo on the home page (2026-10-14)
 
 ### Changed

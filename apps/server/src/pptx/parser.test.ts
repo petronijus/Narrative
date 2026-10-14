@@ -419,6 +419,23 @@ describe('parsePptx', () => {
     expect(shape.textVerticalAlign).toBe('middle')
     // PPTX 2400 (24pt) → px @ 96 DPI ≈ 32
     expect(shape.fontSize).toBeCloseTo(32, 1)
+    // What the shape is for, as a hint for a restyle (A5.5).
+    expect(shape.placeholderType).toBe('subTitle')
+  })
+
+  it('names the placeholder a slide shape fills ("obj" when untyped), and none for a free shape', async () => {
+    const shape = (id: number, ph: string) => `
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="${id}" name="s${id}"/><p:cNvSpPr/><p:nvPr>${ph}</p:nvPr></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="952500"/></a:xfrm></p:spPr>
+        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>T${id}</a:t></a:r></a:p></p:txBody>
+      </p:sp>`
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}${shape(2, '<p:ph type="title"/>')}${shape(3, '<p:ph idx="1"/>')}${shape(4, '')}${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    expect(out.slides[0]!.shapes.map((s) => s.placeholderType)).toEqual(['title', 'obj', undefined])
   })
 
   it('parses a multi-stop linear gradient with angle conversion', async () => {

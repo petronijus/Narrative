@@ -112,6 +112,7 @@ import type { AgentDocuments } from './documents.js'
 import type { FolderFontsReader } from './folderFonts.js'
 import type { FolderTokensReader } from './folderTokens.js'
 import type { FolderStylePackReader } from './folderStylePack.js'
+import { createFixedWindowLimiter } from '../http/fixedWindowLimiter.js'
 import type { OpConfirmation } from './runStore.js'
 import { collectTouched, type Touched } from './touched.js'
 import {
@@ -395,7 +396,27 @@ function writesDocument(def: AnyCommandDef): boolean {
   return def.effects.includes('doc') || def.transaction === 'self'
 }
 
+/**
+ * Deck builds from a spec (`style.deck.apply { spec }`, A5.3) a user may
+ * start per minute: one build of 60 slides holds the server for up to a
+ * second, inside one document transaction, and an agent token may otherwise
+ * call it hundreds of times a minute.
+ */
+export const DECK_BUILDS_PER_MINUTE = 6
+
+const isSpecBuild = (commandId: string, input: unknown): boolean =>
+  commandId === 'style.deck.apply' &&
+  typeof input === 'object' &&
+  input !== null &&
+  typeof (input as { spec?: unknown }).spec === 'object' &&
+  (input as { spec?: unknown }).spec !== null
+
 export class ServerHost {
+  private readonly deckBuilds = createFixedWindowLimiter({
+    max: DECK_BUILDS_PER_MINUTE,
+    windowMs: 60_000,
+  })
+
   constructor(private readonly deps: ServerHostDeps) {}
 
   /**
@@ -801,6 +822,19 @@ export class ServerHost {
       )
     }
 
+    // Deck builds are counted once their spec passed its checks (the `load`
+    // phase), so fixing a refused spec costs nothing; past the limit nothing
+    // is checked at all.
+    const buildKey = isSpecBuild(commandId, input) ? `build:${ctx.actor.userId}` : null
+    const tooManyBuilds = (retryAfterMs: number): CommandError =>
+      new CommandError(
+        'conflict',
+        `too many deck builds: at most ${DECK_BUILDS_PER_MINUTE} a minute; try again in ` +
+          `${Math.ceil(retryAfterMs / 1000)} s`,
+      )
+    if (buildKey !== null && this.deckBuilds.isBlocked(buildKey))
+      throw tooManyBuilds(this.deckBuilds.hit(buildKey).retryAfterMs)
+
     // Read before the lease: a snapshot of the folder, not a document this
     // command writes.
     const folderTokens =
@@ -832,6 +866,10 @@ export class ServerHost {
       }
       // Validation and the async `load` phase happen here, before any transaction.
       const prepared = await prepareInvocation(this.deps.registry, docCtx, commandId, input)
+      if (buildKey !== null) {
+        const decision = this.deckBuilds.hit(buildKey)
+        if (!decision.allowed) throw tooManyBuilds(decision.retryAfterMs)
+      }
       if (!prepared.synchronous) {
         const output = await prepared.execute()
         await prepared.settle()

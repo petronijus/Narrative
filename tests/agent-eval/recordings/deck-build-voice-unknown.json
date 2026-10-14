@@ -1,0 +1,176 @@
+{
+  "scenario": "deck-build-voice-unknown",
+  "tag": "ev7a704d",
+  "recordedAt": "2026-10-14T13:08:50.980Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.296 (Claude Code)",
+  "fixture": {
+    "folderId": "dTzH5n29aBqj",
+    "deckId": "Ul-aKNMRSQGu",
+    "title": "Voice unknown ev7a704d",
+    "slideIds": ["1tNa1HAI85MJGSvlV5leQ"]
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "Build a 10-slide pitch deck in the Narrative deck \"Voice unknown ev7a704d\" (deckId Ul-aKNMRSQGu) for our client Northwind Logistics: why they should move their fleet planning to our platform. It must sound like Northwind, in their voice.",
+        "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__query_deck,mcp__narrative-eval__query_slide,mcp__narrative-eval__deck_list,mcp__narrative-eval__slide_notes_get,mcp__narrative-eval__style_pack_get,mcp__narrative-eval__ReadMcpResourceTool",
+              "max_results": 10
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
+          {
+            "tool": "query_deck",
+            "command": "query.deck",
+            "input": {
+              "deckId": "Ul-aKNMRSQGu",
+              "spec": true
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slideCount": 1,
+              "slides": [
+                {
+                  "id": "1tNa1HAI85MJGSvlV5leQ",
+                  "index": 0,
+                  "transition": "none",
+                  "objectCount": 0,
+                  "animationCount": 0
+                }
+              ],
+              "guides": [],
+              "meta": {}
+            },
+            "text": "{\"slideCount\":1,\"slides\":[{\"id\":\"1tNa1HAI85MJGSvlV5leQ\",\"index\":0,\"transition\":\"none\",\"objectCount\":0,\"animationCount\":0}],\"guides\":[],\"meta\":{}}"
+          },
+          {
+            "tool": "deck_list",
+            "command": "deck.list",
+            "input": {
+              "query": "Northwind",
+              "limit": 20
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "decks": [],
+              "nextCursor": null
+            },
+            "text": "{\"decks\":[],\"nextCursor\":null}"
+          },
+          {
+            "tool": "deck_list",
+            "command": "deck.list",
+            "input": {
+              "query": "Voice unknown",
+              "limit": 5
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "decks": [
+                {
+                  "id": "Ul-aKNMRSQGu",
+                  "title": "Voice unknown ev7a704d",
+                  "folderId": "dTzH5n29aBqj",
+                  "updatedAt": "2026-10-14T13:08:28.361Z",
+                  "role": "owner"
+                }
+              ],
+              "nextCursor": null
+            },
+            "text": "{\"decks\":[{\"id\":\"Ul-aKNMRSQGu\",\"title\":\"Voice unknown ev7a704d\",\"folderId\":\"dTzH5n29aBqj\",\"updatedAt\":\"2026-10-14T13:08:28.361Z\",\"role\":\"owner\"}],\"nextCursor\":null}"
+          },
+          {
+            "tool": "style_pack_get",
+            "command": "style.pack.get",
+            "input": {
+              "folderId": "dTzH5n29aBqj",
+              "part": "summary"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "part": "summary",
+              "value": {
+                "id": "example-rich",
+                "name": "Example (rich)",
+                "variants": [
+                  {
+                    "axis": "background",
+                    "default": "light",
+                    "values": ["light", "dark"]
+                  }
+                ],
+                "surfaces": ["picture-dark"],
+                "colors": {
+                  "navy": "#001e50",
+                  "white": "#ffffff",
+                  "grey": "#7a8590",
+                  "red": "#e4002b"
+                },
+                "fonts": {
+                  "head": "Inter",
+                  "text": "Inter"
+                },
+                "textStyles": {
+                  "title": "Title 64px",
+                  "body": "Body 32px",
+                  "footer": "Footer 18px",
+                  "cover": "Cover title 88px",
+                  "subtitle": "Subtitle 36px",
+                  "quote": "Quote 56px"
+                },
+                "layouts": [
+                  "title: The opening slide: the deck title and a subtitle.",
+                  "agenda: What the deck covers: a headline and up to six numbered items.",
+                  "chapter: Opens a chapter: its number and its name, on the dark variant of the slide.",
+                  "title-bullets: A headline and up to six bullet points.",
+                  "two-columns: A headline over two columns of text: a comparison, or two sides of one point.",
+                  "picture: A full-bleed picture with a short statement on it.",
+                  "quote: One sentence that carries the point, large, with who said it.",
+                  "closer: The last slide: the ask or the next step, and how to reach us."
+                ],
+                "components": ["pagination (pagination)", "headline (headline)"],
+                "furniture": ["pagenum", "footer"],
+                "archetypeMap": {
+                  "cover": ["title"],
+                  "agenda": ["agenda"],
+                  "divider": ["chapter"],
+                  "content": ["title-bullets", "two-columns"],
+                  "comparison": ["two-columns"],
+                  "picture": ["picture"],
+                  "statement": ["quote"],
+                  "closer": ["closer"],
+                  "contact": ["closer"]
+                },
+                "editorial": {
+                  "titleMode": "action-title",
+                  "title": {
+                    "maxWords": 12,
+                    "trailingPeriod": "forbid"
+                  },
+                  "languages": ["en", "de"]
+                }
+              }
+            },
+            "text": "{\"part\":\"summary\",\"value\":{\"id\":\"example-rich\",\"name\":\"Example (rich)\",\"variants\":[{\"axis\":\"background\",\"default\":\"light\",\"values\":[\"light\",\"dark\"]}],\"surfaces\":[\"picture-dark\"],\"colors\":{\"navy\":\"#001e50\",\"white\":\"#ffffff\",\"grey\":\"#7a8590\",\"red\":\"#e4002b\"},\"fonts\":{\"head\":\"Inter\",\"text\":\"Inter\"},\"textStyles\":{\"title\":\"Title 64px\",\"body\":\"Body 32px\",\"footer\":\"Footer 18px\",\"cover\":\"Cover title 88px\",\"subtitle\":\"Subtitle 36px\",\"quote\":\"Quote 56px\"},\"layouts\":[\"title: The opening slide: the deck title and a subtitle.\",\"agenda: What the deck covers: a headline and up to six numbered items.\",\"chapter: Opens a chapter: its number and its name, on the dark variant of the slide.\",\"title-bullets: A headline and up to six bullet points.\",\"two-columns: A headline over two columns of text: a comparison, or two sides of one point.\",\"picture: A full-bleed picture with a short statement on it.\",\"quote: One sentence that carries the point, large, with who said it.\",\"closer: The last slide: the ask or the next step, and how to reach us.\"],\"components\":[\"pagination (pagination)\",\"headline (headline)\"],\"furniture\":[\"pagenum\",\"footer\"],\"archetypeMap\":{\"cover\":[\"title\"],\"agenda\":[\"agenda\"],\"divider\":[\"chapter\"],\"content\":[\"title-bullets\",\"two-columns\"],\"comparison\":[\"two-columns\"],\"picture\":[\"picture\"],\"statement\":[\"quote\"],\"closer\":[\"closer\"],\"contact\":[\"closer\"]},\"editorial\":{\"titleMode\":\"action-title\",\"title\":{\"maxWords\":12,\"trailingPeriod\":\"forbid\"},\"languages\":[\"en\",\"de\"]}}}"
+          }
+        ],
+        "finalText": "I checked before writing anything and stopped. I don't have what I need to write this in Northwind's voice, and if I guessed, the deck would only sound plausible.\n\n**What I found:**\n- **The deck is empty.** \"Voice unknown ev7a704d\" has one blank slide, and the deck itself has no notes or brief.\n- **There's nothing about Northwind in your workspace.** No deck you can open has \"Northwind\" in its title, so there's nothing to learn their tone from.\n- **The folder's style pack (\"Example (rich)\") covers visuals and layout only.** It sets navy/red/grey colours, Inter type, a cover, agenda, chapter, bullets, two-column, quote and closer layouts, and short, punchy \"action titles\". It says nothing about how Northwind writes or talks.\n\n**What I need from you (any of these will do):**\n1. **Samples of how Northwind writes.** A few paragraphs from their website, an annual report, a press release, an internal memo or an email from their leadership. Even short pieces help. Or describe the voice yourself (e.g. \"plain-spoken and numbers-first\", \"warm, safety-first, family-run feel\").\n2. **Facts I shouldn't make up:**\n   - your platform's name and what it does for fleet planning\n   - Northwind's current planning setup and its problems\n   - any results, figures or customer examples you're allowed to quote\n   - the ask on the last slide (pilot, rollout, timeline)\n3. **The audience and who presents.** If the deck is \"in Northwind's voice\", is it meant for their own leadership, so it reads like their internal case for switching? Or is it your pitch to them that borrows their language?\n\n**Proposed structure, using the style pack's layouts:** cover → where fleet planning hurts today → what it costs → what changes on the platform → how it works → results/proof → a statement slide in their words → rollout plan → risks and how we handle them → the ask and next step.\n\nIf you'd like a draft now, I can build all 10 slides in a neutral voice with placeholders like `[Northwind metric]`, plus notes saying where their voice should go. Then I'd rewrite the text once you send samples. Which would you prefer?",
+        "turns": 6,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

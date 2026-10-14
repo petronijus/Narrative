@@ -709,6 +709,14 @@ export async function matrixDeck(): Promise<ImportedDeck> {
       fit: 'cover',
       imageRect: { x: 850, y: 50, width: 400, height: 400 },
     },
+    // A focus: the 2:1 picture covers a square frame keeping its left edge.
+    {
+      id: 'pf6',
+      type: 'image',
+      ...frame(1300, 100, 300, 300),
+      assetId: 'img-wide',
+      focus: 'left',
+    },
     {
       id: 'pf4',
       type: 'video',

@@ -124,6 +124,26 @@ const BASE: Omit<ParsedPptx, 'slides'> = {
 }
 
 describe('buildDeckUpdate', () => {
+  it('reports the placeholder each object filled by its new id, and stores no hint', () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            textShape({ text: 'Title', placeholderType: 'title' }),
+            textShape({ text: 'Free' }),
+          ],
+        }),
+      ],
+    }
+    const { state, slideIds, placeholders } = buildDeckUpdate(parsed)
+    const objects = applyToFreshDoc(state).slides[0]!.objects
+    expect(placeholders).toEqual([
+      { slide: slideIds[0], objects: [{ object: objects[0]!['id'], type: 'title' }] },
+    ])
+    expect(JSON.stringify(objects)).not.toContain('placeholder')
+  })
+
   it('produces a Y.Doc with one slide per parsed slide, default slide dropped', async () => {
     const parsed: ParsedPptx = {
       ...BASE,

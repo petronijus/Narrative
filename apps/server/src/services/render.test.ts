@@ -12,6 +12,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
+import sharp from 'sharp'
 import {
   renderFailureMessage,
   type RenderExportJob,
@@ -883,5 +884,73 @@ describe('compare: a slide before the agent run and now', () => {
     const out = await service.look({ userId: 'u1', deckId: 'd1', view: { slide: { index: 0 } } })
     expect(out.overflow).toHaveLength(50)
     expect(out.overflowTruncated).toBe(true)
+  })
+})
+
+describe('RenderService.buildPdf / exportPdf (A5.6)', () => {
+  /** A deck whose slide `s2` is skipped. */
+  function deckWithSkipped(ids: string[]): Y.Doc {
+    const doc = deckDoc(ids)
+    doc.getArray<Y.Map<unknown>>('slides').get(1).set('skipped', true)
+    return doc
+  }
+
+  /** The worker's PNG for every page: a real one, of this size. */
+  async function storedPngs(width: number, height: number): Promise<void> {
+    const png = new Uint8Array(
+      await sharp({ create: { width, height, channels: 3, background: '#e53935' } })
+        .png()
+        .toBuffer(),
+    )
+    vi.mocked(buildS3Client).mockReturnValue({
+      send: vi.fn(async () => ({
+        ContentLength: png.byteLength,
+        Body: { transformToByteArray: async () => png },
+      })),
+    } as unknown as ReturnType<typeof buildS3Client>)
+  }
+
+  const pdf = (
+    service: ReturnType<typeof setup>['service'],
+    over: Partial<Parameters<ReturnType<typeof setup>['service']['buildPdf']>[0]> = {},
+  ) =>
+    service.buildPdf({ userId: 'u1', deckId: 'd1', slides: 'all', includeSkipped: false, ...over })
+
+  it('makes a page per slide, the skipped ones left out unless asked for', async () => {
+    await storedPngs(32, 18)
+    vi.mocked(readDocCopy).mockImplementation(async () => deckWithSkipped(['s1', 's2', 's3']))
+    const { service } = setup(async (data) => rendered(data))
+    const out = await pdf(service)
+    expect(out).toMatchObject({ pages: 2, leftOut: 1 })
+    expect(Buffer.from(out.bytes.subarray(0, 5)).toString('latin1')).toBe('%PDF-')
+    expect(await pdf(service, { includeSkipped: true })).toMatchObject({ pages: 3, leftOut: 0 })
+  })
+
+  it('renders in jobs of 20 that all end by the one deadline of the whole file', async () => {
+    await storedPngs(32, 18)
+    const ids = Array.from({ length: 25 }, (_, i) => `s${i + 1}`)
+    vi.mocked(readDocCopy).mockImplementation(async () => deckDoc(ids))
+    const { queue, service } = setup(async (data) => rendered(data))
+    expect((await pdf(service)).pages).toBe(25)
+    const deadlines = queue.run.mock.calls.map(([data]) => data.deadline)
+    expect(deadlines).toEqual([NOW + RENDER_WAIT_MS, NOW + RENDER_WAIT_MS])
+  })
+
+  it('refuses more than 40 slides, a picture of an unexpected size, and a caller that has gone', async () => {
+    await storedPngs(32, 18)
+    vi.mocked(readDocCopy).mockImplementation(async () =>
+      deckDoc(Array.from({ length: 41 }, (_, i) => `s${i + 1}`)),
+    )
+    const { service } = setup(async (data) => rendered(data))
+    expect(await status(pdf(service))).toBe(413)
+
+    vi.mocked(readDocCopy).mockImplementation(async () => deckDoc(['s1']))
+    await storedPngs(4000, 3000)
+    expect(await status(pdf(service))).toBe(503)
+
+    await storedPngs(32, 18)
+    const gone = new AbortController()
+    gone.abort()
+    await expect(pdf(service, { signal: gone.signal })).rejects.toThrow(/cancelled/)
   })
 })

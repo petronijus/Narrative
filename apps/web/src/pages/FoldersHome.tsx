@@ -197,20 +197,25 @@ export function FoldersHome() {
       </header>
 
       <main className="flex-1 overflow-y-auto px-8 py-6">
-        {/* Hero */}
-        <section className="mb-12 mt-10 flex flex-col items-center text-center">
+        {/* Hero: a band in the logo's own paper colour (sampled from its
+            edges), the logo's edges faded into it, in either theme. */}
+        <section className="-mx-8 -mt-6 mb-10 flex flex-col items-center bg-[#eee0cc] px-8 pb-8 pt-10 text-center">
           <h1>
             <img
               src={logoUrl}
               alt="Narrative"
               width={600}
               height={213}
-              className="w-[min(600px,80vw)] h-auto rounded-2xl border border-border shadow-lg"
+              className="w-[min(600px,80vw)] h-auto"
+              style={{
+                maskImage:
+                  'linear-gradient(to right, transparent, #000 3%, #000 97%, transparent), ' +
+                  'linear-gradient(to bottom, transparent, #000 12%, #000 85%, transparent)',
+                maskComposite: 'intersect',
+              }}
             />
           </h1>
-          <p className="mt-4 text-base md:text-lg text-muted-foreground/80">
-            Pro tool for keynote masters
-          </p>
+          <p className="mt-2 text-base md:text-lg text-[#6b5a45]">Pro tool for keynote masters</p>
         </section>
 
         {error !== null && (

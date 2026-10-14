@@ -346,7 +346,9 @@ export function attachmentDisposition(
  */
 export function safeFilename(title: string): string {
   const trimmed = title
-    .replace(/[\u0000-\u001f\u007f"'<>\\/|?*]+/g, ' ')
+    // Control characters, and bidi controls that would make a name read
+    // as another extension ("invoice\u202Eexe"), become spaces.
+    .replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069"'<>\\/|?*]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
   return trimmed.length === 0 ? 'deck' : trimmed.slice(0, 120)

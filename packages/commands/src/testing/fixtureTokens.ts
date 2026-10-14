@@ -65,7 +65,15 @@ export function createFixtureFolderTokens(): FolderTokensSnapshot {
  * commands' examples lay slides out with it.
  */
 function withCompiledExamplePack(tokens: FolderTokensSnapshot): FolderTokensSnapshot {
-  const plan = compileStylePack(exampleStylePack(), { tokens, fonts: null })
+  return withCompiledPack(tokens, exampleStylePack())
+}
+
+/** `tokens` with `pack` compiled into them, as style.pack.edit { op: "compile" } leaves a folder. */
+export function withCompiledPack(
+  tokens: FolderTokensSnapshot,
+  pack: StylePack,
+): FolderTokensSnapshot {
+  const plan = compileStylePack(pack, { tokens, fonts: null })
   for (const t of plan.colors)
     tokens.colors[t.id] = { id: t.id, ...t.fields, origin: t.origin } as ColorTokenSnapshot
   for (const t of plan.textStyles)

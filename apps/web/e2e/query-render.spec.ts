@@ -9,7 +9,8 @@
  * it is a page kept from the previous look); a compare of a slide before
  * the run that changed it and now (A3.6: the "before" drawn on a frozen
  * page); the text boxes whose text overflows, measured with the real fonts, and a box sized exactly to
- * its text (150% and 80% line spacing) reported as fitting. Needs the whole dev stack, the
+ * its text (150% and 80% line spacing) reported as fitting; a picture's `focus` (A5.1) choosing
+ * which band of it covers a frame of another shape. Needs the whole dev stack, the
  * render worker included (`just dev`).
  */
 
@@ -117,6 +118,49 @@ test('a region comes at full resolution', async ({ request }) => {
   expect(near(pixelOf(png, 10, 10), { r: 255, g: 255, b: 255 })).toBe(true)
   expect(near(pixelOf(png, 60, 60), RED)).toBe(true)
   expect(near(pixelOf(png, 40, 60), { r: 255, g: 255, b: 255 })).toBe(true)
+})
+
+test("a picture's focus keeps its side in view when it covers a frame of another shape", async ({
+  request,
+}) => {
+  test.setTimeout(120_000)
+  await seedDeck(request)
+  // A square picture, red above green, covering a 4:1 frame: only a band
+  // of it shows, which band is the focus's.
+  const picture = new PNG({ width: 100, height: 100 })
+  for (let y = 0; y < 100; y++)
+    for (let x = 0; x < 100; x++) {
+      const c = y < 50 ? RED : GREEN
+      const i = (y * 100 + x) << 2
+      picture.data[i] = c.r
+      picture.data[i + 1] = c.g
+      picture.data[i + 2] = c.b
+      picture.data[i + 3] = 255
+    }
+  const { assetId } = await command<{ assetId: string }>(request, 'media.upload', {
+    file: { base64: PNG.sync.write(picture).toString('base64'), filename: 'halves.png' },
+  })
+  const frame = { x: 800, y: 600, width: 400, height: 100 }
+  const shown = async (focus: 'top' | 'bottom' | null) => {
+    await command(request, 'object.create', {
+      slide: { index: 0 },
+      id: `pic-${focus ?? 'centre'}`,
+      object: { type: 'image', ...frame, assetId, fit: 'cover', ...(focus ? { focus } : {}) },
+    })
+    const { png } = await look(request, { slide: { index: 0 }, region: frame })
+    await command(request, 'object.delete', {
+      slide: { index: 0 },
+      objects: [`pic-${focus ?? 'centre'}`],
+    })
+    return { top: pixelOf(png, 200, 10), bottom: pixelOf(png, 200, 90) }
+  }
+  const top = await shown('top')
+  expect(near(top.top, RED) && near(top.bottom, RED)).toBe(true)
+  const bottom = await shown('bottom')
+  expect(near(bottom.top, GREEN) && near(bottom.bottom, GREEN)).toBe(true)
+  // Centred: the middle band, red over green.
+  const centre = await shown(null)
+  expect(near(centre.top, RED) && near(centre.bottom, GREEN)).toBe(true)
 })
 
 test('a sheet shows the slides numbered, in one picture', async ({ request }) => {

@@ -6,7 +6,7 @@
  * deck's meta and the render worker's measurement of the text.
  *
  * Rules (`QA_RULE_IDS`), each at the level the pack's `qa.rules` gives it,
- * else its default (DEFAULT_LEVELS):
+ * else its default (shared QA_RULE_DEFAULT_LEVELS):
  *   - fit — text that runs below its box (measured with the real fonts); a
  *     growing box against the next object below it or the footer band,
  *     with `qa.fit.slackLines` of slack; `growWarnRatio` warns early.
@@ -21,6 +21,9 @@
  *     missing-picture — a picture region still holding its placeholder;
  *     sentinel — placeholder text (`qa.sentinels`, furniture field
  *     sentinels) left in.
+ *   - rhythm — one layout on more than half the slides of a deck of four
+ *     or more (the narrative standard: a deck rhythms through a mix of
+ *     formats); judged only when the whole deck is checked.
  *   - editorial: caps, italics, bullet-glyph, title-period (a title's
  *     period and length), accent-budget, typography (quotes, ranges,
  *     dashes, spaces before units, ellipses, the pack's replacements,
@@ -31,6 +34,7 @@
 
 import * as Y from 'yjs'
 import {
+  QA_RULE_DEFAULT_LEVELS,
   SLIDE_HEIGHT,
   SLIDE_WIDTH,
   type ColorRef,
@@ -85,6 +89,8 @@ export interface CheckInput {
   slides: ReadonlyArray<{ slide: Slide; index: number }>
   /** null: the fit was not measured (asked off). */
   measurement: CheckMeasurement | null
+  /** Every slide of the deck, when the whole deck is checked: deck-wide rules (rhythm) judge it. */
+  deck?: ReadonlyArray<Slide>
 }
 
 export interface CheckReport {
@@ -95,24 +101,8 @@ export interface CheckReport {
   findings: CheckFinding[]
 }
 
-const DEFAULT_LEVELS: Readonly<Record<QaRuleId, CheckLevel>> = {
-  fit: 'error',
-  'font-missing': 'error',
-  'partial-overlap': 'error',
-  'outside-grid': 'warn',
-  'text-color': 'error',
-  'variant-mix': 'error',
-  furniture: 'error',
-  sentinel: 'error',
-  'missing-picture': 'error',
-  caps: 'warn',
-  italics: 'error',
-  'bullet-glyph': 'warn',
-  'title-period': 'warn',
-  'accent-budget': 'warn',
-  typography: 'warn',
-  emoji: 'error',
-}
+/** A deck shorter than this has no rhythm to judge. */
+const RHYTHM_MIN_SLIDES = 4
 
 /** Rounding of stored geometry (half pixels) and of the measurement. */
 const TOLERANCE = 1
@@ -232,7 +222,7 @@ export function checkDeck(input: CheckInput): CheckReport {
   const levelOf = (rule: QaRuleId): CheckLevel | null => {
     const set = qa.rules?.[rule]
     if (set === 'off') return null
-    return set ?? DEFAULT_LEVELS[rule]
+    return set ?? QA_RULE_DEFAULT_LEVELS[rule]
   }
   const report = (rule: QaRuleId, f: Omit<CheckFinding, 'rule' | 'level'>, level?: CheckLevel) => {
     const l = level ?? levelOf(rule)
@@ -249,6 +239,21 @@ export function checkDeck(input: CheckInput): CheckReport {
         message: `The font ${family} did not load: the fit of its text is not verified`,
       })
     }
+  }
+
+  // ── Deck-wide: the rhythm of its layouts ───────────────────────────────
+  if (input.deck !== undefined && input.deck.length >= RHYTHM_MIN_SLIDES) {
+    const count = new Map<string, number>()
+    for (const s of input.deck)
+      if (s.layout?.packId === pack.id)
+        count.set(s.layout.layoutId, (count.get(s.layout.layoutId) ?? 0) + 1)
+    for (const [layoutId, n] of count)
+      if (n * 2 > input.deck.length)
+        report('rhythm', {
+          message:
+            `${n} of ${input.deck.length} slides use the layout '${layoutId}': vary the formats ` +
+            '(another layout or archetype for some of them) so the deck does not read flat',
+        })
   }
 
   const variant: Record<string, string> = {}

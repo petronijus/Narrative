@@ -143,6 +143,7 @@ export {
   PackEditorialSchema,
   QA_RULE_IDS,
   QaRuleIdSchema,
+  QA_RULE_DEFAULT_LEVELS,
   PackQaSchema,
   ARCHETYPES,
   ArchetypeSchema,
@@ -162,6 +163,8 @@ export {
   type PackListLevel,
   type PackFontFace,
   type PackAxis,
+  type Archetype,
 } from './stylePack.js'
 export { validateStylePack, type PackIssue } from './stylePackValidate.js'
 export { exampleStylePack } from './stylePackExample.js'
+export { richExampleStylePack } from './stylePackRichExample.js'

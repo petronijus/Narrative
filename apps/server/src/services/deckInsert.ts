@@ -54,9 +54,14 @@ import {
   type DeckMutationContext,
   type ObjectsMutationContext,
   readFolderTokens,
+  readSlideLayout,
+  readStylePack,
 } from '@narrative/slide-model'
+import type { StylePack } from '@narrative/shared'
 import {
   applyInsertPlan,
+  archetypeOfLayout,
+  storedStylePack,
   planForMaster,
   planInsert,
   sameDocument,
@@ -445,9 +450,16 @@ export async function rewriteForTarget(
         readDocCopy(deps, 'folder', args.targetFolderId),
       ])
       try {
-        const plan = planTokenRebinding(readFolderTokens(srcFolder), readFolderTokens(dstFolder))
+        const plan = planTokenRebinding(readFolderTokens(srcFolder), readFolderTokens(dstFolder), {
+          destPackId: validPack(dstFolder)?.id,
+        })
+        // What each copied slide does in its deck, while the source pack can
+        // still say it (A5.4): the target pack's restyle picks its layout for
+        // the same archetype (style.deck.apply { relayout }).
+        const sourcePack = validPack(srcFolder)
         scratch.transact(() => {
           tokens = applyTokenRebinding(scratch, plan, records)
+          if (sourcePack !== null) recordArchetypes(records, sourcePack)
         })
       } finally {
         srcFolder.destroy()
@@ -459,6 +471,35 @@ export async function rewriteForTarget(
   } catch (err) {
     await discardOwnedMedia({ db: deps.db, owner: target, media, log: deps.log })
     throw err
+  }
+}
+
+/**
+ * A folder's stored style pack when it is a valid one, else null: any
+ * folder editor's client may write the stored pack, and copying slides must
+ * not fail because of it (the archetypes are a hint).
+ */
+function validPack(folder: Y.Doc): StylePack | null {
+  const stored = readStylePack(folder)
+  if (stored === null) return null
+  try {
+    return storedStylePack(stored as unknown as StylePack)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Copied slides laid out with `pack` get the archetype its `archetypeMap`
+ * gives their layout, unless they carry one already.
+ */
+function recordArchetypes(records: ReadonlyArray<Y.Map<unknown>>, pack: StylePack): void {
+  for (const record of records) {
+    const layout = readSlideLayout(record.get('layout'))
+    if (layout === undefined || layout.archetype !== undefined || layout.packId !== pack.id)
+      continue
+    const archetype = archetypeOfLayout(pack, layout.layoutId)
+    if (archetype !== undefined) record.set('layout', { ...layout, archetype })
   }
 }
 

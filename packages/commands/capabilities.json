@@ -54,7 +54,7 @@
       "id": "animation.add",
       "domain": "animation",
       "title": "Add animation",
-      "description": "Append an animation step for an object to the end of its slide's timeline. Omitted fields take the editor defaults: trigger afterPrevious, duration 0.6 s, delay 0 s, easing \"power2.out\"; moveTo targets the slide centre (960, 540) and rotateTo turns to 180°. Presets: fadeIn, fadeOut, slideIn, slideOut, scaleIn, scaleOut, zoomIn, rotateIn, bounceIn, flipIn, popIn, dissolveIn, wipeIn, moveTo, rotateTo. Triggers: afterPrevious (starts when the previous step ends), withPrevious (starts together with the previous step), onClick (waits for a click or the next key). The first step (step 0) with afterPrevious or withPrevious starts as soon as the slide appears; an onClick step 0 waits for the first click. Steps of older decks may read back as trigger onEnter (legacy: starts with the slide wherever it sits); it cannot be chosen, and a step keeps it until its trigger is changed. Rotation units differ by preset, as the animation engine defines them: rotateIn `angle` is in RADIANS (the starting offset, default -1.5708 = a quarter turn), rotateTo `angleDeg` is in DEGREES (the absolute end angle). Use animation.reorder to move the step, animation.update to change it.",
+      "description": "Append an animation step for an object to the end of its slide's timeline. Omitted fields take the editor defaults: trigger afterPrevious, duration 0.6 s, delay 0 s, easing \"power2.out\"; moveTo targets the slide centre (960, 540) and rotateTo turns to 180°. Use animation.reorder to move the step, animation.update to change it.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -111,7 +111,7 @@
       "id": "animation.update",
       "domain": "animation",
       "title": "Update animation",
-      "description": "Change an animation step: preset, trigger, duration (s), delay (s), easing, params. `params` is MERGED into the current params (a key set to null is removed; params: null clears them all). Changing `preset` drops params the new preset does not use and fills its defaults (moveTo: slide centre, rotateTo: 180°). The animated object cannot be changed here. Presets: fadeIn, fadeOut, slideIn, slideOut, scaleIn, scaleOut, zoomIn, rotateIn, bounceIn, flipIn, popIn, dissolveIn, wipeIn, moveTo, rotateTo. Triggers: afterPrevious (starts when the previous step ends), withPrevious (starts together with the previous step), onClick (waits for a click or the next key). The first step (step 0) with afterPrevious or withPrevious starts as soon as the slide appears; an onClick step 0 waits for the first click. Steps of older decks may read back as trigger onEnter (legacy: starts with the slide wherever it sits); it cannot be chosen, and a step keeps it until its trigger is changed. Rotation units differ by preset, as the animation engine defines them: rotateIn `angle` is in RADIANS (the starting offset, default -1.5708 = a quarter turn), rotateTo `angleDeg` is in DEGREES (the absolute end angle).",
+      "description": "Change an animation step: preset, trigger, duration (s), delay (s), easing, params. `params` is MERGED into the current params (a key set to null is removed; params: null clears them all). Changing `preset` drops params the new preset does not use and fills its defaults (moveTo: slide centre, rotateTo: 180°). The animated object cannot be changed here. Steps of older decks may read back as trigger onEnter (legacy: starts with the slide wherever it sits); it cannot be chosen, and a step keeps it until its trigger is changed.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -317,6 +317,23 @@
       ]
     },
     {
+      "id": "deck.exportPdf",
+      "domain": "deck",
+      "title": "Export slides as PDF",
+      "description": "The deck as one PDF, a page per slide as the editor shows it now: pictures of the slides, not editable text (that is deck.exportPptx). Skipped slides are left out unless `includeSkipped`. A download URL for 15 minutes — a bearer link, only for the user who asked — or `delivery: \"base64\"` (≤ 8 MB). At most 40 slides a call; about a second a slide. Any reader of the deck.",
+      "role": "viewer",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks/:id/export.pdf"
+        }
+      ]
+    },
+    {
       "id": "deck.exportPng",
       "domain": "deck",
       "title": "Export slides as PNG",
@@ -408,7 +425,7 @@
       "id": "deck.insertFrom",
       "domain": "deck",
       "title": "Insert slides from a file or deck",
-      "description": "Insert slides into this deck at position `at` (0-based; omitted = at the end; past the end = at the end), taken from a .pptx file (URL or base64, at most 200 MB) or from another Narrative deck you can edit (optionally slides `from`..`to`, or exactly the slide ids in `slides`; copying needs the same editor access as exporting that deck, so a deck you can only view is refused). Slides keep their objects, animations, speaker notes, transition and background; media this deck could not show is copied into it, the source folder's linked media included. From a deck in another folder, token references are rebound to this folder the way deck.moveToFolder does it. It is one change, reverted as one step. Returns the new slide ids — restyle them next if they should match this deck. For a new deck from a file use deck.importPptx.",
+      "description": "Insert slides into this deck at position `at` (0-based; omitted = at the end; past the end = at the end), taken from a .pptx file (URL or base64, at most 200 MB) or from another Narrative deck you can edit (optionally slides `from`..`to`, or exactly the slide ids in `slides`; copying needs the same editor access as exporting that deck, so a deck you can only view is refused). Slides keep their objects, animations, speaker notes, transition and background; media this deck could not show is copied into it, the source folder's linked media included. From a deck in another folder, token references are rebound to this folder the way deck.moveToFolder does it. One change, reverted as one step. To make the new slides match this deck: style.deck.apply { relayout: \"archetype\", slides }, then slide.applyLayout for what it lists unmatched (the insert-restyle prompt). A new deck from a file is deck.importPptx.",
       "role": "editor",
       "effects": ["doc", "server"],
       "undo": "undoable",
@@ -1243,7 +1260,7 @@
       "id": "query.check",
       "domain": "query",
       "title": "Check the deck against its brand",
-      "description": "Check slides against the deck's folder style pack, as the brand's QA does: text that does not fit (measured with the real fonts; a growing box against what is below it), partial overlaps, content outside the margins, text colours outside the pack, a background of another variant, missing footer or page number, placeholder text, empty picture regions, and the editorial rules (capitals, italics, bullet glyphs, title periods and length, the accent budget, typography, emoji). Each finding names its slide, object (and table cell), the rule and an error or warning level; fix the errors before you report a slide done. `fit: false` skips the measurement (a few seconds per 20 slides). A font that did not load leaves the fit unverified (`fitVerified: false`, an error). Any reader of the deck.",
+      "description": "Check slides against the deck's folder style pack, as the brand's QA does: text that does not fit (measured with the real fonts; a growing box against what is below it), partial overlaps, content outside the margins, text colours outside the pack, a background of another variant, missing footer or page number, placeholder text, empty picture regions, and the editorial rules (capitals, italics, bullet glyphs, title periods and length, the accent budget, typography, emoji); on the whole deck, one layout on most slides. Each finding names its slide, object (and table cell), the rule and an error or warning level; fix the errors before you report a slide done. `fit: false` skips the measurement (a few seconds per 20 slides; at most 100 slides measured at once). A font that did not load leaves the fit unverified (`fitVerified: false`, an error). Any reader of the deck.",
       "role": "viewer",
       "effects": [],
       "undo": "n/a",
@@ -1255,7 +1272,7 @@
       "id": "query.deck",
       "domain": "query",
       "title": "Deck outline",
-      "description": "A compact outline of the whole deck, built to fit a model's context: every slide with its id, 0-based index, name, a title guessed from its largest text, outline indent, skipped flag, transition kind and object / animation counts and its style pack layout, plus the deck's alignment guides and its meta (pack variant, footer fields, language; set with style.deck.apply). Start here, then read one slide with query.slide. Slides are 1920 x 1080 px.",
+      "description": "A compact outline of the whole deck, built to fit a model's context: every slide with its id, 0-based index, name, a title guessed from its largest text, outline indent, skipped flag, transition kind and object / animation counts and its style pack layout, plus the deck's alignment guides and its meta (pack variant, footer fields, language; set with style.deck.apply). A deck built from a spec says how many slides it has (`specSlides`); `spec: true` returns the spec itself, to build again. Start here, then read one slide with query.slide. Slides are 1920 x 1080 px.",
       "role": "viewer",
       "effects": [],
       "undo": "n/a",
@@ -1291,7 +1308,7 @@
       "id": "query.slide",
       "domain": "query",
       "title": "Read slide",
-      "description": "Everything on one slide: every object with all its properties in stacking order (first = backmost), the animation steps in play order, the transition, the background (null = default white), the style pack layout it follows (slide.applyLayout) and the speaker notes as plain text (slide.notes.get has them as Markdown with their formatting). Text bodies come as plain `text` (blank line between paragraphs) plus `paragraphs` with runs and list attributes when formatted; colours as \"#rrggbb\" or { $token }. For one object use query.object. It also reads a component master: target the component (componentId) and read slide { index: 0 } — edit the master with the same object and text commands.",
+      "description": "Everything on one slide: every object with all its properties in stacking order (first = backmost), the animation steps in play order, the transition, the background (null = default white), the style pack layout it follows (slide.applyLayout), its brief (the message and claims of the spec that built it) and the speaker notes as plain text (slide.notes.get has them as Markdown with their formatting). Text bodies come as plain `text` (blank line between paragraphs) plus `paragraphs` with runs and list attributes when formatted; colours as \"#rrggbb\" or { $token }. For one object use query.object. It also reads a component master: target the component (componentId) and read slide { index: 0 } — edit the master with the same object and text commands.",
       "role": "viewer",
       "effects": [],
       "undo": "n/a",
@@ -1465,7 +1482,7 @@
       "id": "slide.applyLayout",
       "domain": "slide",
       "title": "Lay a slide out with a pack layout",
-      "description": "Lay a slide out with one of its folder's style pack layouts (style.pack.get \"layouts\" lists them by purpose and slots): each slot becomes a box in the brand's text style and place, a picture, or the pack's component; the pack's footer, page number and decoration are drawn. `content` fills slots by name: text (a string or { paragraphs }) or a picture { assetId }. On a slide that has a layout already, the text and pictures of its slots move into the new layout's slots of the same name or role; objects without a slot stay as they are. `surface`: where the layout offers a choice (a photo tone). The pack must have been compiled. Undo: one step.",
+      "description": "Lay a slide out with one of its folder's style pack layouts (style.pack.get \"layouts\" lists them by purpose and slots): each slot becomes a box in the brand's text style and place, a picture, or the pack's component; the pack's footer, page number and decoration are drawn. `content` fills slots by name: text (a string or { paragraphs }) or a picture { assetId }. On a slide that has a layout already, the text and pictures already on the slide move into the slots of the same name, else of their `role` (top to bottom, left to right; set roles with object.update first to lay out a plain slide); `unplaced` lists what stayed where it was. `archetype` instead of `layoutId` takes the layout the pack maps to that kind of slide. `surface`: where the layout offers a choice (a photo tone). The pack must have been compiled. Undo: one step.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -1616,7 +1633,7 @@
       "id": "style.deck.apply",
       "domain": "style",
       "title": "Re-style a deck with its folder's pack",
-      "description": "Re-lay every slide of the deck that follows a pack layout with its folder's style pack, keeping each slot's content, and redraw the pack's footer, page numbers and decoration. `variant` sets the deck's variant, one value per pack axis (style.pack.get \"summary\" lists them) — its colours follow; `fields` fills the footer's fields (null clears one); `lang` picks the footer language; `guides` (default true) adds the pack's grid as guides. A slide whose layout this pack does not have is left as it is and listed; one on a surface its layout no longer offers goes to the default (listed). Undo: one step.",
+      "description": "Re-lay every slide of the deck that follows a pack layout with its folder's style pack, keeping each slot's content, and redraw the pack's footer, page numbers and decoration. `variant` sets the deck's variant, one value per pack axis (style.pack.get \"summary\" lists them) — its colours follow; `fields` fills the footer's fields (null clears one); `lang` picks the footer language; `guides` (default true) adds the pack's grid as guides. A slide whose layout this pack does not have is left as it is and listed; one on a surface its layout no longer offers goes to the default (listed). `spec` instead builds the whole deck from a deck spec (the build-deck playbook), checked against the pack first. Building again keeps the slides of unchanged spec slides, edits included, and builds the rest fresh; slides not built from a spec are refused unless `replace: true`. Not in ops.apply. The deck keeps the spec (query.deck { spec: true }) to build again; it is deck content every viewer has (spec: null forgets it). `relayout: \"archetype\"` also restyles slides on another pack's layout: each takes this pack's layout for its archetype, its content by slot and role, its colours and text styles this pack's by purpose; `slides` limits it. Undo: one step.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -1925,7 +1942,7 @@
       "id": "token.create",
       "domain": "token",
       "title": "Add a design token",
-      "description": "Add a colour or a text style to the folder, for every deck in it. A colour is { name, value } (\"#RRGGBB\" or \"#RRGGBBAA\"), optionally byVariant { axis, values } (a value per deck variant) and bySurface; a folder holds at most 24 colours. A text style names what linked text takes — family, weight, size, lineHeight (multiple of the size), letterSpacing, paragraph spacing, colour (a hex or a folder colour), textTransform, minSize (the floor of autofit \"shrink\"), levels (list defaults per paragraph level); apply it with text.style.apply; its name must be new in the folder (token.list). Returns the new id. Undo: token.delete. Needs the editor role in the folder.",
+      "description": "Add a colour or a text style to the folder, for every deck in it. A colour is { name, value } (\"#RRGGBB\" or \"#RRGGBBAA\"), optionally byVariant { axis, values } (a value per deck variant) and bySurface; a folder holds at most 24 colours. A text style holds the typography linked text takes (its fields are the schema's); apply it with text.style.apply; its name must be new in the folder (token.list). Returns the new id. Undo: token.delete. Needs the editor role in the folder.",
       "role": "editor",
       "effects": ["server"],
       "undo": "undoable",
@@ -2017,14 +2034,7 @@
       ]
     }
   ],
-  "knownMissing": [
-    {
-      "capability": "deck.exportPdf",
-      "phase": "A5",
-      "source": "new",
-      "note": "moved out of A3 by Petr (2026-10-10): not wanted yet; the render worker (A3) makes it a raster PDF of its PNGs when it is"
-    }
-  ],
+  "knownMissing": [],
   "allowlist": [
     {
       "capability": "Zoom and pan",

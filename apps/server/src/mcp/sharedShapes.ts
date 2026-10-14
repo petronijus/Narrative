@@ -22,6 +22,8 @@
  * repeated widely enough to be worth it must be listed here.
  */
 
+import { inlineCheapDefinitions } from './schemaCompact.js'
+
 type JsonSchema = Record<string, unknown>
 
 export interface SharedShape {
@@ -57,6 +59,16 @@ const COMPACT_TOKEN_REF = {
 /** The text body input (text.set, object.create, slide.applyLayout) as the commands' zod produces it. */
 const TEXT_BODY: JsonSchema = JSON.parse(
   '{"anyOf":[{"type":"string"},{"type":"object","properties":{"paragraphs":{"minItems":1,"maxItems":1000,"type":"array","items":{"type":"object","properties":{"list":{"type":"string","enum":["bullet","number","none"]},"level":{"type":"integer","minimum":0,"maximum":8},"bulletChar":{"type":"string"},"numberFormat":{"type":"string","enum":["decimal","decimalParen","lowerAlpha","lowerAlphaParen","upperAlpha","upperAlphaParen","lowerRoman","upperRoman"]},"startAt":{"type":"integer","exclusiveMinimum":0},"text":{"type":"string"},"runs":{"maxItems":1000,"type":"array","items":{"type":"object","properties":{"text":{"type":"string"},"bold":{"type":"boolean"},"fontWeight":{"type":"integer","minimum":100,"maximum":900,"multipleOf":100},"italic":{"type":"boolean"},"underline":{"type":"boolean"},"color":{"anyOf":[{"type":"integer","minimum":0,"maximum":16777215},{"type":"string","pattern":"^#(?:[0-9a-f]{3}|[0-9a-f]{6})$"}]},"fontFamily":{"type":"string"},"fontSize":{"type":"number","exclusiveMinimum":0,"maximum":2000}},"required":["text"]}}}}}},"required":["paragraphs"]}]}',
+) as JsonSchema
+
+/** A file argument (media_upload, deck_importPptx, folder_fonts_upload, …): { url } or { base64 }. */
+const FILE_INPUT: JsonSchema = JSON.parse(
+  '{"anyOf":[{"type":"object","properties":{"url":{"type":"string","format":"uri"},"filename":{"type":"string"},"mimeType":{"type":"string","pattern":"^[\\\\w.+-]+\\\\/[\\\\w.+-]+$"}},"required":["url"]},{"type":"object","properties":{"base64":{"type":"string"},"filename":{"type":"string"},"mimeType":{"type":"string","pattern":"^[\\\\w.+-]+\\\\/[\\\\w.+-]+$"}},"required":["base64"]}]}',
+) as JsonSchema
+
+/** The part of a text body text_format and text_list act on. */
+const TEXT_RANGE: JsonSchema = JSON.parse(
+  '{"anyOf":[{"type":"object","properties":{"start":{"type":"integer","minimum":0,"description":"0-based character offset in the body text as queries return it"},"length":{"type":"integer","minimum":0}},"required":["start","length"],"description":"Offsets count characters of the text exactly as query_object returns it (a paragraph break \\"\\\\n\\\\n\\" is 2)"},{"type":"object","properties":{"match":{"type":"string","description":"Exact, case-sensitive text to find"},"occurrence":{"anyOf":[{"type":"integer","minimum":1},{"type":"string","const":"all"}],"description":"Which match, 1-based (default 1), or \\"all\\""}},"required":["match"],"description":"The range(s) where `match` occurs"}],"description":"Omit to target the whole body"}',
 ) as JsonSchema
 
 export const SHARED_SHAPES: readonly SharedShape[] = [
@@ -138,23 +150,108 @@ export const SHARED_SHAPES: readonly SharedShape[] = [
     compact: { type: 'array', items: { type: 'string' } },
     note: 'A list of object ids holds 1 to 500 ids.',
   },
+  {
+    // A5.0: the url and base64 forms each repeated filename and mimeType;
+    // the vocabulary's file notes say what each field is.
+    name: 'file input',
+    match: FILE_INPUT,
+    compact: {
+      type: 'object',
+      properties: {
+        url: { type: 'string' },
+        base64: { type: 'string' },
+        filename: { type: 'string' },
+        mimeType: { type: 'string' },
+      },
+    },
+    note: '',
+  },
+  {
+    name: 'text range',
+    match: TEXT_RANGE,
+    compact: {
+      type: 'object',
+      properties: {
+        start: { type: 'integer' },
+        length: { type: 'integer' },
+        match: { type: 'string' },
+        occurrence: { type: ['integer', 'string'] },
+      },
+    },
+    note:
+      'A text `range` (omit it for the whole body) is { start, length } in characters of the text as query_object ' +
+      'returns it (a paragraph break "\\n\\n" counts 2), or { match, occurrence? }: exact, case-sensitive text, ' +
+      'occurrence 1-based (default 1) or "all".',
+  },
 ]
 
-const KEYED = SHARED_SHAPES.map((s) => [JSON.stringify(s.match), s] as const)
+/** JSON with object keys sorted: two schemas that differ only in key order compare equal. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  )
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`
+}
+
+const KEYED = new Map(SHARED_SHAPES.map((s) => [canonical(s.match), s] as const))
+
+const REF = /^#\/\$defs\/(.+)$/
 
 /**
- * Replace every subtree of `schema` that is exactly a shared shape with its
- * compact form (outermost match wins; a replaced subtree is not searched
- * again).
+ * `value` with every `$ref` into `defs` replaced by its definition (siblings
+ * such as a description win, as in schemaCompact.ts' `resolve`); a recursive
+ * definition stays a `$ref`.
+ */
+function dereferenced(
+  value: unknown,
+  defs: Record<string, JsonSchema>,
+  open: string[] = [],
+): unknown {
+  if (Array.isArray(value)) return value.map((v) => dereferenced(v, defs, open))
+  if (value === null || typeof value !== 'object') return value
+  const node = value as JsonSchema
+  const ref = typeof node['$ref'] === 'string' ? REF.exec(node['$ref']) : null
+  const name = ref === null ? null : decodeURIComponent(ref[1]!)
+  if (name !== null && defs[name] !== undefined && !open.includes(name)) {
+    const { $ref: _ref, ...siblings } = node
+    return dereferenced({ ...defs[name], ...siblings }, defs, [...open, name])
+  }
+  return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, dereferenced(v, defs, open)]))
+}
+
+/**
+ * Replace every subtree of `schema` that is a shared shape with its compact
+ * form (outermost match wins; a replaced subtree is not searched again). A
+ * subtree matches with its `$ref`s resolved: zod hoists a schema it meets
+ * twice into `$defs`, so the same shape can be written with references on
+ * one tool (object_create's text body) and inline on another. Definitions
+ * left unused afterwards are dropped, those left cheap inlined.
  */
 export function compactSharedShapes(schema: unknown): unknown {
-  if (schema === null || typeof schema !== 'object') return schema
-  const key = JSON.stringify(schema)
-  for (const [k, shape] of KEYED) if (k === key) return structuredClone(shape.compact)
-  if (Array.isArray(schema)) return schema.map(compactSharedShapes)
-  return Object.fromEntries(
-    Object.entries(schema as Record<string, unknown>).map(([k, v]) => [k, compactSharedShapes(v)]),
-  )
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return schema
+  const root = schema as JsonSchema
+  const defs = (root['$defs'] ?? {}) as Record<string, JsonSchema>
+  let replaced = false
+  const walk = (value: unknown, path: string[]): unknown => {
+    if (value === null || typeof value !== 'object') return value
+    // A definition that is a shape is compacted in place, for every use.
+    // A bare `$ref` stays: its definition is compacted in place, and the
+    // reference is shorter than any compact form.
+    const bareRef = !Array.isArray(value) && Object.keys(value).length === 1 && '$ref' in value
+    const shape = bareRef ? undefined : KEYED.get(canonical(dereferenced(value, defs)))
+    if (shape !== undefined && path.length > 0 && !(path.length === 1 && path[0] === '$defs')) {
+      replaced = true
+      return structuredClone(shape.compact)
+    }
+    if (Array.isArray(value)) return value.map((v, i) => walk(v, [...path, String(i)]))
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, walk(v, [...path, k])]),
+    )
+  }
+  const out = walk(root, []) as JsonSchema
+  return replaced && root['$defs'] !== undefined ? inlineCheapDefinitions(out) : out
 }
 
 /** The instructions' sentences for the shared shapes. */

@@ -16,6 +16,7 @@
 import type {
   ArrowObject,
   EllipseObject,
+  ImageFocus,
   ImageMask,
   ImageObject,
   NormalizedPathAnchor,
@@ -723,9 +724,15 @@ export interface Rect {
 /**
  * Where the renderer draws a picture of `size` pixels fitted into `box`
  * (web `mediaFit.applyFit`): scaled to cover the box or to fit inside it,
- * centred. Without a known size the picture fills the box exactly.
+ * centred, or against the side `focus` keeps in view. Without a known size
+ * the picture fills the box exactly.
  */
-export function fittedRect(box: Rect, size: PixelSize | undefined, fit: 'cover' | 'contain'): Rect {
+export function fittedRect(
+  box: Rect,
+  size: PixelSize | undefined,
+  fit: 'cover' | 'contain',
+  focus?: ImageFocus,
+): Rect {
   if (size === undefined || !(size.width > 0) || !(size.height > 0)) return box
   const scale =
     fit === 'cover'
@@ -733,7 +740,14 @@ export function fittedRect(box: Rect, size: PixelSize | undefined, fit: 'cover' 
       : Math.min(box.width / size.width, box.height / size.height)
   const width = size.width * scale
   const height = size.height * scale
-  return { x: box.x + (box.width - width) / 2, y: box.y + (box.height - height) / 2, width, height }
+  const spareX = box.width - width
+  const spareY = box.height - height
+  return {
+    x: box.x + (focus === 'left' ? 0 : focus === 'right' ? spareX : spareX / 2),
+    y: box.y + (focus === 'top' ? 0 : focus === 'bottom' ? spareY : spareY / 2),
+    width,
+    height,
+  }
 }
 
 /**
@@ -834,7 +848,12 @@ export async function writeImage(
   // The renderer fits the picture into its crop rectangle (or its frame)
   // and clips to the frame; `srcRect` says exactly that to PowerPoint.
   const box = { x: o.x, y: o.y, width: o.width, height: o.height }
-  const picture = fittedRect(o.imageRect ?? box, await ctx.pixelSize(o.assetId), o.fit ?? 'cover')
+  const picture = fittedRect(
+    o.imageRect ?? box,
+    await ctx.pixelSize(o.assetId),
+    o.fit ?? 'cover',
+    o.focus,
+  )
   const insets = insetsOf(box, picture)
   const cropSignature = insets === null ? '' : `${insets.l},${insets.t},${insets.r},${insets.b}`
   return tag(

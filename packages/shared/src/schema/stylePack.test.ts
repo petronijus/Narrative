@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { StylePackSchema, type StylePack } from './stylePack.js'
 import { validateStylePack } from './stylePackValidate.js'
 import { exampleStylePack } from './stylePackExample.js'
+import { richExampleStylePack } from './stylePackRichExample.js'
 
 const paths = (pack: StylePack): string[] => validateStylePack(pack).map((i) => i.path)
 
@@ -16,6 +17,16 @@ describe('style pack', () => {
     const pack = exampleStylePack()
     expect(StylePackSchema.safeParse(pack).success).toBe(true)
     expect(validateStylePack(pack)).toEqual([])
+  })
+
+  it('the rich example pack (A5.2) has the shape, passes every rule, and maps the archetypes a deck needs', () => {
+    const pack = richExampleStylePack()
+    const parsed = StylePackSchema.safeParse(pack)
+    expect(parsed.error?.issues ?? []).toEqual([])
+    expect(validateStylePack(pack)).toEqual([])
+    expect(pack.layouts).toHaveLength(8)
+    for (const a of ['cover', 'agenda', 'divider', 'content', 'comparison', 'picture', 'statement', 'closer'])
+      expect(pack.archetypeMap[a as keyof StylePack['archetypeMap']]?.length, a).toBeGreaterThan(0)
   })
 
   it('rejects malformed fields by shape', () => {

@@ -25,7 +25,8 @@ import {
   settle,
   type AgentWorld,
 } from '../test-support/agentWorld.js'
-import type { HostRequest, HostResult } from './serverHost.js'
+import { exampleStylePack } from '@narrative/shared'
+import { DECK_BUILDS_PER_MINUTE, type HostRequest, type HostResult } from './serverHost.js'
 
 let world: AgentWorld
 
@@ -701,5 +702,61 @@ describe("a folder read its decks' guests may run too", () => {
       await run('member', 'token.usages', { category: 'colors', tokenId: 'c1' }),
     ).toMatchObject({ ok: true, result: { usages: [] } })
     expect(usages).toHaveBeenCalledOnce()
+  })
+})
+
+describe('deck builds from a spec (A5.3)', () => {
+  it(`allows ${DECK_BUILDS_PER_MINUTE} a minute per user, then refuses before reading anything`, async () => {
+    // No pack in the deck's folder: each build fails on its own, after the limiter counted it.
+    const build = () =>
+      exec({
+        actor: { userId: 'ed' },
+        invocation: {
+          command: 'style.deck.apply',
+          input: {
+            spec: { schemaVersion: 1, packId: 'example', slides: [{ archetype: 'cover' }] },
+          },
+        },
+      })
+    for (let i = 0; i < DECK_BUILDS_PER_MINUTE; i++)
+      expect(await build()).not.toMatchObject({
+        error: { message: expect.stringContaining('a minute') },
+      })
+    expect(await build()).toMatchObject({
+      ok: false,
+      error: { code: 'conflict', message: expect.stringContaining('too many deck builds') },
+    })
+    // Other calls of the command are not counted.
+    expect(
+      await exec({
+        actor: { userId: 'ed' },
+        invocation: { command: 'style.deck.apply', input: { guides: false } },
+      }),
+    ).not.toMatchObject({ error: { message: expect.stringContaining('a minute') } })
+  })
+
+  it('does not count a spec its checks refuse', async () => {
+    world.setFolder(
+      'deck1',
+      'f1',
+      { colors: { navy: { name: 'Navy', value: '#001e50' } } },
+      exampleStylePack() as unknown as Record<string, unknown>,
+    )
+    // The pack has no layout for an agenda: refused by the checks, every time.
+    const refused = () =>
+      exec({
+        actor: { userId: 'ed' },
+        invocation: {
+          command: 'style.deck.apply',
+          input: {
+            spec: { schemaVersion: 1, packId: 'example', slides: [{ archetype: 'agenda' }] },
+          },
+        },
+      })
+    for (let i = 0; i < DECK_BUILDS_PER_MINUTE + 2; i++)
+      expect(await refused()).toMatchObject({
+        ok: false,
+        error: { code: 'invalid_input', message: expect.stringContaining('agenda') },
+      })
   })
 })

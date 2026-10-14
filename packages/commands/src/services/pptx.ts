@@ -18,6 +18,12 @@ export interface ImportPptxResult {
   slideHeight: number
   embeddedFontCount: number
   referencedFontFamilies: string[]
+  /**
+   * From a .pptx: per slide, the PowerPoint placeholder each object filled
+   * (title, ctrTitle, subTitle, body, pic, obj, …) — a hint for its role
+   * when the slides are restyled (A5.5). Reported, not stored.
+   */
+  placeholders?: Array<{ slide: string; objects: Array<{ object: string; type: string }> }>
 }
 
 /** Where `deck.insertFrom` takes slides from. */
@@ -53,6 +59,12 @@ export interface SlideInsertResult {
   tokens?: { rebound: number; literalised: number; detached: number; unmatched: number }
   /** Deck sources: slide links to source slides that were not copied (removed). */
   droppedLinks?: number
+  /**
+   * From a .pptx: per slide, the PowerPoint placeholder each object filled
+   * (title, ctrTitle, subTitle, body, pic, obj, …) — a hint for its role
+   * when the slides are restyled (A5.5). Reported, not stored.
+   */
+  placeholders?: Array<{ slide: string; objects: Array<{ object: string; type: string }> }>
 }
 
 /**

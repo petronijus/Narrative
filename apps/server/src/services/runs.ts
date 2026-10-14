@@ -15,7 +15,8 @@
  *   Every write of a run carries `agentOrigin(runId)`. On the run's first
  *   write to a document, a `Y.UndoManager` is attached to THAT live Y.Doc
  *   (the one Hocuspocus holds and every editor is synced to), scoped to the
- *   deck's `slides` + `guides` and tracking only the run's origin — so
+ *   deck's `slides`, `guides` and `meta` (slide-model `undoScope`) and
+ *   tracking only the run's origin — so
  *   undoing it removes the run's changes and nothing people did meanwhile.
  *   The document as it was just then is kept beside it (`stateBefore`, the
  *   "before" of query.render's compare), for as long as the history.
@@ -38,6 +39,7 @@
  *   - Single process: runs, history and presence are per server process.
  */
 
+import { createHash } from 'node:crypto'
 import * as Y from 'yjs'
 import { nanoid } from 'nanoid'
 import type { Document } from '@hocuspocus/server'
@@ -53,7 +55,7 @@ import {
   type RevertRunResult,
   type RunDocument,
 } from '@narrative/commands'
-import { agentOrigin, releaseAgentOrigin } from '@narrative/slide-model'
+import { agentOrigin, releaseAgentOrigin, undoScope } from '@narrative/slide-model'
 import type { ServiceDeps } from './deps.js'
 import type { AgentDocuments, DocumentLease } from '../agent/documents.js'
 import type { AgentPresence } from '../agent/presence.js'
@@ -180,6 +182,41 @@ export interface OpToRecord {
   error?: { code: string; message: string; issues?: unknown; opIndex?: number }
   /** Hosts the op's downloads contacted (agent_ops.fetched_hosts). */
   fetchedHosts?: string[]
+}
+
+/**
+ * A logged input over this size is kept as its size and digest (A5.3: a
+ * deck spec is up to 256 kB, and the deck keeps it anyway).
+ */
+const MAX_LOGGED_INPUT_BYTES = 64 * 1024
+/** A logged error's message and issues are bounded too: a refusal can list many problems. */
+const MAX_LOGGED_ERROR_BYTES = 8 * 1024
+
+function boundedInput(input: unknown): unknown {
+  const redacted = redactForAudit(input ?? null)
+  let json: string
+  try {
+    json = JSON.stringify(redacted) ?? 'null'
+  } catch {
+    return { unserialisable: true }
+  }
+  const bytes = Buffer.byteLength(json, 'utf8')
+  if (bytes <= MAX_LOGGED_INPUT_BYTES) return redacted
+  return { truncated: true, bytes, sha256: createHash('sha256').update(json).digest('hex') }
+}
+
+function boundedError(error: NonNullable<OpToRecord['error']>): NonNullable<OpToRecord['error']> {
+  const json = JSON.stringify(error.issues ?? null) ?? 'null'
+  return {
+    code: error.code,
+    message: error.message.slice(0, MAX_LOGGED_ERROR_BYTES),
+    ...(error.issues !== undefined
+      ? Buffer.byteLength(json, 'utf8') <= MAX_LOGGED_ERROR_BYTES
+        ? { issues: error.issues }
+        : { issues: { truncated: true } }
+      : {}),
+    ...(error.opIndex !== undefined ? { opIndex: error.opIndex } : {}),
+  }
 }
 
 function boundedResult(result: unknown): unknown {
@@ -412,10 +449,12 @@ export class RunManager implements AgentRunService {
       runId: run.id,
       seq: run.seq,
       command: op.command,
-      input: redactForAudit(op.input ?? null),
+      input: boundedInput(op.input),
       target: op.target,
       createdAt: this.now(),
-      ...(op.error === undefined ? { result: boundedResult(op.result) } : { error: op.error }),
+      ...(op.error === undefined
+        ? { result: boundedResult(op.result) }
+        : { error: boundedError(op.error) }),
       ...(op.fetchedHosts === undefined || op.fetchedHosts.length === 0
         ? {}
         : { fetchedHosts: [...op.fetchedHosts] }),
@@ -506,7 +545,7 @@ export class RunManager implements AgentRunService {
     }
     this.sweep()
     const document = lease.document
-    const manager = new Y.UndoManager([document.getArray('slides'), document.getArray('guides')], {
+    const manager = new Y.UndoManager(undoScope(document), {
       trackedOrigins: new Set<unknown>([agentOrigin(run.id)]),
       // One stack item per op: never merge by time, split explicitly with
       // stopCapturing() after each op (afterDocumentWrite).

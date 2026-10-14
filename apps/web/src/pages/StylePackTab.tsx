@@ -18,11 +18,11 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { Download, Hammer, Trash2, Upload } from 'lucide-react'
 import {
+  QA_RULE_DEFAULT_LEVELS,
   QA_RULE_IDS,
   type ColorRef,
   type PackLayout,
   type PackRegion,
-  type QaRuleId,
   type StylePack,
 } from '@narrative/shared'
 import { Button } from '@/components/ui/button'
@@ -34,26 +34,6 @@ interface Compiled {
   textStyles: { created: number; updated: number }
   components: { created: number; updated: number }
   missingFonts: string[]
-}
-
-/** Default levels, as the checker applies them (commands stylePack/check.ts). */
-const RULE_DEFAULT: Readonly<Record<QaRuleId, 'error' | 'warn'>> = {
-  fit: 'error',
-  'font-missing': 'error',
-  'partial-overlap': 'error',
-  'outside-grid': 'warn',
-  'text-color': 'error',
-  'variant-mix': 'error',
-  furniture: 'error',
-  sentinel: 'error',
-  'missing-picture': 'error',
-  caps: 'warn',
-  italics: 'error',
-  'bullet-glyph': 'warn',
-  'title-period': 'warn',
-  'accent-budget': 'warn',
-  typography: 'warn',
-  emoji: 'error',
 }
 
 const REGION_FILL: Readonly<Record<PackRegion['type'], string>> = {
@@ -657,7 +637,7 @@ function RulesSection({
                 })
               }
             >
-              <option value="default">default ({RULE_DEFAULT[rule]})</option>
+              <option value="default">default ({QA_RULE_DEFAULT_LEVELS[rule]})</option>
               <option value="error">error</option>
               <option value="warn">warning</option>
               <option value="off">off</option>

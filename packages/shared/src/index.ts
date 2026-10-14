@@ -33,6 +33,7 @@ export type {
   ParagraphAttrs,
   ParagraphAttrKey,
   ImageObject,
+  ImageFocus,
   VideoObject,
   TableObject,
   TableCell,
@@ -78,6 +79,8 @@ export type {
   DeckGuide,
   DeckMeta,
   SlideLayoutRef,
+  SlideBrief,
+  SlideClaim,
 } from './deck.js'
 
 export { DEFAULT_TRANSITION, DEFAULT_BACKGROUND, computeSlideNumber } from './deck.js'
@@ -147,3 +150,4 @@ export {
 } from './render-queue.js'
 
 export * from './schema/index.js'
+export { buildImagePdf, jpegInfo, type JpegInfo, type PdfOptions, type PdfPage } from './pdf.js'

@@ -9,6 +9,7 @@
 
 import type { SlideObject } from './slide.js'
 import type { AnimationStep } from './animation.js'
+import type { Archetype } from './schema/stylePack.js'
 
 export type SlideTransitionKind = 'none' | 'fade' | 'push' | 'cube' | 'magic'
 export type SlidePushDirection = 'left' | 'right' | 'up' | 'down'
@@ -138,6 +139,32 @@ export interface Slide {
    * tokens resolve (A4.2d).
    */
   layout?: SlideLayoutRef
+  /**
+   * What the slide is for (A5.3): its one-line job and the claims it
+   * makes, as the deck spec that built it says. Written by
+   * `style.deck.apply { spec }`, read back by query.slide.
+   */
+  brief?: SlideBrief
+  /**
+   * Which slide of the deck spec built this one (A5.3): a digest of that
+   * spec slide, its pack and language. A rebuild keeps the slides whose
+   * spec slide did not change (ids, animations, people's edits) and builds
+   * the others fresh.
+   */
+  specKey?: string
+}
+
+/** {@link Slide.brief}. */
+export interface SlideBrief {
+  message?: string
+  claims?: SlideClaim[]
+}
+
+/** A claim a slide makes: with its source, flagged as needing one, or illustrative only. */
+export interface SlideClaim {
+  kind: 'sourced' | 'source-needed' | 'illustrative'
+  text: string
+  source?: string
 }
 
 /** A slide's pack layout (A4.4). */
@@ -146,6 +173,13 @@ export interface SlideLayoutRef {
   layoutId: string
   /** The surface the layout pins or the slide chose; colour tokens resolve on it. */
   surface?: string
+  /**
+   * What the slide does in the deck (A5.1): the archetype its layout was
+   * picked for, or the one the pack's `archetypeMap` gives that layout. A
+   * restyle into another pack picks that pack's layout for the same
+   * archetype.
+   */
+  archetype?: Archetype
 }
 
 /**

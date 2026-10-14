@@ -11,10 +11,22 @@
  *     anchor and alignment; a picture, or a placeholder until one is given;
  *     a component's objects at the region's origin (drawn from the pack's
  *     component, as its master holds them).
- *   - Content: given per slot, or carried over from the slide's earlier
- *     layout — the object in the same slot is updated in place (its id,
- *     and so its animations, stay); else the content of an object with the
- *     same role moves into the new region.
+ *   - Content: given per slot, or carried over from what the slide holds —
+ *     the object in the same slot is updated in place (its id, and so its
+ *     animations, stay); else an object with the region's role moves in
+ *     (A5.1: any object carrying a `role`, whether a layout placed it or an
+ *     agent classified it). Regions and objects of one role pair up in
+ *     reading order (top, then left; a region's `fillOrder` first), and only
+ *     where the types fit: text into a text region (or a component's first
+ *     text object), anything else into a picture, chart or table region.
+ *   - What the layout did not place stays where it is and is listed
+ *     (`unplaced`): objects without a slot or role, and objects of the
+ *     earlier layout the new one has no place for. The earlier layout's
+ *     empty text boxes (a component part still showing its master's text
+ *     counts as empty) and picture placeholders are removed, and so is its
+ *     object a slot's given content replaces.
+ *   - Content is checked first: a slot the layout has, text for text and
+ *     components, a picture for picture slots.
  *   - Furniture (the layout's set, else the pack's default) and the
  *     layout's decor are regenerated: `role: 'furniture'`, the item id as
  *     `slot` (`decor-<n>` for decor). Template fields come from the deck's
@@ -30,11 +42,14 @@
 import * as Y from 'yjs'
 import { nanoid } from 'nanoid'
 import {
+  ARCHETYPES,
   SLIDE_HEIGHT,
   SLIDE_WIDTH,
+  type Archetype,
   type ColorRef,
   type DeckMeta,
   type FurnitureItem,
+  type ImageFocus,
   type PackLayout,
   type PackRegion,
   type SlideBackground,
@@ -50,20 +65,18 @@ import {
   type FolderTokensSnapshot,
   type RichDeltaOp,
   type TextStyleTokenSnapshot,
+  type TokenResolveContext,
 } from '@narrative/slide-model'
 import { CommandError } from '../errors.js'
 import { compiledTokenId, compileStylePack } from './compile.js'
-import {
-  planFromBody,
-  planText,
-  planToDelta,
-  type BodyPlan,
-  type TextBodyInput,
-} from '../text/body.js'
+import { planFromBody, planToDelta, type BodyPlan, type TextBodyInput } from '../text/body.js'
 import { textStyleFields } from '../text/textStyle.js'
 
-/** What a slot is filled with: text (plain or paragraphs) or a picture. */
-export type SlotContent = TextBodyInput | { assetId: string }
+/** What a slot is filled with: text (plain or paragraphs) or a picture, and the side of it kept in view. */
+export type SlotContent = TextBodyInput | { assetId: string; focus?: PictureFocus }
+
+/** A pack region's `focus`; 'center' is an image's default (no `focus`). */
+type PictureFocus = NonNullable<PackRegion['focus']>
 
 export interface LayoutPlan {
   /** In place (ids kept); `body` replaces the text. */
@@ -72,7 +85,20 @@ export interface LayoutPlan {
   remove: string[]
   background: SlideBackground
   layout: SlideLayoutRef
+  /** Objects left where they were: not placed in a region, not furniture. */
+  unplaced: string[]
+  /** The layout's slots left without content (an empty box, a placeholder, a component's own text). */
+  emptySlots: string[]
 }
+
+/**
+ * Slots of what a deck spec draws on the grid (`drawn-<n>`, A5.2): placed
+ * by the spec, not by a region, so a re-lay leaves them where they are, never
+ * moves them by role and does not list them as unplaced.
+ */
+export const DRAWN_SLOT_PREFIX = 'drawn-'
+const isDrawn = (slot: string | undefined): boolean =>
+  slot !== undefined && slot.startsWith(DRAWN_SLOT_PREFIX)
 
 interface PlanArgs {
   pack: StylePack
@@ -88,6 +114,8 @@ interface PlanArgs {
   surface?: string
   /** The slide's 1-based number, for `{page}` inside furniture text. */
   slideNumber: number
+  /** The archetype the layout was picked for (else the pack's archetypeMap says). */
+  archetype?: Archetype
 }
 
 /** A canvas fraction in px, to the half pixel: fractions carry 4 decimals (≈ 0.2 px), the brand's grid does not. */
@@ -107,8 +135,16 @@ function rectPx(rect: readonly [number, number, number, number]): {
   }
 }
 
-function isAssetContent(c: SlotContent | undefined): c is { assetId: string } {
+function isAssetContent(
+  c: SlotContent | undefined,
+): c is { assetId: string; focus?: PictureFocus } {
   return typeof c === 'object' && c !== null && 'assetId' in c
+}
+
+/** The image `focus` for a region's picture: the content's, else the region's; centred is none. */
+function focusOf(region: PackRegion, given: SlotContent | undefined): ImageFocus | undefined {
+  const focus = (isAssetContent(given) ? given.focus : undefined) ?? region.focus
+  return focus === undefined || focus === 'center' ? undefined : focus
 }
 
 export function planLayout(args: PlanArgs): LayoutPlan {
@@ -139,44 +175,124 @@ export function planLayout(args: PlanArgs): LayoutPlan {
   }
 
   // ── Tokens the compile made ─────────────────────────────────────────────
-  const colorToken = (ref: ColorRef): { $token: string } => {
-    const key = ref.startsWith('#') ? `literal:${ref.toLowerCase()}` : ref
-    const id = compiledTokenId(pack.id, key)
-    if (!Object.hasOwn(tokens.colors, id))
+  const { colorToken, colorValue, styleToken } = packTokens(pack, tokens, ctx)
+
+  // ── The pack's components, as their masters hold them ───────────────────
+  const components = compileStylePack(pack, { tokens, fonts: null }).components
+  const componentOf = (id: string) => components.find((c) => c.origin.key === `component:${id}`)
+  /** The text a component part shows until it is filled (its master's). */
+  const componentDefaults = new Set(
+    components.flatMap((c) =>
+      c.objects.flatMap((o) => (o.type === 'text' && typeof o.text === 'string' ? [o.text] : [])),
+    ),
+  )
+
+  // ── Content given by slot: each slot the layout has, of a kind it takes ──
+  for (const [slot, given] of Object.entries(args.content ?? {})) {
+    const region = layout.regions.find((r) => r.slot === slot)
+    if (region === undefined)
       throw new CommandError(
-        'conflict',
-        `the folder has no token for ${ref} yet; compile the pack first (style.pack.edit { op: "compile" })`,
+        'invalid_input',
+        `layout '${layout.id}' has no slot '${slot}'; it has ${layout.regions.map((r) => r.slot).join(', ')}`,
       )
-    return { $token: `colors.${id}` }
-  }
-  const colorValue = (ref: ColorRef): number => {
-    const hex = resolveTokenValue(colorToken(ref), tokens, ctx)
-    return (hex === null ? null : parseHexColor(hex))?.color ?? 0
-  }
-  const styleToken = (styleId: string): TextStyleTokenSnapshot => {
-    const id = compiledTokenId(pack.id, `textStyle:${styleId}`)
-    const style = tokens.textStyles[id]
-    if (style === undefined)
+    const takesPicture = region.type === 'image' && region.component === undefined
+    if (isAssetContent(given) !== takesPicture)
       throw new CommandError(
-        'conflict',
-        `the folder has no text style for '${styleId}' yet; compile the pack first (style.pack.edit { op: "compile" })`,
+        'invalid_input',
+        takesPicture
+          ? `slot '${slot}' takes a picture { assetId }, not text`
+          : `slot '${slot}' takes ${region.type === 'text' || region.component !== undefined ? 'text' : `no content (a ${region.type} slot)`}, not a picture`,
       )
-    return style
   }
 
-  // ── What the slide holds from its earlier layout ────────────────────────
+  // ── What the slide holds ────────────────────────────────────────────────
+  const bodyOf = (map: Y.Map<unknown>): RichDeltaOp[] | string => {
+    const t = map.get('text')
+    return t instanceof Y.Text ? toDelta(t) : typeof t === 'string' ? t : ''
+  }
+  /** A body as a new text object's fields. */
+  const textOf = (body: RichDeltaOp[] | string): Record<string, unknown> => ({
+    text: typeof body === 'string' ? body : body.map((op) => op.insert).join(''),
+    ...(typeof body === 'string' ? {} : { _richTextOps: body }),
+  })
   const plain = args.objects.map((m) => ({
     map: m,
     id: m.get('id') as string,
     type: m.get('type') as string,
     slot: m.get('slot') as string | undefined,
     role: m.get('role') as string | undefined,
+    x: Number(m.get('x') ?? 0),
+    y: Number(m.get('y') ?? 0),
   }))
+  type Held = (typeof plain)[number]
   const pack0 = plain.filter((o) => o.slot !== undefined)
+  /** A layout's text box with nothing of its own: empty, or a component part's default text. */
+  const holdsNoText = (o: Held): boolean => {
+    if (o.type !== 'text' || o.slot === undefined) return false
+    const text = String(textOf(bodyOf(o.map))['text']).trim()
+    return text === '' || componentDefaults.has(text)
+  }
   const used = new Set<string>()
   const remove = new Set<string>()
   // Furniture and decor are regenerated; region objects are matched below.
   for (const o of pack0) if (o.role === 'furniture') remove.add(o.id)
+
+  // The object already in a region's slot.
+  const slotHolder = new Map<PackRegion, Held>()
+  for (const region of layout.regions) {
+    const o = pack0.find(
+      (p) => p.slot === region.slot && !remove.has(p.id) && ![...slotHolder.values()].includes(p),
+    )
+    if (o !== undefined) slotHolder.set(region, o)
+  }
+  // Text goes into text regions (and components, whose first text object
+  // takes it); anything else into picture, chart and table regions.
+  const fits = (region: PackRegion, o: Held): boolean =>
+    region.component !== undefined
+      ? o.type === 'text' &&
+        (componentOf(region.component)?.objects.some((p) => p.type === 'text') ?? false)
+      : region.type === 'text'
+        ? o.type === 'text'
+        : o.type !== 'text'
+  // The rest move by role, in reading order on both sides: regions by
+  // fillOrder, then top, then left; objects by top, then left.
+  const byRole = new Map<PackRegion, Held>()
+  const holders = new Set([...slotHolder.values()].map((o) => o.id))
+  const movable = plain
+    .filter(
+      (o) =>
+        o.role !== undefined &&
+        o.role !== 'furniture' &&
+        !remove.has(o.id) &&
+        !holders.has(o.id) &&
+        !isDrawn(o.slot) &&
+        !holdsNoText(o),
+    )
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+  const regionOrder = [...layout.regions].sort(
+    (a, b) =>
+      (a.fillOrder ?? Number.MAX_SAFE_INTEGER) - (b.fillOrder ?? Number.MAX_SAFE_INTEGER) ||
+      a.rect[1] - b.rect[1] ||
+      a.rect[0] - b.rect[0],
+  )
+  const taken = new Set<string>()
+  for (const region of regionOrder) {
+    // A region holding its own object takes no other. One filled by name
+    // takes the earlier layout's object of its role only to replace it (it
+    // goes); a person's or an agent's own object is not the layout's to drop.
+    if (slotHolder.has(region)) continue
+    const given = args.content?.[region.slot] !== undefined
+    const o = movable.find(
+      (m) =>
+        !taken.has(m.id) &&
+        m.role === region.role &&
+        fits(region, m) &&
+        (!given || m.slot !== undefined),
+    )
+    if (o === undefined) continue
+    byRole.set(region, o)
+    taken.add(o.id)
+  }
 
   const update: LayoutPlan['update'] = []
   const add: SlideObject[] = []
@@ -198,35 +314,30 @@ export function planLayout(args: PlanArgs): LayoutPlan {
     return fields
   }
 
-  const bodyOf = (map: Y.Map<unknown>): RichDeltaOp[] | string => {
-    const t = map.get('text')
-    return t instanceof Y.Text ? toDelta(t) : typeof t === 'string' ? t : ''
+  /** An object that moved into a region: its old self goes. */
+  const consume = (o: Held): void => {
+    used.add(o.id)
+    remove.add(o.id)
   }
 
+  /** Regions that got content: given, carried in place, or moved in. */
+  const filled = new Set<PackRegion>()
   for (const region of layout.regions) {
     const box = rectPx(region.rect)
     const given = args.content?.[region.slot]
-    const sameSlot = pack0.find(
-      (o) => !used.has(o.id) && o.slot === region.slot && !remove.has(o.id),
-    )
-    const sameRole =
-      sameSlot ??
-      (args.current !== undefined
-        ? pack0.find(
-            (o) =>
-              !used.has(o.id) &&
-              o.role === region.role &&
-              !remove.has(o.id) &&
-              o.role !== 'furniture',
-          )
-        : undefined)
+    if (given !== undefined) filled.add(region)
+    const sameSlot = slotHolder.get(region)
+    const roleMatch = byRole.get(region)
+    const sameRole = sameSlot ?? roleMatch
 
     if (region.component !== undefined) {
-      // A component's objects at the region's origin, as its master holds them.
-      const compiled = compileStylePack(pack, { tokens, fonts: null }).components.find(
-        (c) => c.origin.key === `component:${region.component}`,
-      )
+      // A component's objects at the region's origin, as its master holds
+      // them; the slot's content goes into its first text object.
+      const compiled = componentOf(region.component)
       if (compiled === undefined) continue
+      // Content given replaces the earlier layout's object of this role.
+      if (given !== undefined && roleMatch !== undefined) consume(roleMatch)
+      const firstText = compiled.objects.findIndex((o) => o.type === 'text')
       for (const [i, o] of compiled.objects.entries()) {
         const slot = i === 0 ? region.slot : `${region.slot}-${i + 1}`
         const old = pack0.find((p) => !used.has(p.id) && p.slot === slot)
@@ -235,30 +346,40 @@ export function planLayout(args: PlanArgs): LayoutPlan {
           const style = tokens.textStyles[o.textStyleId]
           if (style !== undefined) Object.assign(placed, textStyleFields(style, tokens))
         }
-        const content = i === 0 ? given : undefined
+        const content = i === firstText && !isAssetContent(given) ? given : undefined
         if (old !== undefined && old.type === o.type) {
           used.add(old.id)
+          if (i === firstText && !holdsNoText(old)) filled.add(region)
           const { id: _id, text: _text, ...patch } = placed
           update.push({
             id: old.id,
             patch,
-            ...(content !== undefined && !isAssetContent(content)
-              ? { body: planFromBody(content) }
-              : {}),
+            ...(content !== undefined ? { body: planFromBody(content) } : {}),
           })
-        } else {
-          if (old !== undefined) remove.add(old.id)
-          const body =
-            content !== undefined && !isAssetContent(content) ? planFromBody(content) : null
-          add.push({
-            ...placed,
-            id: nanoid(),
-            ...(body !== null ? { text: planText(body), _richTextOps: planToDelta(body) } : {}),
-          } as unknown as SlideObject)
+          continue
         }
+        if (old !== undefined) remove.add(old.id)
+        // Moved in by role: the text of the object that held it.
+        const moved =
+          i === firstText &&
+          content === undefined &&
+          sameRole !== undefined &&
+          sameRole.type === 'text' &&
+          !used.has(sameRole.id)
+            ? sameRole
+            : undefined
+        if (moved !== undefined) {
+          consume(moved)
+          filled.add(region)
+        }
+        const body =
+          content !== undefined
+            ? textOf(planToDelta(planFromBody(content)))
+            : moved !== undefined
+              ? textOf(bodyOf(moved.map))
+              : {}
+        add.push({ ...placed, id: nanoid(), ...body } as unknown as SlideObject)
       }
-      if (sameRole !== undefined && sameRole.slot !== region.slot && !used.has(sameRole.id))
-        remove.add(sameRole.id)
       continue
     }
 
@@ -277,6 +398,7 @@ export function planLayout(args: PlanArgs): LayoutPlan {
       const geometry = { ...inner, slot: region.slot, role: region.role, name: region.slot }
       if (sameSlot !== undefined && sameSlot.type === 'text') {
         used.add(sameSlot.id)
+        if (!holdsNoText(sameSlot)) filled.add(region)
         update.push({
           id: sameSlot.id,
           patch: { ...geometry, ...fields },
@@ -285,11 +407,14 @@ export function planLayout(args: PlanArgs): LayoutPlan {
         continue
       }
       let body: RichDeltaOp[] | string = ''
-      if (given !== undefined && !isAssetContent(given)) body = planToDelta(planFromBody(given))
-      else if (sameRole !== undefined && sameRole.type === 'text') {
+      if (given !== undefined && !isAssetContent(given)) {
+        body = planToDelta(planFromBody(given))
+        // It replaces the earlier layout's object of this role.
+        if (roleMatch !== undefined) consume(roleMatch)
+      } else if (sameRole !== undefined && sameRole.type === 'text') {
         body = bodyOf(sameRole.map)
-        used.add(sameRole.id)
-        remove.add(sameRole.id)
+        consume(sameRole)
+        if (String(textOf(body)['text']).trim() !== '') filled.add(region)
       }
       add.push({
         ...defaults,
@@ -299,32 +424,68 @@ export function planLayout(args: PlanArgs): LayoutPlan {
         type: 'text',
         rotation: 0,
         opacity: 1,
-        text: typeof body === 'string' ? body : body.map((op) => op.insert).join(''),
-        ...(typeof body === 'string' ? {} : { _richTextOps: body }),
+        ...textOf(body),
       } as unknown as SlideObject)
       continue
     }
 
-    // Picture (or a chart or table slot, held by a placeholder until one is made).
-    const picture = isAssetContent(given)
-      ? given.assetId
-      : sameRole !== undefined && sameRole.type === 'image'
-        ? (sameRole.map.get('assetId') as string)
-        : undefined
-    if (sameRole !== undefined) {
-      used.add(sameRole.id)
-      remove.add(sameRole.id)
-    }
+    // A picture, chart or table region.
     const geometry = { ...box, slot: region.slot, role: region.role, name: region.slot }
-    if (region.type === 'image' && picture !== undefined) {
+    const asset = isAssetContent(given) ? given.assetId : undefined
+    // The layout's own placeholder, standing in until there is a picture.
+    const placeholder =
+      sameRole !== undefined && sameRole.type === 'rectangle' && sameRole.slot !== undefined
+    if (sameRole !== undefined && fits(region, sameRole) && !placeholder) {
+      if (asset !== undefined && sameRole.type !== 'image') {
+        // A new picture replaces what was there.
+        consume(sameRole)
+      } else {
+        // What was there (a picture, a table, a chart) moves into the region,
+        // id kept; a picture covers its new frame — unless it stays in the
+        // slot of the same layout and nothing new is given: then the crop
+        // and focus someone chose stay too (a variant switch re-lays it).
+        used.add(sameRole.id)
+        filled.add(region)
+        const sameFrame =
+          sameRole === sameSlot &&
+          args.current?.packId === pack.id &&
+          args.current.layoutId === layout.id &&
+          given === undefined
+        update.push({
+          id: sameRole.id,
+          patch: {
+            ...geometry,
+            ...(sameRole.type === 'image' && !sameFrame
+              ? {
+                  fit: 'cover',
+                  focus: focusOf(region, given),
+                  imageRect: undefined,
+                  ...(asset !== undefined ? { assetId: asset } : {}),
+                }
+              : {}),
+          },
+        })
+        continue
+      }
+    }
+    if (placeholder) {
+      if (asset === undefined) {
+        used.add(sameRole.id)
+        update.push({ id: sameRole.id, patch: geometry })
+        continue
+      }
+      consume(sameRole)
+    }
+    if (region.type === 'image' && asset !== undefined) {
       add.push({
         ...geometry,
         id: nanoid(),
         type: 'image',
         rotation: 0,
         opacity: 1,
-        assetId: picture,
+        assetId: asset,
         fit: 'cover',
+        ...(focusOf(region, given) !== undefined ? { focus: focusOf(region, given) } : {}),
       } as unknown as SlideObject)
     } else {
       add.push({
@@ -339,9 +500,18 @@ export function planLayout(args: PlanArgs): LayoutPlan {
     }
   }
 
-  // Region objects of the earlier layout nothing took over.
-  if (args.current !== undefined)
-    for (const o of pack0) if (!used.has(o.id) && o.role !== 'furniture') remove.add(o.id)
+  // The earlier layout's objects nothing took over: an empty text box or a
+  // picture placeholder goes; anything holding content stays, listed.
+  for (const o of pack0) {
+    if (used.has(o.id) || remove.has(o.id) || o.role === 'furniture' || isDrawn(o.slot)) continue
+    if (o.type === 'rectangle' || holdsNoText(o)) remove.add(o.id)
+  }
+  const unplaced = plain
+    .filter(
+      (o) => !used.has(o.id) && !remove.has(o.id) && o.role !== 'furniture' && !isDrawn(o.slot),
+    )
+    .map((o) => o.id)
+  const emptySlots = layout.regions.filter((r) => !filled.has(r)).map((r) => r.slot)
 
   // ── Furniture and decor ─────────────────────────────────────────────────
   const furnitureIds = layout.furniture ?? pack.furniture.defaultSet
@@ -385,9 +555,7 @@ export function planLayout(args: PlanArgs): LayoutPlan {
         ]
       }
       case 'pageNumber': {
-        const compiled = compileStylePack(pack, { tokens, fonts: null }).components.find(
-          (c) => c.origin.key === `component:${item.component}`,
-        )
+        const compiled = componentOf(item.component)
         return (compiled?.objects ?? []).map((o, i) => {
           const placed: Record<string, unknown> = {
             ...o,
@@ -488,6 +656,7 @@ export function planLayout(args: PlanArgs): LayoutPlan {
     color: colorValue(layout.background ?? 'role:background'),
     alpha: 1,
   }
+  const archetype = args.archetype ?? archetypeOfLayout(pack, layout.id)
   return {
     update,
     add,
@@ -498,8 +667,94 @@ export function planLayout(args: PlanArgs): LayoutPlan {
       packId: pack.id,
       layoutId: layout.id,
       ...(surface !== undefined ? { surface } : {}),
+      ...(archetype !== undefined ? { archetype } : {}),
+    },
+    unplaced,
+    emptySlots,
+  }
+}
+
+/**
+ * The folder tokens a pack's compile made, by what the pack calls them: a
+ * colour reference (`role:text`, `color:navy`, `#ff0000`) as a token
+ * reference and as the value it has on `ctx` (the deck's variant, the
+ * slide's surface), a text style id as its token. A reference the compile
+ * has not made yet is a conflict: compile the pack first.
+ */
+export function packTokens(
+  pack: StylePack,
+  tokens: FolderTokensSnapshot,
+  ctx: TokenResolveContext,
+): {
+  colorToken(ref: ColorRef): { $token: string }
+  colorValue(ref: ColorRef): number
+  styleToken(styleId: string): TextStyleTokenSnapshot
+} {
+  const colorToken = (ref: ColorRef): { $token: string } => {
+    const key = ref.startsWith('#') ? `literal:${ref.toLowerCase()}` : ref
+    const id = compiledTokenId(pack.id, key)
+    if (!Object.hasOwn(tokens.colors, id))
+      throw new CommandError(
+        'conflict',
+        `the folder has no token for ${ref} yet; compile the pack first (style.pack.edit { op: "compile" })`,
+      )
+    return { $token: `colors.${id}` }
+  }
+  return {
+    colorToken,
+    colorValue(ref) {
+      const hex = resolveTokenValue(colorToken(ref), tokens, ctx)
+      return (hex === null ? null : parseHexColor(hex))?.color ?? 0
+    },
+    styleToken(styleId) {
+      const id = compiledTokenId(pack.id, `textStyle:${styleId}`)
+      const style = tokens.textStyles[id]
+      if (style === undefined)
+        throw new CommandError(
+          'conflict',
+          `the folder has no text style for '${styleId}' yet; compile the pack first (style.pack.edit { op: "compile" })`,
+        )
+      return style
     },
   }
+}
+
+/** The archetype the pack's `archetypeMap` gives a layout (the first that lists it). */
+export function archetypeOfLayout(pack: StylePack, layoutId: string): Archetype | undefined {
+  for (const archetype of ARCHETYPES)
+    if (pack.archetypeMap[archetype]?.includes(layoutId) === true) return archetype
+  return undefined
+}
+
+/**
+ * The layout a slide of `archetype` takes (A5.1): of the layouts the pack's
+ * `archetypeMap` lists for it, preferred first, the first; given content
+ * (`filled`, its slot names), the first whose required slots it fills, else
+ * the first.
+ */
+export function layoutForArchetype(
+  pack: StylePack,
+  archetype: Archetype,
+  filled: ReadonlySet<string> = new Set(),
+): PackLayout {
+  const candidates = (pack.archetypeMap[archetype] ?? [])
+    .map((id) => pack.layouts.find((l) => l.id === id))
+    .filter((l): l is PackLayout => l !== undefined)
+  const first = candidates[0]
+  if (first === undefined) {
+    const mapped = ARCHETYPES.filter((a) => (pack.archetypeMap[a]?.length ?? 0) > 0)
+    throw new CommandError(
+      'not_found',
+      `the pack has no layout for archetype '${archetype}'` +
+        (mapped.length > 0 ? `; it has layouts for ${mapped.join(', ')}` : '') +
+        ' (or pick a layoutId: style.pack.get "layouts")',
+    )
+  }
+  if (filled.size === 0) return first
+  return (
+    candidates.find((l) => l.regions.every((r) => r.required !== true || filled.has(r.slot))) ??
+    first
+  )
 }
 
 /** The colour a placeholder takes: the muted text role where the pack has it, else the text role. */

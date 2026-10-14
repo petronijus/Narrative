@@ -3,12 +3,14 @@
  * Folder Settings → Style pack shows the pack the command API set, Compile
  * makes its tokens, a colour edited there reaches the pack through
  * `style.pack.edit`; a slide laid out with the pack passes `query.check`
- * with the text measured on the render page. Every fixture is made through
+ * with the text measured on the render page; a whole deck built from a spec
+ * (A5.3) with the rich example pack passes it too. Every fixture is made through
  * the API and the folder is deleted afterwards (with its decks).
  */
 
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { exampleStylePack } from '@narrative/shared'
+import { exampleStylePack, richExampleStylePack } from '@narrative/shared'
+import { exampleDeckSpec } from '@narrative/commands'
 
 const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'
 const WEB_ORIGIN = process.env['NARRATIVE_WEB_URL'] ?? 'http://localhost:5173'
@@ -100,5 +102,42 @@ test('a slide laid out with the pack passes the brand check, measured', async ({
     findings: Array<{ level: string; rule: string; message: string }>
   }>(request, { deckId }, 'query.check', {})
   // The example pack's Inter is not uploaded: its fit cannot be verified; nothing else is wrong.
+  expect(check.findings.filter((f) => f.rule !== 'font-missing' && f.level === 'error')).toEqual([])
+})
+
+test('a deck built from a spec passes the brand check, measured', async ({ request }) => {
+  await command(request, { folderId }, 'style.pack.edit', {
+    op: 'set',
+    pack: richExampleStylePack(),
+  })
+  await command(request, { folderId }, 'style.pack.edit', { op: 'compile' })
+  const { id: deckId } = await command<{ id: string }>(request, {}, 'deck.create', {
+    title: 'Pack build',
+    folderId,
+  })
+  const out = await command<{
+    built: { slides: Array<{ layoutId: string; emptySlots: string[] }>; removed: string[] }
+  }>(request, { deckId }, 'style.deck.apply', { spec: exampleDeckSpec() })
+  expect(out.built.slides.map((s) => s.layoutId)).toEqual([
+    'title',
+    'agenda',
+    'title-bullets',
+    'two-columns',
+    'quote',
+    'closer',
+  ])
+  expect(out.built.slides.flatMap((s) => s.emptySlots)).toEqual([])
+  const deck = await command<{ slideCount: number; specSlides?: number }>(
+    request,
+    { deckId },
+    'query.deck',
+    {},
+  )
+  expect(deck).toMatchObject({ slideCount: 6, specSlides: 6 })
+  const check = await command<{
+    fitVerified: boolean
+    findings: Array<{ level: string; rule: string; slideId?: string; message: string }>
+  }>(request, { deckId }, 'query.check', {})
+  // Inter is not uploaded to the folder: its fit cannot be verified; nothing else is wrong.
   expect(check.findings.filter((f) => f.rule !== 'font-missing' && f.level === 'error')).toEqual([])
 })

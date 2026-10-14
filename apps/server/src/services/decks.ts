@@ -9,7 +9,7 @@
 import { nanoid } from 'nanoid'
 import * as Y from 'yjs'
 import { and, desc, eq, inArray, sql, TransactionRollbackError, type SQL } from 'drizzle-orm'
-import { createSlideDoc, readFolderTokens } from '@narrative/slide-model'
+import { createSlideDoc, readFolderTokens, readStylePack } from '@narrative/slide-model'
 import type {
   ActiveEditorsEntry,
   CreatedDeck,
@@ -579,7 +579,10 @@ export function createDecksService(deps: ServiceDeps): DeckService {
         readDocCopy(deps, 'folder', destFolderId),
       ])
       try {
-        plan = planTokenRebinding(readFolderTokens(sourceDoc), readFolderTokens(destDoc))
+        const destPack = readStylePack(destDoc)
+        plan = planTokenRebinding(readFolderTokens(sourceDoc), readFolderTokens(destDoc), {
+          destPackId: typeof destPack?.['id'] === 'string' ? destPack['id'] : undefined,
+        })
       } finally {
         sourceDoc.destroy()
         destDoc.destroy()

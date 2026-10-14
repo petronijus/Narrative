@@ -155,7 +155,12 @@ export const USER_ACTIONS = {
   'deck.duplicate': { label: 'Duplicate deck', commands: ['deck.duplicate'] },
   'deck.moveToFolder': { label: 'Move deck to…', commands: ['deck.moveToFolder'] },
   'deck.delete': { label: 'Delete deck', commands: ['deck.delete'] },
+  'deck.exportMenu': {
+    label: 'Export menu',
+    editorOnly: 'opens the menu of export formats; each item is its own action',
+  },
   'deck.exportPptx': { label: 'Export to PowerPoint', commands: ['deck.exportPptx'] },
+  'deck.exportPdf': { label: 'Export to PDF', commands: ['deck.exportPdf'] },
   'deck.backToList': { label: 'Back to deck list', editorOnly: NAVIGATION },
   'deck.backToPresentation': { label: 'Back to presentation', editorOnly: NAVIGATION },
 

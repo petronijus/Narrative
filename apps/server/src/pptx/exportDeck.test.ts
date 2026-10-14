@@ -10,7 +10,12 @@ import { describe, it, expect, vi } from 'vitest'
 import { Readable } from 'node:stream'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import type { SQL } from 'drizzle-orm'
-import { createDeckAssetLoader, deckAssetScope, resolveSlideTokens } from './exportDeck.js'
+import {
+  createDeckAssetLoader,
+  deckAssetScope,
+  resolveSlideTokens,
+  safeFilename,
+} from './exportDeck.js'
 import type { Slide } from '@narrative/shared'
 import type { Database } from '../db/client.js'
 
@@ -123,5 +128,13 @@ describe('resolveSlideTokens (A4.2d)', () => {
     const band = resolveSlideTokens(slide('band'), tokens, { background: 'dc' })
       .objects as unknown as Array<Record<string, unknown>>
     expect(band[0]!['fill']).toBe(0xff0000)
+  })
+})
+
+describe('safeFilename', () => {
+  it('drops what could make a download name lie about its kind', () => {
+    expect(safeFilename('invoice\u202Efdp.exe')).toBe('invoice fdp.exe')
+    expect(safeFilename('Q3 / "review"\n')).toBe('Q3 review')
+    expect(safeFilename('   ')).toBe('deck')
   })
 })

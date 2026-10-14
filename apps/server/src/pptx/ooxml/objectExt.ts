@@ -337,6 +337,8 @@ export function objectExtValues(
     case 'image': {
       put('variant', o.variant)
       put('fit', o.fit)
+      // Natively the fitted picture's srcRect; which side it kept is the model's.
+      put('focus', o.focus)
       put('imageRotation', o.imageRotation)
       // A mask the picture's own geometry cannot draw exactly.
       if (o.mask !== undefined && !maskIsNative(o.mask, o.width, o.height)) ext['mask'] = o.mask
@@ -498,6 +500,7 @@ const FIELDS: Record<SlideObject['type'], Record<string, Schema>> = {
     ...COMMON,
     variant: oneOf('thumb', 'display', 'original'),
     fit: oneOf('cover', 'contain'),
+    focus: oneOf('top', 'bottom', 'left', 'right'),
     imageRotation: num,
     mask,
     // Set by the parser from `crop` once the crop is checked (parser.ts).

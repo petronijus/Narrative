@@ -7,7 +7,7 @@
 import * as Y from 'yjs'
 import { LOCAL_ORIGIN, getSlideObjectsCtx, yMapToPlainObject } from '@narrative/slide-model'
 import { createDefaultRegistry } from '../catalog.js'
-import { runCommandSync } from '../run.js'
+import { runCommand, runCommandSync } from '../run.js'
 import { CommandError } from '../errors.js'
 import type { CommandContext } from '../types.js'
 import { createFixtureDeck } from './fixtureDeck.js'
@@ -23,6 +23,10 @@ export interface Harness {
   ctx: CommandContext
   deck: NonNullable<CommandContext['deck']>
   run<T = Record<string, unknown>>(command: string, input: unknown): T
+  /** Run a command with an asynchronous `load` phase (style.deck.apply, the notes commands). */
+  runAsync<T = Record<string, unknown>>(command: string, input: unknown): Promise<T>
+  /** As `fail`, for a command with an asynchronous `load` phase. */
+  failAsync(command: string, input: unknown): Promise<CommandError>
   /** Run a command that must fail; returns the error and asserts the document did not change. */
   fail(command: string, input: unknown): CommandError
   /** The live Y.Map of an object. */
@@ -32,6 +36,10 @@ export interface Harness {
   /** An object's text body (text object, or a table cell). */
   text(slideId: string, objectId: string, cell?: { row: number; col: number }): Y.Text
 }
+
+/** runCommand checks the target names a deck; the fixture's has an id of its own. */
+const withTarget = (ctx: CommandContext): CommandContext =>
+  ctx.target === undefined ? { ...ctx, target: { deckId: 'fixture-deck' } } : ctx
 
 export function harness(): Harness {
   const deck = createFixtureDeck()
@@ -54,6 +62,23 @@ export function harness(): Harness {
     ctx,
     deck,
     run: <T>(command: string, input: unknown) => runCommandSync(registry, ctx, command, input) as T,
+    runAsync: async <T>(command: string, input: unknown) =>
+      (await runCommand(registry, withTarget(ctx), command, input)) as T,
+    async failAsync(command, input) {
+      const before = Y.encodeStateVector(deck.doc)
+      let error: unknown
+      try {
+        await runCommand(registry, withTarget(ctx), command, input)
+      } catch (e) {
+        error = e
+      }
+      if (!(error instanceof CommandError))
+        throw new Error(`expected ${command} to fail with a CommandError, got ${String(error)}`)
+      const after = Y.encodeStateVector(deck.doc)
+      if (before.length !== after.length || before.some((b, i) => b !== after[i]))
+        throw new Error(`${command} failed (${error.code}) but changed the document`)
+      return error
+    },
     fail(command, input) {
       const before = Y.encodeStateVector(deck.doc)
       let error: unknown

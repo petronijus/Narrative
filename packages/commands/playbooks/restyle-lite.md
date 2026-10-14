@@ -20,15 +20,27 @@ deck's `folderId` from `deck.get`).
 **With a style pack** — re-lay the slides onto its layouts:
 
 1. `style.pack.get` part "layouts": the layouts by purpose and slots.
-2. For each slide in scope, choose the layout whose purpose fits the
-   slide's point and content, and `slide.applyLayout` with it: the slide's
-   text moves into the new layout's slots by role (title to title, body to
-   body); give `content` for slots the move cannot fill. Objects without a
-   slot that the slide still needs stay where they are — check they do not
+2. Slides imported from a .pptx carry no layout: `deck.importPptx` and
+   `deck.insertFrom` returned `placeholders` (the PowerPoint placeholder
+   each object filled), the best hint for its role. For each slide in
+   scope, choose the layout whose purpose fits the
+   slide's point and content (or an `archetype`: cover, content, picture, …
+   picks the pack's layout for that kind of slide). A slide not laid out
+   yet: first give its objects a `role` with `object.update` (title,
+   subtitle, body, picture, …; leave decoration without one), then
+   `slide.applyLayout` in the same `ops.apply`. Text and pictures move into
+   the layout's slots by role, top to bottom, left to right; give `content`
+   for slots the move cannot fill. What the layout had no place for stays
+   where it was and is listed as `unplaced`: delete it, or check it does not
    collide with the new layout.
 3. A deck already on the pack's layouts is restyled in one step with
    `style.deck.apply` (a new variant, footer fields, the grid as guides): it
-   re-lays every laid-out slide and keeps each slot's content.
+   re-lays every laid-out slide and keeps each slot's content. Slides on
+   another pack's layouts (copied in from another brand's deck with
+   `deck.insertFrom`) follow with `relayout: "archetype"`: each takes this
+   pack's layout for the same kind of slide, its colours and styles by
+   purpose. What it lists as `unmatched` has no such layout here: lay those
+   out by hand (step 2).
 4. `query.check` the restyled slides and fix its errors (shorten text, never
    shrink it), then look with `query.render` (a sheet for many).
 

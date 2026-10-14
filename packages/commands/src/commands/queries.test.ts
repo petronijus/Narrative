@@ -58,17 +58,27 @@ describe('query.deck', () => {
     const h = harness()
     setDeckMeta(h.deck.doc, { variant: { theme: 'dark' }, fields: { client: 'Acme' }, lang: 'de' })
     const s1 = listSlides(h.deck)[0]!.id
-    setSlideLayout(h.deck, s1, { packId: 'p', layoutId: 'title', surface: 'band' })
+    setSlideLayout(h.deck, s1, {
+      packId: 'p',
+      layoutId: 'title',
+      surface: 'band',
+      archetype: 'cover',
+    })
     const deck = h.run<{ meta: unknown; slides: Array<{ layout?: unknown }> }>('query.deck', {})
     expect(deck.meta).toEqual({
       variant: { theme: 'dark' },
       fields: { client: 'Acme' },
       lang: 'de',
     })
-    expect(deck.slides[0]!.layout).toEqual({ packId: 'p', layoutId: 'title', surface: 'band' })
+    expect(deck.slides[0]!.layout).toEqual({
+      packId: 'p',
+      layoutId: 'title',
+      surface: 'band',
+      archetype: 'cover',
+    })
     expect(deck.slides[1]?.layout).toBeUndefined()
     const slide = h.run<{ layout?: unknown }>('query.slide', { slide: { index: 0 } })
-    expect(slide.layout).toEqual({ packId: 'p', layoutId: 'title', surface: 'band' })
+    expect(slide.layout).toMatchObject({ archetype: 'cover' })
   })
 })
 

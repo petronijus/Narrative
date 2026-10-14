@@ -73,8 +73,9 @@ const ParamsInput = z
   .record(z.string(), z.unknown())
   .describe(
     'Preset parameters. slideIn/slideOut: direction up|down|left|right, distance px; zoomIn: fromScale; rotateIn: ' +
-      'angle (radians); flipIn: axis x|y; wipeIn: direction; moveTo: targetX, targetY (slide px of the object CENTRE ' +
-      'at the end, default 960, 540); rotateTo: angleDeg (degrees, default 180); any preset: repeat 0..20.',
+      'angle (RADIANS: the starting offset, default -1.5708); flipIn: axis x|y; wipeIn: direction; moveTo: targetX, ' +
+      'targetY (slide px of the object CENTRE at the end, default 960, 540); rotateTo: angleDeg (DEGREES: the ' +
+      'absolute end angle, default 180); any preset: repeat 0..20.',
   )
 
 /**
@@ -84,18 +85,18 @@ const ParamsInput = z
  * touch, but never chosen for a new or changed step.
  */
 export const WritableAnimationTriggerSchema = AnimationTriggerSchema.exclude(['onEnter']).describe(
-  'afterPrevious (default) | withPrevious | onClick',
+  'afterPrevious (default: when the previous step ends) | withPrevious (with it) | onClick (waits for a click or ' +
+    'key); step 0 with afterPrevious or withPrevious starts as the slide appears',
 )
 
-const PRESETS_DOC =
-  'Presets: fadeIn, fadeOut, slideIn, slideOut, scaleIn, scaleOut, zoomIn, rotateIn, bounceIn, flipIn, popIn, ' +
-  'dissolveIn, wipeIn, moveTo, rotateTo. Triggers: afterPrevious (starts when the previous step ends), ' +
-  'withPrevious (starts together with the previous step), onClick (waits for a click or the next key). The first ' +
-  'step (step 0) with afterPrevious or withPrevious starts as soon as the slide appears; an onClick step 0 waits ' +
-  'for the first click. Steps of older decks may read back as trigger onEnter (legacy: starts with the slide ' +
-  'wherever it sits); it cannot be chosen, and a step keeps it until its trigger is changed. Rotation units ' +
-  'differ by preset, as the animation engine defines them: rotateIn `angle` is in RADIANS (the starting offset, ' +
-  'default -1.5708 = a quarter turn), rotateTo `angleDeg` is in DEGREES (the absolute end angle).'
+/**
+ * The presets, triggers and rotation units are said by the input schema
+ * (the preset enum, the trigger's and params' descriptions); only the legacy
+ * trigger, which no schema lists, is said here.
+ */
+const LEGACY_TRIGGER_DOC =
+  'Steps of older decks may read back as trigger onEnter (legacy: starts with the slide wherever it sits); it ' +
+  'cannot be chosen, and a step keeps it until its trigger is changed.'
 
 function validateParams(
   preset: AnimationPreset,
@@ -148,9 +149,7 @@ export const animationAdd = defineCommand({
   description:
     "Append an animation step for an object to the end of its slide's timeline. Omitted fields take the editor " +
     'defaults: trigger afterPrevious, duration 0.6 s, delay 0 s, easing "power2.out"; moveTo targets the slide ' +
-    'centre (960, 540) and rotateTo turns to 180°. ' +
-    PRESETS_DOC +
-    ' Use animation.reorder to move the step, animation.update to change it.',
+    'centre (960, 540) and rotateTo turns to 180°. Use animation.reorder to move the step, animation.update to change it.',
   input: z.strictObject({
     slide: SlideRefSchema,
     object: ObjectIdSchema.describe('The object to animate (on the same slide)'),
@@ -212,7 +211,7 @@ export const animationUpdate = defineCommand({
     'the current params (a key set to null is removed; params: null clears them all). Changing `preset` drops ' +
     'params the new preset does not use and fills its defaults (moveTo: slide centre, rotateTo: 180°). The ' +
     'animated object cannot be changed here. ' +
-    PRESETS_DOC,
+    LEGACY_TRIGGER_DOC,
   input: z.strictObject({
     slide: SlideRefSchema,
     animation: AnimationIdSchema,

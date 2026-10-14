@@ -52,6 +52,17 @@ export const deckImportPptx = defineCommand({
     ignoredElements: z.array(z.string()),
     embeddedFontCount: z.number(),
     referencedFontFamilies: z.array(z.string()),
+    placeholders: z
+      .array(
+        z.object({
+          slide: z.string(),
+          objects: z.array(z.object({ object: z.string(), type: z.string() })),
+        }),
+      )
+      .optional()
+      .describe(
+        'From a .pptx: the PowerPoint placeholder each object filled (title, subTitle, body, pic, …) — a hint for its role when restyling; not stored',
+      ),
   }),
   role: 'editor',
   scope: 'folder',
@@ -123,8 +134,9 @@ export const deckInsertFrom = defineCommand({
     'you can only view is refused). Slides keep their objects, animations, speaker notes, transition and background; media this deck ' +
     "could not show is copied into it, the source folder's linked media included. From a deck in another " +
     'folder, token references are rebound to this folder the ' +
-    'way deck.moveToFolder does it. It is one change, reverted as one step. Returns the new slide ids — restyle ' +
-    'them next if they should match this deck. For a new deck from a file use deck.importPptx.',
+    'way deck.moveToFolder does it. One change, reverted as one step. To make the new slides match this deck: ' +
+    'style.deck.apply { relayout: "archetype", slides }, then slide.applyLayout for what it lists unmatched ' +
+    '(the insert-restyle prompt). A new deck from a file is deck.importPptx.',
   input: z.strictObject({
     source: InsertSourceSchema,
     at: z.number().int().min(0).optional().describe('Index the first inserted slide takes'),
@@ -141,6 +153,17 @@ export const deckInsertFrom = defineCommand({
       .number()
       .optional()
       .describe('Links to source slides that were not copied (removed)'),
+    placeholders: z
+      .array(
+        z.object({
+          slide: z.string(),
+          objects: z.array(z.object({ object: z.string(), type: z.string() })),
+        }),
+      )
+      .optional()
+      .describe(
+        'From a .pptx: the PowerPoint placeholder each object filled (title, subTitle, body, pic, …) — a hint for its role when restyling; not stored',
+      ),
   }),
   role: 'editor',
   scope: 'deck',

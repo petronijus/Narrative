@@ -44,6 +44,7 @@ import { nanoid } from 'nanoid'
 import { listSlides } from '@narrative/slide-model'
 import * as Y from 'yjs'
 import { eq } from 'drizzle-orm'
+import sharp from 'sharp'
 import {
   parseRenderFailure,
   type RenderJobData,
@@ -51,10 +52,12 @@ import {
   type RenderLookSpec,
   type RenderPage,
   type RenderedSlide,
+  buildImagePdf,
 } from '@narrative/shared'
-import { MAX_MEASURE_SLIDES, MAX_RENDER_SLIDES } from '@narrative/commands'
+import { MAX_MEASURE_SLIDES, MAX_PDF_SLIDES, MAX_RENDER_SLIDES } from '@narrative/commands'
 import type {
   TextMeasurement,
+  PdfExportResult,
   PngExportResult,
   RenderLookResult,
   RenderService,
@@ -63,7 +66,7 @@ import type {
   RenderedPngInfo,
 } from '@narrative/commands'
 import { resolveComponentAccess, resolveDeckAccess } from '../auth/permissions.js'
-import { components } from '../db/schema.js'
+import { components, decks } from '../db/schema.js'
 import { componentRecord } from './components.js'
 import { deckRecord } from './decks.js'
 import {
@@ -91,6 +94,23 @@ import { cardDrawnFrom, cardSourceOf, noteCardDrawn } from '../render/cardState.
 import { readDocCopy } from './liveDocs.js'
 import { MAX_BEFORE_STATE_BYTES } from './runs.js'
 import { EXPORT_URL_TTL_SEC, MAX_INLINE_EXPORT_BYTES } from './pptx.js'
+
+/** The largest slide PNG a PDF page is made from (a photo-heavy 1920×1080 slide, with slack). */
+const MAX_PDF_PAGE_PNG_BYTES = 16_000_000
+/** JPEG quality of a PDF page: slides of text and pictures, at about a fifth of the PNG's size. */
+const PDF_JPEG_QUALITY = 85
+/** The largest picture a page is decoded from: the render's 1920×1080, up to twice that. */
+const MAX_PDF_PAGE_PIXELS = 3840 * 2160
+/** A further PDF job is started only with this much of the caller's time left. */
+const MIN_PDF_JOB_MS = 30_000
+/** A PDF over this many bytes is refused (40 photo-heavy slides stay far below). */
+const MAX_PDF_BYTES = 64 * 1024 * 1024
+
+/** A PNG's size from its header (IHDR), before anything decodes it. */
+function pngSize(png: Uint8Array): { width: number; height: number } {
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength)
+  return { width: view.getUint32(16), height: view.getUint32(20) }
+}
 
 /** How long a caller waits for its render, queueing included (Cloudflare gives up at 100 s). */
 export const RENDER_WAIT_MS = 95_000
@@ -228,7 +248,7 @@ interface LiveDoc {
   card: CardRef
   page: RenderPage
   role: 'viewer' | 'editor' | 'owner'
-  slides: Array<{ id: string }>
+  slides: Array<{ id: string; skipped?: true }>
   stateVector: string
   /** What its card shows (render/cardState.ts), when asked for; null without slides. */
   cardSource: string | null
@@ -248,6 +268,19 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     deckId: string
     slides: RenderSlideRef[] | 'all'
   }): Promise<StoredRenders>
+  /** The slides as PDF bytes, for the editor's download route (A5.6). */
+  buildPdf(args: {
+    userId: string
+    deckId: string
+    slides: RenderSlideRef[] | 'all'
+    includeSkipped: boolean
+    signal?: AbortSignal
+  }): Promise<
+    Omit<PdfExportResult, 'delivery' | 'url' | 'expiresAt' | 'base64'> & {
+      bytes: Uint8Array
+      title: string | null
+    }
+  >
   /**
    * The card picture of a deck or master nobody has open, drawn as `userId`
    * (the deck's owner, the master's folder's owner) behind everyone's jobs;
@@ -294,7 +327,10 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
         card,
         page,
         role,
-        slides: listSlides({ doc, slides: doc.getArray('slides') }).map((s) => ({ id: s.id })),
+        slides: listSlides({ doc, slides: doc.getArray('slides') }).map((s) => ({
+          id: s.id,
+          ...(s.skipped === true ? { skipped: true } : {}),
+        })),
         stateVector: Buffer.from(Y.encodeStateVector(doc)).toString('base64'),
         cardSource: opts.cardSource === true ? cardSourceOf(doc) : null,
       }
@@ -316,7 +352,11 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     doc: Pick<LiveDoc, 'card' | 'page' | 'stateVector'>,
     slides: number,
     request: JobRequest,
-    opts: { background?: boolean } = {},
+    opts: {
+      background?: boolean
+      /** A caller's deadline when the job is one of several (a PDF): never later than its own. */
+      deadline?: number
+    } = {},
   ): Promise<RenderJobResult> {
     // The shared queue: a fair share per person (the slot is taken here,
     // synchronously, so concurrent requests cannot all pass the check), and a
@@ -344,7 +384,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
       if (waiting >= MAX_WAITING_JOBS) {
         throw busy('The renderer is busy right now; try again in a minute', 503)
       }
-      const deadline = now() + RENDER_WAIT_MS
+      const deadline = Math.min(now() + RENDER_WAIT_MS, opts.deadline ?? Number.POSITIVE_INFINITY)
       const workBudgetMs = RENDER_WORK_BASE_MS + RENDER_WORK_PER_SLIDE_MS * slides
       const uploadTtlSec = Math.ceil((RENDER_WAIT_MS + TOKEN_MARGIN_MS) / 1000)
       const target = (key: string) => presignPutUrl(key, 'image/png', uploadTtlSec)
@@ -786,7 +826,180 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     return out
   }
 
-  return { exportPng, renderStored, look, measure, refreshThumbnail, backgroundThumbnail }
+  /**
+   * The slides as a PDF (A5.6): rendered in jobs of MAX_RENDER_SLIDES, each
+   * PNG read back and turned into a JPEG one at a time (only the JPEGs are
+   * held), a page each (shared `buildImagePdf`).
+   */
+  async function buildPdf(args: {
+    userId: string
+    deckId: string
+    slides: RenderSlideRef[] | 'all'
+    includeSkipped: boolean
+    /** Stop between steps once the caller has gone (the route's request closed). */
+    signal?: AbortSignal
+    /** Refuse as soon as the pages pass this many bytes (base64 delivery). */
+    maxBytes?: number
+  }): Promise<
+    Omit<PdfExportResult, 'delivery' | 'url' | 'expiresAt' | 'base64'> & {
+      bytes: Uint8Array
+      title: string | null
+    }
+  > {
+    const deck = await liveDeck(args)
+    const picked = pickSlides(deck.slides, args.slides)
+    const chosen = args.includeSkipped
+      ? picked
+      : picked.filter((s) => deck.slides[s.index]?.skipped !== true)
+    const leftOut = picked.length - chosen.length
+    if (chosen.length === 0)
+      throw badRequest(
+        leftOut > 0
+          ? 'Every slide asked for is skipped; includeSkipped keeps them'
+          : 'The deck has no slides to export',
+      )
+    if (chosen.length > MAX_PDF_SLIDES)
+      throw tooLarge(
+        `That is ${chosen.length} slides; one PDF takes at most ${MAX_PDF_SLIDES} — ask for them in parts`,
+      )
+    const prefix = exportsPrefix(deck.card)
+    const jpegs: Uint8Array[] = []
+    const fonts = new Set<string>()
+    let failedLoads = 0
+    let pageBytes = 0
+    const maxBytes = Math.min(args.maxBytes ?? MAX_PDF_BYTES, MAX_PDF_BYTES)
+    // One deadline for the whole file, as for every render: a caller waits
+    // at most RENDER_WAIT_MS (Cloudflare gives up at 100 s). Every job ends
+    // by it, and a further job starts only with time left to render.
+    const deadline = now() + RENDER_WAIT_MS
+    const gone = (): void => {
+      if (args.signal?.aborted === true) throw failed('The request was cancelled', 499)
+    }
+    for (let i = 0; i < chosen.length; i += MAX_RENDER_SLIDES) {
+      gone()
+      if (i > 0 && deadline - now() < MIN_PDF_JOB_MS)
+        throw failed(
+          `The renderer is busy: ${chosen.length} slides take too long now; export at most ` +
+            `${MAX_RENDER_SLIDES} at a time, or try again in a minute`,
+          503,
+        )
+      const part = chosen.slice(i, i + MAX_RENDER_SLIDES)
+      const keys = new Map(part.map((s) => [s.id, `${prefix}slide-${s.index + 1}.png`]))
+      const result = await runJob(
+        args.userId,
+        deck,
+        part.length,
+        { kind: 'export', uploads: part.map((s) => ({ slideId: s.id, key: keys.get(s.id)! })) },
+        { deadline },
+      )
+      if (result.kind !== 'export') throw failed('The renderer answered another job', 503)
+      const rendered = new Map(result.slides.map((r) => [r.slideId, r]))
+      for (const s of part) {
+        const r = rendered.get(s.id)
+        if (r === undefined) throw failed('The renderer left out a slide', 503)
+        failedLoads += r.failedLoads
+        const png = await readStoredPng(keys.get(s.id)!, MAX_PDF_PAGE_PNG_BYTES)
+        gone()
+        // The worker's bytes are not taken on its word: a page is the
+        // render's size, checked before anything decodes it.
+        const size = pngSize(png)
+        if (size.width * size.height > MAX_PDF_PAGE_PIXELS || size.width === 0 || size.height === 0)
+          throw failed('The renderer returned a picture of an unexpected size', 503)
+        const jpeg = await sharp(png, {
+          limitInputPixels: MAX_PDF_PAGE_PIXELS,
+          sequentialRead: true,
+        })
+          .flatten({ background: '#ffffff' })
+          .jpeg({ quality: PDF_JPEG_QUALITY })
+          .toBuffer()
+        pageBytes += jpeg.byteLength
+        if (pageBytes > maxBytes)
+          throw tooLarge(
+            maxBytes < MAX_PDF_BYTES
+              ? `The PDF passes the ${maxBytes}-byte inline limit; use delivery "url" or fewer slides`
+              : 'The PDF is too large; export fewer slides at a time',
+          )
+        jpegs.push(jpeg)
+      }
+      for (const f of result.failedFonts) fonts.add(f)
+    }
+    const [row] = await db
+      .select({ title: decks.title })
+      .from(decks)
+      .where(eq(decks.id, args.deckId))
+      .limit(1)
+    const title = row?.title ?? null
+    const bytes = buildImagePdf(
+      jpegs.map((jpeg) => ({ jpeg })),
+      title !== null ? { title } : {},
+    )
+    return {
+      bytes,
+      title,
+      pages: jpegs.length,
+      leftOut,
+      sizeBytes: bytes.byteLength,
+      failedLoads,
+      failedFonts: [...fonts],
+    }
+  }
+
+  async function exportPdf(args: {
+    userId: string
+    deckId: string
+    slides: RenderSlideRef[] | 'all'
+    includeSkipped: boolean
+    delivery: 'url' | 'base64'
+  }): Promise<PdfExportResult> {
+    const {
+      bytes,
+      title: _title,
+      ...info
+    } = await buildPdf({
+      ...args,
+      ...(args.delivery === 'base64' ? { maxBytes: MAX_INLINE_EXPORT_BYTES } : {}),
+    })
+    if (args.delivery === 'base64') {
+      if (bytes.byteLength > MAX_INLINE_EXPORT_BYTES)
+        throw tooLarge(
+          `The PDF is ${bytes.byteLength} bytes, over the ${MAX_INLINE_EXPORT_BYTES}-byte inline limit; ` +
+            'use delivery "url" or fewer slides',
+        )
+      return {
+        ...info,
+        delivery: 'base64',
+        base64: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64'),
+      }
+    }
+    const deck = { kind: 'deck', id: args.deckId } as const
+    const key = `${exportsPrefix(deck)}deck.pdf`
+    await buildS3Client().send(
+      new PutObjectCommand({
+        Bucket: MEDIA_BUCKET,
+        Key: key,
+        Body: bytes,
+        ContentType: 'application/pdf',
+        CacheControl: 'private, no-store',
+      }),
+    )
+    return {
+      ...info,
+      delivery: 'url',
+      url: await presignGetUrl(key, EXPORT_URL_TTL_SEC),
+      expiresAt: new Date(now() + EXPORT_URL_TTL_SEC * 1000).toISOString(),
+    }
+  }
+
+  return {
+    exportPng,
+    exportPdf,
+    buildPdf,
+    renderStored,
+    look,
+    measure,
+    refreshThumbnail,
+    backgroundThumbnail,
+  }
 }
 
 /** Test helper: forget the in-flight counts. */

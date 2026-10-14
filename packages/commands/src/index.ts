@@ -67,7 +67,12 @@ export {
 } from './refs.js'
 export { stampMaster, type StampResult } from './commands/components.js'
 export { MAX_RENDER_SLIDES } from './commands/render.js'
-export { MAX_MEASURE_SLIDES, type TextMeasurement } from './services/render.js'
+export {
+  MAX_MEASURE_SLIDES,
+  MAX_PDF_SLIDES,
+  type PdfExportResult,
+  type TextMeasurement,
+} from './services/render.js'
 export {
   ANCHORS,
   OPPOSITE_ANCHOR,
@@ -201,7 +206,23 @@ export {
   packSummary,
 } from './commands/stylePacks.js'
 export { parseStylePack, storedStylePack } from './stylePack/parse.js'
-export { planLayout, type LayoutPlan, type SlotContent } from './stylePack/layout.js'
+export {
+  archetypeOfLayout,
+  planLayout,
+  type LayoutPlan,
+  type SlotContent,
+} from './stylePack/layout.js'
+export {
+  DeckSpecSchema,
+  MAX_SPEC_BYTES,
+  MAX_SPEC_SLIDES,
+  exampleDeckSpec,
+  inLanguage,
+  validateDeckSpec,
+  type DeckSpec,
+  type SpecIssue,
+} from './stylePack/deckSpec.js'
+export { planBuild, type BuildPlan, type BuiltSlide } from './stylePack/buildPlan.js'
 export {
   checkDeck,
   type CheckFinding,

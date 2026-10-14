@@ -9,9 +9,11 @@
  * Fit modes (within width × height bounding box):
  * - 'cover'  : scale = max(boxW/texW, boxH/texH). Sprite is masked to box size.
  * - 'contain': scale = min(boxW/texW, boxH/texH). Centered, no mask needed.
+ * Both centred unless a focus (A5.1) keeps one side of the picture in view.
  */
 
 import { Graphics, type Container, type Sprite, type Texture } from 'pixi.js'
+import type { ImageFocus } from '@narrative/shared'
 
 /**
  * Applies cover or contain fit to a Sprite within a bounding box.
@@ -22,6 +24,8 @@ export function applyFit(
   texture: Texture,
   box: { w: number; h: number },
   fit: 'cover' | 'contain',
+  /** The side kept in view (ImageObject.focus); undefined centres the picture. */
+  focus?: ImageFocus,
 ): void {
   const tw = texture.width
   const th = texture.height
@@ -34,8 +38,11 @@ export function applyFit(
 
   sprite.width = tw * scale
   sprite.height = th * scale
-  sprite.x = (box.w - sprite.width) / 2
-  sprite.y = (box.h - sprite.height) / 2
+  // The spare room (negative when covering) goes to the side away from the focus.
+  const spareX = box.w - sprite.width
+  const spareY = box.h - sprite.height
+  sprite.x = focus === 'left' ? 0 : focus === 'right' ? spareX : spareX / 2
+  sprite.y = focus === 'top' ? 0 : focus === 'bottom' ? spareY : spareY / 2
 }
 
 /**

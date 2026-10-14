@@ -24,8 +24,16 @@ import {
   getSlideObjectsCtx,
   hydrateSlideDoc,
   listSlides,
+  addFolderToken,
+  setStylePack,
 } from '@narrative/slide-model'
-import type { ImageObject, RectangleObject } from '@narrative/shared'
+import {
+  exampleStylePack,
+  richExampleStylePack,
+  type ImageObject,
+  type RectangleObject,
+  type StylePack,
+} from '@narrative/shared'
 import { MemoryPersistence, quietLog } from '../test-support/agentWorld.js'
 import { scriptedDb } from '../test-support/scriptedDb.js'
 import { serviceErrorOf } from '../test-support/serviceErrors.js'
@@ -46,7 +54,7 @@ vi.mock('../auth/permissions.js', async (importOriginal) => {
 
 const { resolveDeckAccess } = await import('../auth/permissions.js')
 const { stageDeckInsert, stageObjectInsert, insertObjectsFrom } = await import('./deckInsert.js')
-const { planInsert } = await import('@narrative/commands')
+const { planInsert, compileStylePack, compiledTokenId } = await import('@narrative/commands')
 const accessMock = vi.mocked(resolveDeckAccess)
 
 let hp: Hocuspocus
@@ -309,6 +317,132 @@ describe('stageDeckInsert', () => {
     expect(err.status).toBe(400)
     expect(err.message).toContain('3 slides')
     expect(script.writes).toEqual([])
+  })
+})
+
+describe('stageDeckInsert across folders with style packs (A5.4)', () => {
+  /** A folder document holding `pack`, compiled into its tokens. */
+  function seedFolder(folderId: string, pack: StylePack, stored: unknown = pack): void {
+    const doc = new Y.Doc()
+    const plan = compileStylePack(pack, {
+      tokens: { colors: {}, textStyles: {}, effectStyles: {} },
+      fonts: null,
+    })
+    for (const t of plan.colors)
+      addFolderToken(doc, 'colors', t.id, { ...t.fields, origin: t.origin })
+    for (const t of plan.textStyles)
+      addFolderToken(doc, 'textStyles', t.id, { ...t.fields, origin: t.origin })
+    setStylePack(doc, stored as Record<string, unknown>)
+    persistence.snapshots.set(`folder:${folderId}`, Y.encodeStateAsUpdate(doc))
+  }
+
+  it("records the slide's archetype and points its colours at the target pack's, by purpose", async () => {
+    const rich = richExampleStylePack()
+    seedFolder('f1', rich)
+    seedFolder('f2', exampleStylePack())
+    const doc = new Y.Doc()
+    const deck = hydrateSlideDoc(doc)
+    deck.slides.get(0).set('id', 'S1')
+    deck.slides.get(0).set('layout', { packId: rich.id, layoutId: 'quote' })
+    const rect: RectangleObject = {
+      id: 'r1',
+      type: 'rectangle',
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+      rotation: 0,
+      opacity: 1,
+      fill: { $token: `colors.${compiledTokenId(rich.id, 'role:text')}` },
+    }
+    addObjects(getSlideObjectsCtx(deck, 'S1')!, [rect])
+    persistence.snapshots.set('src', Y.encodeStateAsUpdate(doc))
+    // The source and both folders are open in editors, so they are read live.
+    const open = await Promise.all(
+      ['src', 'folder:f1', 'folder:f2'].map((n) => hp.openDirectConnection(n)),
+    )
+    const script = scriptedDb({
+      selects: [
+        [
+          { id: 'src', folderId: 'f1' },
+          { id: 'dst', folderId: 'f2' },
+        ],
+        [],
+        [],
+        [],
+      ],
+    })
+    const prepared = await stageDeckInsert(
+      { db: script.db, log: quietLog, hocuspocus: () => hp },
+      { userId: 'u1', sourceDeckId: 'src', targetDeckId: 'dst', range: { from: 0, to: 0 } },
+    )
+    const target = createSlideDoc()
+    let result
+    target.doc.transact(() => {
+      result = prepared.apply(target, 1)
+    })
+    const [copiedId] = (result as unknown as { slideIds: string[] }).slideIds
+    const copied = listSlides(target).find((s) => s.id === copiedId)!
+    // The rich pack calls its quote layout a statement: the target pack's restyle picks by it.
+    expect(copied.layout).toEqual({ packId: rich.id, layoutId: 'quote', archetype: 'statement' })
+    // Both packs compile a text colour: the copy follows the target's, not a literal.
+    expect((copied.objects[0] as RectangleObject).fill).toEqual({
+      $token: `colors.${compiledTokenId('example', 'role:text')}`,
+    })
+    await Promise.all(open.map((c) => c.disconnect()))
+  })
+})
+
+describe('stageDeckInsert from a folder whose stored pack is not valid (A5.4)', () => {
+  it('copies the slides anyway, without an archetype', async () => {
+    const rich = richExampleStylePack()
+    const compiled = (folderId: string, pack: StylePack, stored: unknown) => {
+      const doc = new Y.Doc()
+      const plan = compileStylePack(pack, {
+        tokens: { colors: {}, textStyles: {}, effectStyles: {} },
+        fonts: null,
+      })
+      for (const t of plan.colors)
+        addFolderToken(doc, 'colors', t.id, { ...t.fields, origin: t.origin })
+      setStylePack(doc, stored as Record<string, unknown>)
+      persistence.snapshots.set(`folder:${folderId}`, Y.encodeStateAsUpdate(doc))
+    }
+    compiled('f1', rich, { ...rich, archetypeMap: 'broken' })
+    compiled('f2', exampleStylePack(), exampleStylePack())
+    const doc = new Y.Doc()
+    const deck = hydrateSlideDoc(doc)
+    deck.slides.get(0).set('id', 'S1')
+    deck.slides.get(0).set('layout', { packId: rich.id, layoutId: 'quote' })
+    persistence.snapshots.set('src', Y.encodeStateAsUpdate(doc))
+    const open = await Promise.all(
+      ['src', 'folder:f1', 'folder:f2'].map((n) => hp.openDirectConnection(n)),
+    )
+    const script = scriptedDb({
+      selects: [
+        [
+          { id: 'src', folderId: 'f1' },
+          { id: 'dst', folderId: 'f2' },
+        ],
+        [],
+        [],
+        [],
+      ],
+    })
+    const prepared = await stageDeckInsert(
+      { db: script.db, log: quietLog, hocuspocus: () => hp },
+      { userId: 'u1', sourceDeckId: 'src', targetDeckId: 'dst', range: { from: 0, to: 0 } },
+    )
+    const target = createSlideDoc()
+    let result
+    target.doc.transact(() => {
+      result = prepared.apply(target, 1)
+    })
+    const [copiedId] = (result as unknown as { slideIds: string[] }).slideIds
+    expect(listSlides(target).find((s) => s.id === copiedId)?.layout).toEqual({
+      packId: rich.id,
+      layoutId: 'quote',
+    })
+    await Promise.all(open.map((c) => c.disconnect()))
   })
 })
 

@@ -198,6 +198,7 @@ describe('commandTargetProblems', () => {
       'component.stamp',
       'deck.delete',
       'deck.duplicate',
+      'deck.exportPdf',
       'deck.exportPng',
       'deck.exportPptx',
       'deck.fonts.list',

@@ -217,6 +217,13 @@ export interface ParsedTextRun {
 
 export interface ParsedShape {
   kind: ParsedShapeKind
+  /**
+   * The PowerPoint placeholder the shape fills (`<p:ph type>`: title,
+   * ctrTitle, subTitle, body, pic, obj when untyped, …), on a slide shape
+   * only. A hint for what the object is for (A5.5): import results report
+   * it, nothing stores it.
+   */
+  placeholderType?: string
   /** Top-left in slide-local px (96 DPI). */
   x: number
   y: number
@@ -2103,9 +2110,12 @@ function parseShape(
   /** Captured from the slide shape's `<p:ph type="…">`. Drives master
    *  `<p:txStyles>` bucket lookup (title vs body vs other) below. */
   let slideShapePhType: string | undefined
+  /** The shape fills a placeholder (an untyped `<p:ph>` is an "obj"). */
+  let placeholderHint = false
   {
     const ph = findPlaceholderNode(sp, sourceTag)
     if (ph) {
+      placeholderHint = true
       const phAttrs = getAttrs(ph)
       const type = typeof phAttrs['@type'] === 'string' ? (phAttrs['@type'] as string) : undefined
       const idx = typeof phAttrs['@idx'] === 'string' ? (phAttrs['@idx'] as string) : undefined
@@ -3159,6 +3169,7 @@ function parseShape(
     if (frameTextStrokeAlpha !== undefined) shape.textStrokeAlpha = frameTextStrokeAlpha
     if (frameTextStrokeWidth !== undefined) shape.textStrokeWidth = frameTextStrokeWidth
   }
+  if (placeholderHint) shape.placeholderType = slideShapePhType ?? 'obj'
   return shape
 }
 

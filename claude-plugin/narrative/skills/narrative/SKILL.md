@@ -28,9 +28,11 @@ Narrative is Woodgrove's collaborative presentation editor. You drive it through
 
 Read the matching playbook before you start a task; they build on the basics below.
 
-- **Build slides with the brand's style pack** — Build or extend a deck with its folder's style pack — layouts chosen by purpose, slots filled, the pack's components, checked after every slide. → [references/build-with-pack.md](references/build-with-pack.md)
+- **Build a whole deck from a brief** — Scope the story, agree a slide-by-slide plan with the user, then build the deck in one step with the folder's style pack. → [references/build-deck.md](references/build-deck.md)
+- **Build slides with the brand's style pack** — Add or rebuild a few slides with the folder's style pack — layouts chosen by purpose, slots filled, checked after every slide. A whole deck from a brief is build-deck. → [references/build-with-pack.md](references/build-with-pack.md)
 - **Targeted edits** — Make a specific change the user asked for — move, copy, restyle or rewrite particular objects or slides. → [references/edit.md](references/edit.md)
 - **Find and replace text** — Replace a word or phrase across one slide or the whole deck, keeping formatting. → [references/find-replace.md](references/find-replace.md)
+- **Insert slides and make them ours** — Bring another deck's slides (a Narrative deck or a .pptx) into this deck and restyle them with its brand. → [references/insert-restyle.md](references/insert-restyle.md)
 - **Restyle with the folder's tokens** — Bring slides onto the folder's brand — its style pack's layouts when it has one, else its colours, text styles and fonts. → [references/restyle-lite.md](references/restyle-lite.md)
 - **Shorten or tighten text** — Make the text of a slide or selection shorter and sharper without changing what it says. → [references/shorten.md](references/shorten.md)
 - **Translate slides** — Translate the text of a slide range or the whole deck into another language, keeping layout and formatting. → [references/translate.md](references/translate.md)

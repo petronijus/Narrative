@@ -29,13 +29,15 @@ import {
   addObjects,
   addSlide,
   getSlideObjectsCtx,
+  setStylePack,
   type DeckMutationContext,
 } from '@narrative/slide-model'
 import type { Database } from '../db/client.js'
 import type { AgentAccess } from '../agent/access.js'
 import { createMemoryRunStore, type MemoryRunStore } from '../agent/runStore.js'
 import { createFolderFontsReader } from '../agent/folderFonts.js'
-import { createFolderTokensReader } from '../agent/folderTokens.js'
+import { createFolderTokensReader, type FolderTokensSources } from '../agent/folderTokens.js'
+import { createFolderStylePackReader } from '../agent/folderStylePack.js'
 import { createAgentRuntime, type AgentRuntime } from '../agent/runtime.js'
 import type { ConfirmationLookups } from '../agent/confirmationSummary.js'
 import { awarenessOwnershipExtension } from '../hocuspocus/awarenessOwnership.js'
@@ -126,12 +128,14 @@ export interface AgentWorld {
   createDeck(deckId: string, build?: (doc: Y.Doc) => void): void
   /**
    * Put a deck or component master (by id) in a folder whose document holds
-   * `tokens` (the folder document's `tokens` map), stored like any document.
+   * `tokens` (the folder document's `tokens` map) and, given one, a style
+   * pack, stored like any document.
    */
   setFolder(
     targetId: string,
     folderId: string,
     tokens?: Record<string, Record<string, Record<string, unknown>>>,
+    stylePack?: Record<string, unknown>,
   ): void
   /** The font faces uploaded to `folderId` (the fake of its font assets). */
   setFolderFonts(folderId: string, faces: ReadonlyArray<FontFaceWeight>): void
@@ -247,7 +251,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     const id = target.deckId ?? target.componentId
     return id === undefined ? null : (folderOfTarget.get(id) ?? null)
   }
-  const folderTokens = createFolderTokensReader({
+  const folderSources: FolderTokensSources = {
     folderOf: folderOfFixture,
     async readFolder(folderId) {
       const doc = new Y.Doc()
@@ -259,7 +263,9 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
       if (state !== undefined) Y.applyUpdate(doc, state)
       return doc
     },
-  })
+  }
+  const folderTokens = createFolderTokensReader(folderSources)
+  const folderStylePack = createFolderStylePackReader(folderSources)
   const fontsOfFolder = new Map<string, ReadonlyArray<FontFaceWeight>>()
   const folderFonts = createFolderFontsReader({
     folderOf: (target) => folderOfFixture(target),
@@ -269,6 +275,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     db: {} as Database,
     folderTokens,
     folderFonts,
+    folderStylePack,
     log: opts.log ?? quietLog,
     hocuspocus,
     ...(opts.registry === undefined ? {} : { registry: opts.registry }),
@@ -308,7 +315,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     grant(id, userId, role) {
       roles.set(`${id}|${userId}`, role)
     },
-    setFolder(targetId, folderId, tokens = {}) {
+    setFolder(targetId, folderId, tokens = {}, stylePack) {
       folderOfTarget.set(targetId, folderId)
       const doc = new Y.Doc()
       const root = doc.getMap<unknown>('tokens')
@@ -321,6 +328,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
           for (const [k, v] of Object.entries(fields)) token.set(k, v)
         }
       }
+      if (stylePack !== undefined) setStylePack(doc, stylePack)
       persistence.snapshots.set(`folder:${folderId}`, Y.encodeStateAsUpdate(doc))
       doc.destroy()
     },

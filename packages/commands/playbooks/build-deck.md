@@ -1,0 +1,91 @@
+---
+name: build-deck
+title: Build a whole deck from a brief
+description: Scope the story, agree a slide-by-slide plan with the user, then build the deck in one step with the folder's style pack.
+arguments:
+  - name: brief
+    description: What the deck is for — audience, the decision it asks for, the material at hand.
+    required: true
+  - name: slides
+    description: How many slides, e.g. "about 12".
+    required: false
+    default: as the story needs
+  - name: ownership
+    description: Whose voice it is in — "ours" (the agency's) or the client's name.
+    required: false
+---
+
+Build a deck from this brief: {{brief}}. Length: {{slides}}. Voice:
+{{ownership}}.
+
+You plan with the user first and build once. Nothing is written to the
+deck before step 4 is approved.
+
+1. **Read.** `query.deck` (the deck, its slides and meta) and
+   `style.pack.get` ("summary", then "layouts": purposes, slots, the
+   archetype map, variants, footer fields). Without a style pack, say so
+   and stop: use `build-with-pack` or `restyle-lite` instead.
+2. **Scope — one message, only what the brief leaves open:** who is in
+   the room and what they must decide; tone; the slide count; the variant
+   (`style.pack.get` lists them) and the footer's fields (client,
+   classification, date — never leave a placeholder). If the deck speaks
+   for a client and you have no sample of their voice (a page of their
+   site, an earlier deck), ask for one. Only if the user declines, write
+   in a neutral version of the category's voice and say so in the report.
+3. **Directions.** Offer three genuinely different ways to tell the story
+   (three lines each: the shift the room should make, the opening, the
+   turn) and recommend one. Wait for the choice.
+4. **Plan.** One table, one row per slide:
+   `# | archetype | title (≤ 10 words) | message (≤ 25 words) | claim`.
+   - Map each slide's form to an archetype of the pack (table below); vary
+     them: the same archetype on most slides reads flat (`query.check`
+     warns on it).
+   - Every factual claim names its source, or is marked `[SOURCE NEEDED]`,
+     or `[ILLUSTRATIVE]` when it only shows the idea. Do not invent
+     numbers.
+   - At 12 slides or more, propose two or three named acts.
+     **Wait for approval.** Change the table until the user says go.
+5. **Spec.** Turn the approved table into a deck spec for
+   `style.deck.apply { spec }`: `packId`, `variant`, `lang`, `fields`, and
+   per slide its `archetype` (or a `layout` where one fits better), the
+   text of its slots, `message`, `claims` (kind `sourced` with `source`,
+   `source-needed`, `illustrative`) and speaker `notes`. Upload pictures
+   first (`media.upload`) and use their `assetId`, with `focus` "top" for
+   portraits. `drawn` is for what no layout holds (a rule, a box per
+   column, a big number), on the pack's grid. Text in two languages:
+   `"Umsatz{de|en}Revenue"`.
+6. **Build.** `style.deck.apply { spec }` — one step, reverted in one. A
+   deck that is not empty holds slides of its own: ask before passing
+   `replace: true`. The result lists each slide with `emptySlots` and the
+   unmeasured check's counts.
+7. **Check.** `query.check` on the whole deck. Fix each error by
+   rewriting: shorter text, a slide split in two, another layout or
+   archetype — change the spec and build again rather than editing slides
+   by hand, so the spec stays the deck's source. Never shrink type to make
+   it fit.
+8. **Look.** `query.render` a contact sheet, then the slides that matter
+   most one by one. Look again after every fix.
+9. **Report.** The slides built (archetype and title each), what the check
+   still flags, every `[SOURCE NEEDED]` claim, what the user must supply
+   (pictures, numbers), how the voice was set, and that the whole build
+   reverts in one step (`agent.revert`).
+
+Format to archetype:
+
+| The story's form                      | Archetype        |
+| ------------------------------------- | ---------------- |
+| title reveal (opening) / (a new part) | cover / divider  |
+| compare and contrast                  | comparison       |
+| photo with a pull-quote               | picture          |
+| big quote, typographic transformation | statement        |
+| data, chart                           | evidence         |
+| timeline, process, loop               | process          |
+| numbered points, multi-pane           | content          |
+| the ask                               | decision, closer |
+
+Do not:
+
+- write anything before the plan is approved;
+- build slide by slide with `slide.applyLayout` (that is `build-with-pack`,
+  for a few slides);
+- move, resize or restyle layout objects to make text fit.

@@ -193,4 +193,61 @@ describe('compactInputSchema', () => {
       'additionalProperties',
     )
   })
+
+  it('writes a nullable field as one schema with a null type, accepting the same values', () => {
+    const original = {
+      type: 'object',
+      properties: {
+        size: { anyOf: [{ type: 'number', exclusiveMinimum: 0 }, { type: 'null' }] },
+        align: {
+          anyOf: [{ type: 'string', enum: ['left', 'right'] }, { type: 'null' }],
+          description: 'null clears it',
+        },
+        colour: { anyOf: [{ $ref: '#/$defs/c' }, { type: 'null' }] },
+      },
+      $defs: { c: { type: 'string', pattern: '^#', description: 'a colour, used twice' } },
+    }
+    const out = compactInputSchema(original)
+    const props = out['properties'] as Record<string, Record<string, unknown>>
+    expect(props['size']).toEqual({ type: ['number', 'null'], exclusiveMinimum: 0 })
+    expect(props['align']).toEqual({
+      type: ['string', 'null'],
+      enum: ['left', 'right', null],
+      description: 'null clears it',
+    })
+    for (const value of [{ size: null }, { size: 3 }, { align: null }, { align: 'left' }])
+      expect(valid(out, value), JSON.stringify(value)).toBe(true)
+    expect(valid(out, { size: 0 })).toBe(false)
+    expect(valid(out, { align: 'up' })).toBe(false)
+  })
+
+  it('says a union of string constants as one enum', () => {
+    const out = compactInputSchema({
+      type: 'object',
+      properties: {
+        category: {
+          anyOf: [
+            { type: 'string', const: 'colors' },
+            { type: 'string', const: 'textStyles' },
+          ],
+        },
+        kind: {
+          anyOf: [
+            { type: 'string', enum: ['bullet', 'none'] },
+            { type: 'string', const: 'none' },
+          ],
+        },
+        described: {
+          anyOf: [
+            { type: 'string', const: 'a', description: 'the first' },
+            { type: 'string', const: 'b' },
+          ],
+        },
+      },
+    })
+    const props = out['properties'] as Record<string, Record<string, unknown>>
+    expect(props['category']).toEqual({ type: 'string', enum: ['colors', 'textStyles'] })
+    expect(props['kind']).toEqual({ type: 'string', enum: ['bullet', 'none'] })
+    expect(props['described']).toHaveProperty('anyOf')
+  })
 })

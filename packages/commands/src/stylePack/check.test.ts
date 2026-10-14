@@ -6,17 +6,20 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { listSlides, readDeckMeta, updateObject } from '@narrative/slide-model'
+import { listSlides, readDeckMeta, setDeckMeta, updateObject } from '@narrative/slide-model'
 import type { StylePack } from '@narrative/shared'
 import { harness } from '../testing/harness.js'
 import { objectsOf, resolveSlide } from '../refs.js'
 import { checkDeck, type CheckMeasurement } from './check.js'
+import { MAX_MEASURE_SLIDES } from '../services/render.js'
+import { createDefaultRegistry } from '../catalog.js'
+import { runCommand } from '../run.js'
 
 const NONE: CheckMeasurement = { overflow: [], grown: [], failedFonts: [] }
 
 function laidOut(content: Record<string, unknown> = {}) {
   const h = harness()
-  h.run('style.deck.apply', { fields: { client: 'Acme' } })
+  setDeckMeta(h.ctx.deck!.doc, { fields: { client: 'Acme' } })
   h.run('slide.applyLayout', {
     slide: 's2',
     layoutId: 'title-bullets',
@@ -90,7 +93,7 @@ describe('checkDeck', () => {
     expect(check(h, { measurement: null }).fitVerified).toBe(false)
   })
 
-  it('flags overlap, the grid, colours, editorial rules and placeholders', () => {
+  it('flags overlap, the grid, colours, editorial rules and placeholders', async () => {
     const h = laidOut({
       bullets: {
         paragraphs: [
@@ -118,7 +121,7 @@ describe('checkDeck', () => {
       ]),
     )
     // The footer's sentinel: the client field cleared.
-    h.run('style.deck.apply', { fields: { client: null } })
+    await h.runAsync('style.deck.apply', { fields: { client: null } })
     expect(check(h).findings.find((f) => f.rule === 'sentinel')).toMatchObject({
       level: 'error',
       message: expect.stringContaining('"Client"'),
@@ -156,5 +159,63 @@ describe('checkDeck', () => {
     expect(check(h, { pack }).findings[0]).toMatchObject({ rule: 'title-period', level: 'error' })
     pack.qa.rules = { 'title-period': 'off' }
     expect(check(h, { pack }).findings).toEqual([])
+  })
+
+  it('warns on one layout across most of the deck, judged only on the whole deck', () => {
+    const h = harness()
+    // Four slides, three of them title-bullets.
+    h.run('slide.add', {})
+    for (const slide of ['s1', 's2', 's3'])
+      h.run('slide.applyLayout', { slide, layoutId: 'title-bullets', content: { title: 'T' } })
+    const deck = listSlides(h.ctx.deck!)
+    expect(deck).toHaveLength(4)
+    const run = (whole: boolean, pack: StylePack = h.ctx.stylePack!) =>
+      checkDeck({
+        pack,
+        tokens: h.ctx.folderTokens ?? null,
+        meta: readDeckMeta(h.ctx.deck!.doc),
+        slides: deck.map((slide, index) => ({ slide, index })),
+        measurement: null,
+        ...(whole ? { deck } : {}),
+      }).findings.filter((f) => f.rule === 'rhythm')
+    expect(run(true)).toEqual([
+      expect.objectContaining({
+        level: 'warn',
+        message: expect.stringContaining("3 of 4 slides use the layout 'title-bullets'"),
+      }),
+    ])
+    expect(run(false)).toEqual([])
+    const pack = structuredClone(h.ctx.stylePack!)
+    pack.qa.rules = { rhythm: 'off' }
+    expect(run(true, pack)).toEqual([])
+    // Half is a mix.
+    h.run('slide.applyLayout', { slide: 's3', layoutId: 'title', content: { title: 'T' } })
+    expect(
+      checkDeck({
+        pack: h.ctx.stylePack!,
+        tokens: h.ctx.folderTokens ?? null,
+        meta: readDeckMeta(h.ctx.deck!.doc),
+        slides: [],
+        measurement: null,
+        deck: listSlides(h.ctx.deck!),
+      }).findings,
+    ).toEqual([])
+  })
+
+  it('checks a deck over the measuring cap whole without measuring, rhythm included', async () => {
+    const h = harness()
+    for (let i = 0; i < MAX_MEASURE_SLIDES; i++) h.run('slide.add', {})
+    for (const slide of listSlides(h.ctx.deck!).map((s) => s.id))
+      h.run('slide.applyLayout', { slide, layoutId: 'title-bullets', content: { title: 'T' } })
+    const registry = createDefaultRegistry()
+    const out = (await runCommand(
+      registry,
+      { ...h.ctx, target: { deckId: 'deck-check' } },
+      'query.check',
+      { fit: false },
+    )) as {
+      findings: Array<{ rule: string }>
+    }
+    expect(out.findings.some((f) => f.rule === 'rhythm')).toBe(true)
   })
 })

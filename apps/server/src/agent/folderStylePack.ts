@@ -12,22 +12,31 @@ import { readStylePack } from '@narrative/slide-model'
 import type { StylePack } from '@narrative/shared'
 import type { ServiceDeps } from '../services/deps.js'
 import { readDocCopy } from '../services/liveDocs.js'
-import { folderOf } from './folderTokens.js'
+import { folderOf, type FolderTokensSources } from './folderTokens.js'
 
 /** The target's folder's pack; null when it has no folder or no pack. */
 export type FolderStylePackReader = (target: CommandTarget) => Promise<StylePack | null>
 
-export function createDbFolderStylePackReader(
-  deps: Pick<ServiceDeps, 'db' | 'log' | 'hocuspocus'>,
-): FolderStylePackReader {
+/** The reader over where folders come from (the same sources as the tokens'). */
+export function createFolderStylePackReader(sources: FolderTokensSources): FolderStylePackReader {
   return async (target) => {
-    const folderId = await folderOf(deps.db, target)
+    const folderId = await sources.folderOf(target)
     if (folderId === null) return null
-    const doc = await readDocCopy(deps, 'folder', folderId)
+    const doc = await sources.readFolder(folderId)
     try {
       return readStylePack(doc) as StylePack | null
     } finally {
       doc.destroy()
     }
   }
+}
+
+/** The production reader: the folder from the database, its document live or stored. */
+export function createDbFolderStylePackReader(
+  deps: Pick<ServiceDeps, 'db' | 'log' | 'hocuspocus'>,
+): FolderStylePackReader {
+  return createFolderStylePackReader({
+    folderOf: (target) => folderOf(deps.db, target),
+    readFolder: (folderId) => readDocCopy(deps, 'folder', folderId),
+  })
 }

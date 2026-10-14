@@ -1231,6 +1231,26 @@ export function createDomainFakes(
               failedFonts: [],
             }
       },
+      async exportPdf(args) {
+        rRender('exportPdf', args)
+        // The fixture deck skips none of its slides; a PDF is a page per slide asked for.
+        const chosen = pickRenderSlides(args.deckId, args.slides)
+        const base = {
+          pages: chosen.length,
+          leftOut: 0,
+          sizeBytes: 2048 * chosen.length,
+          failedLoads: 0,
+          failedFonts: [],
+        }
+        return args.delivery === 'base64'
+          ? { ...base, delivery: 'base64', base64: 'JVBERi0xLjQK' }
+          : {
+              ...base,
+              delivery: 'url',
+              url: 'https://storage.test/exports/deck.pdf?X-Amz-Signature=fixture',
+              expiresAt: T0,
+            }
+      },
       async refreshThumbnail(args) {
         rRender('refreshThumbnail', args)
         if ('componentId' in args.target) {

@@ -298,10 +298,8 @@ export const tokenCreate = defineCommand({
   description:
     `Add a colour or a text style to the folder, for every deck in it. A colour is { name, value } ("#RRGGBB" or ` +
     `"#RRGGBBAA"), optionally byVariant { axis, values } (a value per deck variant) and bySurface; a folder holds ` +
-    `at most ${MAX_COLORS} colours. A text style names what linked text takes — family, weight, size, lineHeight ` +
-    '(multiple of the size), letterSpacing, paragraph spacing, colour (a hex or a folder colour), textTransform, ' +
-    'minSize (the floor of autofit "shrink"), levels (list defaults per paragraph level); ' +
-    'apply it with text.style.apply; its name must be new in the folder (token.list). Returns the new id. Undo: ' +
+    `at most ${MAX_COLORS} colours. A text style holds the typography linked text takes (its fields are the ` +
+    "schema's); apply it with text.style.apply; its name must be new in the folder (token.list). Returns the new id. Undo: " +
     'token.delete. Needs the editor role in the folder.',
   input: z.discriminatedUnion('category', [
     NewColor.extend({ category: z.literal('colors') }),

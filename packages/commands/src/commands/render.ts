@@ -9,7 +9,7 @@ import { z } from 'zod'
 import { defineCommand } from '../registry.js'
 import { requireServices } from '../services.js'
 import { SlideRefSchema, type SlideRef } from '../refs.js'
-import type { RenderSlideRef } from '../services/render.js'
+import { MAX_PDF_SLIDES, type RenderSlideRef } from '../services/render.js'
 import { GET, PUT, serverCommand, targetDeckId, targetDocument } from './serverShared.js'
 
 /**
@@ -88,6 +88,63 @@ export const deckExportPng = defineCommand({
       userId: ctx.actor.userId,
       deckId: targetDeckId(ctx),
       slides: input.slides === 'all' ? 'all' : input.slides.map(toRenderRef),
+      delivery: input.delivery,
+    })
+  },
+})
+
+export const deckExportPdf = defineCommand({
+  ...serverCommand,
+  id: 'deck.exportPdf',
+  domain: 'deck',
+  title: 'Export slides as PDF',
+  description:
+    'The deck as one PDF, a page per slide as the editor shows it now: pictures of the slides, not editable ' +
+    'text (that is deck.exportPptx). Skipped slides are left out unless `includeSkipped`. A download URL for ' +
+    '15 minutes — a bearer link, only for the user who asked — or `delivery: "base64"` (≤ 8 MB). At most ' +
+    `${MAX_PDF_SLIDES} slides a call; about a second a slide. Any reader of the deck.`,
+  input: z.strictObject({
+    slides: z
+      .union([z.literal('all'), z.array(SlideRefSchema).min(1).max(MAX_PDF_SLIDES)])
+      .default('all')
+      .describe('"all" (default), or the slides in page order'),
+    includeSkipped: z.boolean().default(false),
+    delivery: z.enum(['url', 'base64']).default('url'),
+  }),
+  output: z.object({
+    delivery: z.enum(['url', 'base64']),
+    url: z.string().optional(),
+    expiresAt: z.string().optional(),
+    base64: z.string().optional(),
+    pages: z.number(),
+    leftOut: z.number(),
+    sizeBytes: z.number(),
+    failedLoads: z.number(),
+    failedFonts: z.array(z.string()),
+  }),
+  role: 'viewer',
+  scope: 'deck',
+  effects: ['server'],
+  undo: 'n/a',
+  confirm: 'never',
+  routes: [GET('/decks/:id/export.pdf')],
+  examples: [
+    { title: 'The deck as a PDF download link', input: {} },
+    {
+      title: 'Slides 1–3 inline, the skipped ones too',
+      input: {
+        slides: [{ index: 0 }, { index: 1 }, { index: 2 }],
+        includeSkipped: true,
+        delivery: 'base64',
+      },
+    },
+  ],
+  async handler(ctx, input) {
+    return requireServices(ctx).render.exportPdf({
+      userId: ctx.actor.userId,
+      deckId: targetDeckId(ctx),
+      slides: input.slides === 'all' ? 'all' : input.slides.map(toRenderRef),
+      includeSkipped: input.includeSkipped,
       delivery: input.delivery,
     })
   },
@@ -227,4 +284,4 @@ export const deckRefreshThumbnail = defineCommand({
   },
 })
 
-export const renderCommands = [deckExportPng, queryRender, deckRefreshThumbnail]
+export const renderCommands = [deckExportPng, deckExportPdf, queryRender, deckRefreshThumbnail]

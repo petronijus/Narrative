@@ -36,6 +36,29 @@ export type PngExportResult =
       failedFonts: string[]
     }
 
+/** Slides one PDF takes (A5.6): rendered in jobs of `MAX_RENDER_SLIDES`. */
+export const MAX_PDF_SLIDES = 40
+
+/** A deck's slides as one PDF (A5.6), a page per slide. */
+export type PdfExportResult = {
+  /** Pages in the file. */
+  pages: number
+  /** Skipped slides left out (`includeSkipped` keeps them). */
+  leftOut: number
+  sizeBytes: number
+  /** Pictures that no longer exist, over all pages (they show their error mark). */
+  failedLoads: number
+  failedFonts: string[]
+} & (
+  | {
+      delivery: 'url'
+      url: string
+      /** When the link stops working. */
+      expiresAt: string
+    }
+  | { delivery: 'base64'; base64: string }
+)
+
 /**
  * What `query.render` looks at: a slide, a region of one (slide px), a sheet
  * of slides, or a slide before and after the agent run `runId` changed it.
@@ -104,6 +127,18 @@ export interface RenderService {
     slides: RenderSlideRef[] | 'all'
     delivery: 'url' | 'base64'
   }): Promise<PngExportResult>
+  /**
+   * The slides of the live deck as one PDF, a page each (any reader of the
+   * deck), at most MAX_PDF_SLIDES; skipped slides are left out unless
+   * `includeSkipped`. The file is the rendered PNGs as JPEGs (a raster PDF).
+   */
+  exportPdf(args: {
+    userId: string
+    deckId: string
+    slides: RenderSlideRef[] | 'all'
+    includeSkipped: boolean
+    delivery: 'url' | 'base64'
+  }): Promise<PdfExportResult>
   /**
    * A picture of the live deck for the model to look at (any reader of the
    * deck): a slide, a region at full resolution, or a numbered sheet.

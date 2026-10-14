@@ -724,6 +724,9 @@ export type ImageMask =
   | { kind: 'polygon'; sides: number }
   | { kind: 'path'; anchors: NormalizedPathAnchor[]; closed: boolean }
 
+/** {@link ImageObject.focus}: the side of a picture kept in view. */
+export type ImageFocus = 'top' | 'bottom' | 'left' | 'right'
+
 export interface ImageObject extends BaseSlideObject {
   type: 'image'
   /**
@@ -743,6 +746,14 @@ export interface ImageObject extends BaseSlideObject {
    * 'cover' = crop to fill (default), 'contain' = letterbox.
    */
   fit?: 'cover' | 'contain'
+  /**
+   * Which side of the picture stays in view when it does not fill its box
+   * (A5.1, a style pack region's `focus`): with `cover` that edge of the
+   * picture meets the box's edge (a portrait cropped to a band keeps the
+   * face at the top); with `contain` the picture sits against that side.
+   * Undefined ⇒ centred. Applies inside `imageRect` when there is a crop.
+   */
+  focus?: ImageFocus
   /**
    * Optional alt text for accessibility / PDF export.
    */

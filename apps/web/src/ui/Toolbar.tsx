@@ -12,7 +12,7 @@
  *   Ctrl/Cmd+Enter → present mode.
  */
 
-import { downloadBlob } from '../lib/download.js'
+import { downloadBlob, safeFilename } from '../lib/download.js'
 import { attachmentFilename } from '../api/client.js'
 import { API_URL } from '../lib/endpoints.js'
 import {
@@ -77,6 +77,10 @@ import { useApi } from '../api/client.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { listSlides } from '@narrative/slide-model'
 import { ExportPptxDialog } from './ExportPptxDialog.js'
+import { exportDeckPdfInBrowser } from '../state/browserDeckPdf.js'
+import { MAX_PDF_SLIDES } from '@narrative/commands'
+import { dismissEditorNotice, showEditorNotice } from '../state/editorNotice.js'
+import { SlideRenderRefused } from '../state/browserSlideExport.js'
 import type { Slide } from '@narrative/shared'
 import { useSelection } from '../state/SelectionContext.js'
 import type { UploadEntry } from '../state/useMediaUpload.js'
@@ -185,6 +189,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     const t = setTimeout(() => setExportError(null), 5_000)
     return () => clearTimeout(t)
   }, [exportError])
+
   // Read the deck's folderId from the shared DeckRoleContext rather
   // than firing another `getDeck` from the toolbar — the provider
   // already fetched it. This lets the "+ Add component" button appear
@@ -211,6 +216,52 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
   const [titleEditing, setTitleEditing] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const titleInputRef = useRef<HTMLInputElement>(null)
+
+  /** Export → PDF: built here, the server's route when this browser cannot render (A5.6). */
+  const exportPdf = useCallback(async () => {
+    if (id === undefined || slideDoc === null || slideDoc.deckCtx === undefined) return
+    const deckCtx = slideDoc.deckCtx
+    // Skipped slides are left out, as presenting leaves them out.
+    const slideIds = listSlides(deckCtx)
+      .filter((s) => s.skipped !== true)
+      .map((s) => s.id)
+    if (slideIds.length === 0) {
+      setExportError('Every slide is skipped: there is nothing to export')
+      return
+    }
+    setExportError(null)
+    setExporting(true)
+    const title = deckTitle ?? 'deck'
+    try {
+      const blob = await exportDeckPdfInBrowser({
+        deckId: id,
+        doc: deckCtx.doc,
+        slideIds,
+        title,
+        onProgress: (done, total) => showEditorNotice(`Exporting the PDF… ${done} of ${total}`),
+      }).catch(async (err: unknown) => {
+        if (err instanceof SlideRenderRefused) throw err
+        // The server makes at most MAX_PDF_SLIDES pages in one go.
+        if (slideIds.length > MAX_PDF_SLIDES)
+          throw new Error(
+            `this browser could not render it, and the server makes PDFs of at most ${MAX_PDF_SLIDES} slides ` +
+              `(this deck has ${slideIds.length})`,
+          )
+        console.warn('[export] building the PDF in the browser failed; asking the server', err)
+        showEditorNotice('Exporting the PDF on the server…')
+        return (await api.exportDeckPdf(id)).blob
+      })
+      dismissEditorNotice()
+      downloadBlob(blob, `${safeFilename(title)}.pdf`)
+    } catch (err) {
+      dismissEditorNotice()
+      setExportError(
+        `Could not export the PDF: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    } finally {
+      setExporting(false)
+    }
+  }, [api, deckTitle, id, slideDoc])
   useEffect(() => {
     if (masterMode || id === undefined) return
     let cancelled = false
@@ -833,46 +884,60 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
           </>
         )}
 
-        {/* M28: Export to PowerPoint — editor+ role (covered by isOwner since
-            we don't expose a non-owner role here yet; the server route enforces
-            editor+ regardless). Clicking opens a compatibility-warning dialog
-            (D2) which lists what won't survive the round-trip; the actual
-            fetch happens when the user confirms inside the dialog.
-            Server errors surface as a transient toolbar banner. */}
-        {isOwner && id !== undefined && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={exporting}
-                onClick={() => {
-                  const slides =
-                    slideDoc !== null && slideDoc.deckCtx !== undefined
-                      ? listSlides(slideDoc.deckCtx)
-                      : []
-                  setExportError(null)
-                  setExportDialogSlides(slides)
-                }}
-                data-action="deck.exportPptx"
-                aria-label="Export to PowerPoint"
-                aria-busy={exporting}
-                className="gap-1.5"
-              >
-                {exporting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <FileDown className="h-4 w-4" aria-hidden="true" />
-                )}
-                {/* The label stays "Export" while the file builds — the
-                    spinner and the disabled state say it is busy. Swapping
-                    in "Exporting…" meant reserving its width permanently,
-                    which left the idle button ~30 px wider than its text. */}
-                <span className="hidden sm:inline">Export</span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Review compatibility & download .pptx</TooltipContent>
-          </Tooltip>
+        {/* Export: PowerPoint for owners (M28: a compatibility dialog lists
+            what will not survive the round-trip, the file is fetched when
+            the user confirms in it) and PDF for every reader (A5.6: built in
+            this browser from the render page, the server's route when the
+            browser cannot render). Failures surface as a transient toolbar
+            banner. */}
+        {!masterMode && id !== undefined && (
+          <DropdownMenu>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={exporting}
+                    data-action="deck.exportMenu"
+                    aria-label="Export"
+                    aria-busy={exporting}
+                    className="gap-1.5"
+                  >
+                    {exporting ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <FileDown className="h-4 w-4" aria-hidden="true" />
+                    )}
+                    {/* The label stays "Export" while the file builds — the
+                        spinner and the disabled state say it is busy. */}
+                    <span className="hidden sm:inline">Export</span>
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Download the deck as a file</TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="end" sideOffset={4} className="min-w-[10rem]">
+              {isOwner && (
+                <DropdownMenuItem
+                  action="deck.exportPptx"
+                  onSelect={() => {
+                    const slides =
+                      slideDoc !== null && slideDoc.deckCtx !== undefined
+                        ? listSlides(slideDoc.deckCtx)
+                        : []
+                    setExportError(null)
+                    setExportDialogSlides(slides)
+                  }}
+                >
+                  Export to PowerPoint
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem action="deck.exportPdf" onSelect={() => void exportPdf()}>
+                Export to PDF
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
         {exportDialogSlides !== null && id !== undefined && (
           <ExportPptxDialog

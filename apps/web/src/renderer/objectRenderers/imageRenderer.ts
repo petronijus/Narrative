@@ -378,7 +378,7 @@ function layoutSprite(
   // non-cropped images is unchanged. The sprite is parented to
   // spriteWrap which we translate so applyFit's local (0,0) lands at
   // (ir.x - data.x, ir.y - data.y) inside the object container.
-  applyFit(sprite, texture, { w: ir.width, h: ir.height }, fit)
+  applyFit(sprite, texture, { w: ir.width, h: ir.height }, fit, data.focus)
 
   // Only enable centre-pivot positioning when rotation is non-zero —
   // setting a non-zero pivot on a Pixi Container with a mask appears to
@@ -595,7 +595,7 @@ export const imageRenderer = {
     }
 
     // Anything geometry-ish: re-layout the existing sprite and refresh the mask.
-    const fitChanged = prev.fit !== next.fit
+    const fitChanged = prev.fit !== next.fit || prev.focus !== next.focus
     const sizeChanged = prev.width !== next.width || prev.height !== next.height
     const posChanged = prev.x !== next.x || prev.y !== next.y
     const imageRectChanged = !isImageRectEqual(prev.imageRect, next.imageRect)

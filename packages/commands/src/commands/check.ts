@@ -39,9 +39,11 @@ export const queryCheck = defineCommand({
     'with the real fonts; a growing box against what is below it), partial overlaps, content outside the ' +
     'margins, text colours outside the pack, a background of another variant, missing footer or page number, ' +
     'placeholder text, empty picture regions, and the editorial rules (capitals, italics, bullet glyphs, title ' +
-    'periods and length, the accent budget, typography, emoji). Each finding names its slide, object (and table ' +
+    'periods and length, the accent budget, typography, emoji); on the whole deck, one layout on most slides. ' +
+    'Each finding names its slide, object (and table ' +
     'cell), the rule and an error or warning level; fix the errors before you report a slide done. `fit: false` ' +
-    'skips the measurement (a few seconds per 20 slides). A font that did not load leaves the fit unverified ' +
+    `skips the measurement (a few seconds per 20 slides; at most ${MAX_MEASURE_SLIDES} slides measured at once). ` +
+    'A font that did not load leaves the fit unverified ' +
     '(`fitVerified: false`, an error). Any reader of the deck.',
   input: z.strictObject({
     slides: z
@@ -122,10 +124,12 @@ export const queryCheck = defineCommand({
               )
             return { slide, index }
           })
-    if (picked.length > MAX_MEASURE_SLIDES)
+    // The cap is the measurement's; unmeasured, a whole deck of any size is one check.
+    if (input.fit && picked.length > MAX_MEASURE_SLIDES)
       throw new CommandError(
         'invalid_input',
-        `the deck has ${picked.length} slides; one check takes at most ${MAX_MEASURE_SLIDES} — name them in parts`,
+        `the deck has ${picked.length} slides; one measured check takes at most ${MAX_MEASURE_SLIDES} — ` +
+          'name them in parts, or check the whole deck with fit: false',
       )
     const report = checkDeck({
       pack,
@@ -133,6 +137,7 @@ export const queryCheck = defineCommand({
       meta: readDeckMeta(deck.doc),
       slides: picked,
       measurement,
+      ...(input.slides === 'all' ? { deck: all } : {}),
     })
     // Errors first, then by slide.
     const order = (f: CheckFinding) => (f.level === 'error' ? 0 : 1)

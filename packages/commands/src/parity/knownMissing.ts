@@ -36,15 +36,7 @@ export interface KnownMissing {
   note?: string
 }
 
-export const KNOWN_MISSING: readonly KnownMissing[] = [
-  // --- A5: deck builder (and what was moved out of A3) -----------------------
-  {
-    capability: 'deck.exportPdf',
-    phase: 'A5',
-    source: 'new',
-    note: 'moved out of A3 by Petr (2026-10-10): not wanted yet; the render worker (A3) makes it a raster PDF of its PNGs when it is',
-  },
-]
+export const KNOWN_MISSING: readonly KnownMissing[] = []
 
 /** Phases already finished: their entries must be gone. Move the marker as phases close. */
-export const FINISHED_PHASES: readonly Phase[] = ['A0', 'A1', 'A2', 'A3', 'A4']
+export const FINISHED_PHASES: readonly Phase[] = ['A0', 'A1', 'A2', 'A3', 'A4', 'A5']

@@ -33,8 +33,10 @@ shows. Where it cannot say it exactly, write the best native approximation
 the native XML next to it is unchanged. `objectExt.ts` is the single table of
 which fields go where; read it before adding a field.
 
-Not carried, on purpose: a slide's style pack layout (`Slide.layout`) and
-the deck's meta (`DeckMeta`: pack variant, footer fields, language). Both
+Not carried, on purpose: a slide's style pack layout (`Slide.layout`),
+its brief and the spec slide that built it (`Slide.brief`, `Slide.specKey`,
+A5.3), and the deck's meta (`DeckMeta`: pack variant, footer fields,
+language, and the deck spec it keeps). Both
 point into the folder's style pack, which a PowerPoint file does not hold:
 export resolves every colour on the deck's variant and the slide's surface
 into literal values, so the file looks the same without them, and an

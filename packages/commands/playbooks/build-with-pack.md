@@ -1,7 +1,7 @@
 ---
 name: build-with-pack
 title: Build slides with the brand's style pack
-description: Build or extend a deck with its folder's style pack — layouts chosen by purpose, slots filled, the pack's components, checked after every slide.
+description: Add or rebuild a few slides with the folder's style pack — layouts chosen by purpose, slots filled, checked after every slide. A whole deck from a brief is build-deck.
 arguments:
   - name: brief
     description: What the slides should say — the story, the audience, the material to use.
@@ -34,8 +34,11 @@ place content into it; you do not design around it.
    date — ask for values you do not know; never leave a placeholder such as
    "Client" or "I/XX"), the language.
 4. For each slide: `slide.add` where needed, then `slide.applyLayout` with
-   the layout id and `content` by slot name — text as a string or
-   `{ paragraphs }`, a picture as `{ assetId }` (from `media.upload`). Write
+   the layout id (or its `archetype`: the pack's layout for that kind of
+   slide) and `content` by slot name — text as a string or `{ paragraphs }`,
+   a picture as `{ assetId }` (from `media.upload`), with `focus` "top" for
+   a portrait so the face stays in a cropped frame. Delete or place what the
+   result lists as `unplaced`. Write
    in the pack's voice: its title mode (an action title states the finding;
    "label+message" puts a short label in the title and the message in the
    subtitle), its register, no closing period where the pack forbids it.
@@ -49,6 +52,8 @@ place content into it; you do not design around it.
    then `query.render` to look at it. Warnings are worth fixing when it is
    cheap.
 7. At the end, `query.check` on the whole deck and one `query.render` sheet.
+   A `rhythm` warning (one layout on most slides) means the deck reads flat:
+   give some slides another layout or archetype.
    Report the slides you made (layout per slide), the check result, and what
    the user still has to supply (pictures, numbers, footer fields).
 

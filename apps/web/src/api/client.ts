@@ -69,6 +69,11 @@ export interface ApiClient {
    */
   exportSlidePng(deckId: string, slideId: string): Promise<{ blob: Blob; filename: string }>
   /**
+   * The deck as one PDF, rendered on the server (`deck.exportPdf`, agentic
+   * A5.6; skipped slides left out): the file and the name the server gives it.
+   */
+  exportDeckPdf(deckId: string): Promise<{ blob: Blob; filename: string }>
+  /**
    * Copy chosen slides of another deck into `deckId` at `at` (the slides
    * panel's cross-deck paste). The server checks editor access to the source
    * deck, copies the media the slides show and rebinds token references
@@ -850,6 +855,12 @@ export function createApiClient(): ApiClient {
       )
       if (!res.ok) throw await apiError(res)
       return { blob: await res.blob(), filename: attachmentFilename(res, 'slide.png') }
+    },
+
+    exportDeckPdf: async (deckId) => {
+      const res = await request(`/decks/${encodeURIComponent(deckId)}/export.pdf`)
+      if (!res.ok) throw await apiError(res)
+      return { blob: await res.blob(), filename: attachmentFilename(res, 'deck.pdf') }
     },
 
     uploadDeckThumbnail: (id, dataUrl) =>

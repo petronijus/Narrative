@@ -465,6 +465,7 @@ function buildObjectSchemas<C extends ColorSlot, R extends RgbSlot>(color: C, rg
     assetId: IdSchema,
     variant: z.enum(['thumb', 'display', 'original']).exactOptional(),
     fit: FitSchema.exactOptional(),
+    focus: z.enum(['top', 'bottom', 'left', 'right']).exactOptional(),
     alt: z.string().exactOptional(),
     imageRect: z
       .strictObject({

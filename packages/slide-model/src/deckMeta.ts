@@ -3,7 +3,13 @@
  * `meta` map (A4.2d): its style variant (one value per axis of its folder's
  * pack), the values of the pack's footer fields, its language.
  *
- *   meta: Y.Map { variant?: { [axis]: value }, fields?: { [id]: text }, lang?: string }
+ *   meta: Y.Map { variant?: { [axis]: value }, fields?: { [id]: text }, lang?: string,
+ *                 spec?: DeckSpec }
+ *
+ * `spec` (A5.3) is the deck spec the deck was last built from
+ * (`style.deck.apply { spec }`), kept so it builds again with another
+ * variant or another pack; a plain JSON value of at most 256 kB, replaced
+ * whole, read by query.deck { spec: true }.
  *
  * `variant` and `fields` are plain JSON values, replaced whole: a deck has
  * a handful of each, and a variant is chosen as a whole. Read everywhere a
@@ -69,4 +75,18 @@ export function subscribeDeckMeta(doc: Y.Doc, listener: (meta: DeckMeta) => void
   const handler = (): void => listener(readDeckMeta(doc))
   m.observe(handler)
   return () => m.unobserve(handler)
+}
+
+/** The deck spec the deck was last built from (A5.3), as stored; null when there is none. */
+export function readDeckSpec(doc: Y.Doc): Record<string, unknown> | null {
+  const v = metaMap(doc).get('spec')
+  return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null
+}
+
+/** Keep the spec the deck was built from, or forget it (`null`); nested in the caller's transaction. */
+export function setDeckSpec(doc: Y.Doc, spec: Record<string, unknown> | null): void {
+  doc.transact(() => {
+    if (spec === null) metaMap(doc).delete('spec')
+    else metaMap(doc).set('spec', spec)
+  })
 }

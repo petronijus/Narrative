@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **145**. Known missing: **1**. Deliberately excluded: **21**.
+Commands: **146**. Known missing: **0**. Deliberately excluded: **21**.
 
 ## agent
 
@@ -46,6 +46,7 @@ Commands: **145**. Known missing: **1**. Deliberately excluded: **21**.
 | `deck.create`           | Create deck                       | owner                  | undoable     | never                      |            |
 | `deck.delete`           | Delete deck                       | owner                  | irreversible | always                     |            |
 | `deck.duplicate`        | Duplicate deck                    | editor                 | undoable     | never                      |            |
+| `deck.exportPdf`        | Export slides as PDF              | viewer                 | n/a          | never                      |            |
 | `deck.exportPng`        | Export slides as PNG              | viewer                 | n/a          | never                      |            |
 | `deck.exportPptx`       | Export PowerPoint                 | editor                 | n/a          | never                      |            |
 | `deck.fonts.list`       | Deck fonts                        | viewer                 | n/a          | never                      | read-only  |
@@ -238,9 +239,8 @@ Commands: **145**. Known missing: **1**. Deliberately excluded: **21**.
 
 ## Known missing
 
-| Capability       | Phase | Today in | Note                                                                                                                      |
-| ---------------- | ----- | -------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `deck.exportPdf` | A5    | new      | moved out of A3 by Petr (2026-10-10): not wanted yet; the render worker (A3) makes it a raster PDF of its PNGs when it is |
+| Capability | Phase | Today in | Note |
+| ---------- | ----- | -------- | ---- |
 
 ## Deliberately excluded
 

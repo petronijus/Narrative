@@ -153,10 +153,12 @@ export interface DeckOutline {
     transition: string
     objectCount: number
     animationCount: number
-    layout?: { packId: string; layoutId: string; surface?: string }
+    layout?: { packId: string; layoutId: string; surface?: string; archetype?: string }
   }>
   guides: unknown[]
   meta: { variant?: Record<string, string>; fields?: Record<string, string>; lang?: string }
+  /** Slides of the spec the deck was last built from (A5.3). */
+  specSlides?: number
 }
 
 export function readDeck(world: World, deckId: string): Promise<DeckOutline> {

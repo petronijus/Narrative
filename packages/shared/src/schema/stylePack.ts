@@ -435,9 +435,35 @@ export const QA_RULE_IDS = [
   'typography',
   'emoji',
   'font-missing',
+  'rhythm',
 ] as const
 export const QaRuleIdSchema = z.enum(QA_RULE_IDS)
 export type QaRuleId = z.infer<typeof QaRuleIdSchema>
+
+/**
+ * The level a rule reports at when the pack's `qa.rules` does not set one:
+ * what query.check applies (commands stylePack/check.ts) and Folder
+ * Settings shows.
+ */
+export const QA_RULE_DEFAULT_LEVELS: Readonly<Record<QaRuleId, 'error' | 'warn'>> = {
+  fit: 'error',
+  'font-missing': 'error',
+  'partial-overlap': 'error',
+  'outside-grid': 'warn',
+  'text-color': 'error',
+  'variant-mix': 'error',
+  furniture: 'error',
+  sentinel: 'error',
+  'missing-picture': 'error',
+  caps: 'warn',
+  italics: 'error',
+  'bullet-glyph': 'warn',
+  'title-period': 'warn',
+  'accent-budget': 'warn',
+  typography: 'warn',
+  emoji: 'error',
+  rhythm: 'warn',
+}
 
 export const PackQaSchema = z.strictObject({
   fit: z.strictObject({
@@ -466,6 +492,8 @@ export const ARCHETYPES = [
   'contact',
 ] as const
 export const ArchetypeSchema = z.enum(ARCHETYPES)
+/** What a slide does in a deck's story (the narrative standard's slide types). */
+export type Archetype = z.infer<typeof ArchetypeSchema>
 
 export const PackProvenanceSchema = z.strictObject({
   bootstrap: z.strictObject({

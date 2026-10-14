@@ -24,12 +24,29 @@ import {
 const registry = createDefaultRegistry()
 const playbooks = loadPlaybooks()
 
+/** A playbook's body at most (build-deck, the longest procedure, is ≈ 4.5 kB). */
+const MAX_PLAYBOOK_BYTES = 6_000
+/** basics is prepended to every other playbook's prompt: its own, slightly larger, cap. */
+const MAX_BASICS_BYTES = 9_000
+
 describe('committed playbooks', () => {
   it('load, with basics first and unique names', () => {
     expect(playbooks[0]!.name).toBe(BASICS_PLAYBOOK)
     const names = playbooks.map((p) => p.name)
     expect(new Set(names).size).toBe(names.length)
     expect(names.length).toBeGreaterThan(1)
+  })
+
+  it('stay short: a prompt is basics plus one playbook, in the context of a model (A5.7)', () => {
+    const tooLong = playbooks
+      .map((p) => ({
+        name: p.name,
+        bytes: Buffer.byteLength(p.body),
+        max: p.name === BASICS_PLAYBOOK ? MAX_BASICS_BYTES : MAX_PLAYBOOK_BYTES,
+      }))
+      .filter((p) => p.bytes > p.max)
+      .map((p) => `${p.name}: ${p.bytes} bytes, at most ${p.max}`)
+    expect(tooLong).toEqual([])
   })
 
   it('only name commands that are registered, or mark them planned', () => {

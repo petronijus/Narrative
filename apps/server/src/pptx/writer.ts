@@ -106,7 +106,15 @@ export interface WriteResult {
   skipped: { images: number; unknownShapes: number }
   /** Ids of the slides written from the parsed deck, in file order. */
   slideIds: string[]
+  /**
+   * Per written slide, the PowerPoint placeholder each object filled
+   * (A5.5): a hint for its role when the slides are restyled; not stored.
+   */
+  placeholders: PlaceholderHints
 }
+
+/** What import results say about placeholders: per slide, object id → placeholder type. */
+export type PlaceholderHints = Array<{ slide: string; objects: Array<{ object: string; type: string }> }>
 
 // ---------------------------------------------------------------------------
 // Shape mapper — ParsedShape → SlideObject | null
@@ -1194,14 +1202,20 @@ function writeSlideShapes(
   parsedSlide: ParsedSlide,
   scale: number,
   slideIds: SlideIdsByPath,
-): { objectsCreated: number; skippedImages: number; skippedUnknown: number } {
+): {
+  objectsCreated: number
+  skippedImages: number
+  skippedUnknown: number
+  placeholders: Array<{ object: string; type: string }>
+} {
   const objCtx = getSlideObjectsCtx(ctx, slideId)
+  const placeholders: Array<{ object: string; type: string }> = []
   let objectsCreated = 0
   let skippedImages = 0
   let skippedUnknown = 0
 
   if (objCtx === null) {
-    return { objectsCreated, skippedImages, skippedUnknown }
+    return { objectsCreated, skippedImages, skippedUnknown, placeholders }
   }
 
   // spId → SlideObject.id map. Populated as we emit each shape so the
@@ -1237,6 +1251,8 @@ function writeSlideShapes(
     try {
       addObject(objCtx, obj)
       if (shape.spId !== undefined) spIdToObjectId.set(shape.spId, obj.id)
+      if (shape.placeholderType !== undefined)
+        placeholders.push({ object: obj.id, type: shape.placeholderType })
       objectsCreated++
     } catch (err) {
       log.warn(
@@ -1303,7 +1319,7 @@ function writeSlideShapes(
     }
   }
 
-  return { objectsCreated, skippedImages, skippedUnknown }
+  return { objectsCreated, skippedImages, skippedUnknown, placeholders }
 }
 
 /**
@@ -1359,8 +1375,11 @@ export function buildDeckUpdate(parsed: ParsedPptx): WriteResult {
   // slide resolves to its id.
   const created = parsed.slides.map(() => addSlide(ctx).id)
   const slideIds = slideIdsByPath(parsed, created)
+  const placeholders: PlaceholderHints = []
   for (const [i, slide] of parsed.slides.entries()) {
     const stats = writeSlideShapes(ctx, created[i]!, slide, scale, slideIds)
+    if (stats.placeholders.length > 0)
+      placeholders.push({ slide: created[i]!, objects: stats.placeholders })
     objectsCreated += stats.objectsCreated
     skippedImages += stats.skippedImages
     skippedUnknown += stats.skippedUnknown
@@ -1380,6 +1399,7 @@ export function buildDeckUpdate(parsed: ParsedPptx): WriteResult {
     slideCount: listSlides(ctx).length,
     objectsCreated,
     skipped: { images: skippedImages, unknownShapes: skippedUnknown },
+    placeholders,
   }
 }
 
@@ -1438,8 +1458,11 @@ export function buildDeckAppendUpdate(
     (_, offset) => (base === undefined ? addSlide(ctx) : addSlide(ctx, base + offset)).id,
   )
   const slideIds = slideIdsByPath(parsed, created)
+  const placeholders: PlaceholderHints = []
   for (const [i, slide] of parsed.slides.entries()) {
     const stats = writeSlideShapes(ctx, created[i]!, slide, scale, slideIds)
+    if (stats.placeholders.length > 0)
+      placeholders.push({ slide: created[i]!, objects: stats.placeholders })
     objectsCreated += stats.objectsCreated
     skippedImages += stats.skippedImages
     skippedUnknown += stats.skippedUnknown
@@ -1452,5 +1475,6 @@ export function buildDeckAppendUpdate(
     slideCount: parsed.slides.length,
     objectsCreated,
     skipped: { images: skippedImages, unknownShapes: skippedUnknown },
+    placeholders,
   }
 }
