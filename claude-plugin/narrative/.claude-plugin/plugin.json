@@ -1,6 +1,6 @@
 {
   "name": "narrative",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "description": "Drive Narrative, Woodgrove's collaborative presentation editor, from Claude Code: the narrative skill teaches Claude how to read, edit, restyle, shorten and translate decks through the Narrative MCP server.",
   "author": { "name": "Woodgrove Digital" },
   "keywords": ["narrative", "presentations", "decks", "mcp", "slides"]

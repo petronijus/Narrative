@@ -25,7 +25,9 @@ describe('text.setBoxTypography', () => {
     expect(h.plain('s1', 't1')['fontStretch']).toBe(130)
     expect(() => set({ fontStretch: 150 })).toThrow(/widths 100–130/)
     // A family without a width axis is drawn at 100 only.
-    expect(() => set({ fontFamily: FIXTURE_FONT_FAMILY, fontStretch: 125 })).toThrow(/no width axis/)
+    expect(() => set({ fontFamily: FIXTURE_FONT_FAMILY, fontStretch: 125 })).toThrow(
+      /no width axis/,
+    )
     set({ fontFamily: FIXTURE_FONT_FAMILY, fontStretch: 100 })
     expect(h.plain('s1', 't1')['fontStretch']).toBe(100)
   })

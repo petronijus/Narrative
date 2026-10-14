@@ -4,6 +4,21 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.11.2 — The logo on the home page (2026-10-14)
+
+### Changed
+
+- The home page shows the Narrative logo: the mark and the name in the
+  header, the logo banner in place of the gradient title.
+- The README is rewritten: logo, screenshots, what Narrative does, how it
+  fits together and a documentation map. Sign-in moves to `docs/auth.md`
+  (server-side sessions, as since 0.6.0) and the video pipeline to
+  `docs/storage.md` (one source-quality MP4, not HLS); prod secrets in
+  `docs/deploy.md` follow the SOPS overlay. `just bump` updates the README's
+  release badge.
+
+---
+
 ## 0.11.1 — Style packs, deployable (2026-10-14)
 
 0.11.0 was tagged but never deployed: its server image did not build.

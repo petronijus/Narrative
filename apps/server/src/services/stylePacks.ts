@@ -116,7 +116,10 @@ export function createStylePacksService(deps: ServiceDeps): StylePackService {
 
       // 1. Tokens: one transaction on the folder document.
       const tokenResult = await writeLiveDoc(deps, 'folder', args.folderId, (doc) => {
-        const plan = compileStylePack(storedStylePack(pack), { tokens: readFolderTokens(doc), fonts })
+        const plan = compileStylePack(storedStylePack(pack), {
+          tokens: readFolderTokens(doc),
+          fonts,
+        })
         const counts = {
           colors: { created: 0, updated: 0 },
           textStyles: { created: 0, updated: 0 },
