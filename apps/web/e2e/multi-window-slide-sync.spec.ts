@@ -76,6 +76,9 @@ async function openDeck(
   })
 
   await page.goto(`/deck/${deckId}`)
+  // The editor, not only its document (the test API comes with DeckShell;
+  // the artboard with the separately loaded DeckEditor route).
+  await expect(page.locator('.artboard')).toBeVisible({ timeout: 30_000 })
   await page.waitForFunction(
     () =>
       (window as unknown as { __narrative_test_api?: unknown }).__narrative_test_api !== undefined,

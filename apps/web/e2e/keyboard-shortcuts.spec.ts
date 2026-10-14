@@ -31,6 +31,9 @@ async function createDeck(page: Page): Promise<string> {
 
 async function openDeckReady(page: Page, deckId: string): Promise<void> {
   await page.goto(`/deck/${deckId}`)
+  // The editor, not only its document (the test API comes with DeckShell;
+  // the artboard with the separately loaded DeckEditor route).
+  await expect(page.locator('.artboard')).toBeVisible({ timeout: 30_000 })
   await expect
     .poll(() => page.evaluate(() => typeof window.__narrative_test_api), { timeout: 15_000 })
     .toBe('object')

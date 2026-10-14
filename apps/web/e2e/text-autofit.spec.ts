@@ -108,9 +108,8 @@ test('a growing box is as tall as its text, and keeps its height as the person t
     // Typing more lines grows it, and the height follows into the document.
     await page.evaluate((objectId) => window.__narrative_test_api!.beginTextEdit(objectId), id)
     await page.keyboard.press(caret.textEnd)
-    await page.keyboard.type(
-      ' and then a good deal more text, enough to wrap onto several lines of this box',
-    )
+    const more = ' and then a good deal more text, enough to wrap onto several lines of this box'
+    await page.keyboard.type(more)
     await page.keyboard.press('Escape')
     await expect
       .poll(async () => {
@@ -128,7 +127,9 @@ test('a growing box is as tall as its text, and keeps its height as the person t
         const t = window.__narrative_test_api!.getObject(objectId)?.['text']
         return typeof t === 'string' ? t : String((t as { toString(): string }) ?? '')
       }, id)
-    for (let i = 0; i < 10 && (await bodyText()) !== 'One line'; i++) {
+    // At most one step per typed character (a busy machine, keys landing
+    // more than the capture window apart, 2026-10-14); a hang still ends.
+    for (let i = 0; i < more.length && (await bodyText()) !== 'One line'; i++) {
       await page.keyboard.press('ControlOrMeta+z')
       await expect
         .poll(async () => {
