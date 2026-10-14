@@ -199,6 +199,7 @@ await app.register(cors, {
     'Tus-Max-Size',
     'Tus-Extension',
     'X-Narrative-Asset-Id',
+    'X-Narrative-Deck-Id',
     'X-Narrative-Width',
     'X-Narrative-Height',
     // The download name of an export (.pptx, slide .png) the app saves itself.
