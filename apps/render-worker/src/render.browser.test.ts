@@ -22,13 +22,19 @@ import type { RenderWorkerConfig } from './config.js'
 const APP = 'https://narrative.test'
 
 /**
- * The time limit of each test and hook here. The shared 30 s
- * (`vitest.timeouts.ts`) ends a hang in a unit test; these drive a real
- * Chromium through up to nine page loads — about 2.5 s alone, 27 s at a load
- * of 29 beside the other suites (MacBook, 2026-10-15), and `just check` runs
- * typecheck and lint alongside. 120 s still ends a hang.
+ * The clocks here are hang detectors sized for a real Chromium on a busy
+ * machine, not for a unit test. The first test drives six jobs through up to
+ * nine page loads: about 2.5 s alone, 27 s at a load of 29 beside the other
+ * suites, and inside a full `just check` (typecheck and lint alongside) one
+ * job alone ran past a 20 s work budget (MacBook, 2026-10-15).
+ *
+ * JOB_BUDGET_MS bounds one job (its `workBudgetMs` and `deadline`; only the
+ * late-job test is about those clocks, and it sets its own deadline);
+ * BROWSER_TIMEOUT_MS bounds each test and hook — the shared 30 s
+ * (`vitest.timeouts.ts`) is meant for unit tests. Both still end a hang.
  */
-const BROWSER_TIMEOUT_MS = 120_000
+const JOB_BUDGET_MS = 60_000
+const BROWSER_TIMEOUT_MS = 240_000
 /** A 1×1 PNG. */
 const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=='
@@ -132,8 +138,8 @@ const job = (deckId: string, token: string, slideId: string): RenderLookJob => (
   page: { kind: 'deck', deckId },
   token,
   stateVector: '',
-  deadline: Date.now() + 30_000,
-  workBudgetMs: 20_000,
+  deadline: Date.now() + JOB_BUDGET_MS,
+  workBudgetMs: JOB_BUDGET_MS,
   look: { mode: 'slide', slideId },
   upload: { url: `${APP}/storage/${deckId}/look.png`, headers: { 'content-type': 'image/png' } },
 })
