@@ -4,12 +4,19 @@
  * M10: Per-deck role context. Provides the current user's effective role
  * for a given deck so components can gate UI accordingly.
  *
- * Role resolution priority:
- *   1. share_token in URL → the share link's role and the deck's folder, from
- *      GET /decks/:id?share_token (the anonymous viewer path; the folder id
- *      opens the folder's token document, which admits the link read-only)
- *   2. viewerRole from deck list response (server includes it when authed)
- *   3. Fallback: 'viewer' (safe default — never grants write access unexpectedly)
+ * The role and the deck's folder come from GET /decks/:id, which answers with
+ * the caller's role on that one deck: the higher of their deck grant and
+ * folder role, raised by a `share_token` in the URL (the anonymous viewer
+ * path; the folder id opens the folder's token document, which admits the
+ * link read-only). Anything else — no session and no token, a refused or
+ * failed request — is 'viewer', the safe default that never grants writes.
+ *
+ * Until the answer arrives the role is 'viewer' too, so the editor is
+ * read-only for that moment. It used to fetch the caller's whole deck list
+ * (GET /decks) and pick this deck out of it: on a long list — 7,752 decks,
+ * 3.4 MB, on the e2e dev user on 2026-10-15 — that moment grew long enough
+ * for the inspector's fields to still be disabled when a person (or a spec)
+ * reached for them.
  *
  * DeckRoleProvider is placed inside DeckShell so all editor/present children
  * can call useDeckRole() without prop-drilling.
@@ -68,71 +75,24 @@ export function DeckRoleProvider({ deckId, children }: DeckRoleProviderProps) {
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    const searchParams = new URLSearchParams(location.search)
+    const shareToken = new URLSearchParams(location.search).get('share_token')
 
-    // share_token in URL → the anonymous path: the link's role and the
-    // deck's folder, so the deck renders with its folder's tokens.
-    const shareToken = searchParams.get('share_token')
-    if (shareToken !== null) {
-      let cancelled = false
-      api
-        .getDeck(deckId, { shareToken })
-        .then((deck) => {
-          if (cancelled) return
-          setRole(deck.viewerRole ?? 'viewer')
-          setFolderId(deck.folderId ?? null)
-        })
-        .catch(() => {
-          if (cancelled) return
-          setRole('viewer')
-        })
-        .finally(() => {
-          if (cancelled) return
-          setIsLoading(false)
-        })
-      return () => {
-        cancelled = true
-      }
-    }
-
-    // Not authenticated — treat as viewer (ProtectedRoute should have already redirected,
-    // but be safe)
-    if (user === null) {
+    // Neither a session nor a share link (ProtectedRoute should have
+    // redirected already, but be safe).
+    if (shareToken === null && user === null) {
       setRole('viewer')
       setIsLoading(false)
       return
     }
 
-    // Fetch deck list and find viewerRole for this deck.
-    // When state-sync phase 2 lands, GET /decks/:id will include viewerRole directly.
-    // For now we use listDecks() which returns all accessible decks with viewerRole.
     let cancelled = false
-
     api
-      .listDecks()
-      .then((decks) => {
+      .getDeck(deckId, shareToken !== null ? { shareToken } : undefined)
+      .then((deck) => {
         if (cancelled) return
-        const deck = decks.find((d) => d.id === deckId)
-        if (deck !== undefined && deck.viewerRole !== undefined) {
-          // Authoritative — server computed this from deck_permissions.
-          setRole(deck.viewerRole)
-        } else if (deck !== undefined && deck.ownerUserId === user.sub) {
-          // Server returned the deck but no viewerRole AND the caller owns
-          // the deck row. Safe to treat as owner — the only path that drops
-          // viewerRole is the dev-mode bypass shape, which only the deck
-          // owner can reach.
-          setRole('owner')
-        } else {
-          // No deck row, or non-owner with missing viewerRole — fall back to
-          // viewer. Better to deny writes than grant them by mistake; a
-          // viewer who legitimately has editor rights will see UI-only
-          // restrictions but the server still enforces the real role.
-          setRole('viewer')
-        }
+        setRole(deck.viewerRole ?? 'viewer')
         // M16 P2: expose folderId so DeckShell can open the folder token doc.
-        if (deck?.folderId) {
-          setFolderId(deck.folderId)
-        }
+        setFolderId(deck.folderId ?? null)
       })
       .catch(() => {
         if (cancelled) return
@@ -142,7 +102,6 @@ export function DeckRoleProvider({ deckId, children }: DeckRoleProviderProps) {
         if (cancelled) return
         setIsLoading(false)
       })
-
     return () => {
       cancelled = true
     }
