@@ -11,6 +11,7 @@
     "all": "node runAll.mjs"
   },
   "dependencies": {
+    "@hocuspocus/common": "^4.7.1",
     "lib0": "^0.2.110",
     "ws": "^8.18.1",
     "y-protocols": "^1.0.6",

@@ -1,22 +1,33 @@
 /**
  * tests/load/docGrowth.ts
  *
- * Scénář 3: Document growth — velký dok (50 slidů × 20 objektů = 1000 objektů),
- * měří initial sync time a encoded size.
+ * Scenario 3: document growth — a large document (50 slides × 20 objects =
+ * 1000 objects) on a deck the scenario creates (and deletes afterwards);
+ * measures the initial sync time and the encoded size.
  *
- * Thresholds (ze spike B verdictu):
- *   - Initial sync < 3000ms
- *   - Encoded size < 1MB
+ * Thresholds (from the spike B verdict):
+ *   - initial sync < 3000 ms
+ *   - encoded size < 1 MB
  *
- * Spike B výsledky: sync ~18ms, size ~228KB. Rezerva je obrovská.
+ * Spike B results: sync ~18 ms, size ~228 KB — a wide margin.
+ *
+ * The slides live under a root type of the harness's own (`load:slides`):
+ * `slides` is the slide model's, which the deck already holds.
  */
 
 import * as Y from 'yjs'
-import { createClient, sleep, checkServerHealth } from './yjsClient.js'
+import {
+  createClient,
+  sleep,
+  checkServerHealth,
+  provisionDeck,
+  canonicalJson,
+  type YjsClient,
+} from './yjsClient.js'
 
 const SERVER_HTTP = process.env['NARRATIVE_SERVER_HTTP'] ?? 'http://localhost:3001'
 const SERVER_WS = process.env['NARRATIVE_SERVER_WS'] ?? 'ws://localhost:3002'
-const DOC_NAME = `load-growth-${Date.now()}`
+const ROOT = 'load:slides'
 
 const NUM_SLIDES = 50
 const OBJECTS_PER_SLIDE = 20
@@ -26,7 +37,7 @@ const THRESHOLD_SYNC_MS = 3000
 const THRESHOLD_SIZE_BYTES = 1_000_000 // 1 MB
 
 function buildLargeDoc(doc: Y.Doc): void {
-  const slides = doc.getArray<Y.Map<unknown>>('slides')
+  const slides = doc.getArray<Y.Map<unknown>>(ROOT)
 
   doc.transact(() => {
     for (let s = 0; s < NUM_SLIDES; s++) {
@@ -64,12 +75,24 @@ async function run(): Promise<void> {
   await checkServerHealth(SERVER_HTTP)
   process.stderr.write('[docGrowth] Server OK\n')
 
-  // Seed klient — generuje velký dokument
+  const deck = await provisionDeck(SERVER_HTTP, `load-growth-${Date.now()}`)
+  const connected: YjsClient[] = []
+  try {
+    await measure(deck.docName, connected)
+  } finally {
+    connected.forEach((c) => c.disconnect())
+    await deck.remove()
+  }
+}
+
+async function measure(docName: string, connected: YjsClient[]): Promise<void> {
+  // The seed client builds the large document.
   process.stderr.write(
     `[docGrowth] Building large doc (${NUM_SLIDES} slides × ${OBJECTS_PER_SLIDE} objects)...\n`,
   )
   const buildStart = performance.now()
-  const seedClient = await createClient(SERVER_WS, DOC_NAME)
+  const seedClient = await createClient(SERVER_WS, docName)
+  connected.push(seedClient)
   await seedClient.waitForSync()
   buildLargeDoc(seedClient.doc)
   const buildMs = Math.round(performance.now() - buildStart)
@@ -79,17 +102,18 @@ async function run(): Promise<void> {
     `[docGrowth] Doc built in ${buildMs}ms, encoded size: ${encodedSize} bytes\n`,
   )
 
-  // Počkej na flush do serveru
+  // Let the document reach the server.
   await sleep(3000)
 
-  // Spawni sync klienty a měř initial sync time
+  // Sync clients: the initial sync time of each.
   process.stderr.write(`[docGrowth] Spawning ${NUM_SYNC_CLIENTS} sync clients...\n`)
   const syncTimes: number[] = []
 
   const syncClients = await Promise.all(
     Array.from({ length: NUM_SYNC_CLIENTS }, async () => {
       const syncStart = performance.now()
-      const client = await createClient(SERVER_WS, DOC_NAME)
+      const client = await createClient(SERVER_WS, docName)
+      connected.push(client)
       await client.waitForSync()
       const syncMs = performance.now() - syncStart
       syncTimes.push(syncMs)
@@ -97,12 +121,11 @@ async function run(): Promise<void> {
     }),
   )
 
-  // Ověř konvergenci
-  const referenceEncoded = Buffer.from(Y.encodeStateAsUpdate(seedClient.doc)).toString('base64')
-  const allConverged = syncClients.every((c) => {
-    const enc = Buffer.from(Y.encodeStateAsUpdate(c.doc)).toString('base64')
-    return enc === referenceEncoded
-  })
+  // Convergence: every sync client holds the seed's content.
+  const reference = canonicalJson(seedClient.doc.getArray(ROOT).toJSON())
+  const allConverged = syncClients.every(
+    (c) => canonicalJson(c.doc.getArray(ROOT).toJSON()) === reference,
+  )
 
   const avgSyncMs =
     syncTimes.length > 0
@@ -140,14 +163,11 @@ async function run(): Promise<void> {
     pass: passSync && passSize && allConverged,
   }
 
-  syncClients.forEach((c) => c.disconnect())
-  seedClient.disconnect()
-
   process.stdout.write(JSON.stringify(result, null, 2) + '\n')
 
   if (!result.pass) {
     process.stderr.write('[docGrowth] FAIL — thresholds not met\n')
-    process.exit(1)
+    process.exitCode = 1
   } else {
     process.stderr.write('[docGrowth] PASS\n')
   }

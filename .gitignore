@@ -57,6 +57,9 @@ apps/web/.playwright/
 test-results/
 apps/test-results/
 
+# Load-test baselines — local, per machine (see tests/load/README.md → Baselines)
+tests/load/baselines.json
+
 # PPTX fixtures — local, developer-supplied (see tests/fixtures/pptx/README.md)
 tests/fixtures/pptx/*.pptx
 

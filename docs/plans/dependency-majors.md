@@ -5,7 +5,7 @@ Done on 2026-10-14/15, each its own commit on `main`: the minor/patch sweep
 @fastify/cors 11, @nodable/entities 3, plugin-react 6, concurrently 10,
 jest-dom 7, size-limit 14), pnpm 12 + bullmq 6 + ioredis 6 (`915bf671`),
 Sentry 11 (`e18be461`), tus 2 (`6ed65ed9`), Hocuspocus 4 (`36ef21b1`),
-opentype.js 2 (2026-10-15, below).
+opentype.js 2 (2026-10-15, below); the load tests run again (2026-10-15, below).
 None of it is released yet — the next release (0.12.2) ships it all; its
 deploy is also the first through `private/release.env` (the build host and
 VM moved out of `infra/release.env`).
@@ -17,14 +17,10 @@ VM moved out of `infra/release.env`).
    longer importable (`apps/web/src/renderer/applyChanges.bench.ts`), `-t`
    joins names with `>`. Check `just mutate` (the Stryker runner is not
    confirmed on vitest 5). Effort M.
-2. **The load tests** (`just load`) hang at "Connecting seed client": the
-   hand-written client (`tests/load/yjsClient.ts`, written for Hocuspocus 2)
-   never sends an Auth message, which the server requires since M10. Send
-   one (sentinel token under BYPASS_AUTH), then record a baseline.
-3. **TypeScript 7**: wait for 7.1 and typescript-eslint support (the 8.x
+2. **TypeScript 7**: wait for 7.1 and typescript-eslint support (the 8.x
    peer is `<6.1`; `apps/web/src/actions/catalog.test.ts` uses the compiler
    API 7.0 removed).
-4. **@types/node** stays on 24 while the runtime is Node 24 LTS.
+3. **@types/node** stays on 24 while the runtime is Node 24 LTS.
 
 ## opentype.js 2 — how it went in
 
@@ -40,6 +36,22 @@ merge let win — and a key on any platform beats the next key.
 `fontMetadata.test.ts` (new) builds its fonts with the library's writer.
 Should the package ever gain an `exports` map without that path, the import
 fails at server start, not silently.
+
+## The load tests — how they came back
+
+`just load` hung at "Connecting seed client" because the hand-written client
+never sent an Auth message; the server queues every message until
+`onAuthenticate` has run. It now does the handshake (the editor's `cookie`
+sentinel, admitted as `dev-user` under BYPASS_AUTH) with the codec of
+`@hocuspocus/common`, and fails with the reason instead of hanging. Behind
+the hang sat more: each scenario now creates its own deck through the API
+and deletes it (a made-up name is no deck dev-user may open), writes under
+a harness root type (docGrowth wrote the model's `slides`), compares
+convergence structurally, and destroys its Awareness (whose interval kept
+the process alive after PASS); awarenessFlood measures delivery to the
+other clients (it had timed two `performance.now()` in a row), and
+runAll's baseline keys read the fields the scenarios print. Baseline
+recorded in `tests/load/README.md`; `baselines.json` is gitignored.
 
 ## Also open
 
