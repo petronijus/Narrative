@@ -100,4 +100,12 @@ recorded in `tests/load/README.md`; `baselines.json` is gitignored.
   rewrite (`git filter-repo`) and a force-push — Petr's call.
 - The e2e drag/typing specs (snapping, clipboard, path editing, tables,
   lists, text undo) fail under a parallel load of ~25+ and pass with two
-  workers; worth a look at why the dev build's main thread stalls that much.
+  workers. Looked at on 2026-10-15: the idle editor is not the cause (0.07 s
+  of main-thread work in 5 s). Two real causes were fixed — the editor was
+  read-only until the caller's whole deck list arrived (`9e5c7316`; it made
+  keyboard-shortcuts fail one run in five even unloaded), and specs leaked
+  ~150 decks a run into that list (`47296251`). What is left is plain
+  starvation: with 18 busy loops beside the suite (load ~60 on 24 threads)
+  even API POSTs and `page.evaluate` time out. Full runs since: 215–217
+  passed, 0–1 failed. The dev database still holds the ~8,000 decks leaked
+  before the fix (Petr decides whether to delete them).
