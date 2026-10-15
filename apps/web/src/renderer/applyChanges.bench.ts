@@ -15,7 +15,7 @@
  * Viz docs/handoff/M3-renderer-reconciler.md → sekce "Benchmark".
  */
 
-import { describe, bench } from 'vitest'
+import { test } from 'vitest'
 
 // Inline mock — bench soubory nemohou použít vi.mock na module level snadno.
 // Místo toho mockujeme interně přes factory a testujeme logiku SceneGraph.
@@ -167,18 +167,20 @@ function fullUpdateBench(
 const ITERATIONS = 1000
 const baseData = { x: 0, y: 0, width: 100, height: 80, fill: 0xff0000, rotation: 0, opacity: 1 }
 
-describe('applyChanges vs. render — drag simulation (1000 x/y updates)', () => {
-  bench('applyPatch({ x, y }) — chirurgický patch', () => {
-    const node = mountBenchRect(baseData)
-    for (let i = 0; i < ITERATIONS; i++) {
-      applyPatchBench(node, { x: i, y: i * 0.5 })
-    }
-  })
-
-  bench('fullUpdate(prev, next) — plný update objekt', () => {
-    const node = mountBenchRect(baseData)
-    for (let i = 0; i < ITERATIONS; i++) {
-      fullUpdateBench(node, { ...baseData, x: i, y: i * 0.5 })
-    }
-  })
+// Vitest 5: `bench` is a test fixture; `bench.compare` runs both and prints one table.
+test('applyChanges vs. render — drag simulation (1000 x/y updates)', async ({ bench }) => {
+  await bench.compare(
+    bench('applyPatch({ x, y }) — chirurgický patch', () => {
+      const node = mountBenchRect(baseData)
+      for (let i = 0; i < ITERATIONS; i++) {
+        applyPatchBench(node, { x: i, y: i * 0.5 })
+      }
+    }),
+    bench('fullUpdate(prev, next) — plný update objekt', () => {
+      const node = mountBenchRect(baseData)
+      for (let i = 0; i < ITERATIONS; i++) {
+        fullUpdateBench(node, { ...baseData, x: i, y: i * 0.5 })
+      }
+    }),
+  )
 })

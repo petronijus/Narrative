@@ -197,6 +197,8 @@
 > `@babel/core` 8 broke its instrumenter) and a run from the repo root (the
 > sandbox has to keep the repo's layout — see `stryker.config.json`).
 > Baseline 2026-10-14: 49% (`mutations.ts` 65%, `slides.ts` 26%).
+> On Vitest 5 the runner needs a patch (stryker-js#6210, see
+> `docs/plans/dependency-majors.md` → Vitest 5); 49% again on 2026-10-15.
 >
 > Added in agentic-layer A1 (2026-09-27):
 >
