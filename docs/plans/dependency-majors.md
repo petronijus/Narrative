@@ -107,5 +107,5 @@ recorded in `tests/load/README.md`; `baselines.json` is gitignored.
   ~150 decks a run into that list (`47296251`). What is left is plain
   starvation: with 18 busy loops beside the suite (load ~60 on 24 threads)
   even API POSTs and `page.evaluate` time out. Full runs since: 215–217
-  passed, 0–1 failed. The dev database still holds the ~8,000 decks leaked
-  before the fix (Petr decides whether to delete them).
+  passed, 0–1 failed. The ~8,000 decks leaked before the fix were deleted
+  from the Omarchy dev database the same night.
