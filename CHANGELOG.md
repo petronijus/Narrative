@@ -4,6 +4,19 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.12.3 — The images build again (2026-10-16)
+
+### Fixed
+
+- The Docker images copy `patches/`: 0.12.2's builds failed on the pnpm
+  patch for the Stryker runner, so 0.12.2 never reached production. This
+  release carries everything 0.12.2 lists.
+
+### Development
+
+- The `layer-reorder` e2e no longer fails one run in four: it selects once
+  the editor knows the objects and waits for each reorder.
+
 ## 0.12.2 — Dependency majors (2026-10-16)
 
 The dependency majors of 2026-10-14/15 — the sync server, uploads, error
