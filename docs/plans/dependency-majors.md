@@ -94,10 +94,27 @@ recorded in `tests/load/README.md`; `baselines.json` is gitignored.
 
 ## Also open
 
-- **Going public**: the current tree is clean of client names and private
-  infrastructure (`122600fc`), but `main`'s history still holds the client
-  brand packs (since `c3d6ac4b`) and names. Publishing needs a history
-  rewrite (`git filter-repo`) and a force-push — Petr's call.
+- **Going public — decided 2026-10-16: rewrite this repo's history** (not a
+  fresh repo). Checked that night: gitleaks finds no secret in any of the
+  1,063 commits, and the only fonts ever committed are the two e2e
+  fixtures (generated, MIT). Not yet clean, despite `122600fc`:
+  - the tree: client pack and font names in tests and code
+    (`tokenRebind.test.ts` 30 lines of `vw`/`fabrikam`, `fontFallback.ts`,
+    `textRenderer.test.ts`, `fontWeights.test.ts`, `cssFontFamily`,
+    `richText`), a few in plans and handoffs; LAN addresses and host
+    details in `docs/deploy.md`, `ops.md`, `storage.md`, `SETUP.md`,
+    `infra/docker-compose.yml` (→ `private/`);
+  - the history: the client brand packs since `c3d6ac4b` and hundreds of
+    lines naming clients.
+    The order: clean the tree (fictional names, infra to `private/`), then
+    `git filter-repo` (paths of the brand packs out, a replace-text list for
+    the names), gitleaks and a name grep over the rewritten history, then
+    the force-push of `main` and the tags — the one force-push Petr has
+    approved. Before it: no other session or machine mid-work (autosync
+    pushes the old history back); after it: every clone (Linux desktop,
+    MacBook, Omarchy, Windows, Narrative-desktop worktree) re-cloned, one
+    AI-handover task per machine. The GHCR images and production are not
+    affected (tags keep their names).
 - The e2e drag/typing specs (snapping, clipboard, path editing, tables,
   lists, text undo) fail under a parallel load of ~25+ and pass with two
   workers. Looked at on 2026-10-15: the idle editor is not the cause (0.07 s
