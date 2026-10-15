@@ -11,7 +11,7 @@
  * `wdth` 130 — needs a face that has it).
  */
 
-import * as opentype from 'opentype.js'
+import { parse, type Font, type FontNames } from 'opentype.js/dist/opentype.mjs'
 
 /** The ranges of a variable font's weight and width axes (`fvar`), [min, max]. */
 export interface FontAxes {
@@ -34,34 +34,24 @@ export interface FontMetadata {
  * file or is missing the required tables.
  */
 export function parseFontMetadata(buf: ArrayBuffer): FontMetadata {
-  // opentype.parse expects an ArrayBuffer; throws on invalid headers.
-  const font = opentype.parse(buf)
+  // parse expects an ArrayBuffer; throws on invalid headers.
+  const font = parse(buf)
 
   // Family — prefer the typographic family (id 16, "preferred family")
-  // when present, otherwise fall back to id 1. names is keyed by lang;
-  // pick `en` then any other available value.
-  const familyName = pickName(font.names as unknown as OpenTypeNames, [
-    'preferredFamily',
-    'fontFamily',
-  ])
+  // when present, otherwise fall back to id 1.
+  const familyName = pickName(font.names, ['preferredFamily', 'fontFamily'])
   if (familyName === null || familyName.trim() === '') {
     throw new Error('Font is missing a family name')
   }
-  const postscriptName =
-    pickName(font.names as unknown as OpenTypeNames, ['postScriptName']) ?? familyName
+  const postscriptName = pickName(font.names, ['postScriptName']) ?? familyName
 
   // Weight — OS/2 usWeightClass is the canonical source, but several
   // foundries (notably Google's variable-font static exports) stamp
   // every cut with the same value. When the postscript / subfamily
   // name clearly contradicts OS/2 (eg `*-Thin` with usWeightClass=300),
   // we trust the name. Defaults to 400 when nothing reliable exists.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const os2 = (font.tables as any).os2 as
-    { usWeightClass?: number; fsSelection?: number } | undefined
-  const subfamilyName = pickName(font.names as unknown as OpenTypeNames, [
-    'preferredSubfamily',
-    'fontSubfamily',
-  ])
+  const os2 = font.tables.os2
+  const subfamilyName = pickName(font.names, ['preferredSubfamily', 'fontSubfamily'])
   const nameWeight = weightFromName(`${subfamilyName ?? ''} ${postscriptName}`)
   const os2Weight = clampWeight(os2?.usWeightClass ?? 400)
   const weight = nameWeight ?? os2Weight
@@ -82,12 +72,9 @@ export function parseFontMetadata(buf: ArrayBuffer): FontMetadata {
 }
 
 /** The weight and width axes of a variable font's `fvar` table. */
-function variableAxes(font: opentype.Font): FontAxes | undefined {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- opentype.js does not type fvar
-  const fvar = (font.tables as any).fvar as
-    { axes?: Array<{ tag?: string; minValue?: number; maxValue?: number }> } | undefined
+function variableAxes(font: Font): FontAxes | undefined {
   const out: FontAxes = {}
-  for (const axis of fvar?.axes ?? []) {
+  for (const axis of font.tables.fvar?.axes ?? []) {
     const { tag, minValue, maxValue } = axis
     if (typeof minValue !== 'number' || typeof maxValue !== 'number') continue
     if (!Number.isFinite(minValue) || !Number.isFinite(maxValue) || minValue > maxValue) continue
@@ -96,17 +83,31 @@ function variableAxes(font: opentype.Font): FontAxes | undefined {
   return out.wght === undefined && out.wdth === undefined ? undefined : out
 }
 
-type OpenTypeNames = Record<string, Record<string, string> | undefined>
+/**
+ * The name table's platforms, the most trusted first. Windows records are
+ * the ones fonts keep current (Macintosh ones are often legacy, MacRoman,
+ * truncated); opentype.js 1.x merged the platforms with the same order
+ * winning, so a font reads as it did before 2.x keyed them apart.
+ */
+const NAME_PLATFORMS = ['windows', 'macintosh', 'unicode'] as const
 
-function pickName(names: OpenTypeNames, keys: ReadonlyArray<string>): string | null {
+/**
+ * The first non-empty name among `keys`, in order: a key on any platform
+ * beats the next key (a typographic family anywhere beats a legacy one).
+ * Per key, English on any platform, then any other language.
+ */
+function pickName(names: FontNames, keys: ReadonlyArray<string>): string | null {
   for (const key of keys) {
-    const localised = names[key]
-    if (localised === undefined) continue
-    const en = localised.en
-    if (typeof en === 'string' && en.trim() !== '') return en.trim()
+    const localised = NAME_PLATFORMS.map((platform) => names[platform]?.[key])
+    for (const translations of localised) {
+      const en = translations?.en?.trim()
+      if (en) return en
+    }
     // Fall back to the first non-empty translation — better than nothing.
-    for (const v of Object.values(localised)) {
-      if (typeof v === 'string' && v.trim() !== '') return v.trim()
+    for (const translations of localised) {
+      for (const v of Object.values(translations ?? {})) {
+        if (typeof v === 'string' && v.trim() !== '') return v.trim()
+      }
     }
   }
   return null

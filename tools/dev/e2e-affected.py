@@ -307,6 +307,9 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/services/localiseMedia.ts", COMPONENTS + ACCESS),
     ("apps/server/src/routes/insertObjects.ts", COMPONENTS + ["object-clipboard"]),
     ("apps/server/src/media/*", MEDIA),
+    # Font parsing (opentype.js): the family and weight an uploaded face lists under.
+    ("apps/server/src/media/fontMetadata.ts", ["folder-font-preview"]),
+    ("apps/server/src/media/opentype.d.ts", ["folder-font-preview"]),
     ("apps/server/src/services/media*", MEDIA),
     ("apps/server/src/pptx/*", PPTX),
     ("apps/server/src/services/pptx.ts", PPTX),
