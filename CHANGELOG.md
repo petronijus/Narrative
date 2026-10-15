@@ -4,6 +4,47 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.12.2 — Dependency majors (2026-10-16)
+
+The dependency majors of 2026-10-14/15 — the sync server, uploads, error
+reporting, queues and the test runner each a major forward — and the
+editor fixes their test runs turned up.
+
+### Fixed
+
+- The editor no longer starts read-only for a moment: it learnt your role
+  by downloading the list of every deck you can see. It now asks for the
+  one deck it opens (2 ms instead of 107 on a long list); before that
+  answer, fields in the inspector were disabled and a keypress meant for
+  them reached the canvas shortcuts.
+- A file dropped on the canvas lands under the cursor at any zoom (at 50%
+  it landed half way to the slide's corner).
+- `editor.show` twice in quick succession keeps the second one's
+  selection and flash.
+
+### Changed
+
+- **Hocuspocus 4** (sync server and the editor's providers, from 2.15),
+  **tus 2** (uploads; their responses carry Narrative's CORS headers now),
+  **Sentry 11** (still off in production; when on, the editor's reports
+  are scrubbed like the server's and the SDK collects no personal data),
+  **BullMQ 6 / ioredis 6**, **opentype.js 2** (font metadata), plus nanoid
+  6 and the minor and patch sweep.
+
+### Development
+
+- pnpm 12; Vitest 5 (its fs module cache kept per package; Stryker's
+  vitest runner patched for Vitest 5's test names — `just mutate` 49%).
+- e2e specs delete every deck and folder they create (a shared fixture,
+  ESLint-enforced; one full run used to leave ~150 decks behind), and the
+  web package lints `e2e/`. Present mode's e2e now also goes back
+  (ArrowLeft, PageUp) and fullscreen (F).
+- 26 of 27 skipped web tests are back: fixed, rewritten for today's code,
+  or deleted where e2e covers them.
+- `just load` runs again; render-worker tests survive a busy machine.
+- Client brands and private infrastructure moved out of the public tree
+  (the private overlay keeps them).
+
 ## 0.12.1 — Old reds green (2026-10-14)
 
 ### Fixed
