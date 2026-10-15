@@ -23,7 +23,13 @@
  * is exercised. API-level mutation bypasses the bug.
  */
 
-import { test, expect, type BrowserContext, type Page } from '@playwright/test'
+import {
+  test,
+  expect,
+  type APIRequestContext,
+  type BrowserContext,
+  type Page,
+} from './fixtures/test'
 import * as path from 'path'
 import * as fs from 'fs'
 import { fileURLToPath } from 'url'
@@ -36,11 +42,10 @@ const RESULTS_DIR = path.resolve(__dirname, '../test-results/multi-window-slide-
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function createDeck(): Promise<string> {
-  const res = await fetch('http://localhost:3001/decks', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ title: 'P14c real-pointer sync repro' }),
+async function createDeck(request: APIRequestContext): Promise<string> {
+  // Through the `request` fixture, so the deck is deleted after the run.
+  const res = await request.post('http://localhost:3001/decks', {
+    data: { title: 'P14c real-pointer sync repro' },
   })
   const json = (await res.json()) as { id: string }
   return json.id
@@ -332,11 +337,12 @@ async function clickAddSlide(page: Page): Promise<void> {
 test.describe('P14c — real-pointer drag sync after slide-switch dance', () => {
   test('B sees A drag after both add+visit+return-from slide 2 — real pointer events', async ({
     browser,
+    request,
   }) => {
     test.setTimeout(240_000)
     fs.mkdirSync(RESULTS_DIR, { recursive: true })
 
-    const deckId = await createDeck()
+    const deckId = await createDeck(request)
     console.log('[P14c] deckId:', deckId)
 
     const ctxA = await browser.newContext()

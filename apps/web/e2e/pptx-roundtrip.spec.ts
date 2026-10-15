@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { test, expect, type Page, type Download } from '@playwright/test'
+import { test, expect, type Page, type Download } from './fixtures/test'
 
 /**
  * E2E: full M28 happy path.

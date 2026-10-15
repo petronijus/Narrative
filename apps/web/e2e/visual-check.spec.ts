@@ -1,4 +1,4 @@
-import { test, type Page } from '@playwright/test'
+import { test, type Page } from './fixtures/test'
 
 /**
  * P1 visual check — captures the home page + the editor with one

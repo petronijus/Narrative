@@ -15,7 +15,7 @@
  * exactly as text at 60 px in a 60 px frame — rendered, and while editing.
  */
 
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures/test'
 
 const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'
 const EDITOR = '[data-shortcut-scope="canvas"] [contenteditable="true"]'

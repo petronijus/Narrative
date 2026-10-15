@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures/test'
 
 /**
  * P11c regression — right-click context menu on a non-selected object

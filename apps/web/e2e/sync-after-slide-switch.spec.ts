@@ -1,4 +1,10 @@
-import { test, expect, type BrowserContext, type Page } from '@playwright/test'
+import {
+  test,
+  expect,
+  type APIRequestContext,
+  type BrowserContext,
+  type Page,
+} from './fixtures/test'
 
 /**
  * Reproduce: 2 windows of same deck. Slide 1 + drag → both windows
@@ -6,11 +12,10 @@ import { test, expect, type BrowserContext, type Page } from '@playwright/test'
  * update, window B does (and vice versa). User report.
  */
 
-async function createDeck(): Promise<string> {
-  const res = await fetch('http://localhost:3001/decks', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ title: 'Sync repro' }),
+async function createDeck(request: APIRequestContext): Promise<string> {
+  // Through the `request` fixture, so the deck is deleted after the run.
+  const res = await request.post('http://localhost:3001/decks', {
+    data: { title: 'Sync repro' },
   })
   const json = (await res.json()) as { id: string }
   return json.id
@@ -35,10 +40,13 @@ async function openDeck(ctx: BrowserContext, deckId: string): Promise<Page> {
   return page
 }
 
-test('sync stays alive after switching active slide on a 2-slide deck', async ({ browser }) => {
+test('sync stays alive after switching active slide on a 2-slide deck', async ({
+  browser,
+  request,
+}) => {
   test.setTimeout(120_000)
 
-  const deckId = await createDeck()
+  const deckId = await createDeck(request)
   const ctxA = await browser.newContext()
   const ctxB = await browser.newContext()
   const pageA = await openDeck(ctxA, deckId)

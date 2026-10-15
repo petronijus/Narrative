@@ -37,7 +37,11 @@ server and one database. So a spec seeds its own folders, decks, components
 and tokens, finds them by the ids it got back (never by position in, or the
 length of, a user-wide list: all folders, all decks, Drafts, access tokens,
 connected apps), gives them unique names (`Date.now()`), and deletes what it
-can. Tests in one file must not depend on each other either: `beforeAll`
+can. Decks and folders are deleted for it: specs import `test` from
+`e2e/fixtures/test.ts` (ESLint refuses `test` from `@playwright/test`), which
+notes every deck and folder created through Playwright's request and browser
+contexts — never seed with Node's own `fetch` — and deletes them, as their
+creator, when the worker is done. Tests in one file must not depend on each other either: `beforeAll`
 runs once per worker, so module state set there is per worker. Wait for
 conditions (`expect.poll`, `toPass`), not fixed sleeps — under parallel load
 a 1.5 s "settle" is not enough. A spec that genuinely cannot share the

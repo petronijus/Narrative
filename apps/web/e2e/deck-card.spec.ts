@@ -25,7 +25,7 @@ import {
   type Browser,
   type Page,
   type TestInfo,
-} from '@playwright/test'
+} from './fixtures/test'
 import { PNG } from 'pngjs'
 
 const API = 'http://localhost:3001'

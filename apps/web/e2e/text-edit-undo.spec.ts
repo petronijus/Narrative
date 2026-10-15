@@ -13,7 +13,7 @@
  * Reported 2026-09-09 as "undo suddenly doesn't work".
  */
 
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures/test'
 import { caret } from './fixtures/keys.js'
 
 const OBJ_ID = 'undo-text-1'

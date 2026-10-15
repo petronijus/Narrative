@@ -18,7 +18,7 @@
  * real focused element.
  */
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures/test'
 import { uploadTestPicture } from './fixtures/media'
 
 async function createDeck(page: Page): Promise<string> {

@@ -5,7 +5,7 @@
  * failure on every machine that had not run the import.
  */
 
-import { test } from '@playwright/test'
+import { test } from './fixtures/test'
 import { mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'

@@ -14,7 +14,7 @@
  * actually sees; the resulting slide order is read from the live Y.Doc.
  */
 
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures/test'
 
 const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'
 

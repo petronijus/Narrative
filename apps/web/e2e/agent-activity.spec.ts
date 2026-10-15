@@ -22,7 +22,7 @@
  * open editors.
  */
 
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures/test'
 
 const API = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'
 

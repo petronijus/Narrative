@@ -12,7 +12,7 @@
  * command API.
  */
 
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { test, expect, type APIRequestContext, type Page } from './fixtures/test'
 import { caret } from './fixtures/keys.js'
 import { PNG } from 'pngjs'
 

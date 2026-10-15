@@ -20,7 +20,7 @@
  * idle-CPU/GPU regression.
  */
 
-import { test, type Page } from '@playwright/test'
+import { test, type Page } from './fixtures/test'
 
 async function createDeck(page: Page): Promise<string> {
   const res = await page.request.post('http://localhost:3001/decks', {

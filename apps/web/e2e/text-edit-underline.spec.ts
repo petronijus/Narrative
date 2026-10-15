@@ -6,7 +6,7 @@
  * noise under a system Chrome.
  */
 
-import { test, type Page } from '@playwright/test'
+import { test, type Page } from './fixtures/test'
 import { provisionDeckWithText } from './fixtures/provisionDeck.js'
 
 async function setup(page: Page): Promise<{ id: string; slideId: string }> {

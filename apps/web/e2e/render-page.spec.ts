@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { test, expect, type APIRequestContext, type Page } from './fixtures/test'
 import { PNG } from 'pngjs'
 import { uploadTestPicture } from './fixtures/media.js'
 

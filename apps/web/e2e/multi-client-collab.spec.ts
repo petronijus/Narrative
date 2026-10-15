@@ -22,7 +22,7 @@
  * determinism — same trade-off as inspector-flows.spec.ts.
  */
 
-import { expect, test, type BrowserContext, type Page } from '@playwright/test'
+import { expect, test, type BrowserContext, type Page } from './fixtures/test'
 
 async function createDeck(page: Page, title = 'multi-client-collab'): Promise<string> {
   const res = await page.request.post('http://localhost:3001/decks', { data: { title } })

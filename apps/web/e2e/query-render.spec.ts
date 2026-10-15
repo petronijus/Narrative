@@ -14,7 +14,7 @@
  * render worker included (`just dev`).
  */
 
-import { test, expect, type APIRequestContext } from '@playwright/test'
+import { test, expect, type APIRequestContext } from './fixtures/test'
 import { PNG } from 'pngjs'
 
 const API = 'http://localhost:3001'

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures/test'
 
 /**
  * Repro: edit slide 1 → thumbnail updates. Switch to slide 2 → both

@@ -110,7 +110,10 @@ whole suite, and names the file — add a new file's area to `AREAS` in
 If a command does not exist or fails to start (port collision, missing
 service), say so explicitly — never skip it silently. Specs seed their own
 folders, decks and components through the API and delete them afterwards;
-none may depend on data in a developer's database.
+none may depend on data in a developer's database. Specs take `test` from
+`apps/web/e2e/fixtures/test.ts` (lint-enforced), which deletes every deck and
+folder a worker's specs created through Playwright's contexts once the
+worker is done; components, tokens and media are still the spec's to delete.
 
 ## What not to test
 

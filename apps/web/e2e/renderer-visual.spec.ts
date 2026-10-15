@@ -31,7 +31,7 @@
  * burden.
  */
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures/test'
 import { PNG } from 'pngjs'
 
 const ENABLE_PIXEL_PERFECT = process.env['RUN_VISUAL_BASELINES'] === '1'

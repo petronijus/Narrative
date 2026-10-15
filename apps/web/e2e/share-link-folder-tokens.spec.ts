@@ -27,7 +27,7 @@
  * its share link) is deleted afterwards.
  */
 
-import { test, expect, type APIRequestContext } from '@playwright/test'
+import { test, expect, type APIRequestContext } from './fixtures/test'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
 import { PNG } from 'pngjs'

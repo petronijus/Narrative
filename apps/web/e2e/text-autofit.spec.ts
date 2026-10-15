@@ -13,7 +13,7 @@
  * this is the browser laying the text out and the editor's write-back.
  */
 
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures/test'
 import { caret } from './fixtures/keys.js'
 
 const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'

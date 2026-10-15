@@ -11,7 +11,7 @@
  * cache-busting URL) and which only Reload can (a failed dependency).
  */
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures/test'
 
 const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'
 

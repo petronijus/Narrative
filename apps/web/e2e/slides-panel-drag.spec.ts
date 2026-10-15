@@ -9,7 +9,7 @@
  * thumbnails made it drift on long drags even without scrolling.
  */
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures/test'
 
 const API = 'http://localhost:3001'
 const SLIDE_COUNT = 16

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 
 /**
  * Diagnostic for R1 — slide 5 radial-gradient ellipses render solid

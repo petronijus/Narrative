@@ -13,7 +13,7 @@
  * ("the mask follows the text") instead of one particular deck.
  */
 
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 
 const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'
 

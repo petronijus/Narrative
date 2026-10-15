@@ -128,4 +128,32 @@ export default [
       'no-console': 'off',
     },
   },
+  // Playwright fixtures hand their value on through a callback named `use`,
+  // which the React hooks rule takes for React's `use()`.
+  {
+    files: ['apps/web/e2e/**/*.ts'],
+    rules: {
+      'react-hooks/rules-of-hooks': 'off',
+    },
+  },
+  // Playwright specs take `test` from e2e/fixtures/test.ts, which deletes the
+  // decks and folders a test created; Playwright's own `test` would leak them.
+  {
+    files: ['apps/web/e2e/**/*.spec.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@playwright/test',
+              importNames: ['test'],
+              message:
+                "Import `test` from './fixtures/test': it deletes the decks and folders a test created.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]

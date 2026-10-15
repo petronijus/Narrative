@@ -8,7 +8,7 @@
  * the API and the folder is deleted afterwards (with its decks).
  */
 
-import { test, expect, type APIRequestContext } from '@playwright/test'
+import { test, expect, type APIRequestContext } from './fixtures/test'
 import { exampleStylePack, richExampleStylePack } from '@narrative/shared'
 import { exampleDeckSpec } from '@narrative/commands'
 

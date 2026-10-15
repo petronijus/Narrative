@@ -1,4 +1,4 @@
-import { test, type Page } from '@playwright/test'
+import { test, type Page } from './fixtures/test'
 import { provisionDeckWithText } from './fixtures/provisionDeck.js'
 
 /**

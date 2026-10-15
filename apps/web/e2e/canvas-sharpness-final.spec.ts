@@ -11,7 +11,7 @@
  * Run: PLAYWRIGHT_USE_SYSTEM_CHROME=1 npx playwright test --config apps/web/playwright.config.ts canvas-sharpness-final
  */
 
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 
 const MAX_PIXELS = 25_000_000
 

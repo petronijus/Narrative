@@ -21,7 +21,7 @@
  * the API path validates the server contract end-to-end.
  */
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures/test'
 
 const SERVER = 'http://localhost:3001'
 

@@ -19,7 +19,7 @@
  * here the measurement would be of a fallback and the spec skips.
  */
 
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 
 const DECK_ID = process.env['DECK_ID'] ?? ''
 /** PowerPoint's own number for the frame, and how far we allow ourselves. */

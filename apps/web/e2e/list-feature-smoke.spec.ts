@@ -16,7 +16,7 @@
  *     the mid-word delete and plain-paragraph backspace-merge regressions.
  */
 
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures/test'
 import { caret } from './fixtures/keys.js'
 import { PNG } from 'pngjs'
 

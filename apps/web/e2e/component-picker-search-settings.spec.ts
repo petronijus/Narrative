@@ -16,7 +16,7 @@
  * developer's database.
  */
 
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 
 const API = 'http://localhost:3001'
 let folderId: string

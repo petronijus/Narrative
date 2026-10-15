@@ -33,7 +33,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 
 const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'
 const CLIENT_ID = 'https://claude.ai/oauth/claude-code-client-metadata'
