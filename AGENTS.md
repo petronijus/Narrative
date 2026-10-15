@@ -128,9 +128,12 @@ Deleted from the suite; do not re-introduce:
 - CRDT byte-equality — `Y.encodeStateAsUpdate` is not canonical; compare
   `listSlides()` structurally.
 
-27 web tests are `it.skip` with a rationale in the file (plus one each in
-server and video-worker); ~6 have never been triaged. Do not un-skip without
-reading the comment; a new skip says why in the file and updates this count.
+One web test is `it.skip` (the "+ slideIn up" quick button, gone until the
+add-preset menu gets direction variants again) and one server test (the
+legacy 409 for a non-empty folder); each says why in its file. The other 26
+web skips were triaged on 2026-10-16: fixed, rewritten for today's code, or
+deleted where e2e covers them or they were DOM-presence tests. A new skip
+says why in the file and updates this count.
 
 ## Layout
 

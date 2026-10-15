@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen, waitFor, fireEvent } from '@testing-library/react'
+import { screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { renderWithProviders as render } from '../test/renderWithProviders'
 import { MemoryRouter } from 'react-router-dom'
 import { FoldersHome } from './FoldersHome'
@@ -211,56 +211,37 @@ describe('FoldersHome', () => {
     })
   })
 
-  it.skip('calls deleteFolder after confirming delete via kebab menu', async () => {
+  /** Open a folder's menu, choose Delete, and return the confirming item. */
+  async function startDelete(folderName: string): Promise<HTMLElement> {
+    let card: HTMLElement | null = await screen.findByText(folderName)
+    while (card !== null && card.querySelector('button[aria-label="Folder options"]') === null) {
+      card = card.parentElement
+    }
+    fireEvent.click(within(card!).getByRole('button', { name: 'Folder options' }))
+    fireEvent.click(within(card!).getByRole('menuitem', { name: 'Delete' }))
+    return within(card!).getByRole('menuitem', { name: /Delete folder \+ 5 decks/ })
+  }
+
+  it('deletes a folder after a confirm step that says how many decks go with it', async () => {
+    mockDeleteFolder.mockResolvedValue(undefined)
     renderFoldersHome()
-    await waitFor(() => screen.getByText('Work'))
 
-    const kebabs = screen.getAllByLabelText('Folder options')
-    fireEvent.click(kebabs[1]!)
-
-    // First click shows "Delete", second confirms
-    await waitFor(() => {
-      const items = screen.getAllByRole('menuitem')
-      const deleteBtn = items.find((el) => el.textContent?.trim() === 'Delete')
-      expect(deleteBtn).toBeTruthy()
-      fireEvent.click(deleteBtn!)
-    })
-
-    await waitFor(() => {
-      const items = screen.getAllByRole('menuitem')
-      const confirmBtn = items.find((el) => el.textContent?.includes('Confirm delete'))
-      expect(confirmBtn).toBeTruthy()
-      fireEvent.click(confirmBtn!)
-    })
+    const confirm = await startDelete('Work')
+    expect(mockDeleteFolder).not.toHaveBeenCalled()
+    fireEvent.click(confirm)
 
     await waitFor(() => {
       expect(mockDeleteFolder).toHaveBeenCalledWith('folder-work')
     })
   })
 
-  it.skip('shows non-empty folder modal when deleteFolder returns 409', async () => {
+  it('explains a refused delete (409, the server keeps Drafts) in a dialog', async () => {
     mockDeleteFolder.mockRejectedValue(Object.assign(new Error('HTTP 409'), { status: 409 }))
     renderFoldersHome()
-    await waitFor(() => screen.getByText('Work'))
 
-    const kebabs = screen.getAllByLabelText('Folder options')
-    fireEvent.click(kebabs[1]!)
+    fireEvent.click(await startDelete('Work'))
 
-    await waitFor(() => {
-      const items = screen.getAllByRole('menuitem')
-      const deleteBtn = items.find((el) => el.textContent?.trim() === 'Delete')
-      fireEvent.click(deleteBtn!)
-    })
-
-    await waitFor(() => {
-      const items = screen.getAllByRole('menuitem')
-      const confirmBtn = items.find((el) => el.textContent?.includes('Confirm delete'))
-      fireEvent.click(confirmBtn!)
-    })
-
-    await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: /cannot delete folder/i })).toBeTruthy()
-    })
+    expect(await screen.findByRole('dialog', { name: /cannot delete folder/i })).toBeTruthy()
   })
 
   it('renders user name in header', async () => {

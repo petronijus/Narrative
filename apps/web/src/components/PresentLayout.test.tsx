@@ -289,115 +289,6 @@ describe('PresentLayout — layout', () => {
 // ---------------------------------------------------------------------------
 
 describe('PresentLayout — keyboard navigation', () => {
-  it.skip('Escape navigates back to editor', () => {
-    renderPresent({ deckId: 'abc' })
-    act(() => {
-      fireEvent.keyDown(window, { key: 'Escape' })
-    })
-    expect(mockNavigate).toHaveBeenCalledOnce()
-    expect(mockNavigate).toHaveBeenCalledWith('/deck/abc')
-  })
-
-  it.skip('ArrowRight advances to next slide', () => {
-    const slide1 = makeSlide('s1')
-    const slide2 = makeSlide('s2')
-    mockSlidesData.push(slide1, slide2)
-
-    const mockSetActiveSlideId = vi.fn()
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's1',
-      setActiveSlideId: mockSetActiveSlideId,
-    }
-
-    renderPresent({ activeSlide })
-
-    act(() => {
-      fireEvent.keyDown(window, { key: 'ArrowRight' })
-    })
-
-    expect(mockSetActiveSlideId).toHaveBeenCalledWith('s2')
-  })
-
-  it.skip('Space advances to next slide', () => {
-    const slide1 = makeSlide('s1')
-    const slide2 = makeSlide('s2')
-    mockSlidesData.push(slide1, slide2)
-
-    const mockSetActiveSlideId = vi.fn()
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's1',
-      setActiveSlideId: mockSetActiveSlideId,
-    }
-
-    renderPresent({ activeSlide })
-
-    act(() => {
-      fireEvent.keyDown(window, { key: ' ' })
-    })
-
-    expect(mockSetActiveSlideId).toHaveBeenCalledWith('s2')
-  })
-
-  it.skip('PageDown advances to next slide', () => {
-    const slide1 = makeSlide('s1')
-    const slide2 = makeSlide('s2')
-    mockSlidesData.push(slide1, slide2)
-
-    const mockSetActiveSlideId = vi.fn()
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's1',
-      setActiveSlideId: mockSetActiveSlideId,
-    }
-
-    renderPresent({ activeSlide })
-
-    act(() => {
-      fireEvent.keyDown(window, { key: 'PageDown' })
-    })
-
-    expect(mockSetActiveSlideId).toHaveBeenCalledWith('s2')
-  })
-
-  it.skip('ArrowLeft retreats to previous slide', () => {
-    const slide1 = makeSlide('s1')
-    const slide2 = makeSlide('s2')
-    mockSlidesData.push(slide1, slide2)
-
-    const mockSetActiveSlideId = vi.fn()
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's2',
-      setActiveSlideId: mockSetActiveSlideId,
-    }
-
-    renderPresent({ activeSlide })
-
-    act(() => {
-      fireEvent.keyDown(window, { key: 'ArrowLeft' })
-    })
-
-    expect(mockSetActiveSlideId).toHaveBeenCalledWith('s1')
-  })
-
-  it.skip('PageUp retreats to previous slide', () => {
-    const slide1 = makeSlide('s1')
-    const slide2 = makeSlide('s2')
-    mockSlidesData.push(slide1, slide2)
-
-    const mockSetActiveSlideId = vi.fn()
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's2',
-      setActiveSlideId: mockSetActiveSlideId,
-    }
-
-    renderPresent({ activeSlide })
-
-    act(() => {
-      fireEvent.keyDown(window, { key: 'PageUp' })
-    })
-
-    expect(mockSetActiveSlideId).toHaveBeenCalledWith('s1')
-  })
-
   it('ArrowLeft at first slide is no-op', () => {
     const slide1 = makeSlide('s1')
     const slide2 = makeSlide('s2')
@@ -436,14 +327,6 @@ describe('PresentLayout — keyboard navigation', () => {
     })
 
     expect(mockSetActiveSlideId).not.toHaveBeenCalled()
-  })
-
-  it.skip('F key calls requestFullscreen', async () => {
-    renderPresent()
-    await act(async () => {
-      fireEvent.keyDown(window, { key: 'f' })
-    })
-    expect(mockRequestFullscreen).toHaveBeenCalled()
   })
 
   it('does not navigate on other keys', () => {
