@@ -30,6 +30,27 @@ async function createDeckAndOpen(page: Page): Promise<void> {
   )
 }
 
+/**
+ * Select `ids` and keep re-issuing it until it sticks: the editor drops a
+ * selection of objects it has not taken in yet, and a selection made in the
+ * same moment as the insert is lost for good (keyboard-shortcuts.spec.ts).
+ */
+async function selectUntilItSticks(page: Page, ids: string[]): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate((want) => {
+          const api = window.__narrative_test_api!
+          if (api.getSelection().join() !== want.join()) api.setSelection(want)
+          return api.getSelection()
+        }, ids),
+      { timeout: 10_000 },
+    )
+    .toEqual(ids)
+}
+
+const objectIds = (page: Page) => page.evaluate(() => window.__narrative_test_api!.objectIds())
+
 test('send backward keeps selection + no dropped ids + no render crash', async ({ page }) => {
   test.setTimeout(60_000)
 
@@ -49,23 +70,18 @@ test('send backward keeps selection + no dropped ids + no render crash', async (
     api.addRect({ id: 'rect-B', x: 280, y: 250, w: 300, h: 200, fill: 0x5555ff })
   })
 
-  // Let the SceneGraph reconciler mount both rects.
-  await page.waitForTimeout(300)
-
-  const initialIds = await page.evaluate(() => window.__narrative_test_api!.objectIds())
-  expect(initialIds).toEqual(['rect-A', 'rect-B'])
-
-  await page.evaluate(() => window.__narrative_test_api!.setSelection(['rect-B']))
-  await page.waitForTimeout(50)
-  expect(await page.evaluate(() => window.__narrative_test_api!.getSelection())).toEqual(['rect-B'])
-
-  // Focus the document body so `[` keydown reaches EditorLayout's handler.
+  // Both rects in the document and in the scene, then rect-B selected.
+  await expect.poll(() => objectIds(page)).toEqual(['rect-A', 'rect-B'])
+  await expect
+    .poll(() => page.evaluate(() => [...window.__narrative_test_api!.sceneGraphIds()].sort()))
+    .toEqual(['rect-A', 'rect-B'])
+  // Escape first: it moves focus to the page so `[` reaches the editor's
+  // shortcuts — and clears the selection, so select afterwards.
   await page.keyboard.press('Escape')
-  await page.evaluate(() => window.__narrative_test_api!.setSelection(['rect-B']))
-  await page.waitForTimeout(50)
+  await selectUntilItSticks(page, ['rect-B'])
 
   await page.keyboard.press('[')
-  await page.waitForTimeout(400)
+  await expect.poll(() => objectIds(page)).toEqual(['rect-B', 'rect-A'])
 
   // (a) No JS errors surfaced
   const realErrors = errors.filter(
@@ -138,17 +154,15 @@ test('layer-reorder stress: 10 consecutive backward/forward presses', async ({ p
   await expect
     .poll(() => page.evaluate(() => [...window.__narrative_test_api!.sceneGraphIds()].sort()))
     .toEqual(['A', 'B', 'C'])
-  await page.evaluate(() => window.__narrative_test_api!.setSelection(['B']))
-  await expect
-    .poll(() => page.evaluate(() => window.__narrative_test_api!.getSelection()))
-    .toEqual(['B'])
+  await page.keyboard.press('Escape')
+  await selectUntilItSticks(page, ['B'])
 
+  // Back and forth: each press lands before the next one goes.
   for (let i = 0; i < 10; i++) {
-    await page.keyboard.press(i % 2 === 0 ? '[' : ']')
-    await page.waitForTimeout(80)
+    const back = i % 2 === 0
+    await page.keyboard.press(back ? '[' : ']')
+    await expect.poll(() => objectIds(page)).toEqual(back ? ['B', 'A', 'C'] : ['A', 'B', 'C'])
   }
-
-  await page.waitForTimeout(500)
 
   const realErrors = errors.filter(
     (e) => !e.includes('No available adapters') && !e.includes('HocuspocusProvider'),
