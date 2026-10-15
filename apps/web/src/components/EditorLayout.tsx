@@ -70,6 +70,7 @@ import { ZoomControl } from '../ui/ZoomControl.js'
 import { useStageBgColor } from '../state/useStageBgColor.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useZoomLevel, MIN_ZOOM, MAX_ZOOM } from '../state/useZoomLevel.js'
+import { clientToCanvasCoords } from '../lib/canvasCoords.js'
 import { isModHeld, useShortcuts } from '../state/useShortcuts.js'
 import { ShortcutsCheatsheet } from '../ui/ShortcutsCheatsheet.js'
 import { EditorContextMenu } from '../ui/EditorContextMenu.js'
@@ -96,26 +97,6 @@ import { Button } from '@/components/ui/button'
  * coords on purpose so the feel is the same at 25% and 200%.
  */
 const TAP_THRESHOLD_PX = 4
-
-/**
- * Converts viewport (clientX, clientY) coordinates into artboard-local
- * slide coordinates. When the artboard is rendered under a CSS
- * transform:scale, getBoundingClientRect already returns the scaled
- * visual rect — we reverse that scale so slide-coord math stays in
- * unscaled 1920×1080 space.
- */
-function clientToCanvasCoords(
-  clientX: number,
-  clientY: number,
-  canvasRect: DOMRect,
-  zoom: number = 1,
-): { x: number; y: number } {
-  const s = zoom === 0 ? 1 : zoom
-  return {
-    x: (clientX - canvasRect.left) / s,
-    y: (clientY - canvasRect.top) / s,
-  }
-}
 
 /**
  * Applies the Shift-key aspect-ratio constraint to a draft drag

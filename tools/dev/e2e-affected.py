@@ -150,6 +150,8 @@ AREAS: list[tuple[str, list[str]]] = [
     # The editor's in-browser "Export as PNG" (a hidden frame on the render page).
     ("apps/web/src/state/browserSlideExport.ts", ["render-export", "render-page"]),
     ("apps/web/src/lib/stateVector.ts", ["render-export"]),
+    # Pointer → slide coordinates: the canvas tools and a file dropped on the canvas.
+    ("apps/web/src/lib/canvasCoords.ts", CANVAS_TOOLS + MEDIA + ["keyboard-shortcuts"]),
     ("apps/web/src/lib/endpoints.ts", SMOKE + SYNC + ["render-page"]),
     ("apps/web/src/lib/shareToken.ts", ACCESS + TOKENS + MEDIA + ["render-page"]),
     ("apps/web/src/ui/PresenterOverlay.tsx", PRESENT),
