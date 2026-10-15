@@ -10,6 +10,8 @@ WORKDIR /app
 # packages/shared (which type-imports yjs without declaring it as its
 # own dep) can resolve modules from the root node_modules.
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+# pnpm-workspace.yaml names patches (patchedDependencies); install refuses without them
+COPY patches ./patches
 COPY apps/video-worker/package.json   apps/video-worker/package.json
 COPY packages/shared/package.json     packages/shared/package.json
 
@@ -37,6 +39,8 @@ WORKDIR /app
 
 # Copy workspace manifests for prod install
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+# pnpm-workspace.yaml names patches (patchedDependencies); install refuses without them
+COPY patches ./patches
 COPY apps/video-worker/package.json   apps/video-worker/package.json
 COPY packages/shared/package.json     packages/shared/package.json
 

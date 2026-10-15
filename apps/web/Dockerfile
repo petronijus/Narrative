@@ -8,6 +8,8 @@ WORKDIR /app
 
 # Workspace manifesty pro cache
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+# pnpm-workspace.yaml names patches (patchedDependencies); install refuses without them
+COPY patches ./patches
 COPY apps/web/package.json               apps/web/package.json
 COPY packages/shared/package.json        packages/shared/package.json
 COPY packages/slide-model/package.json   packages/slide-model/package.json

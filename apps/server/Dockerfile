@@ -8,6 +8,8 @@ WORKDIR /app
 
 # Kopírujeme workspace manifesty (využití Docker layer cache)
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+# pnpm-workspace.yaml names patches (patchedDependencies); install refuses without them
+COPY patches ./patches
 COPY apps/server/package.json            apps/server/package.json
 COPY packages/shared/package.json        packages/shared/package.json
 COPY packages/slide-model/package.json   packages/slide-model/package.json
@@ -35,6 +37,8 @@ WORKDIR /app
 
 # Zkopírujeme workspace manifesty
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+# pnpm-workspace.yaml names patches (patchedDependencies); install refuses without them
+COPY patches ./patches
 COPY apps/server/package.json            apps/server/package.json
 COPY packages/shared/package.json        packages/shared/package.json
 COPY packages/slide-model/package.json   packages/slide-model/package.json
