@@ -4,6 +4,10 @@
  * session opened is kept and reused by its next job, closed after a failed
  * one, and never handed to another session. Skipped where no Chromium can
  * be launched.
+ *
+ * Each test renders its own deck and counts only that deck's page loads and
+ * uploads, so a test that ran out of time and is still finishing its jobs
+ * cannot skew the next one.
  */
 
 import { createServer, type Server } from 'node:http'
@@ -16,6 +20,15 @@ import { WarmPages } from './warmPages.js'
 import type { RenderWorkerConfig } from './config.js'
 
 const APP = 'https://narrative.test'
+
+/**
+ * The time limit of each test and hook here. The shared 30 s
+ * (`vitest.timeouts.ts`) ends a hang in a unit test; these drive a real
+ * Chromium through up to nine page loads — about 2.5 s alone, 27 s at a load
+ * of 29 beside the other suites (MacBook, 2026-10-15), and `just check` runs
+ * typecheck and lint alongside. 120 s still ends a hang.
+ */
+const BROWSER_TIMEOUT_MS = 120_000
 /** A 1×1 PNG. */
 const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=='
@@ -56,10 +69,14 @@ const FROZEN = `<!doctype html><html><body><script>
 
 let server: Server
 let upstream = ''
-let pageLoads = 0
-let uploads = 0
-/** The pages opened, in order: 'live' or 'frozen'. */
-const opened: string[] = []
+/** Per deck: the pages opened, in order ('live' or 'frozen'), and the pictures uploaded. */
+const decks = new Map<string, { opened: string[]; uploads: number }>()
+function deck(deckId: string): { opened: string[]; uploads: number } {
+  let entry = decks.get(deckId)
+  if (entry === undefined) decks.set(deckId, (entry = { opened: [], uploads: 0 }))
+  return entry
+}
+const pageLoads = (deckId: string): number => deck(deckId).opened.length
 const holder = new BrowserHolder({
   idleMs: 60_000,
   chromeExecutable: null,
@@ -72,18 +89,20 @@ beforeAll(async () => {
   server = createServer((req, res) => {
     req.resume()
     req.on('end', () => {
-      if (req.url?.startsWith('/deck/')) {
-        pageLoads += 1
-        const frozen = new URL(req.url, APP).searchParams.get('frozen') === '1'
-        opened.push(frozen ? 'frozen' : 'live')
+      const url = new URL(req.url ?? '/', APP)
+      const page = /^\/deck\/([^/]+)/.exec(url.pathname)
+      const upload = /^\/storage\/([^/]+)\/look\.png$/.exec(url.pathname)
+      if (page !== null) {
+        const frozen = url.searchParams.get('frozen') === '1'
+        deck(page[1]!).opened.push(frozen ? 'frozen' : 'live')
         res.writeHead(200, { 'content-type': 'text/html' })
         res.end(frozen ? FROZEN : PAGE)
       } else if (req.method === 'GET' && req.url?.startsWith('/storage/before/')) {
         // A compare's stored "before" state (here: its name).
         res.writeHead(200, { 'content-type': 'application/octet-stream' })
         res.end(req.url.slice('/storage/before/'.length))
-      } else if (req.method === 'PUT') {
-        uploads += 1
+      } else if (req.method === 'PUT' && upload !== null) {
+        deck(upload[1]!).uploads += 1
         res.writeHead(200)
         res.end()
       } else {
@@ -101,110 +120,77 @@ beforeAll(async () => {
   } catch {
     browser = null
   }
-})
+}, BROWSER_TIMEOUT_MS)
 
 afterAll(async () => {
   await holder.close('test')
   server.close()
-})
+}, BROWSER_TIMEOUT_MS)
 
-const job = (token: string, slideId: string): RenderLookJob => ({
+const job = (deckId: string, token: string, slideId: string): RenderLookJob => ({
   kind: 'look',
-  page: { kind: 'deck', deckId: 'd1' },
+  page: { kind: 'deck', deckId },
   token,
   stateVector: '',
   deadline: Date.now() + 30_000,
   workBudgetMs: 20_000,
   look: { mode: 'slide', slideId },
-  upload: { url: `${APP}/storage/look.png`, headers: { 'content-type': 'image/png' } },
+  upload: { url: `${APP}/storage/${deckId}/look.png`, headers: { 'content-type': 'image/png' } },
 })
 
 describe('renderJob and the session page', () => {
-  it('reuses the page of a session, closes it after a failed job, and keeps sessions apart', async (ctx) => {
-    if (browser === null) ctx.skip()
-    const config: RenderWorkerConfig = {
-      redisUrl: 'redis://unused',
-      appOrigin: APP,
-      upstream,
-      idleMs: 60_000,
-      warmPages: 2,
-      chromeExecutable: null,
-      requireSandbox: false,
-    }
-    const warm = new WarmPages({ max: 2, idleMs: 60_000, log: () => undefined })
-    const deps = { config, log: () => undefined, warm }
-    try {
-      const first = await renderJob(browser!, job('nrr_a', 's1'), deps)
-      expect(first).toMatchObject({
-        kind: 'look',
-        look: { sizeBytes: Buffer.from(PNG_BASE64, 'base64').byteLength },
-      })
-      expect([pageLoads, uploads, warm.size]).toEqual([1, 1, 1])
-      // The session's next job: the same page, no load.
-      await renderJob(browser!, job('nrr_a', 's2'), deps)
-      expect([pageLoads, uploads, warm.size]).toEqual([1, 2, 1])
-      // Another session never gets that page.
-      await renderJob(browser!, job('nrr_b', 's1'), deps)
-      expect([pageLoads, warm.size]).toEqual([2, 2])
-      // A failed job closes its page; the session's next job opens a new one.
-      await expect(renderJob(browser!, job('nrr_a', 'bad'), deps)).rejects.toMatchObject({
-        reason: 'not-settled',
-      })
-      expect(warm.size).toBe(1)
-      await renderJob(browser!, job('nrr_a', 's1'), deps)
-      expect(pageLoads).toBe(3)
-      // Background work closes its page: the people's warm pages stay as they were.
-      const before = warm.size
-      await renderJob(browser!, { ...job('nrr_c', 's1'), keepPage: false }, deps)
-      expect([pageLoads, warm.size]).toEqual([4, before])
-    } finally {
-      warm.closeAll('test')
-    }
-  })
+  it(
+    'reuses the page of a session, closes it after a failed job, and keeps sessions apart',
+    async (ctx) => {
+      if (browser === null) ctx.skip()
+      const config: RenderWorkerConfig = {
+        redisUrl: 'redis://unused',
+        appOrigin: APP,
+        upstream,
+        idleMs: 60_000,
+        warmPages: 2,
+        chromeExecutable: null,
+        requireSandbox: false,
+      }
+      const warm = new WarmPages({ max: 2, idleMs: 60_000, log: () => undefined })
+      const deps = { config, log: () => undefined, warm }
+      const d = 'd-session'
+      try {
+        const first = await renderJob(browser!, job(d, 'nrr_a', 's1'), deps)
+        expect(first).toMatchObject({
+          kind: 'look',
+          look: { sizeBytes: Buffer.from(PNG_BASE64, 'base64').byteLength },
+        })
+        expect([pageLoads(d), deck(d).uploads, warm.size]).toEqual([1, 1, 1])
+        // The session's next job: the same page, no load.
+        await renderJob(browser!, job(d, 'nrr_a', 's2'), deps)
+        expect([pageLoads(d), deck(d).uploads, warm.size]).toEqual([1, 2, 1])
+        // Another session never gets that page.
+        await renderJob(browser!, job(d, 'nrr_b', 's1'), deps)
+        expect([pageLoads(d), warm.size]).toEqual([2, 2])
+        // A failed job closes its page; the session's next job opens a new one.
+        await expect(renderJob(browser!, job(d, 'nrr_a', 'bad'), deps)).rejects.toMatchObject({
+          reason: 'not-settled',
+        })
+        expect(warm.size).toBe(1)
+        await renderJob(browser!, job(d, 'nrr_a', 's1'), deps)
+        expect(pageLoads(d)).toBe(3)
+        // Background work closes its page: the people's warm pages stay as they were.
+        const before = warm.size
+        await renderJob(browser!, { ...job(d, 'nrr_c', 's1'), keepPage: false }, deps)
+        expect([pageLoads(d), warm.size]).toEqual([4, before])
+      } finally {
+        warm.closeAll('test')
+      }
+    },
+    BROWSER_TIMEOUT_MS,
+  )
 
-  it('draws a compare’s "before" on a frozen page first, closes it, and hands the picture to the live page', async (ctx) => {
-    if (browser === null) ctx.skip()
-    const config: RenderWorkerConfig = {
-      redisUrl: 'redis://unused',
-      appOrigin: APP,
-      upstream,
-      idleMs: 60_000,
-      warmPages: 1,
-      chromeExecutable: null,
-      requireSandbox: false,
-    }
-    const warm = new WarmPages({ max: 1, idleMs: 60_000, log: () => undefined })
-    const deps = { config, log: () => undefined, warm }
-    const compare = (state: string): RenderLookJob => ({
-      ...job('nrr_cmp', 's1'),
-      look: { mode: 'compare', slideId: 's1', before: { url: `${APP}/storage/before/${state}` } },
-    })
-    try {
-      opened.length = 0
-      const result = await renderJob(browser!, compare('v1'), deps)
-      expect(opened).toEqual(['frozen', 'live'])
-      expect(result.kind === 'look' && result.look.overflow[0]?.objectId).toBe('before-of-v1')
-      expect(result.kind === 'look' && result.look.newSlide).toBeUndefined()
-      // The live page is kept; the frozen one is not. The next compare closes
-      // the kept page before the frozen one opens (never two at once).
-      expect(warm.size).toBe(1)
-      opened.length = 0
-      const added = await renderJob(browser!, compare('missing'), deps)
-      expect(opened).toEqual(['frozen', 'live'])
-      expect(added.kind === 'look' && added.look.newSlide).toBe(true)
-      expect(added.kind === 'look' && added.look.overflow[0]?.objectId).toBe('null')
-    } finally {
-      warm.closeAll('test')
-    }
-  })
-
-  it('refuses a job that arrived after its deadline without opening a page', async (ctx) => {
-    if (browser === null) ctx.skip()
-    const warm = new WarmPages({ max: 1, idleMs: 60_000, log: () => undefined })
-    const before = pageLoads
-    const late = { ...job('nrr_c', 's1'), deadline: Date.now() - 1 }
-    const error = await renderJob(browser!, late, {
-      config: {
+  it(
+    'draws a compare’s "before" on a frozen page first, closes it, and hands the picture to the live page',
+    async (ctx) => {
+      if (browser === null) ctx.skip()
+      const config: RenderWorkerConfig = {
         redisUrl: 'redis://unused',
         appOrigin: APP,
         upstream,
@@ -212,12 +198,59 @@ describe('renderJob and the session page', () => {
         warmPages: 1,
         chromeExecutable: null,
         requireSandbox: false,
-      },
-      log: () => undefined,
-      warm,
-    }).catch((err: unknown) => err)
-    expect(error).toBeInstanceOf(RenderJobError)
-    expect((error as RenderJobError).reason).toBe('late')
-    expect(pageLoads).toBe(before)
-  })
+      }
+      const warm = new WarmPages({ max: 1, idleMs: 60_000, log: () => undefined })
+      const deps = { config, log: () => undefined, warm }
+      const d = 'd-compare'
+      const opened = deck(d).opened
+      const compare = (state: string): RenderLookJob => ({
+        ...job(d, 'nrr_cmp', 's1'),
+        look: { mode: 'compare', slideId: 's1', before: { url: `${APP}/storage/before/${state}` } },
+      })
+      try {
+        const result = await renderJob(browser!, compare('v1'), deps)
+        expect(opened).toEqual(['frozen', 'live'])
+        expect(result.kind === 'look' && result.look.overflow[0]?.objectId).toBe('before-of-v1')
+        expect(result.kind === 'look' && result.look.newSlide).toBeUndefined()
+        // The live page is kept; the frozen one is not. The next compare closes
+        // the kept page before the frozen one opens (never two at once).
+        expect(warm.size).toBe(1)
+        opened.length = 0
+        const added = await renderJob(browser!, compare('missing'), deps)
+        expect(opened).toEqual(['frozen', 'live'])
+        expect(added.kind === 'look' && added.look.newSlide).toBe(true)
+        expect(added.kind === 'look' && added.look.overflow[0]?.objectId).toBe('null')
+      } finally {
+        warm.closeAll('test')
+      }
+    },
+    BROWSER_TIMEOUT_MS,
+  )
+
+  it(
+    'refuses a job that arrived after its deadline without opening a page',
+    async (ctx) => {
+      if (browser === null) ctx.skip()
+      const warm = new WarmPages({ max: 1, idleMs: 60_000, log: () => undefined })
+      const d = 'd-late'
+      const late = { ...job(d, 'nrr_c', 's1'), deadline: Date.now() - 1 }
+      const error = await renderJob(browser!, late, {
+        config: {
+          redisUrl: 'redis://unused',
+          appOrigin: APP,
+          upstream,
+          idleMs: 60_000,
+          warmPages: 1,
+          chromeExecutable: null,
+          requireSandbox: false,
+        },
+        log: () => undefined,
+        warm,
+      }).catch((err: unknown) => err)
+      expect(error).toBeInstanceOf(RenderJobError)
+      expect((error as RenderJobError).reason).toBe('late')
+      expect(pageLoads(d)).toBe(0)
+    },
+    BROWSER_TIMEOUT_MS,
+  )
 })
