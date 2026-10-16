@@ -4,6 +4,37 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.13.0 — Instance admins (2026-10-16)
+
+### Added
+
+- **Instance admins** ([ADR 0014](docs/adr/0014-instance-admin.md)). An admin
+  is owner of every folder and deck — except other people's private Drafts —
+  and sees new folders at once, with no sharing. The role is a flag on the
+  person, so taking it away takes everything away at once.
+- **Administration screen** (user menu → Administration, admins only): allow
+  an email address to sign in, take it off the list again (the person is
+  signed out when nothing else lets them in), and make or remove admins.
+  Nobody changes their own role, so an admin always remains. No SSH to the
+  server is needed to let a colleague in any more.
+- `ADMIN_EMAILS` (server env) seeds the first admin at sign-in while the
+  instance has none; listed addresses may also sign in.
+
+### Security
+
+- Admin actions are not agent commands: an instruction hidden in a deck
+  cannot let anyone in. The admin routes refuse access tokens, need the
+  app's own origin and log every change.
+- A demoted admin's open editors reconnect with their own role.
+- Production refuses to boot when no allowlist at all is configured
+  (`OIDC_ALLOW_ANY_ACCOUNT=true` opts in): every Google account could sign in.
+
+### Fixed
+
+- `docs/deploy.md`: recreating the server after an env change names the
+  running release (`NARRATIVE_TAG`); without it the server came up on a stale
+  image, older than the web app.
+
 ## 0.12.3 — The images build again (2026-10-16)
 
 ### Fixed
