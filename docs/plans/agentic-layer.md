@@ -640,7 +640,7 @@ that Narrative mirrors the skills. So:
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | Contoso 2026  | `layouts.json` → pack, almost field for field; the Contoso deck spec informs Narrative's own DeckSpec                           | `VW_Master_2026_{DE,EN}.pptx`                                                |
 | Fabrikam      | new PPTX master/layout reader (extends the M28 parser; ADR 0009 "one translation both directions")                              | `Audi_Template.pptx`, **not** the HTML skill (they disagree; see the survey) |
-| Tailspin      | the same master reader, plus the diagram builders as components                                                                 | `tailspinr-master.pptx`                                                          |
+| Tailspin      | the same master reader, plus the diagram builders as components                                                                 | `tailspinr-master.pptx`                                                      |
 | Wingtip house | hand-authored from `test-presentation.html`, **not** `references/template.html` (v1 contradicts SKILL.md v1.8); contoso/vh → px | `test-presentation.html` / SKILL.md v1.8                                     |
 | Wingtip Labs  | extends Wingtip: lime accent, decoration, chart palette                                                                         | `wingtip-labs-deck-design.md`                                                |
 
