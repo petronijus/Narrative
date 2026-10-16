@@ -94,6 +94,8 @@ export default defineConfig({
           {
             name: 'webkit',
             grepInvert: /@serial/,
+            // The desktop shell's own specs drive Electron, not a browser engine.
+            testIgnore: [/desktop-.*\.spec\.ts$/, /desktop\.setup\.ts$/],
             use: {
               ...devices['Desktop Safari'],
               // The Chromium run is at 1×; compare the engines, not the
