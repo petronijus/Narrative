@@ -105,8 +105,8 @@ filter-repo` (client brand packs, the agency's reference slides and
   `petronijus/Narrative-archive` (private, archived) and a new
   `petronijus/Narrative` under the same URL took the rewritten history
   (`main`, `feat/desktop`, 71 tags) and is public. Production and the GHCR
-  images are untouched; the packages' repository link in GHCR still points
-  at the archive until it is re-linked in the package settings. Every other
+  images are untouched; the four packages were re-linked to the new repo
+  (still private). Every other
   clone has to move to the new history by hand (AI-handover tasks for the
   MacBook and the Ubuntu desktop); ai-config's project-sync refuses to
   rebase or push across a rewritten history (`0e36234`).
