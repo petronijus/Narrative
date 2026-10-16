@@ -150,7 +150,10 @@ test('the add-column handle adds and removes columns at the right', async ({ pag
     .toBe(4)
   expect((await tableOf(page.request, deckId, tableId)).width).toBeCloseTo(1200, 6)
 
-  // Two average columns (300 px each) to the left: 4 → 2.
+  // Two average columns (300 px each) to the left: 4 → 2. Take the handle
+  // where the wider table puts it — WebKit moves it a frame after the write.
+  const wider = from.x + 300 * scale
+  await expect.poll(async () => Math.abs((await centre(page, handle)).x - wider)).toBeLessThan(2)
   from = await centre(page, handle)
   await drag(page, from, { x: from.x - 600 * scale, y: from.y })
   await expect

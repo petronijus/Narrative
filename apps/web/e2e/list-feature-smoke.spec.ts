@@ -17,6 +17,7 @@
  */
 
 import { test, expect, type Page } from './fixtures/test'
+import { isEngineNoise } from './fixtures/consoleNoise'
 import { caret } from './fixtures/keys.js'
 import { PNG } from 'pngjs'
 
@@ -248,6 +249,7 @@ test.describe('Multi-level lists — feature smoke', () => {
       // fetch on the empty deck), not a list-feature error. Real app
       // console.error calls and pageerrors are still captured.
       if (t.includes('Failed to load resource') && t.includes('404')) return
+      if (isEngineNoise(t)) return
       errors.push(`console.error: ${t}`)
     })
 

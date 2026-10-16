@@ -64,6 +64,27 @@ function drawnAt(o: Obj, p: Pt): Pt {
 /** Pointer positions map to slide px through the zoom: allow a few px. */
 const near = (a: Pt, b: Pt): boolean => Math.abs(a.x - b.x) < 3 && Math.abs(a.y - b.y) < 3
 
+/**
+ * Wait until the editor has the object in its scene: a click on it before
+ * that lands on the empty slide (WebKit renders an object created over the
+ * API a frame or two later than Chromium).
+ */
+async function untilMounted(page: Page, id: string) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (oid) =>
+          (
+            window as unknown as {
+              __narrative_test_api?: { sceneGraphHasMountedNode(id: string): boolean }
+            }
+          ).__narrative_test_api?.sceneGraphHasMountedNode(oid) ?? false,
+        id,
+      ),
+    )
+    .toBe(true)
+}
+
 async function drag(page: Page, from: Pt, to: Pt) {
   await page.mouse.move(from.x, from.y)
   await page.mouse.down()
@@ -129,6 +150,7 @@ test('double-clicking a rectangle makes it a path; dragging a corner moves only 
   )
   await expect.poll(async () => (await objectsOf(page.request, deckId)).length).toBe(1)
 
+  await untilMounted(page, objectId)
   const centre = at({ x: 800, y: 450 })
   await page.mouse.dblclick(centre.x, centre.y)
   await expect.poll(async () => (await objectsOf(page.request, deckId))[0]!.type).toBe('path')
@@ -180,6 +202,7 @@ test('a rotated line: the end handles sit on its drawn ends and a drag moves tha
   const end1 = drawnAt(line!, line!['p1'] as Pt)
   const end2 = drawnAt(line!, line!['p2'] as Pt)
 
+  await untilMounted(page, line!.id as string)
   const mid = at({ x: 800, y: 600 })
   await page.mouse.click(mid.x, mid.y)
   const handles = page.getByLabel('Line endpoint')

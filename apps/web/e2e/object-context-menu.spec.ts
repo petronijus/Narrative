@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './fixtures/test'
+import { isEngineNoise } from './fixtures/consoleNoise'
 
 /**
  * P11c regression — right-click context menu on a non-selected object
@@ -100,7 +101,8 @@ test('right-click on unselected object → menu opens, items fire', async ({ pag
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
   page.on('console', (msg) => {
     // A failed load names its URL only in the location, not in the text.
-    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()} (${msg.location().url})`)
+    if (msg.type() === 'error' && !isEngineNoise(msg.text()))
+      errors.push(`console.error: ${msg.text()} (${msg.location().url})`)
     if (msg.text().startsWith('[rightClickOn]')) console.log(msg.text())
   })
 

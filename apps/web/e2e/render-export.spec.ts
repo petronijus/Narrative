@@ -251,13 +251,23 @@ async function readDownload(download: import('@playwright/test').Download): Prom
   )
 }
 
+/**
+ * The name the editor offers a download under. WebKit (Playwright's build)
+ * reports a download's name with spaces as underscores; the name the editor
+ * set is otherwise the same, so compare it in the engine's form.
+ */
+function expectOfferedName(file: import('@playwright/test').Download, name: string): void {
+  const engine = file.page().context().browser()?.browserType().name()
+  expect(file.suggestedFilename()).toBe(engine === 'webkit' ? name.replace(/ /g, '_') : name)
+}
+
 async function exportFromMenu(page: import('@playwright/test').Page): Promise<PNG> {
   const firstSlide = page.locator('[role="option"][data-slide-id]').first()
   await firstSlide.click({ button: 'right' })
   const download = page.waitForEvent('download', { timeout: 120_000 })
   await page.getByRole('menuitem', { name: 'Export as PNG' }).click()
   const file = await download
-  expect(file.suggestedFilename()).toBe('e2e render fonts - slide 1.png')
+  expectOfferedName(file, 'e2e render fonts - slide 1.png')
   return readDownload(file)
 }
 
@@ -410,7 +420,7 @@ async function exportPdfFromToolbar(page: import('@playwright/test').Page): Prom
   const download = page.waitForEvent('download', { timeout: 180_000 })
   await page.getByRole('menuitem', { name: 'Export to PDF' }).click()
   const file = await download
-  expect(file.suggestedFilename()).toBe('e2e render export.pdf')
+  expectOfferedName(file, 'e2e render export.pdf')
   return readFileSync((await file.path())!)
 }
 
