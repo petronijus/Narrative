@@ -2,7 +2,7 @@
 
 > Last updated 2026-09-30, after A2.13 (A2 closed; the counts table below is still the A2.11 measurement; see "Added in A2.13" and "Added in A2.12b"). Was 2026-09-30 after A2.12b, 2026-09-30 after A2.11, 2026-09-29 after A2.10 and after A2.9; before that 2026-09-28, 2026-09-27, 2026-09-26, 2026-09-09 and 2026-05-09.
 > Current state, **measured** with `pnpm -r test` on 2026-09-30 (the A2.11
-> tree, uncommitted at the time, on top of `925c08c` / v0.10.12), all green
+> tree, uncommitted at the time, on top of `92cead3` / v0.10.12), all green
 > in the docs sweep's run. `pnpm typecheck` re-run by the sweep: exit 0.
 > `pnpm lint` re-run by the sweep: 0 errors, 221 warnings (animation 2,
 > server 7, web 212) — **only with `NODE_OPTIONS="--import=tsx"`** on
@@ -134,7 +134,7 @@
 > being edited, not a test failure); eval scenarios `table-resize-recolour` and
 > `table-header-gradient` (recorded, replayed).
 >
-> (2026-09-28, MCP tool-list compaction on top of `ee705da` / v0.10.0: 225
+> (2026-09-28, MCP tool-list compaction on top of `db7ef91` / v0.10.0: 225
 > files, 3,205 passed, 32 skipped — server 80 / 1,133, web 75 / 686 + 30
 > skipped, commands 21 / 645, slide-model 27 / 392, shared 8 / 193,
 > animation 13 / 144. The web skips fell from 30 to 28 in 0.10.2 (A2.2):
@@ -153,7 +153,7 @@
 > that pins the bottom corners; eval scenarios `agenda-step-timing` and
 > `photo-animations-hand-over`.
 >
-> (2026-09-27, A1 working tree on top of `9e0e853`: 223 files, 3,192 passed —
+> (2026-09-27, A1 working tree on top of `c4f8a5f`: 223 files, 3,192 passed —
 > server 79 / 1,126, commands 20 / 639; `pnpm typecheck` + `pnpm lint` exit 0,
 > lint 0 errors, 218 warnings in `apps/web`.)
 >
@@ -265,7 +265,7 @@
 > and e2e for crop-carrying moves, "viewing never writes", duplicate/undo
 > and the context-menu layer labels.
 >
-> ⚠️ Red as of 2026-09-26, all pre-existing at `4e3c503`: `pnpm size`
+> ⚠️ Red as of 2026-09-26, all pre-existing at `cc38918`: `pnpm size`
 > (Tiptap chunk 132.64 kB gz vs a 120 kB budget — still exactly that on
 > 2026-09-27 at A1; 120.89 kB on 2026-10-14 once the vendor groups got
 > priorities: Rolldown's manualChunks let `@tiptap/y-tiptap` pull yjs and
@@ -284,7 +284,7 @@
 > other eight defects of that arc — see _Environment traps_.
 >
 > ⚠️ **There is no CI.** GitHub Actions was removed on 2026-09-07 (commit
-> `573ba64`); nothing runs these suites but a human or an agent following
+> `f55be7b`); nothing runs these suites but a human or an agent following
 > `AGENTS.md`'s auto-run policy.
 >
 > ⚠️ **The e2e suite does not run on Ubuntu 26.04 as configured** — see
@@ -566,7 +566,7 @@ The slow gates (`pnpm lighthouse`, Stryker `mutate`, the full
 release (and `agent:eval` after the guidance changes above).
 
 Nothing runs any of this automatically: **there is no CI** (was GitHub Actions
-on every push and PR, removed 2026-09-07 — commit `573ba64` — after both
+on every push and PR, removed 2026-09-07 — commit `f55be7b` — after both
 workflows had been red since 2026-06-17 on a pnpm version conflict). The
 baseline (`just check`) is enforced by the pre-push hook and Claude Code's
 Stop hook since 2026-09-30; the rest of the policy in `AGENTS.md` is honoured

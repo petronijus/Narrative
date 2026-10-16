@@ -732,7 +732,7 @@ after the mechanism has been proven on simpler surfaces.
     component master.
 
 - 2026-09-30: **A2.13 done — A2 closed** (uncommitted on 2026-09-30 on
-  top of `beaf182`; to ship with A2.12b as 0.10.15). Handoff:
+  top of `0797c5c`; to ship with A2.12b as 0.10.15). Handoff:
   [`A2-extraction.md`](../handoff/A2-extraction.md).
   - **The action catalog** (`apps/web/src/actions/catalog.ts`, plan §9.1
     guard 2, the part that was still missing). Every action a person
@@ -827,7 +827,7 @@ after the mechanism has been proven on simpler surfaces.
 
 Released: A2.1–A2.11, A2.7a and A2.12a (0.10.2–0.10.14; A2.12a in 0.10.14,
 2026-09-30, which is what production runs: `/version.json` answered
-`v0.10.14+61260f2` on 2026-09-30). A2.12b and A2.13 are done in the working
+`v0.10.14+d2773e5` on 2026-09-30). A2.12b and A2.13 are done in the working
 tree and uncommitted on 2026-09-30. They are to ship together as 0.10.15.
 The release has a pre-deploy check ([`deploy.md`](../deploy.md),
 "Releasing A2.12b"); A2.13 adds no migration and no env var.
@@ -850,7 +850,7 @@ State after A2.13:
 Done since:
 
 1. **0.10.15 released** (A2.12b + A2.13) on 2026-09-30; production
-   reports `v0.10.15+f91b18e`, migrations 0027–0029 applied, the
+   reports `v0.10.15+9d7912d`, migrations 0027–0029 applied, the
    component-media data migration found nothing to copy.
 2. **The holistic tools/list size review** (2026-09-30). Descriptions
    (69 KB) carry the rules an agent needs and barely repeat, so they

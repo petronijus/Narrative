@@ -21,7 +21,7 @@ becomes **state = Yjs, written only through commands**.
 
 The goal of the agentic layer is full parity: an agent can do everything a
 user can do in the editor, from building a whole deck to "nudge that" or
-"change the font". The capability survey of 2026-09-26 (at `00890b0`, v0.9.29)
+"change the font". The capability survey of 2026-09-26 (at `304b316`, v0.9.29)
 found that there is no single place where "what a user can do" is defined:
 
 - **Writes are scattered.** React components call slide-model mutations,

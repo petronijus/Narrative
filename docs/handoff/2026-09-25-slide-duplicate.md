@@ -57,7 +57,7 @@ only after a very long time. The shortcut only exposed it: the thumbnail menu's
 ## Verified on the MacBook (2026-09-25, evening)
 
 - **Negative control holds.** `slide-duplicate.spec.ts` against the v0.9.28
-  `ResourceManager.ts` (everything else at `1b1dab4`): 3/3 runs fail — the
+  `ResourceManager.ts` (everything else at `6d8a91b`): 3/3 runs fail — the
   copy's canvas stays blank (98 blue pixels where ~3,700 are expected). Back
   on the fixed file: 3/3 pass. The single 64 px test image is enough to hit
   the race; the spec needs no heavier slide.

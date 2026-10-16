@@ -66,7 +66,7 @@ All packages are empty shells at M0. Content arrives in milestones M2-M6.
 - Every workspace inherits `tsconfig.base.json` with `strict: true`, `noUncheckedIndexedAccess: true`, `exactOptionalPropertyTypes: true`. No exceptions without explicit justification.
 - CI runs `pnpm -r typecheck`, `pnpm -r lint`, `pnpm -r build`, `pnpm -r test` across all workspaces.
   > **Amended 2026-09-07**: there is no CI any more — GitHub Actions was removed
-  > (commit `573ba64`) after both workflows had been red since 2026-06-17 on a
+  > (commit `f55be7b`) after both workflows had been red since 2026-06-17 on a
   > pnpm version conflict. The same four commands are now run **locally** before
   > a release, per `CLAUDE.md`'s auto-run policy. The workspace-script
   > convention this ADR establishes is unchanged and is what makes `pnpm -r`

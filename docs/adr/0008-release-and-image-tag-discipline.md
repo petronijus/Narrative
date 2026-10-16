@@ -67,7 +67,7 @@ The rules that keep it true:
 ## Consequences
 
 - **"What is in production?" is now a one-line question**:
-  `curl -s https://<domain>/version.json`. It answered `v0.9.3+00454ec` on
+  `curl -s https://<domain>/version.json`. It answered `v0.9.3+c4305b8` on
   2026-09-09.
 - **A divergence between tag, `package.json` and the deployed image is a bug**,
   not a nuance — it means the pipeline was bypassed by hand.

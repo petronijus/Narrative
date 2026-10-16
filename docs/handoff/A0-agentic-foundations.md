@@ -1,8 +1,8 @@
 # A0 — Agentic layer foundations — handoff (2026-09-26)
 
 **Status:** complete in the working tree, **uncommitted, unreleased, not
-deployed.** Base: `4e3c503` (docs commit on top of the `v0.9.29` tag at
-`00890b0`). Production serves `{"version":"v0.9.29+00890b0"}` (checked
+deployed.** Base: `cc38918` (docs commit on top of the `v0.9.29` tag at
+`304b316`). Production serves `{"version":"v0.9.29+304b316"}` (checked
 2026-09-26). CHANGELOG: the `Unreleased` section. No version number has been
 chosen; releasing means the usual bump of all 8 workspace `package.json`
 files (now including `packages/commands`), tag, build-push, deploy.
@@ -275,7 +275,7 @@ failures in `m16-component-flows.spec.ts`, pre-existing (below).
 - **Real-deck PowerPoint round trip is not clean.**
   `npx tsx src/scripts/pptxRoundtrip.ts <real deck>` reports **5
   differences** (still exactly these 5 after the parity-fix pass), and the
-  same 5 on a clean `4e3c503` checkout: `fillStyle.centerY`,
+  same 5 on a clean `cc38918` checkout: `fillStyle.centerY`,
   `text.length`, and `fontSize` 27.99 → 28. CLAUDE.md requires 0, and the
   0.9.25 CHANGELOG entry recorded 0 on the reference deck, so something between
   0.9.25 and 0.9.29 regressed it. Not bisected; the deck used was not

@@ -1,10 +1,10 @@
 # Dependency majors — what is left (2026-10-15)
 
 Done on 2026-10-14/15, each its own commit on `main`: the minor/patch sweep
-(`ad44e2f6`), the safe majors (`3ce913f4`: nanoid 6, jsdom 30, fast-check 4,
+(`a38dffc4`), the safe majors (`6feaa250`: nanoid 6, jsdom 30, fast-check 4,
 @fastify/cors 11, @nodable/entities 3, plugin-react 6, concurrently 10,
-jest-dom 7, size-limit 14), pnpm 12 + bullmq 6 + ioredis 6 (`915bf671`),
-Sentry 11 (`e18be461`), tus 2 (`6ed65ed9`), Hocuspocus 4 (`36ef21b1`),
+jest-dom 7, size-limit 14), pnpm 12 + bullmq 6 + ioredis 6 (`960f7e2b`),
+Sentry 11 (`8ed9655b`), tus 2 (`a673c0f1`), Hocuspocus 4 (`5a1fb91c`),
 opentype.js 2 and Vitest 5 (2026-10-15, below); the load tests run again
 (2026-10-15, below).
 None of it is released yet — the next release (0.12.2) ships it all; its
@@ -97,14 +97,14 @@ recorded in `tests/load/README.md`; `baselines.json` is gitignored.
 - **Going public — decided 2026-10-16: rewrite this repo's history** (not a
   fresh repo). Checked that night: gitleaks finds no secret in any of the
   1,063 commits, and the only fonts ever committed are the two e2e
-  fixtures (generated, MIT). Not yet clean, despite `122600fc`:
+  fixtures (generated, MIT). Not yet clean, despite `2bdbf2f0`:
   - the tree: client pack and font names in tests and code
     (`tokenRebind.test.ts` 30 lines of `vw`/`fabrikam`, `fontFallback.ts`,
     `textRenderer.test.ts`, `fontWeights.test.ts`, `cssFontFamily`,
     `richText`), a few in plans and handoffs; LAN addresses and host
     details in `docs/deploy.md`, `ops.md`, `storage.md`, `SETUP.md`,
     `infra/docker-compose.yml` (→ `private/`);
-  - the history: the client brand packs since `c3d6ac4b` and hundreds of
+  - the history: the client brand packs since `c15548b7` and hundreds of
     lines naming clients.
     The order: clean the tree (fictional names, infra to `private/`), then
     `git filter-repo` (paths of the brand packs out, a replace-text list for
@@ -119,9 +119,9 @@ recorded in `tests/load/README.md`; `baselines.json` is gitignored.
   lists, text undo) fail under a parallel load of ~25+ and pass with two
   workers. Looked at on 2026-10-15: the idle editor is not the cause (0.07 s
   of main-thread work in 5 s). Two real causes were fixed — the editor was
-  read-only until the caller's whole deck list arrived (`9e5c7316`; it made
+  read-only until the caller's whole deck list arrived (`2a3767c3`; it made
   keyboard-shortcuts fail one run in five even unloaded), and specs leaked
-  ~150 decks a run into that list (`47296251`). What is left is plain
+  ~150 decks a run into that list (`5d95cba7`). What is left is plain
   starvation: with 18 busy loops beside the suite (load ~60 on 24 threads)
   even API POSTs and `page.evaluate` time out. Full runs since: 215–217
   passed, 0–1 failed. The ~8,000 decks leaked before the fix were deleted

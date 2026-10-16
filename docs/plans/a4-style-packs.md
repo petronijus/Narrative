@@ -26,7 +26,7 @@ passes, and `A4` is in `FINISHED_PHASES`.
 ## Decided (Petr, 2026-10-12)
 
 - **Brand fonts reach share-link visitors, as today.** Folder sharing
-  (a6adabb) and 8eb320b let a deck guest and a share-link visitor load the
+  (832f87f) and dee8c8d let a deck guest and a share-link visitor load the
   folder's fonts through presigned URLs; that stays, so a client opening a
   link sees the deck in its faces. §7.6's "never served to anonymous
   share-link viewers" is withdrawn, and so is its "gap to fix in A4"
@@ -70,7 +70,7 @@ passes, and `A4` is in `FINISHED_PHASES`.
 - **Storage: the folder document**, a `stylePack` map next to the tokens.
   A pack is folder content like tokens and components: collaborative, live
   in Folder Settings, written through commands and the sync server only
-  (hard rule), read by deck guests' agents the way 8eb320b reads tokens.
+  (hard rule), read by deck guests' agents the way dee8c8d reads tokens.
   One pack per folder (a folder is the brand boundary, §7.1). A pack too
   large for the folder document (Contoso's 58 layouts are ≈ 350 KB as the
   brain's JSON, far less as a pack) is measured in A4.2 before this is
@@ -319,7 +319,7 @@ the text style, one text style per size.
 ## Where we stand
 
 2026-10-12: plan written; decisions above. Baseline on the MacBook at
-`ed5618e` (0.10.30 + the exact-fit e2e): the full `just e2e` 205 passed,
+`4927205` (0.10.30 + the exact-fit e2e): the full `just e2e` 205 passed,
 2 failed — the known `component-promote-stamp` cleanup timeout and
 `multi-client-collab`'s "three clients converge" — both green rerun with
 one worker (4/4).
@@ -339,7 +339,7 @@ description, `basics.md`, eval scenarios `component-restamp` and
 188,000 bytes, 140 tools. Verified: `just check`; `just e2e -g
 "component"` 14 passed; `multi-client-collab` green on rerun (its known
 flake once); `just pptx-roundtrip` on the reference deck 0 differences
-(`just mutate` broken since 2026-09-26). `just eval` at `2c103a9`: 58/58
+(`just mutate` broken since 2026-09-26). `just eval` at `95d260a`: 58/58
 passed, $8.42, 19m46s — `component-restamp` and
 `component-create-pagination` passed on their first live run;
 `component-promote-headline` is live-only, so it has no recording to

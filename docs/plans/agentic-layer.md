@@ -29,7 +29,7 @@ decisions are recorded in §12.
 
 This plan is based on two read-only surveys done on 2026-09-26:
 
-- a full capability inventory of this repo at `00890b0` (v0.9.29);
+- a full capability inventory of this repo at `304b316` (v0.9.29);
 - the presentation skills in the internal skill library
   (`Wingtip/internal/the internal sources`, commit `29f9367`): litware-fabrikam-pptx,
   litware-fabrikam-html, litware-contoso-presentation, tailspinr-pptx, html-presentation-slides,
@@ -699,8 +699,8 @@ Office, Acme Type, Northwind Sans ST Pro) as folder fonts.
 
 - Brand fonts are uploaded as **folder fonts** of the client's folder.
   They are scoped to the folder. **Changed 2026-10-12 (Petr):** a deck
-  guest and a share-link visitor load them too (folder sharing, a6adabb;
-  8eb320b for guests' agents), so a client opening a link sees the brand
+  guest and a share-link visitor load them too (folder sharing, 832f87f;
+  dee8c8d for guests' agents), so a client opening a link sees the brand
   faces; the earlier "never served to anonymous share-link viewers" is
   withdrawn.
 - ~~Gap to fix in A4: deck-scoped font access for shared-deck editors~~ —
@@ -1003,7 +1003,7 @@ with ToolSearch on; 11 replay free in
 [`docs/handoff/A1-mcp-and-server-host.md`](../handoff/A1-mcp-and-server-host.md).
 "Ends green" did not fully hold for A0: `pnpm size` (Tiptap chunk), the
 real-deck PPTX round trip (5 differences) and Stryker (runner incompatible
-with vitest 4) were already red at `4e3c503`.
+with vitest 4) were already red at `cc38918`.
 
 | Phase                             | Deliverable                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Notes                                                                                                                                                                                                                                                                                                                                                                      |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1221,7 +1221,7 @@ say where the logic lives today:
 As built (A2.10, 2026-09-29): the track resize shipped in A0 as two
 commands, `table.resizeColumn` / `table.resizeRow`, never as
 `table.resizeTrack`; `table.cell.setText` was deliberately not added, because
-the text commands have addressed a cell (`target.cell`) since A0 (`9e0e853`) and a second
+the text commands have addressed a cell (`target.cell`) since A0 (`c4f8a5f`) and a second
 command for the same write would only split the agent's choice. The
 Inspector's range / cell / table routing stays in the editor: it follows the
 editor's selection, which an agent names itself. Decisions:

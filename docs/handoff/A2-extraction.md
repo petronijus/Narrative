@@ -1,10 +1,10 @@
 # Handoff A2 — extraction: the editor writes only through commands
 
 **Status:** done. A2 closed with A2.13 on 2026-09-30. A2.1–A2.12a are
-released (0.10.2–0.10.14). A2.12b is committed (`beaf182`), and A2.13 is
+released (0.10.2–0.10.14). A2.12b is committed (`0797c5c`), and A2.13 is
 uncommitted on top of it; both are to ship together as **0.10.15**.
 **Date:** 2026-09-30
-**Last commit:** `beaf182` (A2.12b). A2.13 is in the working tree, not
+**Last commit:** `0797c5c` (A2.12b). A2.13 is in the working tree, not
 committed.
 
 Plan: [`docs/plans/agentic-layer.md`](../plans/agentic-layer.md) §10, row
@@ -28,20 +28,20 @@ over MCP.
 
 | Step   | Subject                                                          | New commands                                                                                                       | Released                         |
 | ------ | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------- |
-| A2.1   | One-door lint rule over all of `apps/web/src`, 26 files exempted | —                                                                                                                  | 0.10.2 (`5d490ae`)               |
-| A2.2   | Slides panel, notes, slide copy, deck copy                       | `slide.copyTo`, `slide.notes.get`, `slide.notes.set`, `deck.duplicate`                                             | 0.10.2 (`5d490ae`)               |
-| A2.3   | Guides                                                           | —                                                                                                                  | 0.10.5 (`3f757c0`)               |
-| A2.4   | Object creation and arrangement                                  | — (creation defaults moved into `object.create`)                                                                   | 0.10.6 (`bafe31e`)               |
-| A2.5   | Transforms                                                       | `object.resize`, `.rotate`, `.flip`, `.alignToSlide`, `.crop.set`                                                  | 0.10.7 (`4db7618`)               |
-| A2.6   | Paths and lines                                                  | `object.path.create`, `.path.fromShape`, `.path.setAnchors`, `object.line.setEndpoints`                            | 0.10.8 (`a2381f8`)               |
-| A2.7   | Clipboard                                                        | `object.copyTo`, `object.insert`, `object.insertFromDeck`                                                          | 0.10.9 (`3816515`)               |
-| A2.7a  | Agent file upload (added at Petr's request)                      | `media.uploadSession`                                                                                              | 0.10.10 (`a0d6d2c`)              |
-| A2.8   | Fill, effects, page number                                       | `object.fill.gradient`, `object.effects.shadow`, `object.slideNumber.set`                                          | 0.10.11 (`669d151`)              |
-| A2.9   | Animation                                                        | `animation.retime`, `animation.retarget`                                                                           | 0.10.12 (`c305738`)              |
-| A2.10  | Tables                                                           | `table.setSize`                                                                                                    | 0.10.12 (`925c08c`)              |
-| A2.11  | Text                                                             | `text.edit`, `text.replace`, `text.setBoxTypography`, `text.style.apply`                                           | 0.10.13 (`b982d95`)              |
-| A2.12a | Folder tokens and propagation on the server                      | `token.create`, `.update`, `.delete`, `.seedDefaults`, `.list`, `text.style.createFromObject`, `.updateFromObject` | 0.10.14 (`61260f2`)              |
-| A2.12b | Components, component-owned media                                | `component.promote`                                                                                                | to ship as 0.10.15 (`beaf182`)   |
+| A2.1   | One-door lint rule over all of `apps/web/src`, 26 files exempted | —                                                                                                                  | 0.10.2 (`dc2bea7`)               |
+| A2.2   | Slides panel, notes, slide copy, deck copy                       | `slide.copyTo`, `slide.notes.get`, `slide.notes.set`, `deck.duplicate`                                             | 0.10.2 (`dc2bea7`)               |
+| A2.3   | Guides                                                           | —                                                                                                                  | 0.10.5 (`d24b36c`)               |
+| A2.4   | Object creation and arrangement                                  | — (creation defaults moved into `object.create`)                                                                   | 0.10.6 (`24d9721`)               |
+| A2.5   | Transforms                                                       | `object.resize`, `.rotate`, `.flip`, `.alignToSlide`, `.crop.set`                                                  | 0.10.7 (`fbfc790`)               |
+| A2.6   | Paths and lines                                                  | `object.path.create`, `.path.fromShape`, `.path.setAnchors`, `object.line.setEndpoints`                            | 0.10.8 (`8e43bc7`)               |
+| A2.7   | Clipboard                                                        | `object.copyTo`, `object.insert`, `object.insertFromDeck`                                                          | 0.10.9 (`2bee770`)               |
+| A2.7a  | Agent file upload (added at Petr's request)                      | `media.uploadSession`                                                                                              | 0.10.10 (`0f3e637`)              |
+| A2.8   | Fill, effects, page number                                       | `object.fill.gradient`, `object.effects.shadow`, `object.slideNumber.set`                                          | 0.10.11 (`f796851`)              |
+| A2.9   | Animation                                                        | `animation.retime`, `animation.retarget`                                                                           | 0.10.12 (`d9a6acc`)              |
+| A2.10  | Tables                                                           | `table.setSize`                                                                                                    | 0.10.12 (`92cead3`)              |
+| A2.11  | Text                                                             | `text.edit`, `text.replace`, `text.setBoxTypography`, `text.style.apply`                                           | 0.10.13 (`86e3006`)              |
+| A2.12a | Folder tokens and propagation on the server                      | `token.create`, `.update`, `.delete`, `.seedDefaults`, `.list`, `text.style.createFromObject`, `.updateFromObject` | 0.10.14 (`d2773e5`)              |
+| A2.12b | Components, component-owned media                                | `component.promote`                                                                                                | to ship as 0.10.15 (`0797c5c`)   |
 | A2.13  | Close: action catalog, empty exemption list, `FINISHED_PHASES`   | — (`object.create` gained an optional `id`)                                                                        | to ship as 0.10.15 (uncommitted) |
 
 35 new commands in all (94 → 129).
@@ -168,7 +168,7 @@ Cross-cutting decisions made during A2. Each step's own decisions are in
   recorded here.
 - `grep -c "file:" apps/web/eslint.one-door.js` should print 0 (no pending
   entry).
-- `curl -s https://narrative.bastla.com/version.json`: `v0.10.14+61260f2`
+- `curl -s https://narrative.bastla.com/version.json`: `v0.10.14+d2773e5`
   on 2026-09-30. After the release it should report `v0.10.15+<hash>`.
 
 ## Next step
@@ -237,8 +237,8 @@ Cross-cutting decisions made during A2. Each step's own decisions are in
   `apps/web/src/state/testApiLegacyFixtures.ts`,
   `packages/commands/src/parity/{parity.test.ts,knownMissing.ts,allowlist.ts,slideModelExports.ts}`,
   `apps/server/src/mcp/toolListBudget.test.ts`.
-- Commits: `5d490ae` (A2.1–A2.2), `3f757c0`, `bafe31e`, `4db7618`,
-  `a2381f8`, `3816515`, `a0d6d2c`, `669d151`, `c305738`, `925c08c`,
-  `b982d95`, `61260f2`, `beaf182`; A2.13 not yet committed.
+- Commits: `dc2bea7` (A2.1–A2.2), `d24b36c`, `24d9721`, `fbfc790`,
+  `8e43bc7`, `2bee770`, `0f3e637`, `f796851`, `d9a6acc`, `92cead3`,
+  `86e3006`, `d2773e5`, `0797c5c`; A2.13 not yet committed.
 - Reference: [`docs/mcp.md`](../mcp.md), [`docs/capabilities.md`](../capabilities.md)
   (generated), [`tests/agent-eval/README.md`](../../tests/agent-eval/README.md).

@@ -1732,9 +1732,9 @@ writing the document directly and dispatches the same commands agents use.
 ## 0.10.0 — Agents over MCP (2026-09-27)
 
 Phases A0 and A1 of the agentic layer ([`docs/plans/agentic-layer.md`](./docs/plans/agentic-layer.md)).
-A0 (`9e0e853`): the foundations — the command registry, runtime schemas,
+A0 (`c4f8a5f`): the foundations — the command registry, runtime schemas,
 parity guards — plus the editor bugs the capability survey turned up. A1
-(`624a3bd`, `e27e9bc`): Claude Code and claude.ai can now drive Narrative
+(`4acf6c1`, `083312a`): Claude Code and claude.ai can now drive Narrative
 over MCP. Handoffs:
 [`docs/handoff/A0-agentic-foundations.md`](./docs/handoff/A0-agentic-foundations.md),
 [`docs/handoff/A1-mcp-and-server-host.md`](./docs/handoff/A1-mcp-and-server-host.md).
@@ -2592,7 +2592,7 @@ for linux/amd64` — having already overwritten `:latest` with them. The
 ## 0.9.4 — Four things that were quietly broken (2026-09-18)
 
 The CSP and Caddy-mount fixes below reached production by rsync on 2026-09-09
-without a version bump, so `/version.json` went on reading `v0.9.3+00454ec`
+without a version bump, so `/version.json` went on reading `v0.9.3+c4305b8`
 while they were already live. They are folded into this release because the
 0.9.4 image is the first artifact that actually carries them. Everything else
 here has never been deployed.
@@ -2615,19 +2615,19 @@ here has never been deployed.
   moving a text box could be undone but writing the sentence inside it could
   not, and neither could the Enter / Tab structural edits. Also corrects
   `yjsMetrics.onUpdate`, which counted local edits as received-from-remote.
-  (`8169b9d`.)
+  (`7e5bbf3`.)
 - **Clicking an object selected nothing when the click beat the sync.**
   `subscribeToSlideObjectsWithFlush` returned a no-op subscription for a slide
   that had not arrived yet, which never recovered: the object list stayed
   empty, the stale-selection sanitiser dropped every selection, and the canvas
   had nothing to hit-test. It waits for the slide now. Two more races went with
   it — the deck provider tearing down its Y.Doc on a StrictMode remount, and
-  the dev test API binding itself to an already-destroyed doc. (`523c82c`.)
+  the dev test API binding itself to an already-destroyed doc. (`34f4f49`.)
 - **A quick Linear → Solid switch left the gradient in the document** while the
   dropdown read "Solid". The fill picker compared the requested mode against
   the mode derived from `obj.fillStyle`, which comes back from Y.Doc a frame
   later, so the second change decided nothing had changed. It compares against
-  the mode it last asked for instead. (`dd5f4d3`.)
+  the mode it last asked for instead. (`c46e603`.)
 - **Canvas text ignored the deck's fonts, and every texture load threw** — the
   SPA CSP was two directives too tight for PixiJS. `font-src 'self'` blocked
   HTMLText's font embedding (Pixi builds an SVG whose `@font-face` embeds the
@@ -2637,7 +2637,7 @@ here has never been deployed.
   and independent of it. `connect-src 'self'` blocked Pixi's ImageBitmap probe,
   which fetches a 1×1 `data:` PNG inside the texture worker, so
   `checkImageBitmap` threw on every texture load. Both now allow `data:`.
-  (PR #72, `931e648`.) Rationale:
+  (PR #72, `b0d1823`.) Rationale:
   [ADR 0007](./docs/adr/0007-csp-as-a-renderer-constraint.md).
 - **A config change could not reach the Caddy container.** Compose mounted
   `./caddy/Caddyfile` as a single file, and a single-file bind mount is pinned
@@ -2646,7 +2646,7 @@ here has never been deployed.
   unlinked inode while the host file, `caddy validate` and `caddy reload` all
   reported success — which is exactly how the CSP fix above appeared not to
   land, and cost a debugging round the same day. The **directory** is mounted
-  now (`./caddy:/etc/caddy:ro`). (PR #73, `e6b4042`.)
+  now (`./caddy:/etc/caddy:ro`). (PR #73, `8933119`.)
 
 ---
 

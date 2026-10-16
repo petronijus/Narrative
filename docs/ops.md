@@ -20,7 +20,7 @@ against the VM, and not against the repo.
 ```bash
 # 1. Which version is live
 curl -s https://narrative.bastla.com/version.json
-# {"version":"v0.9.3+00454ec"}     ← matches a git tag + package.json version
+# {"version":"v0.9.3+c4305b8"}     ← matches a git tag + package.json version
 
 # 2. The document must be revalidated on every load
 curl -sI https://narrative.bastla.com | grep -i cache-control
@@ -65,7 +65,7 @@ A single-file bind mount is pinned to the file's inode, and the deploy syncs
 config in with rsync, which replaces files rather than rewriting them in place
 — so the container kept reading the old, unlinked inode while the host file,
 `caddy validate` and `caddy reload` all looked correct. That cost a full
-debugging round on 2026-09-09 (fixed in `e6b4042`). Do not convert the mount
+debugging round on 2026-09-09 (fixed in `8933119`). Do not convert the mount
 back to a single file, and always confirm a config change with `curl -sI`
 against the public URL.
 
@@ -121,7 +121,7 @@ The endpoint returns Prometheus text format (version 0.0.4).
 - A high `narrative_updates_bytes_total` means large documents or heavy editing.
 
 **Access control** (was a TODO for M29; **done** in the 2026-06-12 audit,
-commit `c45faf4`): `/metrics` leaks connection counts and document sizes, so in
+commit `b89796b`): `/metrics` leaks connection counts and document sizes, so in
 production it is gated by `METRICS_TOKEN` — scrape with
 `Authorization: Bearer <token>`. If `NODE_ENV=production` and `METRICS_TOKEN`
 is unset or empty, the endpoint is **not registered at all**: the server keeps

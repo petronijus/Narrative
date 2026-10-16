@@ -55,7 +55,7 @@ Read these before touching the proxy, the CSP or a deploy. Each cost a
 debugging round.
 
 - **There is no CI.** GitHub Actions was removed on 2026-09-07 (commit
-  `573ba64`) after both workflows had been red since 2026-06-17 on a pnpm
+  `f55be7b`) after both workflows had been red since 2026-06-17 on a pnpm
   version conflict. There is no `.github/` directory — do not "restore" one
   without being asked. Checks are local: `pnpm typecheck && pnpm lint &&
 pnpm -r test`.
@@ -66,7 +66,7 @@ pnpm -r test`.
   to the file's inode; rsync replaces files rather than rewriting them, so the
   container goes on reading the old, unlinked inode while the host file,
   `caddy validate` and `caddy reload` all report success. Mount the
-  **directory** (`./caddy:/etc/caddy:ro`, commit `e6b4042`).
+  **directory** (`./caddy:/etc/caddy:ro`, commit `8933119`).
 - **Verify a config change against the served artifact**, never against the
   file on disk: `curl -sI https://<domain>/ | grep -i content-security-policy`.
 - **Cloudflare re-frames bodyless POSTs** (`Content-Length: 0` →

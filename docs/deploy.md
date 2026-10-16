@@ -119,7 +119,7 @@ Revoke the token afterwards if it was only for the test.
 ## Releasing A2.12b (component-owned media) — 0.10.15
 
 Written 2026-09-30, while the work was uncommitted; production ran
-`v0.10.14+61260f2` (`/version.json`, re-checked the same day after A2.13).
+`v0.10.14+d2773e5` (`/version.json`, re-checked the same day after A2.13).
 0.10.15 also carries A2.13 (the close of A2: the action catalog guard, the
 e2e test hook through commands, `object.create`'s optional `id`), which
 adds no migration, env var or deploy step. The release brings three schema
@@ -515,7 +515,7 @@ curl -sI https://narrative.example.com | head -5
 
 # WHICH VERSION is actually live (the single most useful check)
 curl -s https://narrative.example.com/version.json
-# {"version":"v0.9.3+00454ec"}
+# {"version":"v0.9.3+c4305b8"}
 
 # The document must not be cacheable, or deploys look like no-ops
 curl -sI https://narrative.example.com | grep -i cache-control
@@ -563,7 +563,7 @@ to the file's **inode**, and rsync _replaces_ files rather than rewriting them
 in place, so the container went on reading the old, unlinked inode while the
 host file, `caddy validate` and `caddy reload` all reported success. That is
 how the CSP fix of 2026-09-09 appeared not to land. The **directory** is
-mounted now (`./caddy:/etc/caddy:ro`, commit `e6b4042`) — do not "simplify" it
+mounted now (`./caddy:/etc/caddy:ro`, commit `8933119`) — do not "simplify" it
 back to a file mount.
 
 `deploy.sh` validates and reloads the Caddyfile after `compose up` (since

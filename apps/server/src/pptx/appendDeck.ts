@@ -30,7 +30,7 @@
  * deck in memory and its persistence writes a full snapshot and then deletes
  * every older row for that document, so a row written underneath it is both
  * invisible to everyone connected and deleted outright by the next store.
- * That was the "I uploaded it as append and nothing happened" bug (882d67c).
+ * That was the "I uploaded it as append and nothing happened" bug (0b4d7d3).
  * `openDirectConnection` makes the insert an ordinary edit of the live
  * document: connected editors get it over the wire at once and it persists by
  * the same path as every other change.

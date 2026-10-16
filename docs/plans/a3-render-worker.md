@@ -266,7 +266,7 @@ strict-origin` keeps a share-link page's URL out of same-origin Referers.
 - `deck.exportPdf` moved to phase A5 in `knownMissing.ts`.
 
 Deploy of 0.10.20 checked on production: `/version.json` serves
-`v0.10.20+c01cccf`, `deploy.sh` reloaded the Caddyfile (`Referrer-Policy:
+`v0.10.20+8f159e0`, `deploy.sh` reloaded the Caddyfile (`Referrer-Policy:
 strict-origin` served), Caddy's access log writes `share_token=REDACTED`,
 the `/ws` upgrade answers 101, and an anonymous media read reaches the
 service (404 for an unknown asset, no longer 401). Left for Petr: open the

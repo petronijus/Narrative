@@ -34,7 +34,7 @@ memory path below were reconciled with `.claude/agents/` at the same time.)_
 | `ai-integration` | Agent surface: MCP server, its OAuth authorization server, tool generation and schema compaction, confirmation over MCP, playbooks, MCP prompts/resources, the `narrative` skill generator, the agent eval suite | `apps/server/src/mcp/` (incl. `mcp/oauth/`), `packages/commands/playbooks/`, `packages/commands/src/playbooks/`, `packages/commands/scripts/skill.ts`, `tests/agent-eval/`                                                                                                                                                                                                                                                       |
 
 > `infra` no longer owns `.github/workflows/` — GitHub Actions was removed on
-> 2026-09-07 (commit `573ba64`). It owns the GHCR build/push + pull-deploy
+> 2026-09-07 (commit `f55be7b`). It owns the GHCR build/push + pull-deploy
 > pipeline instead (`infra/scripts/build-push.sh`, `infra/scripts/deploy.sh`).
 
 > `ai-integration` was repurposed on 2026-09-26 (was: in-app Anthropic SDK
