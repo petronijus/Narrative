@@ -75,5 +75,31 @@ export default defineConfig({
       fullyParallel: false,
       use: chrome,
     },
+    // The editor in WebKit — the engine of Safari and of a macOS WKWebView,
+    // which a Tauri shell would use. Opt-in (`just e2e-webkit`): the editor is
+    // built for Chromium, and this measures how far WebKit is from it.
+    ...(process.env['PW_WEBKIT'] === '1'
+      ? [
+          {
+            name: 'webkit',
+            grepInvert: /@serial/,
+            use: {
+              ...devices['Desktop Safari'],
+              // The Chromium run is at 1×; compare the engines, not the
+              // screens (Safari's profile emulates a 2× Retina display).
+              deviceScaleFactor: 1,
+              // Safari's user agent names a Mac, so the editor would take ⌘
+              // as Mod while Playwright's ControlOrMeta sends Ctrl on a
+              // Linux host. Off a Mac, WebKit says where it really runs.
+              ...(os.platform() === 'darwin'
+                ? {}
+                : {
+                    userAgent:
+                      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Safari/605.1.15',
+                  }),
+            },
+          },
+        ]
+      : []),
   ],
 })

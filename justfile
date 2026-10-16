@@ -120,6 +120,21 @@ e2e *args: _stack
     eval "$(tools/dev/playwright-env.sh)"
     exec pnpm --filter web test:e2e "$@"
 
+# The e2e specs in WebKit — Safari's and macOS WKWebView's engine, what a Tauri shell would draw with (`just e2e-webkit -g "x"`).
+# macOS runs Playwright's WebKit natively (`pnpm exec playwright install webkit` once); Linux runs it in Playwright's
+# own image, whose Ubuntu has the libraries that WebKit build needs, against the dev stack on the host.
+e2e-webkit *args: _stack
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "$(uname)" == Darwin ]]; then
+      PW_WEBKIT=1 exec pnpm --filter web test:e2e --project webkit "$@"
+    fi
+    version="$(node -p "require('./node_modules/@playwright/test/package.json').version")"
+    exec docker run --rm --network host --ipc host --user "$(id -u):$(id -g)" \
+      -e HOME=/tmp -e PW_WEBKIT=1 -e CI= -v "$PWD:$PWD" -w "$PWD/apps/web" \
+      "mcr.microsoft.com/playwright:v$version-noble" \
+      node ../../node_modules/@playwright/test/cli.js test --project webkit "$@"
+
 # The smoke set: does the app boot, paint and present at all (~10 s; tools/dev/e2e-affected.py SMOKE)
 e2e-smoke *args:
     tools/dev/e2e-affected.py --smoke {{ args }}
