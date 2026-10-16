@@ -122,7 +122,7 @@ function deckWithReferences(): Y.Doc {
 describe('across style packs (A5.4)', () => {
   // Two folders' compiled packs: every role token is called "Text" or
   // "Accent" in both, so only the compile's origin pairs them right.
-  const contoso:FolderTokensSnapshot = {
+  const contoso: FolderTokensSnapshot = {
     colors: {
       'p-contoso-role-text': {
         id: 'p-contoso-role-text',
@@ -199,7 +199,9 @@ describe('across style packs (A5.4)', () => {
       to: 'colors.p-aaa-role-text',
     })
     expect(
-      planTokenRebinding(contoso, withOld, { destPackId: 'fabrikam' }).refs.get('colors.p-contoso-role-text'),
+      planTokenRebinding(contoso, withOld, { destPackId: 'fabrikam' }).refs.get(
+        'colors.p-contoso-role-text',
+      ),
     ).toEqual({ kind: 'rebind', to: 'colors.p-fabrikam-role-text' })
   })
 

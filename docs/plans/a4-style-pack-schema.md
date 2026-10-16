@@ -508,7 +508,7 @@ styles, 4 components (pagination, headline, stat-cards, band).
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
 | dark/light `:root`                         | axis `theme` {dark (default), light}: background, surface, text, textSecondary (`#FFFFFF99`), textMuted, line |
 | 8 highlight colours, "best on"             | axis `accent` {dune … yard}, `accent` + `onAccent` roles, `recommendedWith`                                   |
-| Northwind Sans 400/700/900, Black Display   | `fonts.text`, `textBold`, `black`, `display`                                                                  |
+| Northwind Sans 400/700/900, Black Display  | `fonts.text`, `textBold`, `black`, `display`                                                                  |
 | `clamp()` type scale                       | text styles at the 1920 values (title 160, hero 58, body 17 …)                                                |
 | `.label` pill + text (absolute, 7vh/7vw)   | component `label`                                                                                             |
 | `.slide-footer` divider, logo dark/light   | furniture `footer-rule`, `logo` (asset `byRole: background`)                                                  |
