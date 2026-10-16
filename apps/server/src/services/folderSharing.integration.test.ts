@@ -153,7 +153,19 @@ describe('folder sharing', () => {
       role: 'editor',
       reason: 'folder',
     })
-    // No email: they already use Narrative.
+    // They already use Narrative: an email says it is theirs now — no invite to accept.
+    await settleEmail()
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: email(known),
+        subject: expect.stringContaining('shared "Client" with you'),
+        text: expect.stringContaining('It is already in your Narrative'),
+      }),
+    )
+    // The same role again: nothing new, no second email.
+    sendEmail.mockClear()
+    await service.invite({ userId: owner, folderId: folder, email: email(known), role: 'editor' })
+    await new Promise((r) => setTimeout(r, 50))
     expect(sendEmail).not.toHaveBeenCalled()
   })
 

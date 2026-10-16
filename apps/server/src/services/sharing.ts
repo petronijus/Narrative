@@ -30,6 +30,8 @@ import { endRenderSessions } from '../render/sessions.js'
 import { createInvite, listPendingInvitesForDeck, revokeInvite } from '../auth/invites.js'
 import { getUserByEmail, getUserBySub, listUsersBySubs } from '../auth/users.js'
 import { sendEmail } from '../email/client.js'
+import { signImgproxyUrl } from '../media/imgproxyUrl.js'
+import type { EmailAccess } from '../email/templates/deckInvite.js'
 import { renderDeckInviteEmail } from '../email/templates/deckInvite.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, conflict, notFound } from './errors.js'
@@ -52,11 +54,26 @@ export function requireInviteEmail(email: string): void {
  * `returnTo` (a path of the web app) afterwards.
  */
 export function inviteSignInUrl(returnTo: string): string {
-  const spaOrigin =
+  return `${appOrigin()}/api/auth/start?returnTo=${encodeURIComponent(returnTo)}`
+}
+
+/** The web app's public origin, as the emails link to it. */
+export function appOrigin(): string {
+  return (
     process.env['SPA_ORIGIN'] ??
     process.env['PUBLIC_URL'] ??
     `https://${process.env['DOMAIN'] ?? 'localhost'}`
-  return `${spaOrigin}/api/auth/start?returnTo=${encodeURIComponent(returnTo)}`
+  )
+}
+
+/**
+ * A deck thumbnail a mail client can fetch: the signed imgproxy URL of its
+ * `preview` variant (the URL is the access, like the home page's), or null
+ * without a thumbnail or without imgproxy signing configured.
+ */
+export function emailThumbnailUrl(thumbnailKey: string | null | undefined): string | null {
+  if (!thumbnailKey || !process.env['IMGPROXY_KEY']) return null
+  return signImgproxyUrl({ storageKey: thumbnailKey, variant: 'preview', extension: 'jpg' })
 }
 
 /** Permission rows with the email and name of each user, in one directory query. */
@@ -102,12 +119,21 @@ export function createSharingService(deps: ServiceDeps): SharingService {
     return { userId: user.sub, email: user.email, name: user.name, role }
   }
 
-  /** Fire-and-forget invitation email; the invite row exists either way. */
-  function sendInviteEmail(deckId: string, email: string, role: DeckRole, inviterSub: string) {
+  /**
+   * Fire-and-forget email; the invite row or the permission exists either
+   * way. `granted`: someone who already uses Narrative got access at once.
+   */
+  function sendInviteEmail(
+    deckId: string,
+    email: string,
+    role: DeckRole,
+    inviterSub: string,
+    access: EmailAccess = 'invite',
+  ) {
     void (async () => {
       try {
         const [deckRow] = await db
-          .select({ title: decks.title })
+          .select({ title: decks.title, thumbnailKey: decks.thumbnailKey })
           .from(decks)
           .where(eq(decks.id, deckId))
           .limit(1)
@@ -121,6 +147,9 @@ export function createSharingService(deps: ServiceDeps): SharingService {
           inviterEmail: inviter.email,
           role,
           signInUrl,
+          access,
+          appOrigin: appOrigin(),
+          previewUrl: emailThumbnailUrl(deckRow.thumbnailKey),
         })
         await sendEmail({
           to: email.toLowerCase(),
@@ -154,7 +183,15 @@ export function createSharingService(deps: ServiceDeps): SharingService {
       // Only another owner can change your role: picking a lower role for
       // yourself would lock you out of the dialog you are standing in.
       if (existingUser.sub === inviterUserId) throw conflict(SELF_ROLE_CHANGE)
-      return { kind: 'granted', user: await grant(deckId, existingUser, role, inviterUserId) }
+      const previous = (await listPermissions(db, deckId)).find(
+        (p) => p.userId === existingUser.sub,
+      )
+      const granted = await grant(deckId, existingUser, role, inviterUserId)
+      // They get access at once, and an email saying so: on a new grant or
+      // a new role, never for the same role again.
+      if (previous?.role !== role)
+        sendInviteEmail(deckId, existingUser.email, role, inviterUserId, 'granted')
+      return { kind: 'granted', user: granted }
     }
 
     // Re-inviting the same email replaces the pending invite's role.
