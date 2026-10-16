@@ -38,6 +38,8 @@ export interface AuthUser {
   sub: string
   email: string
   name?: string | null
+  /** An instance admin (docs/adr/0014); the server decides, the UI only shows the screen. */
+  isAdmin?: boolean
 }
 
 export interface AuthContextValue {

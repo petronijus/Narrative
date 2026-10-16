@@ -19,6 +19,7 @@ import type {
 } from '@narrative/commands'
 import { components, decks, folderPermissions, folders, mediaAssets, users } from '../db/schema.js'
 import type { DeckRole } from '../auth/permissions.js'
+import { adminProbe } from '../auth/admin.js'
 import {
   componentIdsInKeys,
   purgeComponentBucketPrefix,
@@ -203,7 +204,28 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
    * (the dev user and the legacy demo user). `grantedBy` names who shared
    * the folder with the caller: null for the folders they created.
    */
-  function memberships(userId: string) {
+  function memberships(userId: string, admin: boolean) {
+    const ids = ownerIdsFor(userId, deps.bypass)
+    if (admin) {
+      // An instance admin (ADR 0014) is owner of every folder but other
+      // people's Drafts; `grantedBy` still names who shared one with them.
+      return db
+        .select({
+          folderId: folders.id,
+          role: sql<DeckRole>`CASE WHEN ${folders.isDrafts} THEN min(${folderPermissions.role}) ELSE 'owner' END`.as(
+            'role',
+          ),
+          grantedBy: sql<string | null>`max(${folderPermissions.grantedBy})`.as('granted_by'),
+        })
+        .from(folders)
+        .leftJoin(
+          folderPermissions,
+          and(eq(folderPermissions.folderId, folders.id), inArray(folderPermissions.userId, ids)),
+        )
+        .groupBy(folders.id)
+        .having(sql`count(${folderPermissions.userId}) > 0 OR NOT ${folders.isDrafts}`)
+        .as('my_folders')
+    }
     return db
       .select({
         folderId: folderPermissions.folderId,
@@ -212,7 +234,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
         grantedBy: sql<string | null>`max(${folderPermissions.grantedBy})`.as('granted_by'),
       })
       .from(folderPermissions)
-      .where(inArray(folderPermissions.userId, ownerIdsFor(userId, deps.bypass)))
+      .where(inArray(folderPermissions.userId, ids))
       .groupBy(folderPermissions.folderId)
       .as('my_folders')
   }
@@ -229,7 +251,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
 
   async function list(args: { userId: string }): Promise<FolderSummary[]> {
     const deckCountSub = deckCounts()
-    const mine = memberships(args.userId)
+    const mine = memberships(args.userId, await adminProbe(db, args.userId))
     const rows = await db
       .select({
         id: folders.id,
@@ -274,7 +296,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
       filters.push(sql`(${folderNameKey}, ${folders.id}) > (${args.after.key}, ${args.after.id})`)
 
     const deckCountSub = deckCounts()
-    const mine = memberships(args.userId)
+    const mine = memberships(args.userId, await adminProbe(db, args.userId))
     const rows = await db
       .select({
         id: folders.id,

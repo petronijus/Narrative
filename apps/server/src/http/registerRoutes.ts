@@ -22,6 +22,7 @@ import { registerComponentRoutes } from '../routes/components.js'
 import { registerTokenRoutes } from '../routes/tokens.js'
 import { registerSharingRoutes } from '../routes/sharing.js'
 import { registerFolderSharingRoutes } from '../routes/folderSharing.js'
+import { registerAdminRoutes } from '../routes/admin.js'
 import { registerPptxImportRoutes } from '../routes/pptxImport.js'
 import { registerPptxExportRoutes } from '../routes/pptxExport.js'
 import { registerPdfExportRoutes, registerPngExportRoutes } from '../routes/pngExport.js'
@@ -97,6 +98,7 @@ export async function registerHttpRoutes(app: FastifyInstance, deps: HttpRouteDe
 
   // Folder sharing — members and email invites (folder-sharing step 3)
   await registerFolderSharingRoutes(app, db)
+  await registerAdminRoutes(app, db, deps.auth.allowlist)
 
   // PowerPoint import — synchronous parse + Y.Doc write (M28 phase 3 MVP)
   await registerPptxImportRoutes(app, db)

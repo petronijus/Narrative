@@ -771,13 +771,27 @@ ssh petr@192.0.2.147 "sudo sed -i \
   's/OIDC_ALLOWED_EMAILS=.*/OIDC_ALLOWED_EMAILS=petr@example.com,friend@gmail.com/' \
   /opt/narrative/infra/.env.prod"
 
-# Recreate server container (no rebuild needed)
-ssh petr@192.0.2.147 'cd /opt/narrative/infra && \
+# Recreate server container (no rebuild needed). Pass the running release:
+# without NARRATIVE_TAG compose falls back to the stale `latest` image and the
+# server ends up older than the web app (folders lose `sharedBy`, the home
+# page crashes). The tag is in `/version.json`.
+ssh petr@192.0.2.147 'cd /opt/narrative/infra && NARRATIVE_TAG=vX.Y.Z \
   docker compose -f docker-compose.yml \
     -f docker-compose.prod.yml \
     -f docker-compose.prod.shared-tunnel.yml \
     --env-file .env.prod up -d --force-recreate server'
 ```
+
+### Admins add people themselves
+
+Once someone is an instance admin ([ADR 0014](./adr/0014-instance-admin.md)),
+nobody needs SSH to let a colleague in: the admin screen (user menu →
+Administration) allows an address to sign in and makes other admins. The first
+admin comes from `ADMIN_EMAILS` in `infra/.env.prod` (a comma-separated list of
+verified emails), set the same way as the allowlist above (including
+`NARRATIVE_TAG`); the flag is set at sign-in while the instance has no admin —
+the first listed person to sign in becomes it, and promotes the others. Admins own every folder and
+deck but other people's Drafts. Their changes need no restart.
 
 ## Revoking a user (kill switch)
 

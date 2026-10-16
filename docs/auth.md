@@ -22,7 +22,7 @@ Browser → GET /auth/start?returnTo=…        (server: PKCE state, 302 to Goog
         → every API request and the Hocuspocus WebSocket carry the cookie
 ```
 
-- `GET /auth/me` resolves the cookie to `{ sub, email, name }` (or `401`);
+- `GET /auth/me` resolves the cookie to `{ sub, email, name, isAdmin }` (or `401`);
   `POST /auth/logout` revokes the row and clears the cookie.
 - In production the routes sit under `/api` (Caddy strips the prefix), so the
   Google redirect URI is `https://<domain>/api/auth/callback`.
@@ -35,13 +35,39 @@ gets in (`apps/server/src/auth/signInPolicy.ts`). An account is admitted when
 1. the **env allowlist** admits it — `OIDC_ALLOWED_EMAILS` (exact,
    comma-separated) and/or `OIDC_ALLOWED_DOMAIN` (a workspace domain, verified
    email only); **or**
-2. the **database** admits it, for a verified email only: an open invite to
-   a deck or folder, or a role on a deck or folder _somebody else_ created.
+2. `ADMIN_EMAILS` lists it (comma-separated, verified email only) — these are
+   the instance admins below; **or**
+3. the **database** admits it, for a verified email only: an address an
+   instance admin allowed (`allowed_emails`, the admin screen), an open
+   invite to a deck or folder, or a role on a deck or folder _somebody else_
+   created.
 
 Set at least one allowlist variable in production — the server warns loudly
 at boot when both are empty. Adding and revoking people on production:
 [`deploy.md` → Adding a new allowed user](./deploy.md#adding-a-new-allowed-user)
 and [Revoking a user](./deploy.md#revoking-a-user-kill-switch).
+
+## Instance admins
+
+An **admin** ([ADR 0014](./adr/0014-instance-admin.md)) is owner of every folder
+and deck except other people's private Drafts, and decides who may sign in. It
+is a flag on the user (`users.is_admin`), read by the access resolvers, not a
+role written into every folder: a new folder is visible to admins at once, and
+removing the flag takes everything away at once.
+
+- The first admin comes from `ADMIN_EMAILS` (verified email): the flag is set
+  at sign-in only while the instance has no admin; after that admins decide.
+  With `OIDC_ALLOWED_EMAILS`, `OIDC_ALLOWED_DOMAIN` and `ADMIN_EMAILS` all
+  empty, production refuses to boot (`OIDC_ALLOW_ANY_ACCOUNT=true` opts in).
+- An admin makes or unmakes other admins and manages the allowed addresses in
+  the admin screen (user menu → Administration; `/admin`). Nobody changes
+  their own role, so an admin always remains.
+- Admin actions are **not** agent commands (`parity/allowlist.ts`): text in a
+  deck is data written by other people, and an instruction hidden there must
+  not be able to let a stranger in.
+- Removing an allowed address signs the person out when nothing else admits
+  them. The kill switch (`revokeUserAccess`) also drops the admin flag and the
+  admin-allowed entry.
 
 ## Setting up the Google OAuth client
 

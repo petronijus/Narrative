@@ -37,6 +37,12 @@ export interface Script {
   updates?: unknown[][]
   /** Results of successive deletes' `.returning()` (default: `[]`). */
   deletes?: unknown[][]
+  /**
+   * Whether the caller is an instance admin (docs/adr/0014). The resolvers'
+   * admin probe (`adminProbe` in auth/admin.ts) is answered from this and
+   * consumes no scripted select. Default: not an admin.
+   */
+  admin?: boolean
 }
 
 const CHAIN_METHODS = [
@@ -45,6 +51,8 @@ const CHAIN_METHODS = [
   'limit',
   'orderBy',
   'groupBy',
+  'having',
+  'for',
   'leftJoin',
   'innerJoin',
   'as',
@@ -75,8 +83,10 @@ export function scriptedDb(script: Script = {}): ScriptedDb {
   }
 
   const db = {
-    select: () =>
+    select: (fields?: Record<string, unknown>) =>
       query(() => {
+        if (fields !== undefined && 'adminProbe' in fields)
+          return script.admin === true ? [{ adminProbe: true }] : []
         if (selects.length === 0)
           throw new Error('scriptedDb: no scripted result left for a select')
         return selects.shift()

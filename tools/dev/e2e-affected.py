@@ -279,6 +279,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/pages/accessTokenList.ts", ["access-tokens"]),
     ("apps/web/src/pages/ConfirmAgentAction.tsx", ["agent-confirm", "mcp-oauth-consent"]),
     ("apps/web/src/pages/Auth*", ACCESS),
+    # The admin screen (ADR 0014): its rules are the server's, exercised by the access specs.
+    ("apps/web/src/pages/Admin.tsx", ACCESS),
     ("apps/web/src/components/ProtectedRoute.tsx", ACCESS),
     ("apps/web/src/api/*", ACCESS + MEDIA + COMPONENTS + TOKENS),
     # ── server ────────────────────────────────────────────────────────────
@@ -293,6 +295,9 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/services/sharing.ts", ACCESS),
     ("apps/server/src/services/folderSharing.ts", ACCESS),
     ("apps/server/src/routes/folderSharing.ts", ACCESS),
+    ("apps/server/src/routes/auth.ts", ACCESS),
+    ("apps/server/src/routes/admin.ts", ACCESS),
+    ("apps/server/src/services/admin.ts", ACCESS),
     ("apps/server/src/email/*", ACCESS),
     ("apps/server/src/services/shared.ts", ACCESS + TOKENS + COMPONENTS),
     ("apps/server/src/services/folders.ts", ACCESS + ["folder-font-preview"]),
@@ -367,6 +372,8 @@ NO_E2E = [
     "infra/*",
     "packages/commands/capabilities.json",
     "apps/server/drizzle/*",
+    # Ops scripts run by hand on the server, never in a browser.
+    "apps/server/src/scripts/*",
 ]
 
 SOURCE = ["apps/*/src/*", "packages/*/src/*", "apps/web/index.html", "apps/web/vite.config.ts"]

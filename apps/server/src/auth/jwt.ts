@@ -112,6 +112,12 @@ export function createJwtVerifier(opts: {
 export interface AllowlistConfig {
   allowedEmails: string[]
   allowedDomain?: string | undefined
+  /**
+   * `ADMIN_EMAILS`: instance admins (docs/adr/0014). Listing an address also
+   * lets it sign in, with a verified email; `bootstrapAdmin` (auth/admin.ts)
+   * sets the flag at sign-in.
+   */
+  adminEmails?: string[] | undefined
 }
 
 /**
@@ -119,13 +125,16 @@ export interface AllowlistConfig {
  *   - exact match in `allowedEmails`, or
  *   - ends with `@${allowedDomain}` AND `email_verified` is true.
  *
- * When neither `allowedEmails` nor `allowedDomain` is configured, returns
- * true unconditionally (open-deployment mode — only sensible in dev).
+ * When none of `allowedEmails`, `allowedDomain` and `adminEmails` is
+ * configured, returns true unconditionally (open-deployment mode — only
+ * sensible in dev; production refuses to boot that way, index.ts).
  */
 export function isAllowedByEnv(payload: JwtPayload, config: AllowlistConfig): boolean {
   const emails = config.allowedEmails.map((e) => e.trim().toLowerCase()).filter(Boolean)
   const domain = config.allowedDomain?.trim().toLowerCase() || undefined
-  if (emails.length === 0 && !domain) return true
+  // Open only when nothing at all is configured: an operator who lists
+  // admins (ADMIN_EMAILS) and lets them manage the allowed list has a gate.
+  if (emails.length === 0 && !domain && (config.adminEmails ?? []).length === 0) return true
   const email = payload.email?.toLowerCase()
   if (!email) return false
   if (emails.includes(email)) return true

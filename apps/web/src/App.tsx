@@ -36,7 +36,7 @@ import { VersionChip } from './ui/VersionChip.js'
 import { ThemeToggle } from './ui/ThemeToggle.js'
 import { PerfHudToggle } from './ui/PerfHudToggle.js'
 import { PerfHud } from './ui/PerfHud.js'
-import { ACCESS_TOKENS_PATH } from './ui/UserMenu.js'
+import { ACCESS_TOKENS_PATH, ADMIN_PATH } from './ui/UserMenu.js'
 import { lazyRoute } from './ui/lazyRoute.js'
 import { RouteErrorBoundary, RouteSpinner } from './ui/RouteErrorBoundary.js'
 
@@ -68,6 +68,10 @@ const ComponentRenderShell = lazyRoute(
   (m) => m.ComponentRenderShell,
 )
 // Account settings: small, rarely visited — kept off the dashboard chunk.
+const Admin = lazyRoute(
+  () => import('./pages/Admin.js'),
+  (m) => m.Admin,
+)
 const AccessTokens = lazyRoute(
   () => import('./pages/AccessTokens.js'),
   (m) => m.AccessTokens,
@@ -106,6 +110,7 @@ export function App() {
                     <Route path="/folder/:folderId" element={<FolderDecks />} />
                     <Route path="/folder/:folderId/settings" element={<FolderSettings />} />
                     <Route path={ACCESS_TOKENS_PATH} element={<AccessTokens />} />
+                    <Route path={ADMIN_PATH} element={<Admin />} />
                     <Route path="/confirm/:id" element={<ConfirmAgentAction />} />
                     <Route
                       path="/folder/:folderId/component/:componentId"

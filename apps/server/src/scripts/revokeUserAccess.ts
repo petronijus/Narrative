@@ -29,6 +29,7 @@
  */
 
 import { revokeUserAccess, resolveUser } from '../auth/userAccess.js'
+import { parseAdminEmails } from '../auth/admin.js'
 
 function usage(message?: string): never {
   if (message) console.error(message)
@@ -50,6 +51,7 @@ const allowlist = {
     .map((e) => e.trim())
     .filter(Boolean),
   allowedDomain: process.env['OIDC_ALLOWED_DOMAIN']?.trim() || undefined,
+  adminEmails: parseAdminEmails(process.env['ADMIN_EMAILS']),
 }
 
 // Imported only now: db/client.ts connects (and throws without POSTGRES_URL)
@@ -73,6 +75,7 @@ try {
         `${report.revoked.uploadSessions} upload session(s).`,
     )
     if (!dryRun) {
+      console.log('Admin role and allowed-emails entry removed (if there were any).')
       console.log(
         'Open editor connections and MCP sessions on the running server stay up until their ' +
           'next request or reconnect (which is refused); restart the server for an immediate cut-off.',
@@ -81,6 +84,8 @@ try {
     if (report.stillAllowedBy !== null) {
       const how = {
         env: 'the env allowlist (OIDC_ALLOWED_EMAILS / OIDC_ALLOWED_DOMAIN) — edit .env.prod and redeploy',
+        admin: 'ADMIN_EMAILS — edit .env.prod and redeploy',
+        allowlist: 'the allowed emails list — remove the address in the admin screen',
         invite: 'a pending deck invite — cancel it',
         permission: 'a deck permission — remove it from the shared decks',
       }[report.stillAllowedBy]

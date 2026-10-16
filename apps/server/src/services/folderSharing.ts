@@ -47,6 +47,7 @@ import {
   folders,
 } from '../db/schema.js'
 import { listFolderPermissions, roleAtLeast } from '../auth/permissions.js'
+import { adminProbe } from '../auth/admin.js'
 import {
   createFolderInvite,
   listPendingInvitesForFolder,
@@ -141,7 +142,8 @@ export function createFolderSharingService(deps: ServiceDeps): FolderSharingServ
         .select({ userId: folderPermissions.userId, role: folderPermissions.role })
         .from(folderPermissions)
         .where(eq(folderPermissions.folderId, folderId))
-      requireOwnerAmong(members, userId)
+      // An instance admin owns every folder but Drafts (which is never shared).
+      if (!(await adminProbe(tx as unknown as Database, userId))) requireOwnerAmong(members, userId)
 
       const current = (members.find((m) => m.userId === memberId)?.role ?? null) as DeckRole | null
       if (current === null && (change.kind === 'remove' || change.membersOnly)) {

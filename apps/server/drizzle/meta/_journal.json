@@ -253,6 +253,13 @@
       "when": 1791838804546,
       "tag": "0035_font_axes",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792000000000,
+      "tag": "0036_instance_admin",
+      "breakpoints": true
     }
   ]
 }

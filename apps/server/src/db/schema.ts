@@ -506,6 +506,12 @@ export const users = pgTable(
     pictureUrl: text('picture_url'),
     firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).defaultNow().notNull(),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).defaultNow().notNull(),
+    /**
+     * Instance admin (docs/adr/0014): owner of every folder and deck except
+     * other people's Drafts, and manages who may use Narrative at all. Set by
+     * `ADMIN_EMAILS` at sign-in or by another admin; never inferred.
+     */
+    isAdmin: boolean('is_admin').notNull().default(false),
   },
   // Case-insensitive email uniqueness — see migration 0013 for the actual
   // `LOWER(email)` unique index (drizzle's plain unique() doesn't support
@@ -564,6 +570,19 @@ export const folderInvites = pgTable(
   },
   (t) => [index('folder_invites_folder_id_idx').on(t.folderId)],
 )
+
+// ---------------------------------------------------------------------------
+// allowed_emails — who may sign in, managed by instance admins (ADR 0014).
+// Joins the env allowlist (OIDC_ALLOWED_EMAILS / OIDC_ALLOWED_DOMAIN) and the
+// implicit invite / share grants in auth/signInPolicy.ts.
+// ---------------------------------------------------------------------------
+
+export const allowedEmails = pgTable('allowed_emails', {
+  /** Stored lower-case. */
+  email: text('email').primaryKey(),
+  addedBySub: text('added_by_sub').notNull(),
+  addedAt: timestamp('added_at', { withTimezone: true }).defaultNow().notNull(),
+})
 
 // ---------------------------------------------------------------------------
 // sessions — server-side opaque session rows (replaces browser-PKCE flow).

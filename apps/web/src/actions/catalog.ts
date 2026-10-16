@@ -206,6 +206,12 @@ export const USER_ACTIONS = {
     editorOnly:
       'opens the page where a person creates access tokens for agents; tokens are never an agent capability',
   },
+  'account.admin': {
+    label: 'Administration',
+    editorOnly:
+      'opens the admin screen where an instance admin decides who may sign in and who is an admin; ' +
+      'deliberately not an agent capability (parity/allowlist.ts, ADR 0014)',
+  },
   'account.signOut': { label: 'Sign out', editorOnly: "ends the person's own session" },
 } as const satisfies Record<string, UserAction>
 

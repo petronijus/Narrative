@@ -29,7 +29,9 @@ import {
   deckPermissions,
   deckUpdates,
   folderPermissions,
+  folders,
   mediaAssets,
+  users,
 } from '../db/schema.js'
 import {
   higherRole,
@@ -143,20 +145,32 @@ export function createDecksService(deps: ServiceDeps): DeckService {
    * user), so a deck appears once.
    */
   function accessJoins(userId: string) {
+    const adminOwns = sql<boolean>`(coalesce(${users.isAdmin}, false) AND NOT EXISTS (SELECT 1 FROM ${folders} WHERE ${folders.id} = ${decks.folderId} AND ${folders.isDrafts}))`
     return {
       deckGrant: and(eq(deckPermissions.deckId, decks.id), eq(deckPermissions.userId, userId)),
       folderGrant: and(
         eq(folderPermissions.folderId, decks.folderId),
         eq(folderPermissions.userId, userId),
       ),
-      visible: sql`(${deckPermissions.role} IS NOT NULL OR ${folderPermissions.role} IS NOT NULL)`,
-      roles: { deckRole: deckPermissions.role, folderRole: folderPermissions.role },
+      adminGrant: eq(users.sub, userId),
+      // An instance admin (ADR 0014) is owner of every deck outside other
+      // people's Drafts: `users.is_admin` comes in the same query.
+      visible: sql`(${deckPermissions.role} IS NOT NULL OR ${folderPermissions.role} IS NOT NULL OR ${adminOwns})`,
+      roles: {
+        deckRole: deckPermissions.role,
+        folderRole: folderPermissions.role,
+        adminOwns,
+      },
     }
   }
 
   /** The user's role on a listed deck: the higher of their deck grant and folder role (`visible` guarantees one). */
-  function listedRole(r: { deckRole: DeckRole | null; folderRole: DeckRole | null }): DeckRole {
-    return higherRole(r.deckRole, r.folderRole) ?? 'viewer'
+  function listedRole(r: {
+    deckRole: DeckRole | null
+    folderRole: DeckRole | null
+    adminOwns: boolean | null
+  }): DeckRole {
+    return r.adminOwns === true ? 'owner' : (higherRole(r.deckRole, r.folderRole) ?? 'viewer')
   }
 
   async function list(args: { userId: string; folderId?: string | undefined }) {
@@ -187,6 +201,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
       .from(decks)
       .leftJoin(deckPermissions, access.deckGrant)
       .leftJoin(folderPermissions, access.folderGrant)
+      .leftJoin(users, access.adminGrant)
       .where(
         filterFolderId !== null
           ? and(access.visible, eq(decks.folderId, filterFolderId))
@@ -273,6 +288,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
         .leftJoin(lastStore, eq(lastStore.deckId, decks.id))
         .leftJoin(deckPermissions, access.deckGrant)
         .leftJoin(folderPermissions, access.folderGrant)
+        .leftJoin(users, access.adminGrant)
         .where(and(access.visible, ...filters))
         .orderBy(...order)
         .limit(limit + 1)

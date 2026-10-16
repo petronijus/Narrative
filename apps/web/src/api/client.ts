@@ -152,6 +152,13 @@ export interface ApiClient {
   removeFolderMember(folderId: string, userId: string): Promise<void>
   listFolderInvites(folderId: string): Promise<DeckInvite[]>
   cancelFolderInvite(folderId: string, inviteId: string): Promise<void>
+  // Instance administration (admins only; the server answers 403 to anyone else).
+  listAdminUsers(): Promise<AdminUser[]>
+  setUserAdmin(userId: string, isAdmin: boolean): Promise<AdminUser>
+  listAllowedEmails(): Promise<AllowedEmail[]>
+  allowEmail(email: string): Promise<AllowedEmail>
+  /** `signedOut`: nothing else admitted them, so their sessions were ended. */
+  removeAllowedEmail(email: string): Promise<{ signedOut: boolean }>
   /**
    * Bulk-move decks from srcFolderId to destFolderId: the caller owns every
    * deck and is an editor of both folders; the decks must live in
@@ -714,6 +721,23 @@ export interface VideoInfoResponse {
   transcodeError: string | null
 }
 
+/** Instance administration (docs/adr/0014): who uses Narrative and who may sign in. */
+export interface AdminUser {
+  userId: string
+  email: string
+  name: string | null
+  isAdmin: boolean
+  firstSeenAt: string
+  lastSeenAt: string
+}
+
+export interface AllowedEmail {
+  email: string
+  addedBy: string | null
+  addedAt: string
+  signedIn: boolean
+}
+
 /** A refused request, with the status and the server's own explanation (`{ error }`). */
 export class ApiError extends Error {
   constructor(
@@ -991,6 +1015,38 @@ export function createApiClient(): ApiClient {
     },
 
     listFolderInvites: (folderId) => requestJson<DeckInvite[]>(`/folders/${folderId}/invites`),
+
+    listAdminUsers: () => requestJson<AdminUser[]>('/admin/users'),
+
+    setUserAdmin: async (userId, isAdmin) => {
+      const res = await request(`/admin/users/${encodeURIComponent(userId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isAdmin }),
+      })
+      if (!res.ok) throw await apiError(res)
+      return res.json() as Promise<AdminUser>
+    },
+
+    listAllowedEmails: () => requestJson<AllowedEmail[]>('/admin/allowed-emails'),
+
+    allowEmail: async (email) => {
+      const res = await request('/admin/allowed-emails', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+      if (!res.ok) throw await apiError(res)
+      return res.json() as Promise<AllowedEmail>
+    },
+
+    removeAllowedEmail: async (email) => {
+      const res = await request(`/admin/allowed-emails/${encodeURIComponent(email)}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) throw await apiError(res)
+      return res.json() as Promise<{ signedOut: boolean }>
+    },
 
     cancelFolderInvite: async (folderId, inviteId) => {
       const res = await request(`/folders/${folderId}/invites/${inviteId}`, { method: 'DELETE' })

@@ -47,6 +47,7 @@ import { closeRenderQueue, dropStaleRenderJobs } from './render/queue.js'
 import { metricsRegistrationDecision } from './metrics/index.js'
 import { initSentry } from './observability/sentry.js'
 import { createJwtVerifier } from './auth/jwt.js'
+import { parseAdminEmails } from './auth/admin.js'
 import { registerAuthPlugin, assertAuthBootSafety } from './auth/fastifyAuth.js'
 import { ensureDevUserAtBoot } from './auth/devIdentity.js'
 import {
@@ -103,11 +104,20 @@ const verifier = bypassAuth
 
 // Allowlist config — applied in /auth/callback alongside the DB-based
 // implicit-allowlist check (pending invite or existing permission).
-const allowlistConfig = { allowedEmails, allowedDomain }
+const adminEmails = parseAdminEmails(process.env['ADMIN_EMAILS'])
+const allowlistConfig = { allowedEmails, allowedDomain, adminEmails }
 
-if (!bypassAuth && allowedEmails.length === 0 && !allowedDomain) {
+if (!bypassAuth && allowedEmails.length === 0 && !allowedDomain && adminEmails.length === 0) {
+  // Every Google account could sign in, and the admins' allowed list would
+  // gate nothing (docs/adr/0014). Production needs an explicit opt-in.
+  if (isProd && process.env['OIDC_ALLOW_ANY_ACCOUNT'] !== 'true') {
+    throw new Error(
+      '[server] OIDC_ALLOWED_EMAILS, OIDC_ALLOWED_DOMAIN and ADMIN_EMAILS are all empty: any ' +
+        'Google account could sign in. Set one of them, or OIDC_ALLOW_ANY_ACCOUNT=true.',
+    )
+  }
   console.warn(
-    '[server] OIDC_ALLOWED_EMAILS and OIDC_ALLOWED_DOMAIN are both empty — ' +
+    '[server] OIDC_ALLOWED_EMAILS, OIDC_ALLOWED_DOMAIN and ADMIN_EMAILS are all empty — ' +
       'ANY Google account will be allowed to sign in. Set one of them in production.',
   )
 }

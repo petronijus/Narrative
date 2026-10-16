@@ -77,6 +77,8 @@ services:
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
       OIDC_ALLOWED_EMAILS: ${OIDC_ALLOWED_EMAILS:-}
       OIDC_ALLOWED_DOMAIN: ${OIDC_ALLOWED_DOMAIN:-}
+      # Instance admins (docs/adr/0014): verified emails, set the flag at sign-in.
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       # Signs the short-lived OAuth state cookie. REQUIRED in prod (server
       # throws on boot otherwise). Generate: openssl rand -hex 32
       SESSION_COOKIE_SECRET: ${SESSION_COOKIE_SECRET:?SESSION_COOKIE_SECRET env var is required}
