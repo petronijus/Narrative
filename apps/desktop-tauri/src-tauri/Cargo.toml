@@ -1,6 +1,6 @@
 [package]
 name = "narrative-desktop-tauri"
-version = "0.14.0"
+version = "0.15.0"
 description = "Narrative desktop app — Tauri prototype beside the Electron shell"
 edition = "2021"
 publish = false

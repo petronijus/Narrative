@@ -4,6 +4,39 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.15.0 — The desktop app's sign-in on the server (2026-10-16)
+
+The desktop work (D0) merged: the server and the editor now speak to a
+desktop shell, so an installed app can sign in. The Electron app itself is
+not released yet; a Tauri prototype beside it is being evaluated
+(`docs/plans/desktop-tauri-evaluation.md`).
+
+### Added
+
+- **The Narrative desktop app** (`apps/desktop`, ADR 0015, `docs/desktop.md`).
+  An Electron shell around the editor the server serves: sign-in through the
+  system browser with a one-time ticket, a native menu that runs the
+  editor's own shortcuts, PowerPoint files opened from the operating system,
+  a server choice (production, the dev stack, a custom server), packages for
+  Linux (deb, AppImage), macOS (signed, notarized) and Windows, and
+  self-updates that install only what the release key signed. Online only
+  for now; offline work follows (`docs/plans/desktop-app.md`).
+- **Present on a chosen display.** Where the browser can place windows
+  (Chrome, Edge, the desktop app), the presentation's Display choice puts
+  fullscreen on the projector while the presenter view stays on the laptop.
+- **Mod+X cuts objects on the canvas**, as the context menu's Cut does.
+- The **Tauri prototype** (`apps/desktop-tauri`, not released): the same
+  shell on the system webview; `.deb` 6.7 MB instead of 102 MB.
+
+### Changed
+
+- **Delete/Backspace and Mod+C on the canvas** now prevent the key's
+  default, as every keyed menu action must.
+- **The editor checks for a new build when its window regains focus**, not
+  only when it becomes visible again.
+- **Sign-in's `returnTo`** refuses backslashes and control characters, and
+  error reports mask PKCE verifiers.
+
 ## 0.14.0 — Emails for everything that concerns you (2026-10-16)
 
 ### Added
@@ -455,30 +488,6 @@ built together and tested as one.
   production a slide of the reference deck spent 9–12 s settling and capturing
   after its pictures had loaded in under a second (0.10.26 timings); this
   names the part to make faster.
-
-### Added
-
-- **The Narrative desktop app** (`apps/desktop`, ADR 0015, `docs/desktop.md`).
-  An Electron shell around the editor the server serves: sign-in through the
-  system browser with a one-time ticket, a native menu that runs the
-  editor's own shortcuts, PowerPoint files opened from the operating system,
-  a server choice (production, the dev stack, a custom server), packages for
-  Linux (deb, AppImage), macOS (signed, notarized) and Windows, and
-  self-updates that install only what the release key signed. Online only
-  for now; offline work follows (`docs/plans/desktop-app.md`).
-- **Present on a chosen display.** Where the browser can place windows
-  (Chrome, Edge, the desktop app), the presentation's Display choice puts
-  fullscreen on the projector while the presenter view stays on the laptop.
-- **Mod+X cuts objects on the canvas**, as the context menu's Cut does.
-
-### Changed
-
-- **Delete/Backspace and Mod+C on the canvas** now prevent the key's
-  default, as every keyed menu action must.
-- **The editor checks for a new build when its window regains focus**, not
-  only when it becomes visible again.
-- **Sign-in's `returnTo`** refuses backslashes and control characters, and
-  error reports mask PKCE verifiers.
 
 ---
 
