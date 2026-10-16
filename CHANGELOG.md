@@ -4,6 +4,21 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.13.1 — Sharing emails for everyone (2026-10-16)
+
+### Fixed
+
+- Sharing a deck or folder with someone who already uses Narrative now
+  emails them; before, only people new to Narrative got an email, so a
+  colleague never learnt a deck had been shared. Sent on a new share or a
+  new role, not again for the same role.
+
+### Changed
+
+- The sharing email is redesigned in Narrative's look: the deck's real
+  first-slide thumbnail (a folder shows its three latest decks and how
+  many more it holds), what the role lets you do, and one clear button.
+
 ## 0.13.0 — Instance admins (2026-10-16)
 
 ### Added
