@@ -131,7 +131,7 @@ e2e-webkit *args: _stack
     fi
     version="$(node -p "require('./node_modules/@playwright/test/package.json').version")"
     exec docker run --rm --network host --ipc host --user "$(id -u):$(id -g)" \
-      -e HOME=/tmp -e PW_WEBKIT=1 -e CI= -v "$PWD:$PWD" -w "$PWD/apps/web" \
+      -e HOME=/tmp -e PW_WEBKIT=1 -e CI= -e PERF_PROBE -v "$PWD:$PWD" -w "$PWD/apps/web" \
       "mcr.microsoft.com/playwright:v$version-noble" \
       node ../../node_modules/@playwright/test/cli.js test --project=webkit "$@"
 
