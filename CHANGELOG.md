@@ -4,6 +4,14 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.13.2 — One tagline (2026-10-16)
+
+### Changed
+
+- "Pro tool for keynote masters", the home screen's subline, is now the
+  tagline everywhere: the sharing email, the page title, the sign-in page
+  and the README.
+
 ## 0.13.1 — Sharing emails for everyone (2026-10-16)
 
 ### Fixed
