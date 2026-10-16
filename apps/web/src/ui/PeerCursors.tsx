@@ -22,7 +22,7 @@
  */
 
 import { useEffect, useRef } from 'react'
-import { useAwareness } from '../state/useAwareness.js'
+import { useRemotePeers } from '../state/useAwareness.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
@@ -142,7 +142,7 @@ function createCursorElement(peer: PeerInfo): HTMLElement {
  * Nevyžaduje žádné DOM output — efekty řídí OverlayCompositor.
  */
 export function PeerCursors(): null {
-  const { remotePeers } = useAwareness()
+  const remotePeers = useRemotePeers()
   const canvasInstance = useCanvasInstance()
   const { activeSlideId } = useActiveSlide()
   const { zoom } = useZoomLevel()

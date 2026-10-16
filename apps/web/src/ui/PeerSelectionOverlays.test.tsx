@@ -28,6 +28,7 @@ const mockAwarenessData = {
 
 vi.mock('../state/useAwareness.js', () => ({
   useAwareness: () => mockAwarenessData,
+  useRemotePeers: () => mockAwarenessData.remotePeers,
 }))
 
 const mockGetBounds = vi.fn<(id: string) => ObjectBounds | null>()

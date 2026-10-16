@@ -31,7 +31,7 @@
  */
 
 import type { PeerInfo } from '@narrative/shared'
-import { useAwareness } from '../state/useAwareness.js'
+import { useRemotePeers } from '../state/useAwareness.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { ObjectBounds } from '../renderer/types.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
@@ -103,7 +103,7 @@ function PeerObjectOutline({
  * Umístění: absolutně přes canvas container (position:absolute;inset:0;pointer-events:none).
  */
 export function PeerSelectionOverlays() {
-  const { remotePeers } = useAwareness()
+  const remotePeers = useRemotePeers()
   const canvasInstance = useCanvasInstance()
   const { activeSlideId } = useActiveSlide()
   // Subscribed for its re-renders only (see the header): bounds are read

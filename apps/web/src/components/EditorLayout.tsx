@@ -62,7 +62,7 @@ import type { SlideObject, SlideObjectType, PathAnchor, TableObject } from '@nar
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
 import type { SnapGuide } from '../editor/snap.js'
-import { computeSnap, snapsThisFrame } from '../editor/snap.js'
+import { computeSnap, sameSnapGuides, snapsThisFrame } from '../editor/snap.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { UploadDropZone } from '../ui/UploadDropZone.js'
 import { UploadProgressStack } from '../ui/UploadProgressCard.js'
@@ -689,7 +689,11 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   const penSessionRef = useRef<PenSession | null>(null)
 
   /** Snap guides — aktivní během dragu/resize */
-  const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([])
+  const [snapGuides, setSnapGuidesState] = useState<SnapGuide[]>([])
+  // Stays the same state (no render) when the guides drawn would not change.
+  const setSnapGuides = useCallback((next: SnapGuide[]) => {
+    setSnapGuidesState((prev) => (sameSnapGuides(prev, next) ? prev : next))
+  }, [])
 
   /** Canvas size pro SnapGuides vizualizaci */
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })

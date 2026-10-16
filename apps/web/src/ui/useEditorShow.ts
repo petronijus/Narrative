@@ -34,7 +34,7 @@ import { usePathPointsMode } from '../state/PathPointsModeContext.js'
 import { useTableEdit } from '../state/TableEditContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
-import { useAwareness } from '../state/useAwareness.js'
+import { useRemotePeers } from '../state/useAwareness.js'
 
 /** How long the highlight outline stays up once it is drawn. */
 export const SHOW_HIGHLIGHT_MS = 2_000
@@ -93,7 +93,7 @@ export function useEditorShow(): EditorShowState {
   const { pathPointsId, exitPathPoints } = usePathPointsMode()
   const { active: activeTableCell, endEdit: endTableCellEdit } = useTableEdit()
   const { objects } = useSlideObjects()
-  const { remotePeers } = useAwareness()
+  const remotePeers = useRemotePeers()
 
   const [target, setTarget] = useState<Target | null>(null)
   const [highlight, setHighlight] = useState<ShowHighlight | null>(null)

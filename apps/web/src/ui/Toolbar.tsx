@@ -16,6 +16,7 @@ import { downloadBlob, safeFilename } from '../lib/download.js'
 import { attachmentFilename } from '../api/client.js'
 import { API_URL } from '../lib/endpoints.js'
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -157,7 +158,7 @@ interface ToolbarProps {
   masterMode?: boolean
 }
 
-export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
+function ToolbarImpl({ masterMode = false }: ToolbarProps = {}) {
   const { activeTool, setActiveTool } = useTool()
   const navigate = useNavigate()
   const location = useLocation()
@@ -1045,6 +1046,14 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     </TooltipProvider>
   )
 }
+
+/**
+ * Its only prop is a boolean, so a re-render of the editor around it (every
+ * pointer move of a drag commits several times) renders the toolbar's ~20
+ * tooltip-wrapped buttons for nothing: memoised, it renders when its own
+ * hooks (selection, tool, role, …) say so.
+ */
+export const Toolbar = memo(ToolbarImpl)
 
 // ---------------------------------------------------------------------------
 // Table grid picker — Word / PowerPoint / LibreImpress-style popover where

@@ -88,3 +88,56 @@ export function useAwareness(): AwarenessSnapshot {
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
+
+/**
+ * The other people's awareness, and nothing of this client's own.
+ *
+ * `useAwareness()` hands out a new snapshot on every awareness change — this
+ * client's own cursor (30 Hz while the pointer moves) and selection included —
+ * and every reader renders for it, synchronously. Most readers draw other
+ * people (cursors, selection frames, who is where) and have no use for the
+ * local entry. This hook's snapshot is the same array for as long as no
+ * remote peer's state has been replaced (y-protocols swaps a client's state
+ * object when, and only when, that client sends a new one), so the local
+ * cursor moving renders nothing here.
+ */
+export function useRemotePeers(): PeerInfo[] {
+  const { awareness } = useSlideDoc()
+  const cacheRef = useRef<{ key: unknown[]; peers: PeerInfo[] } | null>(null)
+
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      awareness.on('change', onStoreChange)
+      return () => {
+        awareness.off('change', onStoreChange)
+      }
+    },
+    [awareness],
+  )
+
+  const getSnapshot = useCallback((): PeerInfo[] => {
+    const localClientId = awareness.clientID
+    const states = awareness.getStates() as Map<number, unknown>
+    const key: unknown[] = []
+    for (const [clientId, rawState] of states) {
+      if (clientId !== localClientId) key.push(clientId, rawState)
+    }
+    const cached = cacheRef.current
+    if (
+      cached !== null &&
+      cached.key.length === key.length &&
+      cached.key.every((v, i) => v === key[i])
+    ) {
+      return cached.peers
+    }
+    const peers: PeerInfo[] = []
+    for (const [clientId, rawState] of states) {
+      const peerInfo = toPeerInfo(clientId, rawState, localClientId)
+      if (peerInfo !== null && !peerInfo.isLocal) peers.push(peerInfo)
+    }
+    cacheRef.current = { key, peers }
+    return peers
+  }, [awareness])
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}

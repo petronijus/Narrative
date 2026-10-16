@@ -268,3 +268,23 @@ export function computeSnap(
 export function snapsThisFrame(snappingEnabled: boolean, modifierHeld: boolean): boolean {
   return snappingEnabled !== modifierHeld
 }
+
+/**
+ * Whether two guide lists draw the same lines. Every pointer move of a drag
+ * computes a fresh list, mostly an empty one or the same guide as the move
+ * before; setting state to an equal-but-new array re-rendered the whole
+ * editor for nothing.
+ */
+export function sameSnapGuides(a: readonly SnapGuide[], b: readonly SnapGuide[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  return a.every((g, i) => {
+    const o = b[i]!
+    return (
+      g.kind === o.kind &&
+      g.position === o.position &&
+      g.range.start === o.range.start &&
+      g.range.end === o.range.end
+    )
+  })
+}

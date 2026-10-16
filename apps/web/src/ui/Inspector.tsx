@@ -22,6 +22,7 @@
 
 import { effectiveLineHeightMultiple } from '../lib/fontLineMetrics.js'
 import {
+  memo,
   useCallback,
   useEffect,
   useId,
@@ -1444,6 +1445,113 @@ function layerLabel(obj: SlideObject): string {
   return `${obj.type}-${obj.id.slice(0, 4)}`
 }
 
+/**
+ * What a layer row calls back. One stable object for the panel's lifetime, so a
+ * row's props change only when what it shows changes: dragging one object
+ * re-renders no row (a pointer move used to render all of them, ~450 elements
+ * at 224 objects, several times per move).
+ */
+interface LayerRowHandlers {
+  onDragStart: (id: string, e: React.DragEvent) => void
+  onDragOver: (id: string, e: React.DragEvent) => void
+  onDrop: (id: string, e: React.DragEvent) => void
+  onClick: (id: string, e: React.MouseEvent) => void
+  onDelete: (id: string) => void
+}
+
+interface LayerRowProps {
+  id: string
+  label: string
+  locked: boolean
+  /** The object's group id, '' when it is in none. */
+  groupId: string
+  active: boolean
+  readOnly: boolean
+  dragging: boolean
+  /** Where the drop indicator sits on this row, null for none. */
+  dropPosition: 'before' | 'after' | null
+  handlers: LayerRowHandlers
+}
+
+// Primitive props only, so React.memo's shallow compare is the whole check.
+const LayerRow = memo(function LayerRow({
+  id,
+  label,
+  locked,
+  groupId,
+  active,
+  readOnly,
+  dragging,
+  dropPosition,
+  handlers,
+}: LayerRowProps) {
+  return (
+    <li
+      draggable={!readOnly}
+      onDragStart={(e) => handlers.onDragStart(id, e)}
+      onDragOver={(e) => handlers.onDragOver(id, e)}
+      onDrop={(e) => handlers.onDrop(id, e)}
+      onClick={(e) => handlers.onClick(id, e)}
+      className={[
+        'group relative flex items-center gap-1.5 rounded-md border border-transparent px-1.5 py-1 text-[11px]',
+        'cursor-pointer select-none',
+        // Match the inspector toggle style: tinted blue fill +
+        // primary text/icon, no border accent. Keeps the row
+        // chrome identical between active and idle so only the
+        // colour change distinguishes selection.
+        active ? 'bg-primary/15 text-primary' : 'text-foreground hover:bg-accent/40',
+        dragging ? 'opacity-40' : '',
+        readOnly ? 'cursor-default' : '',
+      ].join(' ')}
+    >
+      {dropPosition === 'before' && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-0.5 left-0 right-0 h-0.5 rounded-full bg-primary"
+        />
+      )}
+      {dropPosition === 'after' && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute -bottom-0.5 left-0 right-0 h-0.5 rounded-full bg-primary"
+        />
+      )}
+      <span className="w-3 text-[9px] text-muted-foreground/60">⋮⋮</span>
+      <span className="flex-1 truncate">{label}</span>
+      {locked && (
+        <span className="text-muted-foreground/60" aria-hidden="true">
+          <Lock className="h-3 w-3" />
+        </span>
+      )}
+      {groupId !== '' && (
+        <span
+          className="rounded-md bg-muted px-1 text-[9px] text-muted-foreground"
+          title={`Group ${groupId.slice(0, 4)}`}
+        >
+          ∘
+        </span>
+      )}
+      {!readOnly && !locked && (
+        <button
+          type="button"
+          aria-label="Delete layer"
+          title="Delete layer"
+          onClick={(e) => {
+            e.stopPropagation()
+            handlers.onDelete(id)
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          draggable={false}
+          className="ml-0.5 rounded-md p-0.5 text-muted-foreground/60 opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus:opacity-100 focus:outline-none"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </li>
+  )
+})
+
 export function LayersPanel({ activeIds, readOnly }: { activeIds: string[]; readOnly: boolean }) {
   const { objects } = useSlideObjects()
   const { activeSlideId } = useActiveSlide()
@@ -1462,82 +1570,127 @@ export function LayersPanel({ activeIds, readOnly }: { activeIds: string[]; read
   const rows = useMemo(() => [...objects].reverse(), [objects])
   const activeSet = useMemo(() => new Set(activeIds), [activeIds])
 
-  const onDragStart = (id: string) => (e: React.DragEvent) => {
-    if (readOnly) return
-    setDraggingId(id)
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', id)
-  }
-  const onDragOver = (id: string) => (e: React.DragEvent) => {
-    if (readOnly || draggingId === null) return
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-    // Top half of the row → "drop above this row"; bottom half → "drop
-    // below". The previous version always showed the indicator at the
-    // top edge of the hovered row, which lied to the user when they
-    // tried to drop after the last row: the cue said "above" but the
-    // mutation actually placed the item at the back. Splitting the row
-    // in half fixes both ends and gives a real "drop at the bottom"
-    // affordance.
-    const rect = e.currentTarget.getBoundingClientRect()
-    const midY = rect.top + rect.height / 2
-    const position: 'before' | 'after' = e.clientY < midY ? 'before' : 'after'
-    setDropTarget((prev) =>
-      prev !== null && prev.id === id && prev.position === position ? prev : { id, position },
-    )
-  }
-  const onDragEnd = () => {
-    setDraggingId(null)
-    setDropTarget(null)
-  }
-  const onDrop = (targetId: string) => (e: React.DragEvent) => {
-    e.preventDefault()
-    if (readOnly || draggingId === null) {
-      onDragEnd()
-      return
-    }
-    if (draggingId === targetId) {
-      onDragEnd()
-      return
-    }
-    const visualTargetIdx = rows.findIndex((o) => o.id === targetId)
-    if (visualTargetIdx === -1) {
-      onDragEnd()
-      return
-    }
-    // rows is reversed: visual 0 = front = last in Y.Array.
-    // 'before' = above target visually = same Y.Array slot the target
-    // currently holds (target shifts down one).
-    // 'after'  = below target visually = one slot lower in Y.Array,
-    //            which clamps to 0 when dropping after the last row
-    //            so "drag to the bottom of the panel" sends the item
-    //            all the way to the back.
-    const position = dropTarget?.id === targetId ? dropTarget.position : 'before'
-    const yIndex =
-      position === 'before'
-        ? objects.length - 1 - visualTargetIdx
-        : objects.length - 2 - visualTargetIdx
-    if (activeSlideId !== null) {
-      command.tryRun('object.layer', {
-        slide: activeSlideId,
-        objects: [draggingId],
-        move: 'toIndex',
-        toIndex: Math.max(0, yIndex),
-      })
-    }
-    onDragEnd()
+  // What the row callbacks read, kept current by assignment: the callbacks
+  // themselves are created once (below), so the rows never see them change.
+  const live = useRef({
+    readOnly,
+    draggingId,
+    dropTarget,
+    rows,
+    objectCount: objects.length,
+    activeIds,
+    activeSet,
+    activeSlideId,
+    command,
+    selectOne,
+    selectMany,
+    clear,
+  })
+  live.current = {
+    readOnly,
+    draggingId,
+    dropTarget,
+    rows,
+    objectCount: objects.length,
+    activeIds,
+    activeSet,
+    activeSlideId,
+    command,
+    selectOne,
+    selectMany,
+    clear,
   }
 
-  const onRowClick = (id: string) => (e: React.MouseEvent) => {
-    if (e.shiftKey) {
-      const next = new Set(activeIds)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      selectMany([...next])
-    } else {
-      selectOne(id)
-    }
-  }
+  const onDragEnd = useCallback(() => {
+    setDraggingId(null)
+    setDropTarget(null)
+  }, [])
+
+  const handlers = useMemo<LayerRowHandlers>(
+    () => ({
+      onDragStart: (id, e) => {
+        if (live.current.readOnly) return
+        setDraggingId(id)
+        e.dataTransfer.effectAllowed = 'move'
+        e.dataTransfer.setData('text/plain', id)
+      },
+      onDragOver: (id, e) => {
+        if (live.current.readOnly || live.current.draggingId === null) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        // Top half of the row → "drop above this row"; bottom half → "drop
+        // below". The previous version always showed the indicator at the
+        // top edge of the hovered row, which lied to the user when they
+        // tried to drop after the last row: the cue said "above" but the
+        // mutation actually placed the item at the back. Splitting the row
+        // in half fixes both ends and gives a real "drop at the bottom"
+        // affordance.
+        const rect = e.currentTarget.getBoundingClientRect()
+        const midY = rect.top + rect.height / 2
+        const position: 'before' | 'after' = e.clientY < midY ? 'before' : 'after'
+        setDropTarget((prev) =>
+          prev !== null && prev.id === id && prev.position === position ? prev : { id, position },
+        )
+      },
+      onDrop: (targetId, e) => {
+        e.preventDefault()
+        const { readOnly, draggingId, dropTarget, rows, objectCount, activeSlideId, command } =
+          live.current
+        if (readOnly || draggingId === null) {
+          onDragEnd()
+          return
+        }
+        if (draggingId === targetId) {
+          onDragEnd()
+          return
+        }
+        const visualTargetIdx = rows.findIndex((o) => o.id === targetId)
+        if (visualTargetIdx === -1) {
+          onDragEnd()
+          return
+        }
+        // rows is reversed: visual 0 = front = last in Y.Array.
+        // 'before' = above target visually = same Y.Array slot the target
+        // currently holds (target shifts down one).
+        // 'after'  = below target visually = one slot lower in Y.Array,
+        //            which clamps to 0 when dropping after the last row
+        //            so "drag to the bottom of the panel" sends the item
+        //            all the way to the back.
+        const position = dropTarget?.id === targetId ? dropTarget.position : 'before'
+        const yIndex =
+          position === 'before'
+            ? objectCount - 1 - visualTargetIdx
+            : objectCount - 2 - visualTargetIdx
+        if (activeSlideId !== null) {
+          command.tryRun('object.layer', {
+            slide: activeSlideId,
+            objects: [draggingId],
+            move: 'toIndex',
+            toIndex: Math.max(0, yIndex),
+          })
+        }
+        onDragEnd()
+      },
+      onClick: (id, e) => {
+        const { activeIds, selectMany, selectOne } = live.current
+        if (e.shiftKey) {
+          const next = new Set(activeIds)
+          if (next.has(id)) next.delete(id)
+          else next.add(id)
+          selectMany([...next])
+        } else {
+          selectOne(id)
+        }
+      },
+      onDelete: (id) => {
+        const { activeSlideId, activeSet, clear, command } = live.current
+        if (activeSlideId === null) return
+        if (activeSet.has(id)) clear()
+        command.tryRun('object.delete', { slide: activeSlideId, objects: [id] })
+      },
+    }),
+    [onDragEnd],
+  )
 
   return (
     <Section title={`Layers (${objects.length})`} storageKey="layers-panel">
@@ -1545,83 +1698,27 @@ export function LayersPanel({ activeIds, readOnly }: { activeIds: string[]; read
         <p className="text-[10px] text-muted-foreground/70">No objects on this slide yet.</p>
       )}
       <ul className="flex flex-col gap-0.5" onDragEnd={onDragEnd}>
-        {rows.map((o) => {
-          const active = activeSet.has(o.id)
-          const isDragging = draggingId === o.id
-          const dropOnThis =
-            dropTarget !== null &&
-            dropTarget.id === o.id &&
-            draggingId !== null &&
-            draggingId !== o.id
-          return (
-            <li
-              key={o.id}
-              draggable={!readOnly}
-              onDragStart={onDragStart(o.id)}
-              onDragOver={onDragOver(o.id)}
-              onDrop={onDrop(o.id)}
-              onClick={onRowClick(o.id)}
-              className={[
-                'group relative flex items-center gap-1.5 rounded-md border border-transparent px-1.5 py-1 text-[11px]',
-                'cursor-pointer select-none',
-                // Match the inspector toggle style: tinted blue fill +
-                // primary text/icon, no border accent. Keeps the row
-                // chrome identical between active and idle so only the
-                // colour change distinguishes selection.
-                active ? 'bg-primary/15 text-primary' : 'text-foreground hover:bg-accent/40',
-                isDragging ? 'opacity-40' : '',
-                readOnly ? 'cursor-default' : '',
-              ].join(' ')}
-            >
-              {dropOnThis && dropTarget!.position === 'before' && (
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute -top-0.5 left-0 right-0 h-0.5 rounded-full bg-primary"
-                />
-              )}
-              {dropOnThis && dropTarget!.position === 'after' && (
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute -bottom-0.5 left-0 right-0 h-0.5 rounded-full bg-primary"
-                />
-              )}
-              <span className="w-3 text-[9px] text-muted-foreground/60">⋮⋮</span>
-              <span className="flex-1 truncate">{layerLabel(o)}</span>
-              {o.locked === true && (
-                <span className="text-muted-foreground/60" aria-hidden="true">
-                  <Lock className="h-3 w-3" />
-                </span>
-              )}
-              {o.groupId !== undefined && o.groupId !== '' && (
-                <span
-                  className="rounded-md bg-muted px-1 text-[9px] text-muted-foreground"
-                  title={`Group ${o.groupId.slice(0, 4)}`}
-                >
-                  ∘
-                </span>
-              )}
-              {!readOnly && o.locked !== true && (
-                <button
-                  type="button"
-                  aria-label="Delete layer"
-                  title="Delete layer"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (activeSlideId === null) return
-                    if (activeSet.has(o.id)) clear()
-                    command.tryRun('object.delete', { slide: activeSlideId, objects: [o.id] })
-                  }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  draggable={false}
-                  className="ml-0.5 rounded-md p-0.5 text-muted-foreground/60 opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus:opacity-100 focus:outline-none"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </li>
-          )
-        })}
+        {rows.map((o) => (
+          <LayerRow
+            key={o.id}
+            id={o.id}
+            label={layerLabel(o)}
+            locked={o.locked === true}
+            groupId={o.groupId ?? ''}
+            active={activeSet.has(o.id)}
+            readOnly={readOnly}
+            dragging={draggingId === o.id}
+            dropPosition={
+              dropTarget !== null &&
+              dropTarget.id === o.id &&
+              draggingId !== null &&
+              draggingId !== o.id
+                ? dropTarget.position
+                : null
+            }
+            handlers={handlers}
+          />
+        ))}
       </ul>
     </Section>
   )
