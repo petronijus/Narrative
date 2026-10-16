@@ -21,7 +21,7 @@ export interface AllowlistEntry {
 
 export const AGENT_ALLOWLIST: readonly AllowlistEntry[] = [
   {
-    capability: 'Instance administration (admins, who may sign in)',
+    capability: 'Instance administration (admins, who may sign in, which emails are sent)',
     reason:
       'Deliberately human-only (ADR 0014): text inside a deck is data written by other people, and an ' +
       'instruction hidden there must not be able to let a stranger into Narrative or promote one to ' +
@@ -32,6 +32,9 @@ export const AGENT_ALLOWLIST: readonly AllowlistEntry[] = [
       { method: 'GET', path: '/admin/allowed-emails' },
       { method: 'POST', path: '/admin/allowed-emails' },
       { method: 'DELETE', path: '/admin/allowed-emails/:email' },
+      { method: 'GET', path: '/admin/emails' },
+      { method: 'PATCH', path: '/admin/emails/:kind' },
+      { method: 'GET', path: '/admin/emails/:kind/preview' },
     ],
   },
   {

@@ -299,9 +299,9 @@ export async function revokeFolderInvite(
 export async function consumePendingInvitesForEmail(
   db: Database,
   { email, sub, emailVerified }: { email: string; sub: string; emailVerified: boolean },
-): Promise<{ joinedDeckIds: string[]; joinedFolderIds: string[] }> {
+): Promise<ConsumedInvites> {
   // An invite is addressed to an inbox: only a verified claim to it takes it.
-  if (!emailVerified) return { joinedDeckIds: [], joinedFolderIds: [] }
+  if (!emailVerified) return { joinedDeckIds: [], joinedFolderIds: [], accepted: [] }
   const emailLower = email.toLowerCase()
   const now = new Date()
 
@@ -318,6 +318,7 @@ export async function consumePendingInvitesForEmail(
     )
 
   const joinedDeckIds: string[] = []
+  const accepted: AcceptedInvite[] = []
 
   // 2) For each invite, upsert a deck_permissions row and mark the invite
   // accepted. Done one row at a time so a partial failure (e.g. one deck
@@ -340,6 +341,7 @@ export async function consumePendingInvitesForEmail(
         .where(eq(deckInvites.id, invite.id))
 
       joinedDeckIds.push(invite.deckId)
+      accepted.push({ kind: 'deck', id: invite.deckId, invitedBySub: invite.invitedBySub })
     } catch (err) {
       // Non-fatal — log and continue with the next invite. The user can
       // re-trigger by signing in again if any rows remain pending.
@@ -378,10 +380,24 @@ export async function consumePendingInvitesForEmail(
         .where(eq(folderInvites.id, invite.id))
 
       joinedFolderIds.push(invite.folderId)
+      accepted.push({ kind: 'folder', id: invite.folderId, invitedBySub: invite.invitedBySub })
     } catch (err) {
       log.warn({ id: invite.id, err }, 'failed to consume folder invite')
     }
   }
 
-  return { joinedDeckIds, joinedFolderIds }
+  return { joinedDeckIds, joinedFolderIds, accepted }
+}
+
+/** An invite turned into a role at sign-in, and who sent it. */
+export interface AcceptedInvite {
+  kind: 'deck' | 'folder'
+  id: string
+  invitedBySub: string
+}
+
+export interface ConsumedInvites {
+  joinedDeckIds: string[]
+  joinedFolderIds: string[]
+  accepted: AcceptedInvite[]
 }

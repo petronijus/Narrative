@@ -180,8 +180,12 @@ export interface DeckService {
     folderId?: string | undefined
   }): Promise<DuplicatedDeck>
   rename(args: { deckId: string; title: string }): Promise<DeckRecord>
-  /** Delete the deck, its document, permissions, share links and media (rows and storage). */
-  delete(args: { deckId: string }): Promise<void>
+  /**
+   * Delete the deck, its document, permissions, share links and media (rows
+   * and storage). `userId`: who deletes it — everyone else it was shared with
+   * is told by email.
+   */
+  delete(args: { deckId: string; userId?: string }): Promise<void>
   /**
    * Move decks from one folder to another — the user needs the owner role on
    * every deck and the editor role in both folders — copying the media each

@@ -87,6 +87,8 @@ export function scriptedDb(script: Script = {}): ScriptedDb {
       query(() => {
         if (fields !== undefined && 'adminProbe' in fields)
           return script.admin === true ? [{ adminProbe: true }] : []
+        // Who an email would go to (email/events.ts): nobody, unscripted.
+        if (fields !== undefined && 'notifyAudience' in fields) return []
         if (selects.length === 0)
           throw new Error('scriptedDb: no scripted result left for a select')
         return selects.shift()

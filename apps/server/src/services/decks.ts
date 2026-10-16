@@ -50,6 +50,7 @@ import { listDeckFontAssets } from '../media/assets.js'
 import { activeEditorsByDeck } from '../hocuspocus/presence.js'
 import { closeConnectionsForDocument, closeDeckConnections } from '../hocuspocus/connections.js'
 import type { ServiceDeps } from './deps.js'
+import { deckAudience, notifyDeleted } from '../email/events.js'
 import { badRequest, conflict, failed, forbidden, notFound } from './errors.js'
 import {
   containsIgnoringCase,
@@ -522,8 +523,10 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     return deckRecord(updated)
   }
 
-  async function remove(args: { deckId: string }): Promise<void> {
+  async function remove(args: { deckId: string; userId?: string }): Promise<void> {
     const id = args.deckId
+    // Who to tell, read before the rows cascade away.
+    const audience = await deckAudience(deps, id, args.userId)
     // Collect every storage key BEFORE the cascade removes the media_assets
     // rows. tus-uploaded originals live at a compound key outside the
     // decks/<id>/ prefix, so the prefix sweep alone would orphan them.
@@ -540,8 +543,9 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     const [deleted] = await db
       .delete(decks)
       .where(eq(decks.id, id))
-      .returning({ id: decks.id, folderId: decks.folderId })
+      .returning({ id: decks.id, folderId: decks.folderId, title: decks.title })
     if (!deleted) throw notFound('Deck not found')
+    notifyDeleted(deps, { actorId: args.userId, audience, kind: 'deck', title: deleted.title })
     // Nobody may keep the deck open, and its guests read its folder's token
     // document through it: close both, so everyone else reconnects and is
     // authorised again.

@@ -9,6 +9,9 @@
  *     — or, once they are an admin, everything. No email is sent.
  *   - "People": everyone who has signed in, and who is an admin.
  *
+ *   - "Emails": every kind of email Narrative sends, switched on or off for
+ *     the whole instance, with a preview (AdminEmails.tsx).
+ *
  * The server decides (every call answers 403 to anyone else); this page only
  * hides itself from people who are not admins. Reached from the user menu.
  */
@@ -18,6 +21,7 @@ import { useNavigate } from 'react-router-dom'
 import { ChevronLeft, Plus, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react'
 import { ApiError, useApi, type AdminUser, type AllowedEmail } from '../api/client.js'
 import { useAuth } from '../state/AuthContext.js'
+import { AdminEmails } from './AdminEmails.js'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -281,6 +285,8 @@ export function Admin() {
               </ul>
             )}
           </section>
+
+          <AdminEmails />
         </div>
       </main>
 

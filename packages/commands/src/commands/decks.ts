@@ -251,7 +251,7 @@ export const deckDelete = defineCommand({
   routes: [DELETE('/decks/:id')],
   examples: [{ title: 'Delete the deck', input: {} }],
   async handler(ctx) {
-    await requireServices(ctx).decks.delete({ deckId: targetDeckId(ctx) })
+    await requireServices(ctx).decks.delete({ deckId: targetDeckId(ctx), userId: ctx.actor.userId })
     return { deleted: true as const }
   },
 })

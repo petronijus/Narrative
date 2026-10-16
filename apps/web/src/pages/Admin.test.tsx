@@ -18,6 +18,9 @@ const api = {
   allowEmail: vi.fn(),
   removeAllowedEmail: vi.fn(),
   setUserAdmin: vi.fn(),
+  listEmailKinds: vi.fn(),
+  setEmailEnabled: vi.fn(),
+  previewEmail: vi.fn(),
 }
 
 vi.mock('../api/client', async (importOriginal) => ({
@@ -47,6 +50,25 @@ beforeEach(() => {
   api.allowEmail.mockResolvedValue({})
   api.removeAllowedEmail.mockResolvedValue(undefined)
   api.setUserAdmin.mockResolvedValue({})
+  api.listEmailKinds.mockResolvedValue([
+    {
+      kind: 'deleted',
+      label: 'Deck or folder deleted',
+      description: 'A shared deck or folder is deleted.',
+      recipient: 'Everyone else it was shared with',
+      group: 'Sharing',
+      enabled: true,
+    },
+  ])
+  api.setEmailEnabled.mockImplementation(async (kind: string, enabled: boolean) => ({
+    kind,
+    label: 'Deck or folder deleted',
+    description: 'A shared deck or folder is deleted.',
+    recipient: 'Everyone else it was shared with',
+    group: 'Sharing',
+    enabled,
+  }))
+  api.previewEmail.mockResolvedValue({ subject: 'Petr deleted the folder', html: '<p>hi</p>' })
 })
 
 describe('Admin', () => {
@@ -84,5 +106,23 @@ describe('Admin', () => {
     api.listAdminUsers.mockRejectedValue(new ApiError(403, 'Forbidden'))
     renderWithProviders(<Admin />)
     expect(await screen.findByText('Only admins can open this page.')).toBeTruthy()
+  })
+
+  it('turns a kind of email off with its switch, and shows its preview', async () => {
+    renderWithProviders(<Admin />)
+    const toggle = await screen.findByRole('switch', { name: /deck or folder deleted email on/i })
+    fireEvent.click(toggle)
+    await waitFor(() => expect(api.setEmailEnabled).toHaveBeenCalledWith('deleted', false))
+    expect(
+      await screen.findByRole('switch', { name: /deck or folder deleted email off/i }),
+    ).toHaveAttribute('aria-checked', 'false')
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /preview the deck or folder deleted email/i }),
+    )
+    await waitFor(() => expect(api.previewEmail).toHaveBeenCalledWith('deleted'))
+    const frame = await screen.findByTitle('Deck or folder deleted email preview')
+    expect(frame.getAttribute('srcdoc')).toBe('<p>hi</p>')
+    expect(frame.getAttribute('sandbox')).toBe('')
   })
 })

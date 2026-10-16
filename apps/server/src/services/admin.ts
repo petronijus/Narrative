@@ -18,7 +18,7 @@
 
 import { asc, desc, eq, sql } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { allowedEmails, users, type User } from '../db/schema.js'
+import { allowedEmails, emailSettings, users, type User } from '../db/schema.js'
 import { isInstanceAdmin } from '../auth/admin.js'
 import { getUserByEmail, getUserBySub } from '../auth/users.js'
 import type { AllowlistConfig } from '../auth/jwt.js'
@@ -27,6 +27,15 @@ import { signInGrant } from '../auth/signInPolicy.js'
 import { closeUserConnections } from '../hocuspocus/connections.js'
 import { endRenderSessions } from '../render/sessions.js'
 import type { ServiceDeps } from './deps.js'
+import { EMAIL_CATALOG, emailKindInfo, isEmailKind, type EmailKind } from '../email/catalog.js'
+import { appOrigin } from '../email/layout.js'
+import { notify } from '../email/notify.js'
+import { person } from '../email/events.js'
+import {
+  renderAdminGrantedEmail,
+  renderAdminRevokedEmail,
+  renderSignInAllowedEmail,
+} from '../email/templates/notices.js'
 import { badRequest, conflict, forbidden, notFound } from './errors.js'
 import { iso } from './shared.js'
 
@@ -67,6 +76,25 @@ export interface AdminService {
   removeAllowedEmail(args: { userId: string; email: string }): Promise<{ signedOut: boolean }>
   /** Make a user an admin or take the role away — never your own, so an admin always remains. */
   setAdmin(args: { userId: string; targetUserId: string; isAdmin: boolean }): Promise<AdminUser>
+  /** Every kind of email Narrative sends, and whether it is on. */
+  listEmails(args: { userId: string }): Promise<EmailKindSetting[]>
+  /** Turn one kind of email on or off for the whole instance. */
+  setEmailEnabled(args: {
+    userId: string
+    kind: string
+    enabled: boolean
+  }): Promise<EmailKindSetting>
+  /** One kind of email rendered with sample data, for the admin screen. */
+  previewEmail(args: { userId: string; kind: string }): Promise<{ subject: string; html: string }>
+}
+
+export interface EmailKindSetting {
+  kind: EmailKind
+  label: string
+  description: string
+  recipient: string
+  group: string
+  enabled: boolean
 }
 
 // RFC-5322-lite, as routes/sharing.ts; an address is checked once, here.
@@ -76,6 +104,18 @@ export function requireAllowableEmail(raw: string): string {
   const email = raw.trim().toLowerCase()
   if (email.length > 320 || !EMAIL.test(email)) throw badRequest('That is not an email address')
   return email
+}
+
+function setting(kind: EmailKind, enabled: boolean): EmailKindSetting {
+  const k = emailKindInfo(kind)
+  return {
+    kind,
+    label: k.label,
+    description: k.description,
+    recipient: k.recipient,
+    group: k.group,
+    enabled,
+  }
 }
 
 function adminUser(u: User): AdminUser {
@@ -155,12 +195,32 @@ export function createAdminService(deps: ServiceDeps, opts: AdminServiceOptions)
     async allowEmail({ userId, email: raw }) {
       await requireAdmin(userId)
       const email = requireAllowableEmail(raw)
-      await db
+      const inserted = await db
         .insert(allowedEmails)
         .values({ email, addedBySub: userId })
         .onConflictDoNothing({ target: allowedEmails.email })
+        .returning({ email: allowedEmails.email })
       audit('allow-email', { by: userId, email })
-      return allowedEmail(email)
+      const entry = await allowedEmail(email)
+      // A welcome for a new address nobody has signed in with yet.
+      if (inserted.length > 0 && (await getUserByEmail(db, email)) === null) {
+        void notify({
+          db,
+          log,
+          kind: 'sign-in-allowed',
+          to: email,
+          render: async () => {
+            const by = await getUserBySub(db, userId)
+            return by === null
+              ? null
+              : {
+                  ...renderSignInAllowedEmail({ to: email, origin: appOrigin(), by: person(by) }),
+                  replyTo: by.email,
+                }
+          },
+        })
+      }
+      return entry
     },
 
     async removeAllowedEmail({ userId, email: raw }) {
@@ -217,13 +277,59 @@ export function createAdminService(deps: ServiceDeps, opts: AdminServiceOptions)
           .set({ isAdmin })
           .where(eq(users.sub, targetUserId))
           .returning()
-        return { user: adminUser(updated!), demoted: target.isAdmin && !isAdmin }
+        return {
+          user: adminUser(updated!),
+          demoted: target.isAdmin && !isAdmin,
+          changed: target.isAdmin !== isAdmin,
+        }
       })
       // A demoted admin's open sockets still carry the owner role they
       // authenticated with (CONN-1): close them, they reconnect with their own.
       if (result.demoted) disconnect(targetUserId)
       audit(isAdmin ? 'make-admin' : 'remove-admin', { by: userId, target: targetUserId })
+      if (result.changed) {
+        void notify({
+          db,
+          log,
+          kind: isAdmin ? 'admin-granted' : 'admin-revoked',
+          to: result.user.email,
+          render: async () => {
+            const by = await getUserBySub(db, userId)
+            if (by === null) return null
+            const args = { to: result.user.email, origin: appOrigin(), by: person(by) }
+            return isAdmin ? renderAdminGrantedEmail(args) : renderAdminRevokedEmail(args)
+          },
+        })
+      }
       return result.user
+    },
+
+    async listEmails({ userId }) {
+      await requireAdmin(userId)
+      const rows = await db.select().from(emailSettings)
+      const off = new Set(rows.filter((r) => !r.enabled).map((r) => r.kind))
+      return EMAIL_CATALOG.map((k) => setting(k.kind, !off.has(k.kind)))
+    },
+
+    async setEmailEnabled({ userId, kind, enabled }) {
+      await requireAdmin(userId)
+      if (!isEmailKind(kind)) throw notFound('No such kind of email')
+      await db
+        .insert(emailSettings)
+        .values({ kind, enabled, updatedBySub: userId })
+        .onConflictDoUpdate({
+          target: emailSettings.kind,
+          set: { enabled, updatedBySub: userId, updatedAt: new Date() },
+        })
+      audit(enabled ? 'email-on' : 'email-off', { by: userId, kind })
+      return setting(kind, enabled)
+    },
+
+    async previewEmail({ userId, kind }) {
+      await requireAdmin(userId)
+      if (!isEmailKind(kind)) throw notFound('No such kind of email')
+      const { subject, html } = emailKindInfo(kind).preview(appOrigin())
+      return { subject, html }
     },
   }
 }

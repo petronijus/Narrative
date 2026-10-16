@@ -585,6 +585,19 @@ export const allowedEmails = pgTable('allowed_emails', {
 })
 
 // ---------------------------------------------------------------------------
+// email_settings — which kinds of email Narrative sends (email/catalog.ts),
+// switched by instance admins. No row = on.
+// ---------------------------------------------------------------------------
+
+export const emailSettings = pgTable('email_settings', {
+  /** An `EmailKind` (email/catalog.ts). */
+  kind: text('kind').primaryKey(),
+  enabled: boolean('enabled').notNull(),
+  updatedBySub: text('updated_by_sub').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+})
+
+// ---------------------------------------------------------------------------
 // sessions — server-side opaque session rows (replaces browser-PKCE flow).
 // ---------------------------------------------------------------------------
 

@@ -185,11 +185,21 @@ export function looksLikeConfirmationId(value: unknown): value is string {
   return typeof value === 'string' && ID_PATTERN.test(value)
 }
 
+/** How long a confirmation waits unanswered before its person is emailed. */
+export const UNANSWERED_AFTER_MS = 2 * 60_000
+
 export interface AgentConfirmationsOptions {
   now?: () => number
   ttlMs?: number
   maxPendingPerUser?: number
   maxTotal?: number
+  /**
+   * Called once for a confirmation still pending `unansweredAfterMs` after it
+   * was created (and not expired): the person may be away from the client
+   * that asked — the server emails them the link.
+   */
+  onUnanswered?: (record: ConfirmationRecord) => void
+  unansweredAfterMs?: number
 }
 
 export class AgentConfirmations {
@@ -199,8 +209,12 @@ export class AgentConfirmations {
   private readonly ttlMs: number
   private readonly maxPendingPerUser: number
   private readonly maxTotal: number
+  private readonly onUnanswered: ((record: ConfirmationRecord) => void) | undefined
+  private readonly unansweredAfterMs: number
 
   constructor(opts: AgentConfirmationsOptions = {}) {
+    this.onUnanswered = opts.onUnanswered
+    this.unansweredAfterMs = opts.unansweredAfterMs ?? UNANSWERED_AFTER_MS
     this.now = opts.now ?? Date.now
     this.ttlMs = opts.ttlMs ?? CONFIRMATION_TTL_MS
     this.maxPendingPerUser = opts.maxPendingPerUser ?? MAX_PENDING_PER_USER
@@ -268,6 +282,15 @@ export class AgentConfirmations {
       usedAt: null,
     }
     this.records.set(record.id, record)
+    if (this.onUnanswered !== undefined) {
+      const onUnanswered = this.onUnanswered
+      const timer = setTimeout(() => {
+        const r = this.records.get(record.id)
+        if (r !== undefined && r.status === 'pending' && !this.expired(r))
+          onUnanswered(structuredClone(r))
+      }, this.unansweredAfterMs)
+      timer.unref?.()
+    }
     return record
   }
 

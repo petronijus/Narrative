@@ -56,7 +56,8 @@ import {
 import { getUserByEmail, getUserBySub } from '../auth/users.js'
 import { closeUserFolderConnections } from '../hocuspocus/connections.js'
 import { endRenderSessions } from '../render/sessions.js'
-import { sendEmail } from '../email/client.js'
+import { notify } from '../email/notify.js'
+import { notifyAccessRemoved } from '../email/events.js'
 import { renderFolderInviteEmail, type EmailAccess } from '../email/templates/deckInvite.js'
 import type { ServiceDeps } from './deps.js'
 import { conflict, forbidden, notFound } from './errors.js'
@@ -242,15 +243,19 @@ export function createFolderSharingService(deps: ServiceDeps): FolderSharingServ
     inviterSub: string,
     access: EmailAccess = 'invite',
   ) {
-    void (async () => {
-      try {
+    void notify({
+      db,
+      log: deps.log,
+      kind: 'folder-shared',
+      to: email,
+      render: async () => {
         const [folderRow] = await db
           .select({ name: folders.name })
           .from(folders)
           .where(eq(folders.id, folderId))
           .limit(1)
         const inviter = await getUserBySub(db, inviterSub)
-        if (!folderRow || !inviter) return
+        if (!folderRow || !inviter) return null
         // Its three most recently changed decks, and how many there are.
         const recent = await db
           .select({ title: decks.title, thumbnailKey: decks.thumbnailKey })
@@ -262,26 +267,26 @@ export function createFolderSharingService(deps: ServiceDeps): FolderSharingServ
           .select({ n: sql<number>`cast(count(*) as int)` })
           .from(decks)
           .where(eq(decks.folderId, folderId))
-        const { subject, html, text } = renderFolderInviteEmail({
-          recipientEmail: email.toLowerCase(),
-          folderName: folderRow.name,
-          inviterName: inviter.name ?? inviter.email,
-          inviterEmail: inviter.email,
-          role,
-          signInUrl: inviteSignInUrl(`/folder/${folderId}`),
-          access,
-          appOrigin: appOrigin(),
-          decks: recent.map((d) => ({
-            title: d.title,
-            previewUrl: emailThumbnailUrl(d.thumbnailKey),
-          })),
-          deckCount: counted?.n ?? recent.length,
-        })
-        await sendEmail({ to: email.toLowerCase(), subject, html, text, replyTo: inviter.email })
-      } catch (err) {
-        deps.log.warn({ err, folderId, email }, '[invite] folder invitation email failed')
-      }
-    })()
+        return {
+          ...renderFolderInviteEmail({
+            recipientEmail: email.toLowerCase(),
+            folderName: folderRow.name,
+            inviterName: inviter.name ?? inviter.email,
+            inviterEmail: inviter.email,
+            role,
+            signInUrl: inviteSignInUrl(`/folder/${folderId}`),
+            access,
+            appOrigin: appOrigin(),
+            decks: recent.map((d) => ({
+              title: d.title,
+              previewUrl: emailThumbnailUrl(d.thumbnailKey),
+            })),
+            deckCount: counted?.n ?? recent.length,
+          }),
+          replyTo: inviter.email,
+        }
+      },
+    })
   }
 
   async function listMembers(args: {
@@ -362,8 +367,18 @@ export function createFolderSharingService(deps: ServiceDeps): FolderSharingServ
     folderId: string
     memberId: string
   }): Promise<void> {
-    await requireOwner(args.folderId, args.userId)
-    await changeMembership(args.folderId, args.userId, args.memberId, { kind: 'remove' })
+    const folder = await requireOwner(args.folderId, args.userId)
+    const was = await changeMembership(args.folderId, args.userId, args.memberId, {
+      kind: 'remove',
+    })
+    if (was !== null)
+      notifyAccessRemoved(deps, {
+        actorId: args.userId,
+        memberId: args.memberId,
+        kind: 'folder',
+        title: folder.name,
+        role: was,
+      })
   }
 
   async function listInvites(args: { userId: string; folderId: string }): Promise<PendingInvite[]> {

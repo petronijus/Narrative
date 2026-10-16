@@ -159,6 +159,9 @@ export interface ApiClient {
   allowEmail(email: string): Promise<AllowedEmail>
   /** `signedOut`: nothing else admitted them, so their sessions were ended. */
   removeAllowedEmail(email: string): Promise<{ signedOut: boolean }>
+  listEmailKinds(): Promise<EmailKindSetting[]>
+  setEmailEnabled(kind: string, enabled: boolean): Promise<EmailKindSetting>
+  previewEmail(kind: string): Promise<{ subject: string; html: string }>
   /**
    * Bulk-move decks from srcFolderId to destFolderId: the caller owns every
    * deck and is an editor of both folders; the decks must live in
@@ -738,6 +741,16 @@ export interface AllowedEmail {
   signedIn: boolean
 }
 
+/** One kind of email Narrative sends, and whether admins left it on. */
+export interface EmailKindSetting {
+  kind: string
+  label: string
+  description: string
+  recipient: string
+  group: string
+  enabled: boolean
+}
+
 /** A refused request, with the status and the server's own explanation (`{ error }`). */
 export class ApiError extends Error {
   constructor(
@@ -1047,6 +1060,23 @@ export function createApiClient(): ApiClient {
       if (!res.ok) throw await apiError(res)
       return res.json() as Promise<{ signedOut: boolean }>
     },
+
+    listEmailKinds: () => requestJson<EmailKindSetting[]>('/admin/emails'),
+
+    setEmailEnabled: async (kind, enabled) => {
+      const res = await request(`/admin/emails/${encodeURIComponent(kind)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      })
+      if (!res.ok) throw await apiError(res)
+      return res.json() as Promise<EmailKindSetting>
+    },
+
+    previewEmail: (kind) =>
+      requestJson<{ subject: string; html: string }>(
+        `/admin/emails/${encodeURIComponent(kind)}/preview`,
+      ),
 
     cancelFolderInvite: async (folderId, inviteId) => {
       const res = await request(`/folders/${folderId}/invites/${inviteId}`, { method: 'DELETE' })

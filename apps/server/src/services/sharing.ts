@@ -29,7 +29,8 @@ import { closeDeckConnections, closeUserConnectionsOnDocument } from '../hocuspo
 import { endRenderSessions } from '../render/sessions.js'
 import { createInvite, listPendingInvitesForDeck, revokeInvite } from '../auth/invites.js'
 import { getUserByEmail, getUserBySub, listUsersBySubs } from '../auth/users.js'
-import { sendEmail } from '../email/client.js'
+import { notify } from '../email/notify.js'
+import { deckRoleBefore, notifyAccessRemoved } from '../email/events.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import type { EmailAccess } from '../email/templates/deckInvite.js'
 import { renderDeckInviteEmail } from '../email/templates/deckInvite.js'
@@ -130,39 +131,36 @@ export function createSharingService(deps: ServiceDeps): SharingService {
     inviterSub: string,
     access: EmailAccess = 'invite',
   ) {
-    void (async () => {
-      try {
+    void notify({
+      db,
+      log: deps.log,
+      kind: 'deck-shared',
+      to: email,
+      render: async () => {
         const [deckRow] = await db
           .select({ title: decks.title, thumbnailKey: decks.thumbnailKey })
           .from(decks)
           .where(eq(decks.id, deckId))
           .limit(1)
         const inviter = await getUserBySub(db, inviterSub)
-        if (!deckRow || !inviter) return
-        const signInUrl = inviteSignInUrl(`/deck/${deckId}`)
-        const { subject, html, text } = renderDeckInviteEmail({
-          recipientEmail: email.toLowerCase(),
-          deckTitle: deckRow.title,
-          inviterName: inviter.name ?? inviter.email,
-          inviterEmail: inviter.email,
-          role,
-          signInUrl,
-          access,
-          appOrigin: appOrigin(),
-          previewUrl: emailThumbnailUrl(deckRow.thumbnailKey),
-        })
-        await sendEmail({
-          to: email.toLowerCase(),
-          subject,
-          html,
-          text,
+        if (!deckRow || !inviter) return null
+        return {
+          ...renderDeckInviteEmail({
+            recipientEmail: email.toLowerCase(),
+            deckTitle: deckRow.title,
+            inviterName: inviter.name ?? inviter.email,
+            inviterEmail: inviter.email,
+            role,
+            signInUrl: inviteSignInUrl(`/deck/${deckId}`),
+            access,
+            appOrigin: appOrigin(),
+            previewUrl: emailThumbnailUrl(deckRow.thumbnailKey),
+          }),
           // Replies reach the actual inviter, not a noreply mailbox.
           replyTo: inviter.email,
-        })
-      } catch (err) {
-        deps.log.warn({ err, deckId, email }, '[invite] email send failed')
-      }
-    })()
+        }
+      },
+    })
   }
 
   async function listPermissionsWithUsers(args: { deckId: string }): Promise<PermissionEntry[]> {
@@ -254,7 +252,19 @@ export function createSharingService(deps: ServiceDeps): SharingService {
     if (owners.some((o) => o.userId === userId) && owners.length <= 1) {
       throw conflict('Cannot revoke the last owner — assign another owner first.')
     }
+    const was = await deckRoleBefore(deps, deckId, userId)
     await revokePermission(db, { deckId, userId })
+    if (was !== null)
+      notifyAccessRemoved(deps, {
+        actorId: callerUserId,
+        memberId: userId,
+        kind: 'deck',
+        role: was,
+        title: async () =>
+          (
+            await db.select({ title: decks.title }).from(decks).where(eq(decks.id, deckId)).limit(1)
+          )[0]?.title ?? null,
+      })
     // CONN-1: kick the revoked user's live connections on this deck, and on
     // its folder's token document when this deck was what let them read it —
     // and their render sessions' pages (render/sessions.ts).

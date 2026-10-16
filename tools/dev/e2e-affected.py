@@ -299,6 +299,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/routes/admin.ts", ACCESS),
     ("apps/server/src/services/admin.ts", ACCESS),
     ("apps/server/src/email/*", ACCESS),
+    ("apps/server/src/email/templates/*", ACCESS),
+    ("apps/web/src/pages/AdminEmails.tsx", ACCESS),
     ("apps/server/src/services/shared.ts", ACCESS + TOKENS + COMPONENTS),
     ("apps/server/src/services/folders.ts", ACCESS + ["folder-font-preview"]),
     ("apps/server/src/services/decks.ts", ACCESS + ["slide-duplicate"]),

@@ -75,7 +75,9 @@ describe('AdminService', () => {
       addedBy: 'a@example.com',
       signedIn: false,
     }
-    const { service: s, db } = service({ selects: [[{ isAdmin: true }], [entry]] })
+    // Admin check, the entry; then nobody signed in with it yet — the
+    // welcome email's own reads are unscripted and fail quietly.
+    const { service: s, db } = service({ selects: [[{ isAdmin: true }], [entry], []] })
     await expect(s.allowEmail({ userId: 'admin', email: 'New@Example.com' })).resolves.toEqual({
       ...entry,
       addedAt: T.toISOString(),

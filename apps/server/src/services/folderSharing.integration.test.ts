@@ -119,8 +119,12 @@ async function owners() {
 }
 
 /** Let the fire-and-forget invitation email finish. */
-async function settleEmail() {
-  await vi.waitFor(() => expect(sendEmail).toHaveBeenCalled())
+async function settleEmail(to?: string) {
+  await vi.waitFor(() =>
+    to === undefined
+      ? expect(sendEmail).toHaveBeenCalled()
+      : expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to })),
+  )
 }
 
 describe('folder sharing', () => {
@@ -193,6 +197,8 @@ describe('folder sharing', () => {
     ).rejects.toMatchObject({ code: 'not_found' })
     expect(await roleOf(loner)).toBeNull()
     await service.removeMember({ userId: owner, folderId: folder, memberId: coOwner })
+    // Removing someone emails them (email/events.ts): let it land here.
+    await settleEmail(email(coOwner))
   })
 
   it('an unknown address gets a pending invite and one email; a new role emails again', async () => {
@@ -206,7 +212,7 @@ describe('folder sharing', () => {
       kind: 'pending',
       invite: { email: email(newcomer), role: 'viewer', replaced: false },
     })
-    await settleEmail()
+    await settleEmail(email(newcomer))
     expect(sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
         to: email(newcomer),

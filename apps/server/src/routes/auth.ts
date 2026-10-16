@@ -47,6 +47,7 @@ import {
 } from '../auth/session.js'
 import { upsertUser } from '../auth/users.js'
 import { bootstrapAdmin, isInstanceAdmin } from '../auth/admin.js'
+import { notifyInvitesAccepted } from '../email/events.js'
 import { consumePendingInvitesForEmail } from '../auth/invites.js'
 
 // ---------------------------------------------------------------------------
@@ -347,11 +348,15 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
     // Convert any pending deck invites for this email into real permissions.
     // Non-fatal — failure here doesn't block login.
     try {
-      await consumePendingInvitesForEmail(db, {
+      const consumed = await consumePendingInvitesForEmail(db, {
         email: userPayload.email,
         sub: userPayload.sub,
         emailVerified: userPayload.emailVerified === true,
       })
+      notifyInvitesAccepted(
+        { db, log: request.log },
+        { whoSub: userPayload.sub, accepted: consumed.accepted },
+      )
     } catch (err) {
       request.log.warn({ err }, '[auth] invite consumption failed')
     }

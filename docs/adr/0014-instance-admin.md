@@ -71,6 +71,8 @@ sign in at all meant editing `OIDC_ALLOWED_EMAILS` on the production VM.
   admin manages a folder's members like its owners do.
 - Admin actions are logged (`audit: 'admin'` log lines: allow, remove, make,
   remove admin).
+- Admins also switch each kind of email on or off for the instance and
+  preview it (Administration → Emails, [`docs/email.md`](../email.md)).
 - `resolveFolderAccess` costs one more indexed lookup for a non-owner caller.
   Tests that script the database answer it from `scriptedDb({ admin })`
   (the `adminProbe` select key) without consuming a scripted result.

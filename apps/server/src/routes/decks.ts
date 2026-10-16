@@ -287,6 +287,7 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
       try {
         await createDecksService(routeDeps(app, db, request.log)).delete({
           deckId: request.params.id,
+          userId: request.user!.sub,
         })
         return reply.status(204).send()
       } catch (err) {

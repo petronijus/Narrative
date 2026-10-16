@@ -10,6 +10,9 @@
  *                                          (409 for yourself or the last admin)
  *   GET    /admin/allowed-emails       → the addresses an admin allowed
  *   POST   /admin/allowed-emails       → { email } allow an address (idempotent)
+ *   GET    /admin/emails               → every kind of email, and whether it is on
+ *   PATCH  /admin/emails/:kind         → { enabled } turn a kind on or off
+ *   GET    /admin/emails/:kind/preview → { subject, html } with sample data
  *   DELETE /admin/allowed-emails/:email → take an address off the list,
  *                                          { signedOut } when nothing else admits them
  *
@@ -39,6 +42,15 @@ const allowSchema = {
     properties: {
       email: { type: 'string', minLength: 3, maxLength: 320, pattern: EMAIL_PATTERN },
     },
+  },
+}
+
+const emailEnabledSchema = {
+  body: {
+    type: 'object',
+    required: ['enabled'],
+    additionalProperties: false,
+    properties: { enabled: { type: 'boolean' } },
   },
 }
 
@@ -119,6 +131,49 @@ export async function registerAdminRoutes(
           await service(request.log).removeAllowedEmail({
             userId: request.user!.sub,
             email: request.params.email,
+          }),
+        )
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
+    },
+  )
+
+  app.get('/admin/emails', { preHandler: authPreHandler }, async (request, reply) => {
+    try {
+      return reply.send(await service(request.log).listEmails({ userId: request.user!.sub }))
+    } catch (err) {
+      return sendServiceError(reply, err)
+    }
+  })
+
+  app.patch<{ Params: { kind: string }; Body: { enabled: boolean } }>(
+    '/admin/emails/:kind',
+    { schema: emailEnabledSchema, preHandler: [requireSameOrigin, authPreHandler] },
+    async (request, reply) => {
+      try {
+        return reply.send(
+          await service(request.log).setEmailEnabled({
+            userId: request.user!.sub,
+            kind: request.params.kind,
+            enabled: request.body.enabled,
+          }),
+        )
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
+    },
+  )
+
+  app.get<{ Params: { kind: string } }>(
+    '/admin/emails/:kind/preview',
+    { preHandler: authPreHandler },
+    async (request, reply) => {
+      try {
+        return reply.send(
+          await service(request.log).previewEmail({
+            userId: request.user!.sub,
+            kind: request.params.kind,
           }),
         )
       } catch (err) {

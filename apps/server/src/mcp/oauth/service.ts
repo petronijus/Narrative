@@ -805,7 +805,10 @@ export class McpOAuthService {
     userSub: string,
     csrfToken: string,
     approve: boolean,
-  ): Promise<{ redirectTo: string }> {
+  ): Promise<{
+    redirectTo: string
+    connected: { clientName: string; redirectUri: string } | null
+  }> {
     const a = id.length > 0 && id.length <= 64 ? await this.store.getAuthorization(id) : null
     if (a === null || a.userSub !== userSub || !hashesEqual(a.csrfHash, hashSecret(csrfToken))) {
       throw new OAuthError(
@@ -843,7 +846,12 @@ export class McpOAuthService {
     }
     if (a.state !== null) url.searchParams.set('state', a.state)
     url.searchParams.set('iss', this.config.issuer)
-    return { redirectTo: url.toString() }
+    return {
+      redirectTo: url.toString(),
+      connected: approve
+        ? { clientName: a.clientName ?? a.clientId, redirectUri: a.redirectUri }
+        : null,
+    }
   }
 
   /** The error redirect for a request that failed validation after its redirect URI was trusted. */

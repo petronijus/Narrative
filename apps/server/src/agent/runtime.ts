@@ -36,6 +36,7 @@ import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { EXPORT_SWEEP_INTERVAL_MS, sweepExpiredExports } from '../services/exportSweep.js'
 import { RunManager } from '../services/runs.js'
 import { createDbAccess, type AgentAccess } from './access.js'
+import { notifyAgentConfirmation } from '../email/events.js'
 import { createAgentDocuments, type AgentDocuments } from './documents.js'
 import { createAgentPresence, type AgentPresence, type AgentPrincipalKeys } from './presence.js'
 import { createDrizzleRunStore, type RunStore } from './runStore.js'
@@ -279,7 +280,22 @@ export async function createAgentRuntime(opts: AgentRuntimeOptions): Promise<Age
     ...(opts.apiBaseUrl === undefined ? {} : { apiBaseUrl: opts.apiBaseUrl }),
     ...(opts.uploadSessions === undefined ? {} : { uploadSessions: opts.uploadSessions }),
   })
-  const confirmations = new AgentConfirmations()
+  // A confirmation nobody answers within minutes reaches its person by email
+  // (the email kind can be switched off in the admin screen).
+  const confirmations = new AgentConfirmations({
+    onUnanswered: (r) =>
+      notifyAgentConfirmation(
+        { db: opts.db, log: opts.log },
+        {
+          userSub: r.userId,
+          confirmationId: r.id,
+          agent: r.summary.clientName,
+          action: r.summary.title,
+          target: r.summary.target.label,
+          expiresAt: r.expiresAt,
+        },
+      ),
+  })
   const host = new ServerHost({
     registry,
     access: opts.access ?? createDbAccess(opts.db),

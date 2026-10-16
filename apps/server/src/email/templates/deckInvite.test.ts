@@ -20,7 +20,7 @@ describe('renderDeckInviteEmail', () => {
   it('announces a pending invite that expires', () => {
     const m = renderDeckInviteEmail({ ...base, deckTitle: 'Pitch' })
     expect(m.subject).toBe('Petr shared "Pitch" with you on Narrative')
-    expect(m.html).toContain('You&rsquo;re invited to')
+    expect(m.html).toContain('You’re invited to')
     expect(m.text).toContain('The invite expires in 30 days.')
     expect(m.text).toContain('Role:  Editor — You can edit its slides, text and animations.')
   })

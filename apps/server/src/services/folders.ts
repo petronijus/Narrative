@@ -36,6 +36,7 @@ import {
 } from '../media/assets.js'
 import { parseFontMetadata } from '../media/fontMetadata.js'
 import type { ServiceDeps } from './deps.js'
+import { folderAudience, notifyDeleted } from '../email/events.js'
 import { seedNewFolder } from './tokens.js'
 import { badRequest, conflict, failed, notFound, unprocessable } from './errors.js'
 import {
@@ -377,6 +378,8 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
     const id = args.folderId
     const existing = await requireFolderRole(db, id, args.userId, 'owner', { bypass: deps.bypass })
     if (existing.isDrafts) throw conflict('cannot_delete_drafts')
+    // Who to tell, read before the rows cascade away.
+    const audience = await folderAudience(deps, id, args.userId)
 
     // Capture deck ids so MinIO blobs can be swept after the cascade.
     const containedDecks = await db
@@ -448,6 +451,13 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
     await Promise.all([sweepPrefixes(), purgeUnreferencedKeys(db, explicitKeys, deps.log)])
     // What was too young to sweep (a transcode or a copy still writing).
     sweepAgainAfterGrace(sweepPrefixes, deps.log, { folderId: id })
+    notifyDeleted(deps, {
+      actorId: args.userId,
+      audience,
+      kind: 'folder',
+      title: existing.name,
+      deckCount: containedDecks.length,
+    })
     return { deletedDeckCount: containedDecks.length }
   }
 
