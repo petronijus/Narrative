@@ -154,11 +154,23 @@ test.describe('text edit overlay alignment', () => {
           },
           { id, slideId, align, vAlign },
         )
-        await page.waitForTimeout(400)
 
         // Probe Pixi BEFORE entering edit mode — that's where the
-        // ground-truth rendered-text position lives.
-        const probe = await probeTextNode(page, id)
+        // ground-truth rendered-text position lives. Wait until it shows the
+        // new alignment (the deck starts top-aligned, so middle and bottom
+        // move the text down) and holds still: a fixed wait was too short
+        // under load, in WebKit most of all.
+        let probe: TextNodeProbe | null = null
+        await expect
+          .poll(async () => {
+            const a = await probeTextNode(page, id)
+            await page.waitForTimeout(150)
+            const b = await probeTextNode(page, id)
+            if (a === null || b === null || Math.abs(a.textNodeY - b.textNodeY) > 0.5) return false
+            probe = b
+            return vAlign === 'top' || b.textNodeY > 5
+          })
+          .toBe(true)
         if (probe === null) throw new Error('SceneGraph probe failed')
         const pixiTextTop = probe.pageY + probe.textNodeY
 

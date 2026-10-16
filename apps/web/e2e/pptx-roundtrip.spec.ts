@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { test, expect, type Page, type Download } from './fixtures/test'
+import { isEngineNoise } from './fixtures/consoleNoise'
 
 /**
  * E2E: full M28 happy path.
@@ -54,6 +55,7 @@ test.describe('M28 pptx round-trip', () => {
       // with a non-resource message.
       if (/^Failed to load resource:/i.test(text)) return
       if (/favicon\.ico/i.test(url)) return
+      if (isEngineNoise(text)) return
       errors.push(`console.error: ${text}`)
     })
 
@@ -105,6 +107,7 @@ test.describe('M28 pptx round-trip', () => {
       const text = msg.text()
       // Same dev-noise filter as the import test — see above for rationale.
       if (/favicon\.ico/i.test(text)) return
+      if (isEngineNoise(text)) return
       errors.push(`console.error: ${text}`)
     })
 

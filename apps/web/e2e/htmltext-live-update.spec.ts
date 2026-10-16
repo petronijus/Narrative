@@ -195,21 +195,22 @@ test.describe('Pixi HTMLText live update during inline edit', () => {
     await page.evaluate((id) => {
       window.__narrative_test_api!.updateObject(id, { text: 'World' })
     }, TEXT_OBJ_ID)
-    await page.waitForTimeout(300)
-
-    const afterWorld = await readPixiText(page, TEXT_OBJ_ID)
-    console.log('[after updateObject(World)]:', afterWorld)
-    expect(afterWorld, 'textNode.text must update to World after Y.Text mutation').toBe('World')
+    // The reconciler applies it on its next frame; poll rather than guess a wait.
+    await expect
+      .poll(() => readPixiText(page, TEXT_OBJ_ID), {
+        message: 'textNode.text must update to World after Y.Text mutation',
+      })
+      .toBe('World')
 
     // Mutate to 'live update test'
     await page.evaluate((id) => {
       window.__narrative_test_api!.updateObject(id, { text: 'live update test' })
     }, TEXT_OBJ_ID)
-    await page.waitForTimeout(300)
-
-    const afterLive = await readPixiText(page, TEXT_OBJ_ID)
-    console.log('[after updateObject(live update test)]:', afterLive)
-    expect(afterLive, 'textNode.text must update to typed text').toBe('live update test')
+    await expect
+      .poll(() => readPixiText(page, TEXT_OBJ_ID), {
+        message: 'textNode.text must update to typed text',
+      })
+      .toBe('live update test')
   })
 
   // ── Test 2: visual rendering ─────────────────────────────────────────────

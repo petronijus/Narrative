@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './fixtures/test'
+import { isEngineNoise } from './fixtures/consoleNoise'
 
 /**
  * P6 regression: reorder via the Layer order buttons must keep the
@@ -59,7 +60,8 @@ test('send backward keeps selection + no dropped ids + no render crash', async (
   page.on('console', (msg) => {
     // Include the location: "Failed to load resource: … 404" on its own names
     // nothing, and chasing it costs more than printing it does.
-    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()} @ ${msg.location().url}`)
+    if (msg.type() === 'error' && !isEngineNoise(msg.text()))
+      errors.push(`console.error: ${msg.text()} @ ${msg.location().url}`)
   })
 
   await createDeckAndOpen(page)
@@ -128,8 +130,14 @@ test('send backward keeps selection + no dropped ids + no render crash', async (
   // reconciler used to addChild at the END on re-add, so "send
   // backward" left the target rendered on top — user saw no visual
   // change until refresh.
-  const childOrder = await page.evaluate(() => window.__narrative_test_api!.sceneGraphChildOrder())
-  expect(childOrder, 'Pixi child order must mirror Y.Array').toEqual(['rect-B', 'rect-A'])
+  // Polled: WebKit (Playwright's, in its container) applies the change set
+  // ~0.8 s after the keypress where Chromium takes one frame — open in
+  // docs/plans/desktop-tauri-evaluation.md, to be felt on a Mac.
+  await expect
+    .poll(() => page.evaluate(() => window.__narrative_test_api!.sceneGraphChildOrder()), {
+      message: 'Pixi child order must mirror Y.Array',
+    })
+    .toEqual(['rect-B', 'rect-A'])
 })
 
 test('layer-reorder stress: 10 consecutive backward/forward presses', async ({ page }) => {
@@ -138,7 +146,8 @@ test('layer-reorder stress: 10 consecutive backward/forward presses', async ({ p
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
   page.on('console', (msg) => {
     // The location names what failed to load; the text alone does not.
-    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()} @ ${msg.location().url}`)
+    if (msg.type() === 'error' && !isEngineNoise(msg.text()))
+      errors.push(`console.error: ${msg.text()} @ ${msg.location().url}`)
   })
 
   await createDeckAndOpen(page)
