@@ -11,8 +11,13 @@
  * rectangle `lock1`, a heading `hd1` linked to the "Title" text style (its
  * size set by hand), a 2x3 table `tbl2` whose top row is one merged cell, a
  * line `ln1` from (100, 900) to (500, 900) and an open path `pa1` (a curved
- * stroke through (1200, 800), (1400, 700), (1600, 800)); `s3` is empty; a
- * deck guide `gd1`.
+ * stroke through (1200, 800), (1400, 700), (1600, 800)) and a stamp of the
+ * fake services' `cmp_headline` (instance `stamp_headline`, moved by
+ * (+600, +520) from where the master draws it): its bar `st_bar`, its title
+ * slot `st_title` ("Q3 revenue", not yet bold like the master's) and
+ * `st_old`, the copy of a master object `m_old` the master no longer has —
+ * it lacks a copy of the master's subtitle, so a restamp updates two objects,
+ * adds one and removes one; `s3` is empty; a deck guide `gd1`.
  *
  * Add to it when a new command needs something to act on; never rename.
  */
@@ -232,6 +237,33 @@ export function createFixtureDeck(): DeckMutationContext {
     strokeWidth: 3,
   }
   addObjects(s2, [line, path])
+
+  // A stamp of cmp_headline (fakeDomainServices.ts fixtureComponentState).
+  const stamped = (objectId: string, origin: { x: number; y: number }) => ({
+    component: { id: 'cmp_headline', objectId, instance: 'stamp_headline', origin },
+  })
+  const stampTitle: TextObject = {
+    ...text,
+    id: 'st_title',
+    name: 'title',
+    x: 720,
+    y: 610,
+    width: 1200,
+    height: 64 * 1.4,
+    text: 'Q3 revenue',
+    fontSize: 64,
+    ...stamped('m_title', { x: 120, y: 90 }),
+  }
+  addObjects(s2, [
+    rect('st_bar', 720, 580, {
+      width: 80,
+      height: 8,
+      fill: 0xe0301e,
+      ...stamped('m_bar', { x: 120, y: 60 }),
+    }),
+    stampTitle,
+    rect('st_old', 720, 700, { width: 400, height: 4, ...stamped('m_old', { x: 120, y: 180 }) }),
+  ])
 
   const guides = getDeckGuidesCtx(deck.doc)
   const guideId = addGuide(guides, 'vertical', 960)

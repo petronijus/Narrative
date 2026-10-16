@@ -2,12 +2,12 @@
  * ui/UserMenu.tsx
  *
  * The signed-in user's menu in the dashboard headers (FoldersHome,
- * FolderDecks): who is signed in, account settings (Access tokens) and
- * sign-out. Renders nothing while signed out.
+ * FolderDecks): who is signed in, account settings (Access tokens), the
+ * admin screen (admins only) and sign-out. Renders nothing while signed out.
  */
 
 import { useNavigate } from 'react-router-dom'
-import { ChevronDown, KeyRound, LogOut } from 'lucide-react'
+import { ChevronDown, KeyRound, LogOut, ShieldCheck } from 'lucide-react'
 import { useAuth } from '../state/AuthContext.js'
 import { Button } from '@/components/ui/button'
 import {
@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 export const ACCESS_TOKENS_PATH = '/settings/access-tokens'
+export const ADMIN_PATH = '/admin'
 
 export function UserMenu() {
   const navigate = useNavigate()
@@ -53,6 +54,12 @@ export function UserMenu() {
           <KeyRound className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
           Access tokens
         </DropdownMenuItem>
+        {user.isAdmin === true && (
+          <DropdownMenuItem action="account.admin" onSelect={() => void navigate(ADMIN_PATH)}>
+            <ShieldCheck className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
+            Administration
+          </DropdownMenuItem>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem action="account.signOut" onSelect={() => void logout()}>
           <LogOut className="mr-2 h-3.5 w-3.5" aria-hidden="true" />

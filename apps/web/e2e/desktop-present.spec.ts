@@ -1,5 +1,5 @@
 /**
- * The presentation's Display choice in the desktop app (ADR 0014 decision
+ * The presentation's Display choice in the desktop app (ADR 0015 decision
  * 8; apps/web/src/present/): the shell grants window management to its
  * server, so the choice is offered; on a machine with one display it says
  * so instead of listing one. Needs the dev stack (`just dev`).

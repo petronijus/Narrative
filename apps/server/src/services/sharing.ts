@@ -29,7 +29,10 @@ import { closeDeckConnections, closeUserConnectionsOnDocument } from '../hocuspo
 import { endRenderSessions } from '../render/sessions.js'
 import { createInvite, listPendingInvitesForDeck, revokeInvite } from '../auth/invites.js'
 import { getUserByEmail, getUserBySub, listUsersBySubs } from '../auth/users.js'
-import { sendEmail } from '../email/client.js'
+import { notify } from '../email/notify.js'
+import { deckRoleBefore, notifyAccessRemoved } from '../email/events.js'
+import { signImgproxyUrl } from '../media/imgproxyUrl.js'
+import type { EmailAccess } from '../email/templates/deckInvite.js'
 import { renderDeckInviteEmail } from '../email/templates/deckInvite.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, conflict, notFound } from './errors.js'
@@ -52,11 +55,26 @@ export function requireInviteEmail(email: string): void {
  * `returnTo` (a path of the web app) afterwards.
  */
 export function inviteSignInUrl(returnTo: string): string {
-  const spaOrigin =
+  return `${appOrigin()}/api/auth/start?returnTo=${encodeURIComponent(returnTo)}`
+}
+
+/** The web app's public origin, as the emails link to it. */
+export function appOrigin(): string {
+  return (
     process.env['SPA_ORIGIN'] ??
     process.env['PUBLIC_URL'] ??
     `https://${process.env['DOMAIN'] ?? 'localhost'}`
-  return `${spaOrigin}/api/auth/start?returnTo=${encodeURIComponent(returnTo)}`
+  )
+}
+
+/**
+ * A deck thumbnail a mail client can fetch: the signed imgproxy URL of its
+ * `preview` variant (the URL is the access, like the home page's), or null
+ * without a thumbnail or without imgproxy signing configured.
+ */
+export function emailThumbnailUrl(thumbnailKey: string | null | undefined): string | null {
+  if (!thumbnailKey || !process.env['IMGPROXY_KEY']) return null
+  return signImgproxyUrl({ storageKey: thumbnailKey, variant: 'preview', extension: 'jpg' })
 }
 
 /** Permission rows with the email and name of each user, in one directory query. */
@@ -102,38 +120,47 @@ export function createSharingService(deps: ServiceDeps): SharingService {
     return { userId: user.sub, email: user.email, name: user.name, role }
   }
 
-  /** Fire-and-forget invitation email; the invite row exists either way. */
-  function sendInviteEmail(deckId: string, email: string, role: DeckRole, inviterSub: string) {
-    void (async () => {
-      try {
+  /**
+   * Fire-and-forget email; the invite row or the permission exists either
+   * way. `granted`: someone who already uses Narrative got access at once.
+   */
+  function sendInviteEmail(
+    deckId: string,
+    email: string,
+    role: DeckRole,
+    inviterSub: string,
+    access: EmailAccess = 'invite',
+  ) {
+    void notify({
+      db,
+      log: deps.log,
+      kind: 'deck-shared',
+      to: email,
+      render: async () => {
         const [deckRow] = await db
-          .select({ title: decks.title })
+          .select({ title: decks.title, thumbnailKey: decks.thumbnailKey })
           .from(decks)
           .where(eq(decks.id, deckId))
           .limit(1)
         const inviter = await getUserBySub(db, inviterSub)
-        if (!deckRow || !inviter) return
-        const signInUrl = inviteSignInUrl(`/deck/${deckId}`)
-        const { subject, html, text } = renderDeckInviteEmail({
-          recipientEmail: email.toLowerCase(),
-          deckTitle: deckRow.title,
-          inviterName: inviter.name ?? inviter.email,
-          inviterEmail: inviter.email,
-          role,
-          signInUrl,
-        })
-        await sendEmail({
-          to: email.toLowerCase(),
-          subject,
-          html,
-          text,
+        if (!deckRow || !inviter) return null
+        return {
+          ...renderDeckInviteEmail({
+            recipientEmail: email.toLowerCase(),
+            deckTitle: deckRow.title,
+            inviterName: inviter.name ?? inviter.email,
+            inviterEmail: inviter.email,
+            role,
+            signInUrl: inviteSignInUrl(`/deck/${deckId}`),
+            access,
+            appOrigin: appOrigin(),
+            previewUrl: emailThumbnailUrl(deckRow.thumbnailKey),
+          }),
           // Replies reach the actual inviter, not a noreply mailbox.
           replyTo: inviter.email,
-        })
-      } catch (err) {
-        deps.log.warn({ err, deckId, email }, '[invite] email send failed')
-      }
-    })()
+        }
+      },
+    })
   }
 
   async function listPermissionsWithUsers(args: { deckId: string }): Promise<PermissionEntry[]> {
@@ -154,7 +181,15 @@ export function createSharingService(deps: ServiceDeps): SharingService {
       // Only another owner can change your role: picking a lower role for
       // yourself would lock you out of the dialog you are standing in.
       if (existingUser.sub === inviterUserId) throw conflict(SELF_ROLE_CHANGE)
-      return { kind: 'granted', user: await grant(deckId, existingUser, role, inviterUserId) }
+      const previous = (await listPermissions(db, deckId)).find(
+        (p) => p.userId === existingUser.sub,
+      )
+      const granted = await grant(deckId, existingUser, role, inviterUserId)
+      // They get access at once, and an email saying so: on a new grant or
+      // a new role, never for the same role again.
+      if (previous?.role !== role)
+        sendInviteEmail(deckId, existingUser.email, role, inviterUserId, 'granted')
+      return { kind: 'granted', user: granted }
     }
 
     // Re-inviting the same email replaces the pending invite's role.
@@ -217,7 +252,19 @@ export function createSharingService(deps: ServiceDeps): SharingService {
     if (owners.some((o) => o.userId === userId) && owners.length <= 1) {
       throw conflict('Cannot revoke the last owner — assign another owner first.')
     }
+    const was = await deckRoleBefore(deps, deckId, userId)
     await revokePermission(db, { deckId, userId })
+    if (was !== null)
+      notifyAccessRemoved(deps, {
+        actorId: callerUserId,
+        memberId: userId,
+        kind: 'deck',
+        role: was,
+        title: async () =>
+          (
+            await db.select({ title: decks.title }).from(decks).where(eq(decks.id, deckId)).limit(1)
+          )[0]?.title ?? null,
+      })
     // CONN-1: kick the revoked user's live connections on this deck, and on
     // its folder's token document when this deck was what let them read it —
     // and their render sessions' pages (render/sessions.ts).

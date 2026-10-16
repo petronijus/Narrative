@@ -1,6 +1,6 @@
 /**
  * services/components.ts — server implementation of `ComponentService`
- * (packages/commands/src/services/components.ts). GET /folders/:id/components,
+ * (packages/commands/src/services/components.ts). GET/POST /folders/:id/components,
  * PATCH/DELETE /components/:id and the `component.*` commands call these
  * functions; the agent host uses `access` to open a master (`component:<id>`)
  * for the ordinary document commands. Promoting and stamping move objects
@@ -19,10 +19,18 @@ import {
 import { isStorageSafeId, mediaOwnerPrefix } from '../media/mediaOwner.js'
 import { closeConnectionsForDocument } from '../hocuspocus/connections.js'
 import type { ServiceDeps } from './deps.js'
-import { badRequest, notFound } from './errors.js'
+import { badRequest, conflict, notFound } from './errors.js'
 import { iso, requireComponentRole, requireFolderRole } from './shared.js'
 import { documentName, readDocState } from './liveDocs.js'
-import { prepareComponentStamp, promoteComponent } from './componentStaging.js'
+import {
+  createEmptyComponent,
+  prepareComponentStamp,
+  promoteComponent,
+} from './componentStaging.js'
+
+/** Why a deck cannot restamp stamps of a component in another folder. */
+export const RESTAMP_ELSEWHERE =
+  "These stamps come from a component of another folder (the deck moved, or they were copied from a deck there); a deck restamps only its own folder's components"
 
 /** Longest component name the API accepts. */
 export const MAX_COMPONENT_NAME = 200
@@ -63,6 +71,14 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
       .where(eq(components.folderId, args.folderId))
       .orderBy(components.createdAt)
     return rows.map(componentRecord)
+  }
+
+  async function create(args: {
+    userId: string
+    folderId: string
+    name: string
+  }): Promise<ComponentRecord> {
+    return createEmptyComponent(deps, args)
   }
 
   async function rename(args: {
@@ -168,8 +184,34 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
     return promoteComponent(deps, args)
   }
 
-  async function prepareStamp(args: { userId: string; componentId: string; deckId: string }) {
+  async function prepareStamp(args: Parameters<ComponentService['prepareStamp']>[0]) {
+    if (args.purpose === 'restamp') await requireRestampableHere(args)
     return prepareComponentStamp(deps, { ...args, master: await readMaster(args) })
+  }
+
+  /**
+   * A restamp re-applies a component to stamps already on the deck; those
+   * can come from a component of another folder — the deck moved, or the
+   * stamps were copied from a deck elsewhere. Say so, rather than "not
+   * found", to someone who can see that component; a deck restamps only its
+   * own folder's components, as it stamps only those.
+   */
+  async function requireRestampableHere(args: {
+    userId: string
+    componentId: string
+    deckId: string
+  }): Promise<void> {
+    const [deck] = await db
+      .select({ folderId: decks.folderId })
+      .from(decks)
+      .where(eq(decks.id, args.deckId))
+      .limit(1)
+    if (!deck) throw notFound('Deck not found')
+    const row = await requireComponentRole(db, args.componentId, args.userId, 'viewer', {
+      bypass: deps.bypass,
+      unseen: 'not_found',
+    })
+    if (row.folderId !== deck.folderId) throw conflict(RESTAMP_ELSEWHERE)
   }
 
   async function access(args: { userId: string; componentId: string }) {
@@ -184,5 +226,5 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
     }
   }
 
-  return { list, rename, delete: remove, readMaster, promote, prepareStamp, access }
+  return { list, create, rename, delete: remove, readMaster, promote, prepareStamp, access }
 }

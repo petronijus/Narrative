@@ -36,6 +36,7 @@
 import { HOCUSPOCUS_URL } from '../lib/endpoints.js'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
+import { hocuspocusAuthOptions } from './hocuspocusAuth.js'
 import { whenProviderSaved } from './providerSaved.js'
 
 /** How long to keep a component doc alive after the last subscriber leaves. */
@@ -48,6 +49,10 @@ interface CacheEntry {
   refCount: number
   /** True once Hocuspocus reports its first sync round-trip. */
   synced: boolean
+  /** The server refused the connection (no access, an ended render token) and has not let it in since. */
+  refused: boolean
+  /** Told when `synced` or `refused` changes (the render page of a master, ComponentRender.tsx). */
+  statusListeners: Set<() => void>
   /** Subscribers to master-doc mutations (rAF-debounced). */
   listeners: Set<() => void>
   /** Pending rAF id for the listener flush — null when no flush is queued. */
@@ -71,7 +76,18 @@ const cache = new Map<string, CacheEntry>()
  * on first call; otherwise bumps ref count. Cancels any pending linger
  * destroy if one was scheduled.
  */
-export function acquireComponentDoc(componentId: string): void {
+export function acquireComponentDoc(
+  componentId: string,
+  opts: {
+    /**
+     * The page's query string: a `share_token` in it authenticates the
+     * connection (the render page of the master's card, agentic A3).
+     */
+    search?: string
+    /** Publish this client in the master's awareness (default true; the render page: false). */
+    presence?: boolean
+  } = {},
+): void {
   const existing = cache.get(componentId)
   if (existing !== undefined) {
     existing.refCount += 1
@@ -88,10 +104,25 @@ export function acquireComponentDoc(componentId: string): void {
   // real session from the `narrative_session` cookie on the WS upgrade.
   // See `docs/adr/0005-server-side-session-cookies.md`.
   const provider = new HocuspocusProvider({
-    url: HOCUSPOCUS_URL,
     name: `component:${componentId}`,
     document: doc,
-    token: 'cookie',
+    ...hocuspocusAuthOptions(HOCUSPOCUS_URL, opts.search ?? ''),
+    // No awareness: the render worker's browser must not show up as a peer.
+    ...(opts.presence === false ? { awareness: null } : {}),
+    onAuthenticationFailed() {
+      const failed = cache.get(componentId)
+      if (failed === undefined) return
+      failed.refused = true
+      for (const listener of [...failed.statusListeners]) listener()
+    },
+    // A refusal is over once the server lets the connection in again (a
+    // passing failure, e.g. the connection throttle).
+    onAuthenticated() {
+      const entry = cache.get(componentId)
+      if (entry === undefined || !entry.refused) return
+      entry.refused = false
+      for (const listener of [...entry.statusListeners]) listener()
+    },
   })
 
   const entry: CacheEntry = {
@@ -100,6 +131,8 @@ export function acquireComponentDoc(componentId: string): void {
     provider,
     refCount: 1,
     synced: false,
+    refused: false,
+    statusListeners: new Set(),
     listeners: new Set(),
     rafHandle: null,
     lingerTimer: null,
@@ -108,6 +141,8 @@ export function acquireComponentDoc(componentId: string): void {
     },
     syncedHandler: () => {
       entry.synced = true
+      entry.refused = false
+      for (const listener of [...entry.statusListeners]) listener()
       // First sync delivers the initial state — fire listeners so the
       // renderer re-extracts a fresh snapshot from the freshly-populated doc.
       scheduleListenerFlush(entry)
@@ -162,9 +197,23 @@ export function whenComponentDocSaved(componentId: string): Promise<void> {
 }
 
 /** Returns 'synced' once the first server round-trip lands, else 'pending'. */
-export function getComponentDocSyncStatus(componentId: string): 'pending' | 'synced' {
+/** Be told when the master doc's sync status changes (synced, refused); returns the unsubscribe. */
+export function subscribeToComponentDocStatus(
+  componentId: string,
+  listener: () => void,
+): () => void {
+  const entry = cache.get(componentId)
+  if (entry === undefined) return () => undefined
+  entry.statusListeners.add(listener)
+  return () => {
+    entry.statusListeners.delete(listener)
+  }
+}
+
+export function getComponentDocSyncStatus(componentId: string): 'pending' | 'synced' | 'refused' {
   const entry = cache.get(componentId)
   if (entry === undefined) return 'pending'
+  if (entry.refused) return 'refused'
   return entry.synced ? 'synced' : 'pending'
 }
 

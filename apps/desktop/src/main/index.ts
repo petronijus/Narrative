@@ -1,7 +1,7 @@
 /**
  * main/index.ts
  *
- * The desktop shell's entry (ADR 0014, docs/plans/desktop-d0-spec.md §3.1).
+ * The desktop shell's entry (ADR 0015, docs/plans/desktop-d0-spec.md §3.1).
  * Everything before `whenReady` runs at module top level, in this order,
  * because Electron reads it before the first window exists: the sandbox for
  * every renderer, a separate identity for an unpackaged build, the refusal

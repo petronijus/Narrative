@@ -22,9 +22,10 @@ import { registerComponentRoutes } from '../routes/components.js'
 import { registerTokenRoutes } from '../routes/tokens.js'
 import { registerSharingRoutes } from '../routes/sharing.js'
 import { registerFolderSharingRoutes } from '../routes/folderSharing.js'
+import { registerAdminRoutes } from '../routes/admin.js'
 import { registerPptxImportRoutes } from '../routes/pptxImport.js'
 import { registerPptxExportRoutes } from '../routes/pptxExport.js'
-import { registerPngExportRoutes } from '../routes/pngExport.js'
+import { registerPdfExportRoutes, registerPngExportRoutes } from '../routes/pngExport.js'
 import { registerAuthRoutes, type AuthRoutesOpts } from '../routes/auth.js'
 import { registerDesktopAuthRoutes } from '../routes/desktopAuth.js'
 import { registerAccessTokenRoutes } from '../routes/accessTokens.js'
@@ -98,6 +99,7 @@ export async function registerHttpRoutes(app: FastifyInstance, deps: HttpRouteDe
 
   // Folder sharing — members and email invites (folder-sharing step 3)
   await registerFolderSharingRoutes(app, db)
+  await registerAdminRoutes(app, db, deps.auth.allowlist)
 
   // PowerPoint import — synchronous parse + Y.Doc write (M28 phase 3 MVP)
   await registerPptxImportRoutes(app, db)
@@ -106,11 +108,12 @@ export async function registerHttpRoutes(app: FastifyInstance, deps: HttpRouteDe
   await registerPptxExportRoutes(app, db)
   // One slide as PNG, rendered by the render worker (A3).
   await registerPngExportRoutes(app, db)
+  await registerPdfExportRoutes(app, db)
 
   // Server-driven OAuth flow + session cookie minting (replaces the old
   // browser-PKCE + Bearer-id_token path). Public endpoints by design.
   registerAuthRoutes(app, { db, ...deps.auth })
-  // The desktop app's sign-in ticket redeem (ADR 0014); its own form scope.
+  // The desktop app's sign-in ticket redeem (ADR 0015); its own form scope.
   await registerDesktopAuthRoutes(app, { db, ...deps.auth })
 
   // Personal access tokens (agentic A1) — session-cookie only, never a PAT.

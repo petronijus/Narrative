@@ -41,7 +41,11 @@ function hexNumberToCss(n: number): string {
 // Context
 // ---------------------------------------------------------------------------
 
-export type ResolveColour = (value: number | TokenRef | string | undefined | null) => string
+export type ResolveColour = (
+  value: number | TokenRef | string | undefined | null,
+  /** Where it is painted: the slide's surface (A4.2d). */
+  ctx?: { surface?: string },
+) => string
 
 export interface TokensContextValue {
   /**
@@ -72,6 +76,8 @@ export const TokensContext = createContext<TokensContextValue>({
 
 interface TokensProviderProps {
   tokens: FolderTokensSnapshot | null
+  /** The deck's variant (its `meta.variant`, A4.2d): variant-aware colours resolve on it. */
+  variant?: Readonly<Record<string, string>> | undefined
   children: React.ReactNode
 }
 
@@ -80,20 +86,25 @@ interface TokensProviderProps {
  * If `tokens` is null (no folder doc available), the resolver falls back to
  * literal hex conversion and returns `'transparent'` for all TokenRefs.
  */
-export function TokensProvider({ tokens, children }: TokensProviderProps) {
+export function TokensProvider({ tokens, variant, children }: TokensProviderProps) {
   const value = useMemo((): TokensContextValue => {
-    const resolve: ResolveColour = (value) => {
+    const resolve: ResolveColour = (value, ctx) => {
       if (value === undefined || value === null) return 'transparent'
       if (typeof value === 'number') return hexNumberToCss(value)
       if (typeof value === 'string') return value
       if (isTokenRef(value)) {
         if (!tokens) return 'transparent'
-        return resolveTokenValue(value, tokens) ?? 'transparent'
+        return (
+          resolveTokenValue(value, tokens, {
+            ...(variant !== undefined ? { variant } : {}),
+            ...(ctx?.surface !== undefined ? { surface: ctx.surface } : {}),
+          }) ?? 'transparent'
+        )
       }
       return 'transparent'
     }
     return { resolve }
-  }, [tokens])
+  }, [tokens, variant])
 
   return <TokensContext value={value}>{children}</TokensContext>
 }

@@ -222,11 +222,18 @@ export class PostgresPersistence implements Extension {
    * (services/localiseMedia.ts `checkMovedMediaAfterStore`).
    */
   private readonly onDeckStored: ((deckId: string) => void) | undefined
+  /** After a component master's snapshot was stored (its card, services/deckThumbnails.ts). */
+  private readonly onComponentStored: ((componentId: string) => void) | undefined
 
-  constructor(opts: { db: Database; onDeckStored?: (deckId: string) => void }) {
+  constructor(opts: {
+    db: Database
+    onDeckStored?: (deckId: string) => void
+    onComponentStored?: (componentId: string) => void
+  }) {
     this.db = opts.db
     this.maxDocBytes = resolveMaxDocBytes()
     this.onDeckStored = opts.onDeckStored
+    this.onComponentStored = opts.onComponentStored
   }
 
   async onLoadDocument(data: onLoadDocumentPayload): Promise<Y.Doc | void> {
@@ -292,7 +299,9 @@ export class PostgresPersistence implements Extension {
   async onStoreDocument(data: onStoreDocumentPayload): Promise<void> {
     const target = parseDocName(data.documentName)
     const binding = BINDINGS[target.kind]
-    const ctx = data.context as { role?: string; userId?: string } | undefined
+    // The context of the connection whose change triggered this store
+    // (Hocuspocus 4: `lastContext`; a server-side write's own context).
+    const ctx = data.lastContext as { role?: string; userId?: string } | undefined
 
     // Defense-in-depth: skip persistence for viewer connections.
     // Primary enforcement is `readOnly: true` returned from onAuthenticate,
@@ -398,6 +407,13 @@ export class PostgresPersistence implements Extension {
           this.onDeckStored(target.id)
         } catch (err) {
           log.error({ id: target.id, err }, 'after-store check of a deck failed to start')
+        }
+      }
+      if (target.kind === 'component' && this.onComponentStored !== undefined) {
+        try {
+          this.onComponentStored(target.id)
+        } catch (err) {
+          log.error({ id: target.id, err }, 'after-store work of a component failed to start')
         }
       }
     } catch (err) {

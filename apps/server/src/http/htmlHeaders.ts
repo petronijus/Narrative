@@ -3,7 +3,7 @@
  *
  * Headers of the small pages the server renders itself — the MCP OAuth
  * consent and error pages (mcp/oauth/routes.ts) and the desktop sign-in
- * hand-off page (ADR 0014). They hold credentials or decisions, so they are
+ * hand-off page (ADR 0015). They hold credentials or decisions, so they are
  * never cached, never framed, and run no script.
  */
 

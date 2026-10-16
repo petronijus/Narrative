@@ -266,7 +266,7 @@ strict-origin` keeps a share-link page's URL out of same-origin Referers.
 - `deck.exportPdf` moved to phase A5 in `knownMissing.ts`.
 
 Deploy of 0.10.20 checked on production: `/version.json` serves
-`v0.10.20+c01cccf`, `deploy.sh` reloaded the Caddyfile (`Referrer-Policy:
+`v0.10.20+8f159e0`, `deploy.sh` reloaded the Caddyfile (`Referrer-Policy:
 strict-origin` served), Caddy's access log writes `share_token=REDACTED`,
 the `/ws` upgrade answers 101, and an anonymous media read reaches the
 service (404 for an unknown asset, no longer 401). Left for Petr: open the
@@ -425,7 +425,7 @@ opt-in skipped); the full eval live (53/53, $7.32), `look-at-slide` and
 `export-png-slide` again after the last description change.
 
 **After 0.10.24** (production, the same day): `query.render` showed single
-slides of the Proseware deck correctly, but a sheet came back blank — six empty
+slides of the reference deck correctly, but a sheet came back blank — six empty
 tiles, or a white picture. The kernel log showed the worker's Chromium
 OOM-killed at the 900 MB limit (one slide of that deck peaked at 899 MiB and
 stayed at ~750 MiB); a dead GPU process leaves empty canvases and no error.
@@ -436,4 +436,106 @@ the worker restarts Chromium), and the limit is 1200 MB (Petr). Measured
 locally first: neither a small GPU budget nor the production image alone
 reproduced it — only the production deck on the 2.9 GB VM did.
 
-Next: A3.5 server thumbnails.
+**Speed, 0.10.26–0.10.28.** With the memory fixed, a sheet of the reference
+deck still ran past its deadline: a slide took 9–15 s. The worker now logs
+each job's timings (pages/renderTimings.ts, with settleScene's phases), and
+production said: loads 0.8 s, settle 10 ms, capture 9.7–12 s. Locally, the
+same slide pinned to two cores (`taskset -c 2,3`, the container's
+`cpus: 2`) reproduced it: under SwiftShader every frame of a 1920×1080
+slide costs ~0.7 s of CPU (a full-bleed picture behind a stencil mask
+~0.45 s of it), `gl.finish()` does not wait, so the first pixel read pays
+for every frame queued since the last one — the settle loop's on-screen
+frames included, which nobody looks at. 0.10.28: the render page with
+`?paint=off` keeps its canvas 1×1 (Canvas `onScreen`); the worker and the
+editor's export frame open it so. The capture renders the scene into its
+own texture and is the same picture to the pixel (render-page.spec); a slide
+went from 7.4 s to 1.1 s on two cores. A sheet draws preview-size pictures
+(0.10.26). What remains is the one capture frame — the stencil-masked
+picture is its biggest part, if it is ever worth a cheaper clip.
+
+**A3.5a, deck cards — 0.10.29.** `deck.refreshThumbnail` (editors) and the
+background card for decks nobody has open: services/deckThumbnails.ts
+(scheduler on PostgresPersistence `onDeckStored`: 10 s quiet, skipped while
+a signed-in editor has the deck open, at most once a minute per deck,
+owners in turn), services/render.ts (`thumbnail` look of the first slide,
+`backgroundThumbnail` / `refreshThumbnail`), render/cardState.ts (what the
+card was last drawn from: a hash of the first slide's Yjs structure — not
+the state vector, which a deletion leaves as it was), services/
+deckThumbnailStore.ts (shared with the editor's upload: a key per picture,
+the row swapped under `FOR UPDATE`, replaced pictures kept for
+`REPLACED_GRACE_MS`). Background jobs run in their own render lane
+(`RenderLane` on the token: own session, rate bucket `render:bg:<owner>`)
+with `keepPage: false`, at `BACKGROUND_PRIORITY`, outside the in-flight
+share; only `RendererBusyError` (queue full or down, waited past its time)
+is retried. Reviews: code (a blocker — the first hash walked live Y.Text
+and overflowed the stack on every slide with text; caught on re-review,
+tests now use text and a table), security (no confused deputy: the render
+token reads as a share-link viewer of that deck, whoever it is minted for),
+parity. tools/list: 184,396 bytes of 184,500 — A3.5b needs a raise. An
+eval scenario waits for A3.7 (a negative check too: no refresh after
+ordinary edits).
+
+The e2e suite on the Omarchy desktop had been running on the system
+Chromium 152 instead of Playwright's 148 (SETUP.md → "Target crashed").
+
+**A3.5b, A3.6, A3.7 — 0.10.30 (A3 closed, 2026-10-11).** Built together,
+then tested as one (Petr's call).
+
+- **A3.5b component cards.** `deck.refreshThumbnail` takes `componentId`
+  (`acceptsComponent`, folder editors) — no separate tool, as for every
+  document command; `component.refreshThumbnail` is removed from `knownMissing`.
+  Render tokens name a target (`RenderDoc`: deck or component); a master's
+  token is no share link — `resolveComponentAccess` and
+  `resolveFolderContentAccess` admit it for that master and its folder
+  only, while its requester can still read the master, so the page reads
+  the master document (Hocuspocus, read-only), the folder's tokens, fonts
+  and media. The page is `/folder/:f/component/:c/render`
+  (pages/ComponentRender.tsx: DeckRender in the master's providers; the
+  component doc cache connects with the page's token and no awareness).
+  Jobs name their page (`RenderPage`); card renders of masters wait under
+  `components/<id>/exports/`, which the export sweep now covers. Cards are
+  stored like deck cards (`storeComponentThumbnail`), drawn in the
+  background after `onComponentStored` as the folder's owner.
+- **A3.6 before/after.** The run records `Y.encodeStateAsUpdate` of the
+  document at its first write, beside its UndoManager and gone with it
+  (`RunManager.stateBefore`). `query.render` `{ slide, compare: "before" }`
+  carries it in the job (≤ 8 MB); the worker opens a frozen page
+  (`?frozen=1`: DeckShell mounts a local document from
+  `__narrativeRenderFreeze(state)`, nothing live), captures the slide,
+  closes it — and closes the kept page first, so two pages never hold
+  memory at once — then the live page composes before | now
+  (`compareLayout`, "New in this run" for a slide the run added). Folder
+  tokens and fonts are today's on both sides.
+- **A3.6 text fit.** After each slide settles, the page measures every text
+  box's laid-out text (`laidOutTextBottom`: the glyph block below its
+  vertical placement, what the clip mask reaches) against its box;
+  `query.render` returns `overflow: [{ slideId, index, objectId,
+boxHeight, textHeight }]`. Table cells are not measured (a cell grows its
+  row).
+- **A3.7.** Playbooks: look after every visible change, fix every overflow
+  you caused (wording first, never smaller type than the role uses), show
+  before/after with `compare`; `deck.refreshThumbnail` only before a
+  hand-off. Eval scenarios `compare-before-after`, `fix-text-overflow`
+  (the grader measures again), `deck-card-before-handoff`, and a
+  no-refresh check in two edit scenarios — all live-only (the render
+  worker draws). `FINISHED_PHASES += 'A3'`. Handoff:
+  [`A3-render-worker.md`](../handoff/A3-render-worker.md).
+
+**Verified before 0.10.30 (2026-10-11, evening):** `just check`;
+`just integration` 109/109; the full `just e2e` failed 71 specs under a
+machine load of 20–30 (timeouts, crashed targets) — every failed spec
+file passed when rerun with two workers (100 + 28), `canvas-sharpness`
+and `multi-client-collab` with one (8/8); `just eval` 54/56 ($7.58):
+`compare-before-after` failed on its grader (it took the box colour over
+red runs; fixed, then PASS) and `title-style-folderwide` on a model
+choice that passed on rerun.
+
+**The exact-fit overflow e2e — written 2026-10-12** (after 0.10.30,
+MacBook): `query-render.spec.ts` "a box sized exactly to its text fits"
+squeezes two three-line boxes (150% and 80% spacing) to read their laid-out
+height, sizes each box to it — no overflow, top and bottom aligned — then
+4 px short, reported with the same text height. It fails when
+`laidOutTextBottom` stops taking the PowerPoint line offset out (checked by
+that mutation); the spec file passed 24/24 (`--repeat-each 3`).
+
+A3 is done. Next: A4 (style packs, plan §7).

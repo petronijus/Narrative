@@ -36,6 +36,7 @@ const mockCanvasInstance = {
   compositor: {},
   sceneGraph: {
     getBounds: mockGetBounds,
+    onTextLayout: () => () => {},
   },
 }
 

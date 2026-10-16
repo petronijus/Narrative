@@ -32,6 +32,7 @@ import type { RenderService } from './services/render.js'
 import type { TokenService } from './services/tokens.js'
 import type { EditorService } from './services/editor.js'
 import type { AgentRunService } from './services/runs.js'
+import type { StylePackService } from './services/stylePacks.js'
 
 export type {
   DeckService,
@@ -45,6 +46,7 @@ export type {
   TokenService,
   EditorService,
   AgentRunService,
+  StylePackService,
 }
 
 export interface ServerServices {
@@ -59,6 +61,7 @@ export interface ServerServices {
   tokens: TokenService
   editor: EditorService
   runs: AgentRunService
+  stylePacks: StylePackService
 }
 
 export function requireServices(ctx: CommandContext): ServerServices {

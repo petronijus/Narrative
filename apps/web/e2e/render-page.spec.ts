@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { test, expect, type APIRequestContext, type Page } from './fixtures/test'
 import { PNG } from 'pngjs'
 import { uploadTestPicture } from './fixtures/media.js'
 
@@ -76,8 +76,13 @@ async function seedDeck(page: Page): Promise<{ firstSlideId: string; secondSlide
   return ids
 }
 
-async function openRender(page: Page, slide?: string): Promise<void> {
-  const query = slide === undefined ? '' : `?slide=${encodeURIComponent(slide)}`
+async function openRender(
+  page: Page,
+  slide?: string,
+  extra?: Record<string, string>,
+): Promise<void> {
+  const params = new URLSearchParams({ ...(slide === undefined ? {} : { slide }), ...extra })
+  const query = params.size === 0 ? '' : `?${params}`
   await page.goto(`/deck/${deckId}/render${query}`)
   await expect(page.locator('html')).toHaveAttribute('data-render-status', /^(ready|error)$/, {
     timeout: 45_000,
@@ -93,6 +98,20 @@ async function pixel(
   expect([png.width, png.height]).toEqual([1920, 1080])
   const i = (png.width * y + x) << 2
   return { r: png.data[i]!, g: png.data[i + 1]!, b: png.data[i + 2]! }
+}
+
+/** The page's capture hook (`__narrativeRenderCapture`), decoded. */
+async function capture(page: Page): Promise<PNG> {
+  const base64 = await page.evaluate(async () => {
+    const blob = await window.__narrativeRenderCapture!()
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    let binary = ''
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+    }
+    return btoa(binary)
+  })
+  return PNG.sync.read(Buffer.from(base64, 'base64'))
 }
 
 const near = (a: { r: number; g: number; b: number }, b: { r: number; g: number; b: number }) =>
@@ -176,6 +195,25 @@ test('waits for the pictures, the text and the folder fonts before it reports re
     [...document.fonts].map((f) => ({ family: f.family.replace(/"/g, ''), status: f.status })),
   )
   expect(faces).toContainEqual({ family, status: 'loaded' })
+
+  // ?paint=off (the worker, the editor's export frame): nothing on screen,
+  // and the capture is the same picture, folder face and all.
+  const offScreen = await context.newPage()
+  await openRender(offScreen, undefined, { paint: 'off' })
+  expect(await offScreen.evaluate(() => window.__narrativeRender?.status)).toBe('ready')
+  expect(
+    await offScreen.evaluate(() => {
+      const canvas = document.querySelector('[data-testid="render-slide"] canvas')
+      return canvas instanceof HTMLCanvasElement ? [canvas.width, canvas.height] : null
+    }),
+  ).toEqual([1, 1])
+  const [painted, captured] = await Promise.all([capture(render), capture(offScreen)])
+  expect([captured.width, captured.height]).toEqual([1920, 1080])
+  let differing = 0
+  for (let i = 0; i < painted.data.length; i++) {
+    if (Math.abs(painted.data[i]! - captured.data[i]!) > 2) differing += 1
+  }
+  expect(differing).toBe(0)
 })
 
 test('resolves ?slide= by id, defaults to the first slide, and reports an unknown slide', async ({
@@ -218,6 +256,9 @@ test('opened with a render token, as the worker does: paints, and never shows as
   const collaborators = page
     .getByRole('list', { name: 'Connected collaborators' })
     .getByRole('listitem')
+  // The editor's own entry first: counted before its awareness arrived
+  // (a loaded machine), `before` was 0 and the editor itself the "extra" one.
+  await expect(collaborators).not.toHaveCount(0, { timeout: 15_000 })
   const before = await collaborators.count()
 
   const token = await renderToken(page.request, deckId)

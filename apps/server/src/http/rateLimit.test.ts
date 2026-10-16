@@ -97,13 +97,29 @@ describe('bucket keys', () => {
 
   it("keys the render worker's page by who asked for the render, not by its one address", async () => {
     const app = await buildApp()
-    const token = mintRenderToken('deck-1', 'alice')
+    const token = mintRenderToken({ kind: 'deck', id: 'deck-1' }, 'alice')
     const res = await app.inject({
       method: 'GET',
       url: `/key?share_token=${token}`,
       remoteAddress: '203.0.113.9',
     })
     expect(res.json().key).toBe('render:alice')
+    // The server's background renders as alice have a budget of their own.
+    const background = mintRenderToken(
+      { kind: 'deck', id: 'deck-1' },
+      'alice',
+      Date.now(),
+      60_000,
+      undefined,
+      'background',
+    )
+    const bg = await app.inject({
+      method: 'GET',
+      url: `/key?share_token=${background}`,
+      remoteAddress: '203.0.113.9',
+    })
+    expect(bg.json().key).toBe('render:bg:alice')
+    revokeRenderToken(background)
     // An unknown or ended token is just an anonymous request.
     revokeRenderToken(token)
     const ended = await app.inject({
@@ -118,8 +134,8 @@ describe('bucket keys', () => {
     const app = await buildApp({ ipPreLimit: { max: 2, timeWindowMs: 60_000 } })
     const hit = (url: string) =>
       app.inject({ method: 'GET', url, remoteAddress: '203.0.113.9' }).then((r) => r.statusCode)
-    const a = mintRenderToken('deck-1', 'alice')
-    const b = mintRenderToken('deck-2', 'bob')
+    const a = mintRenderToken({ kind: 'deck', id: 'deck-1' }, 'alice')
+    const b = mintRenderToken({ kind: 'deck', id: 'deck-2' }, 'bob')
     expect([await hit(`/key?share_token=${a}`), await hit(`/key?share_token=${a}`)]).toEqual([
       200, 200,
     ])

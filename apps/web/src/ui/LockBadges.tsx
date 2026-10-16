@@ -19,6 +19,7 @@ import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import type { ObjectBounds } from '../renderer/types.js'
+import { useTextLayoutTick } from './useTextLayoutTick.js'
 
 const BADGE_SIZE = 16
 
@@ -31,6 +32,7 @@ export function LockBadges() {
   const { selectedIds } = useSelection()
   const canvasInstance = useCanvasInstance()
   const { zoom } = useZoomLevel()
+  useTextLayoutTick(canvasInstance?.sceneGraph ?? null)
   if (canvasInstance === null) return null
 
   const { sceneGraph } = canvasInstance

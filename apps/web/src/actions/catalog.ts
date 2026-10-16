@@ -155,8 +155,13 @@ export const USER_ACTIONS = {
   'deck.duplicate': { label: 'Duplicate deck', commands: ['deck.duplicate'] },
   'deck.moveToFolder': { label: 'Move deck to…', commands: ['deck.moveToFolder'] },
   'deck.delete': { label: 'Delete deck', commands: ['deck.delete'] },
+  'deck.exportMenu': {
+    label: 'Export menu',
+    editorOnly: 'opens the menu of export formats; each item is its own action',
+  },
   'deck.exportPptx': { label: 'Export to PowerPoint', commands: ['deck.exportPptx'] },
   'deck.importPptx': { label: 'Import PowerPoint', commands: ['deck.importPptx'] },
+  'deck.exportPdf': { label: 'Export to PDF', commands: ['deck.exportPdf'] },
   'deck.backToList': { label: 'Back to deck list', editorOnly: NAVIGATION },
   'deck.backToPresentation': { label: 'Back to presentation', editorOnly: NAVIGATION },
 
@@ -173,6 +178,10 @@ export const USER_ACTIONS = {
     ],
   },
   'folder.delete': { label: 'Delete folder', commands: ['folder.delete'] },
+  'stylePack.compile': { label: 'Compile the style pack', commands: ['style.pack.edit'] },
+  'stylePack.import': { label: 'Import a style pack', commands: ['style.pack.edit'] },
+  'stylePack.export': { label: 'Export the style pack', commands: ['style.pack.get'] },
+  'stylePack.delete': { label: 'Delete the style pack', commands: ['style.pack.edit'] },
 
   // --- Presenting ---------------------------------------------------------
   'present.start': { label: 'Present', commands: ['editor.present.link'] },
@@ -201,6 +210,12 @@ export const USER_ACTIONS = {
     label: 'Access tokens',
     editorOnly:
       'opens the page where a person creates access tokens for agents; tokens are never an agent capability',
+  },
+  'account.admin': {
+    label: 'Administration',
+    editorOnly:
+      'opens the admin screen where an instance admin decides who may sign in and who is an admin; ' +
+      'deliberately not an agent capability (parity/allowlist.ts, ADR 0014)',
   },
   'account.signOut': { label: 'Sign out', editorOnly: "ends the person's own session" },
 } as const satisfies Record<string, UserAction>

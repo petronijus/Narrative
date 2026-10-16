@@ -34,8 +34,27 @@ export interface RenderUpload extends RenderTarget {
   slideId: string
 }
 
+/**
+ * The render page a job opens: a deck's (`/deck/:id/render`), or a component
+ * master's (`/folder/:f/component/:c/render`, for the master's card).
+ */
+export type RenderPage =
+  { kind: 'deck'; deckId: string } | { kind: 'component'; componentId: string; folderId: string }
+
+/** The page's path (no query). */
+export function renderPagePath(page: RenderPage): string {
+  return page.kind === 'deck'
+    ? `/deck/${encodeURIComponent(page.deckId)}/render`
+    : `/folder/${encodeURIComponent(page.folderId)}/component/${encodeURIComponent(page.componentId)}/render`
+}
+
+/** A short name of the page's document, for logs and keys (`deck:<id>`, `component:<id>`). */
+export function renderPageName(page: RenderPage): string {
+  return page.kind === 'deck' ? `deck:${page.deckId}` : `component:${page.componentId}`
+}
+
 interface RenderJobBase {
-  deckId: string
+  page: RenderPage
   /**
    * A render token (`nrr_…`, apps/server/src/auth/renderTokens.ts): the page
    * opens with it as `share_token`. The server keeps one per person and deck
@@ -58,6 +77,12 @@ interface RenderJobBase {
   deadline: number
   /** Milliseconds the worker may spend on the job from its start (stopped like at the deadline). */
   workBudgetMs: number
+  /**
+   * false: close the page after the job instead of keeping it warm — the
+   * server's background work (a deck's card picture), which must not push a
+   * person's warm page out. Absent means keep it.
+   */
+  keepPage?: boolean
 }
 
 /** PNGs of slides at their own size (1920×1080), one upload each: the PNG export. */
@@ -75,7 +100,17 @@ export interface RenderExportJob extends RenderJobBase {
 export const LOOK_MAX_EDGE = 1568
 export const LOOK_MAX_PIXELS = 1_150_000
 
-/** What an agent looks at (`query.render`): one picture, composed in the page. */
+/**
+ * A deck's card picture (`thumbnail` looks): the size the folder page's
+ * imgproxy `thumb` variant shows (400×225, which never enlarges).
+ */
+export const THUMBNAIL_WIDTH = 400
+export const THUMBNAIL_HEIGHT = 225
+
+/**
+ * What the render page composes from slides: what an agent looks at
+ * (`query.render`) or a deck's card — one picture, composed in the page.
+ */
 export type RenderLookSpec =
   /** A slide, downscaled to `LOOK_MAX_EDGE` on its long edge. */
   | { mode: 'slide'; slideId: string }
@@ -87,6 +122,27 @@ export type RenderLookSpec =
     }
   /** Many slides in a grid, each labelled with its number, within `LOOK_MAX_EDGE`. */
   | { mode: 'sheet'; slideIds: string[] }
+  /** A slide as the deck's card picture, `THUMBNAIL_WIDTH`×`THUMBNAIL_HEIGHT`. */
+  | { mode: 'thumbnail'; slideId: string }
+  /**
+   * A slide before and after, side by side, within `LOOK_MAX_EDGE`. `before`
+   * is where the server stored the whole document as it was at the start of
+   * the current agent run (`Y.encodeStateAsUpdate`, a presigned GET — the
+   * state never travels in the queue): the worker fetches it, draws the
+   * slide on a page of its own that holds that state and nothing live, then
+   * hands the picture to the live page, which draws the slide as it is now
+   * beside it.
+   */
+  | { mode: 'compare'; slideId: string; before: { url: string } }
+
+/**
+ * A look as the render page takes it (`__narrativeRenderLook`): a compare
+ * carries the "before" picture the worker drew on the frozen page (base64
+ * PNG; null when the slide did not exist then), not the document state.
+ */
+export type RenderPageLookSpec =
+  | Exclude<RenderLookSpec, { mode: 'compare' }>
+  | { mode: 'compare'; slideId: string; beforePng: string | null }
 
 export interface RenderLookJob extends RenderJobBase {
   kind: 'look'
@@ -112,12 +168,40 @@ export interface RenderedSlide {
   failedLoads: number
 }
 
+/**
+ * A text box whose laid-out text — measured on the page, with the real fonts
+ * — runs below its box (slide px).
+ */
+export interface TextOverflow {
+  slideId: string
+  objectId: string
+  boxHeight: number
+  textHeight: number
+}
+
+/**
+ * A text box that grows with its text (`autofit: 'grow-down'`, A4.2a) and
+ * the height it is drawn at, measured on the page (slide px) — what the
+ * brand checker compares with the region below it (A4.5).
+ */
+export interface GrownText {
+  slideId: string
+  objectId: string
+  height: number
+}
+
 export interface RenderedLook {
   width: number
   height: number
   sizeBytes: number
   /** The slides in it, in the order shown, with their position and failed loads. */
   slides: Array<{ slideId: string; index: number; failedLoads: number }>
+  /** Its slides' text boxes that overflow (a compare: the slide now, not before). */
+  overflow: TextOverflow[]
+  /** Its slides' growing text boxes as drawn (A4.5); absent from a worker older than A4.5. */
+  grown?: GrownText[]
+  /** A compare whose slide did not exist at the start of the run: its "before" side is empty. */
+  newSlide?: boolean
 }
 
 /**

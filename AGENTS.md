@@ -9,14 +9,17 @@ every coding agent (Claude Code, Cursor, Codex, …); humans start at
 Read before changing code: `docs/testing-strategy.md` (what the suites
 cover), `docs/agents.md` (areas and their owners), `SETUP.md` (setup,
 toolchain, troubleshooting). The agentic layer is planned in
-`docs/plans/agentic-layer.md` (A0–A2 done); the status and next steps are
-the "Where we stand" section of `docs/plans/a2-extraction.md`. Folder
+`docs/plans/agentic-layer.md` (A0–A5 done, the plan complete; handoffs
+in `docs/handoff/`). A5 (the deck builder, restyle and PDF export; built,
+released in 0.12.0) is recorded in `docs/plans/a5-deck-builder.md`, A4
+(style packs, released in 0.11.1) in `docs/plans/a4-style-packs.md`, each
+final state in that file's "Where we stand". Folder
 sharing (folder roles, linked component media) is planned in
 `docs/plans/folder-sharing.md` (ADR 0013); faster test loops in
 `docs/plans/dev-speed.md`; the render worker (phase A3: the agent sees
 slides, PNG export, server thumbnails) in `docs/plans/a3-render-worker.md`;
 the desktop app (Electron, offline work) in `docs/plans/desktop-app.md`
-(ADR 0014, `docs/desktop.md`).
+(ADR 0015, `docs/desktop.md`).
 
 ## Hard rules
 
@@ -81,22 +84,22 @@ below that match it.
 
 ## When to run what
 
-| Files touched                                                                                                                         | Also run                                                                                                                                                                                           |
-| ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/commands/**`, or any new/changed user capability (control, shortcut, menu item, route, object property, slide-model export) | `just capabilities` (commit its output) and the `agent-parity` agent (plan §9, ADR 0010)                                                                                                           |
-| `packages/commands/playbooks/**`, MCP prompts, command descriptions/schemas/examples                                                  | `just eval` (before a release too); `just eval --filter <id> --record` when a scenario or command behaviour changes on purpose (`tests/agent-eval/README.md`)                                      |
-| Drizzle stores (`apps/server/src/**/*Store.ts`, `mcp/oauth/store.ts`, `agent/runStore.ts`), migrations                                | `just integration` (writes rows into the dev Postgres)                                                                                                                                             |
-| `apps/web/src/renderer/**` or Pixi code                                                                                               | `just e2e -g "renderer-visual\|inspector-flows"`                                                                                                                                                   |
-| `apps/web/src/ui/**`, `apps/web/src/components/**`                                                                                    | `just e2e -g "<feature>"`                                                                                                                                                                          |
-| Keyboard shortcuts, focus scope, drag/drop                                                                                            | `just e2e -g "keyboard-shortcuts"`                                                                                                                                                                 |
-| `apps/server/src/pptx/**`                                                                                                             | `just pptx-roundtrip <real deck>` — target 0 differences; **5 pre-existing on 2026-09-26** (0.9.26–0.9.29, not bisected): add none (`apps/server/src/pptx/README.md`)                              |
-| Auth, sharing, folders, cascade-delete                                                                                                | `just e2e -g "destructive-flows"`                                                                                                                                                                  |
-| Yjs mutations, Hocuspocus, sync                                                                                                       | `just e2e -g "multi-client-collab"` (**flaky since 2026-09-26**: "three clients … converge" failed 6/6 on clean 0.9.29 and 2/6 with A0 — compare with a clean baseline before blaming your change) |
-| `apps/desktop/**`, `apps/web/src/desktop/**`, `packages/shared/src/desktop.ts`                                                        | `just test desktop web`; packaging, protocol, update or fuse changes: `just desktop-dist` and the per-OS checks in `docs/desktop.md`                                                               |
-| Bundle entry points, dynamic imports, vendor chunks                                                                                   | `just size` (**Tiptap chunk 12.8 kB over budget, pre-existing** — 132.82 kB gz at 0.10.19; grow no chunk)                                                                                          |
-| Hot edit / awareness / doc-growth paths                                                                                               | `just load` (warns on > 20% drift from a local `baselines.json`, copied from `tests/load/baselines.example.json` after a clean run)                                                                |
-| Editor render path (FCP / LCP / TTI)                                                                                                  | `just lighthouse`                                                                                                                                                                                  |
-| `packages/slide-model/src/{mutations,slides}.ts` deep changes                                                                         | `just mutate` — **broken since 2026-09-26** (`@stryker-mutator/vitest-runner` 8.x vs vitest 4): say so instead of skipping silently                                                                |
+| Files touched                                                                                                                         | Also run                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/commands/**`, or any new/changed user capability (control, shortcut, menu item, route, object property, slide-model export) | `just capabilities` (commit its output) and the `agent-parity` agent (plan §9, ADR 0010)                                                                                      |
+| `packages/commands/playbooks/**`, MCP prompts, command descriptions/schemas/examples                                                  | `just eval` (before a release too); `just eval --filter <id> --record` when a scenario or command behaviour changes on purpose (`tests/agent-eval/README.md`)                 |
+| Drizzle stores (`apps/server/src/**/*Store.ts`, `mcp/oauth/store.ts`, `agent/runStore.ts`), migrations                                | `just integration` (writes rows into the dev Postgres)                                                                                                                        |
+| `apps/web/src/renderer/**` or Pixi code                                                                                               | `just e2e -g "renderer-visual\|inspector-flows"`                                                                                                                              |
+| `apps/web/src/ui/**`, `apps/web/src/components/**`                                                                                    | `just e2e -g "<feature>"`                                                                                                                                                     |
+| Keyboard shortcuts, focus scope, drag/drop                                                                                            | `just e2e -g "keyboard-shortcuts"`                                                                                                                                            |
+| `apps/server/src/pptx/**`                                                                                                             | `just pptx-roundtrip <real deck>` — target 0 differences; **5 pre-existing on 2026-09-26** (0.9.26–0.9.29, not bisected): add none (`apps/server/src/pptx/README.md`)         |
+| Auth, sharing, folders, cascade-delete                                                                                                | `just e2e -g "destructive-flows"`                                                                                                                                             |
+| Yjs mutations, Hocuspocus, sync                                                                                                       | `just e2e -g "multi-client-collab"` (flaky 2026-09-26 → 2026-10-14: its clients were driven before the editor route had loaded; 40/40 under 6 workers since)                  |
+| `apps/desktop/**`, `apps/web/src/desktop/**`, `packages/shared/src/desktop.ts`                                                        | `just test desktop web`; packaging, protocol, update or fuse changes: `just desktop-dist` and the per-OS checks in `docs/desktop.md`                                          |
+| Bundle entry points, dynamic imports, vendor chunks                                                                                   | `just size` (Tiptap chunk 135.43 of 137 kB gz on 2026-10-14 — Tiptap 3.32 and its y-tiptap binding 3.0.10 grew it; first paint fell 737 → 615 kB the same day; grow no chunk) |
+| Hot edit / awareness / doc-growth paths                                                                                               | `just load` (warns on > 20% drift from a local `baselines.json`, copied from `tests/load/baselines.example.json` after a clean run)                                           |
+| Editor render path (FCP / LCP / TTI)                                                                                                  | `just lighthouse`                                                                                                                                                             |
+| `packages/slide-model/src/{mutations,slides}.ts` deep changes                                                                         | `just mutate` (~2 min; 49% on 2026-10-14: `mutations.ts` 65%, `slides.ts` 26%) — informational, never gating                                                                  |
 
 Run as few e2e specs as the change needs: `just e2e-affected` while
 working (it runs the e2e part of this table for the working tree, `--base
@@ -110,7 +113,10 @@ whole suite, and names the file — add a new file's area to `AREAS` in
 If a command does not exist or fails to start (port collision, missing
 service), say so explicitly — never skip it silently. Specs seed their own
 folders, decks and components through the API and delete them afterwards;
-none may depend on data in a developer's database.
+none may depend on data in a developer's database. Specs take `test` from
+`apps/web/e2e/fixtures/test.ts` (lint-enforced), which deletes every deck and
+folder a worker's specs created through Playwright's contexts once the
+worker is done; components, tokens and media are still the spec's to delete.
 
 ## What not to test
 
@@ -125,9 +131,12 @@ Deleted from the suite; do not re-introduce:
 - CRDT byte-equality — `Y.encodeStateAsUpdate` is not canonical; compare
   `listSlides()` structurally.
 
-27 web tests are `it.skip` with a rationale in the file (plus one each in
-server and video-worker); ~6 have never been triaged. Do not un-skip without
-reading the comment; a new skip says why in the file and updates this count.
+One web test is `it.skip` (the "+ slideIn up" quick button, gone until the
+add-preset menu gets direction variants again) and one server test (the
+legacy 409 for a non-empty folder); each says why in its file. The other 26
+web skips were triaged on 2026-10-16: fixed, rewritten for today's code, or
+deleted where e2e covers them or they were DOM-presence tests. A new skip
+says why in the file and updates this count.
 
 ## Layout
 
@@ -136,7 +145,7 @@ apps/web            React editor, Pixi renderer (src/renderer), e2e (e2e/)
 apps/server         Fastify API, Hocuspocus, MCP server, services, drizzle/ migrations
 apps/video-worker   ffmpeg transcoding (BullMQ)
 apps/render-worker  headless Chromium on the render page: slide PNGs (BullMQ, A3)
-apps/desktop        the Electron desktop app: a shell that loads the editor from a server (ADR 0014)
+apps/desktop        the Electron desktop app: a shell that loads the editor from a server (ADR 0015)
 packages/shared     object types and zod schemas
 packages/slide-model  Yjs document model and writers
 packages/commands   command registry, parity guards, playbooks, capability manifest
@@ -157,7 +166,7 @@ tools/dev/          formatter, docs check, git hook scripts, toolchain doctor
   and reads the diff in the terminal. Never `--no-verify`, never force-push.
 - **Commit only when Petr says so** ("commit", "push", "ship", "merge",
   "hotovo", "nasaď"); approval to build something is not approval to commit.
-- Toolchain: Node ≥ 24.4 (the 24 LTS line the images run), pnpm 9.15.4 (`packageManager`), Docker with
+- Toolchain: Node ≥ 24.15 (the 24 LTS line the images run), pnpm 12.11.2 (`packageManager`; its settings live in `pnpm-workspace.yaml`), Docker with
   compose, xmllint (PPTX schema tests), python3 ≥ 3.9 (hooks, docs check).
   `just doctor` checks them.
 - Formatting is automatic (pre-commit hook): Prettier (`.prettierrc`) and
@@ -165,7 +174,8 @@ tools/dev/          formatter, docs check, git hook scripts, toolchain doctor
 - **Versions**: git tag = every package version = GHCR image tag =
   `/version.json` = the plugin's version. A release: `just bump X.Y.Z`, the
   CHANGELOG section, commit → verify the subject → tag → push in one chain,
-  then `just deploy vX.Y.Z`. Production is VM 103 (`docs/deploy.md`: layout,
+  then `just gh-release vX.Y.Z` (the GitHub release, from that CHANGELOG
+  section) and `just deploy vX.Y.Z`. Production is VM 103 (`docs/deploy.md`: layout,
   access, rollback, the agentic layer's prod config); connecting to a prod
   host needs Petr's consent per host.
 

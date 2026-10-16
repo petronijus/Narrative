@@ -1,7 +1,7 @@
 /**
  * auth/desktopTickets.ts
  *
- * One-time sign-in tickets of the desktop app (ADR 0014,
+ * One-time sign-in tickets of the desktop app (ADR 0015,
  * docs/plans/desktop-d0-spec.md §4). Google refuses OAuth inside an Electron
  * window, so the desktop shell signs in through the system browser:
  *

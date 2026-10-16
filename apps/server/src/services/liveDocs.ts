@@ -34,6 +34,7 @@ import type { Database } from '../db/client.js'
 import { componentUpdates, deckUpdates, folderUpdates } from '../db/schema.js'
 import { getHocuspocusInstance } from '../hocuspocus/presence.js'
 import type { ServiceDeps } from './deps.js'
+import { transactDirect } from '../hocuspocus/directWrite.js'
 
 export type DocKind = 'deck' | 'folder' | 'component'
 
@@ -157,7 +158,7 @@ export async function writeLiveDoc<T>(
   if (hp !== null) {
     const connection = await hp.openDirectConnection(documentName(kind, id))
     try {
-      await connection.transact((doc) => {
+      await transactDirect(connection, (doc) => {
         if (touched !== undefined) touched.value = true
         doc.transact(() => {
           result = { value: fn(doc) }

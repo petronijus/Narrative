@@ -117,3 +117,28 @@ describe('AgentConfirmations', () => {
     expect(confirmationPageUrl('https://n.example/', 'abc')).toBe('https://n.example/confirm/abc')
   })
 })
+
+describe('AgentConfirmations: an unanswered confirmation', () => {
+  it('reaches its person once, after the wait, only while still pending', async () => {
+    const { vi } = await import('vitest')
+    vi.useFakeTimers()
+    try {
+      const seen: string[] = []
+      const store = new AgentConfirmations({
+        unansweredAfterMs: 60_000,
+        onUnanswered: (r) => seen.push(r.id),
+      })
+      const waiting = store.create(binding, summary)
+      const answered = store.create({ ...binding, sessionKey: 'mcp:s2' }, summary)
+      store.decide(answered.id, 'u1', true)
+      vi.advanceTimersByTime(59_999)
+      expect(seen).toEqual([])
+      vi.advanceTimersByTime(1)
+      expect(seen).toEqual([waiting.id])
+      vi.advanceTimersByTime(600_000)
+      expect(seen).toEqual([waiting.id])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

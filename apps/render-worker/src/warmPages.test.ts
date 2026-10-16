@@ -5,7 +5,7 @@ import { WarmPages, type WarmPage } from './warmPages.js'
 
 /** A context that closes like Playwright's (a 'close' event), and its page. */
 function fakePage(
-  deckId = 'd1',
+  name = 'deck:d1',
 ): WarmPage & { closed: () => boolean; closeListeners: () => number } {
   const events = new EventEmitter()
   let closed = false
@@ -19,7 +19,7 @@ function fakePage(
   } as unknown as BrowserContext
   const page = { isClosed: () => closed } as unknown as Page
   return {
-    deckId,
+    name,
     context,
     page,
     pageErrors: ['old'],
@@ -37,31 +37,31 @@ describe('WarmPages', () => {
 
   it('hands a kept page back to its session and deck only', () => {
     const pages = new WarmPages({ max: 2, idleMs: 60_000, log })
-    const a = fakePage('d1')
+    const a = fakePage('deck:d1')
     pages.keep('nrr_a', a)
-    expect(pages.take('nrr_b', 'd1')).toBeUndefined()
-    const back = pages.take('nrr_a', 'd1')
+    expect(pages.take('nrr_b', 'deck:d1')).toBeUndefined()
+    const back = pages.take('nrr_a', 'deck:d1')
     expect(back?.page).toBe(a.page)
     // Errors of the job before do not leak into the next one.
     expect(back?.pageErrors).toEqual([])
     // Taken out until kept again.
-    expect(pages.take('nrr_a', 'd1')).toBeUndefined()
+    expect(pages.take('nrr_a', 'deck:d1')).toBeUndefined()
   })
 
   it('watches a page kept job after job with one close listener', () => {
     const pages = new WarmPages({ max: 1, idleMs: 60_000, log })
-    const a = fakePage('d1')
+    const a = fakePage('deck:d1')
     for (let job = 0; job < 12; job++) {
-      pages.keep('nrr_a', job === 0 ? a : pages.take('nrr_a', 'd1')!)
+      pages.keep('nrr_a', job === 0 ? a : pages.take('nrr_a', 'deck:d1')!)
     }
     expect(a.closeListeners()).toBe(1)
   })
 
   it('closes a page asked for another deck', async () => {
     const pages = new WarmPages({ max: 1, idleMs: 60_000, log })
-    const a = fakePage('d1')
+    const a = fakePage('deck:d1')
     pages.keep('nrr_a', a)
-    expect(pages.take('nrr_a', 'd2')).toBeUndefined()
+    expect(pages.take('nrr_a', 'deck:d2')).toBeUndefined()
     await Promise.resolve()
     expect(a.closed()).toBe(true)
   })

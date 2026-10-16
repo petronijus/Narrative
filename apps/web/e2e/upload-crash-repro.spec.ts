@@ -13,7 +13,7 @@
  */
 
 import { Buffer } from 'node:buffer'
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { PNG } from 'pngjs'
 
 // ---------------------------------------------------------------------------

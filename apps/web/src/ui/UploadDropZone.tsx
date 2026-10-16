@@ -26,21 +26,8 @@ import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { COMPONENT_DRAG_MIME } from './ComponentPickerDrawer.js'
 import { useStampComponent } from '../state/useStampComponent.js'
-
-// ---------------------------------------------------------------------------
-// Coordinate helper (mirrors EditorLayout.clientToCanvasCoords)
-// ---------------------------------------------------------------------------
-
-function clientToCanvasCoords(
-  clientX: number,
-  clientY: number,
-  canvasRect: DOMRect,
-): { x: number; y: number } {
-  return {
-    x: clientX - canvasRect.left,
-    y: clientY - canvasRect.top,
-  }
-}
+import { useZoomLevel } from '../state/useZoomLevel.js'
+import { clientToCanvasCoords } from '../lib/canvasCoords.js'
 
 // Default drop position when we cannot determine canvas rect
 const DEFAULT_DROP_X = 960
@@ -60,6 +47,10 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
   const { startUpload } = useMediaUpload()
   const { activeSlideId } = useActiveSlide()
   const command = useCommand()
+  // The drop listener is installed once; it reads the zoom through a ref.
+  const { zoom } = useZoomLevel()
+  const zoomRef = useRef(zoom)
+  zoomRef.current = zoom
   const stampComponent = useStampComponent()
 
   const [isDragOver, setIsDragOver] = useState(false)
@@ -188,7 +179,7 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
       setDragFileType(null)
 
       const rect = el.getBoundingClientRect()
-      const dropCoords = clientToCanvasCoords(e.clientX, e.clientY, rect)
+      const dropCoords = clientToCanvasCoords(e.clientX, e.clientY, rect, zoomRef.current)
       pendingDropCoordsRef.current = dropCoords
 
       // Component drag-out from the picker drawer — stamped on the server

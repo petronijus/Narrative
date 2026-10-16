@@ -28,10 +28,11 @@
  */
 
 import { HOCUSPOCUS_URL } from '../lib/endpoints.js'
+import type { StylePack } from '@narrative/shared'
 import { createContext, useContext, useEffect, useRef, useState, useMemo } from 'react'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
-import { hasNoTokens, readFolderTokens } from '@narrative/slide-model'
+import { hasNoTokens, readFolderTokens, readStylePack } from '@narrative/slide-model'
 import { useApi } from '../api/client.js'
 import type { TokenUsage } from '../api/client.js'
 import { FolderDocContext, emptyTokensSnapshot } from './FolderDocContext.js'
@@ -41,6 +42,33 @@ import { hocuspocusAuthOptions } from './hocuspocusAuth.js'
 
 /** The writer the subtree changes tokens with; null until the folder is known. */
 const FolderTokenWriterContext = createContext<FolderTokenWriter | null>(null)
+
+/**
+ * The folder's style pack, read once per change for the whole subtree
+ * (`useFolderStylePack`): every component that calls `useCommand` reads it,
+ * and a listener and a JSON copy of the pack each would multiply with them.
+ */
+const FolderStylePackContext = createContext<StylePack | null | undefined>(undefined)
+
+function FolderStylePackSnapshot({ children }: { children: React.ReactNode }) {
+  const ctx = useContext(FolderDocContext)
+  const doc = ctx !== null && ctx.synced ? ctx.doc : undefined
+  const [pack, setPack] = useState<StylePack | null | undefined>(() =>
+    doc === undefined ? undefined : (readStylePack(doc) as StylePack | null),
+  )
+  useEffect(() => {
+    if (doc === undefined) {
+      setPack(undefined)
+      return
+    }
+    const map = doc.getMap('stylePack')
+    const read = (): void => setPack(readStylePack(doc) as StylePack | null)
+    read()
+    map.observeDeep(read)
+    return () => map.unobserveDeep(read)
+  }, [doc])
+  return <FolderStylePackContext value={pack}>{children}</FolderStylePackContext>
+}
 
 // ---------------------------------------------------------------------------
 // Provider
@@ -89,9 +117,8 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
 
     // The session cookie, or on a share-link visit the page's share_token,
     // exactly like the deck's document (state/hocuspocusAuth.ts).
-    const authOptions = hocuspocusAuthOptions(window.location.search)
+    const authOptions = hocuspocusAuthOptions(HOCUSPOCUS_URL, window.location.search)
     const provider = new HocuspocusProvider({
-      url: HOCUSPOCUS_URL,
       name: `folder:${folderId}`,
       document: doc,
       ...authOptions,
@@ -141,7 +168,9 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
 
   return (
     <FolderDocContext value={value ?? placeholderRef.current}>
-      <FolderTokenWriterContext value={writer}>{children}</FolderTokenWriterContext>
+      <FolderTokenWriterContext value={writer}>
+        <FolderStylePackSnapshot>{children}</FolderStylePackSnapshot>
+      </FolderTokenWriterContext>
     </FolderDocContext>
   )
 }
@@ -290,3 +319,12 @@ export function useTokenUsages(
 
 export type { FolderTokensSnapshot, FolderDocContextValue } from './FolderDocContext.js'
 export type { TokenUsage } from '../api/client.js'
+
+/**
+ * The folder's style pack, live (agentic A4.3): null when the folder has
+ * none, undefined while it is not known (no provider, not synced yet).
+ * The editor's commands read it as `ctx.stylePack`.
+ */
+export function useFolderStylePack(): StylePack | null | undefined {
+  return useContext(FolderStylePackContext)
+}

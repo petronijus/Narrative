@@ -450,8 +450,7 @@ function documentOf(paragraphs: readonly NativeParagraph[]): NotesDoc {
       if (p.list === 'number') list.attrs = { start: p.startAt ?? 1 }
       const parent = stack[stack.length - 1]
       const parentItem = parent?.list.content?.[parent.list.content.length - 1] as
-        | NotesElement
-        | undefined
+        NotesElement | undefined
       if (parentItem !== undefined) parentItem.content = [...(parentItem.content ?? []), list]
       else doc.push(list)
       stack.push({ list, kind: p.list, level: p.level })

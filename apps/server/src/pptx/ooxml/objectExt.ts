@@ -43,9 +43,11 @@ import {
   nonNeg,
   num,
   oneOf,
+  positive,
   rect,
   str,
   table,
+  textListLevel,
   unit,
   vAlign,
   type Schema,
@@ -53,7 +55,7 @@ import {
 import { POLYGON_PRST } from './vocabulary.js'
 import { pxToEmu } from './units.js'
 import type { NarrativeObjectExt } from './narrativeExt.js'
-import { familyIsNative } from './text.js'
+import { familyIsNative, primaryFamily } from './text.js'
 import { maskIsNative } from './shapes.js'
 
 // ---------------------------------------------------------------------------
@@ -63,6 +65,38 @@ import { maskIsNative } from './shapes.js'
 /** Whether the object's outline is drawn natively (colour and a positive width). */
 function visibleStroke(stroke: unknown, width: number | undefined): boolean {
   return stroke !== undefined && width !== undefined && width > 0
+}
+
+/**
+ * A text box whose level 0 (A4.2b) sets its own type, spacing or line
+ * spacing: the native level 1 carries the level's values, which the
+ * importer reads as the frame's. The frame's own values go into the
+ * extension; a frame value the box does not have is `implicit` as the
+ * level's, so the import drops it again.
+ */
+function frameUnderLevelZero(
+  o: Extract<SlideObject, { type: 'text' }>,
+  ext: NarrativeObjectExt,
+  implicit: Record<string, unknown>,
+): void {
+  const l0 = o.listLevels?.[0]
+  if (l0 === undefined) return
+  if (l0.fontSize !== undefined) ext['fontSize'] = o.fontSize
+  if (l0.fontWeight !== undefined) ext['fontWeight'] = o.fontWeight
+  if (l0.color !== undefined) ext['color'] = o.color
+  if (l0.fontFamily !== undefined) {
+    if (o.fontFamily !== undefined) ext['fontFamily'] = o.fontFamily
+    else implicit['fontFamily'] = primaryFamily(l0.fontFamily)
+  }
+  if (l0.lineSpacing !== undefined) {
+    if (o.lineHeight !== undefined) ext['lineHeight'] = o.lineHeight
+    if (o.lineSpacing !== undefined) ext['lineSpacing'] = o.lineSpacing
+    else implicit['lineSpacing'] = l0.lineSpacing
+  }
+  if (l0.spaceBefore !== undefined) {
+    if (o.paragraphSpaceBefore !== undefined) ext['paragraphSpaceBefore'] = o.paragraphSpaceBefore
+    else implicit['paragraphSpaceBefore'] = l0.spaceBefore
+  }
 }
 
 /** Anchor handles the native path cannot carry: a handle with no cubic segment to shape. */
@@ -151,8 +185,6 @@ export function objectExtValues(
     if (absent('startCap')) implicit['startCap'] = ends.start
     if (absent('endCap')) implicit['endCap'] = ends.end
   }
-  if (Object.keys(implicit).length > 0) ext['implicit'] = implicit
-
   // ─── Every object ──────────────────────────────────────────────────────
   // The native name is always written (PowerPoint's selection pane needs
   // one), so a model without a name cannot be told apart natively.
@@ -253,8 +285,10 @@ export function objectExtValues(
       // Only `lineHeight` is written when both are set.
       if (o.lineHeight !== undefined && o.lineSpacing !== undefined)
         ext['lineSpacing'] = o.lineSpacing
-      // The importer leaves top alignment unset.
-      if (o.vAlign === 'top') ext['vAlign'] = 'top'
+      // The importer leaves top alignment unset; a growing box is anchored
+      // at the top natively whatever it says.
+      if (o.vAlign === 'top' || (o.autofit === 'grow-down' && o.vAlign !== undefined))
+        ext['vAlign'] = o.vAlign
       if (o.colorAlpha !== undefined && o.colorAlpha >= 1) ext['colorAlpha'] = o.colorAlpha
       // Glyph outline: written only with a colour, always with a width.
       if (o.stroke === undefined) {
@@ -283,11 +317,28 @@ export function objectExtValues(
       // overrides: PowerPoint has no notion of either.
       put('textStyleId', o.textStyleId)
       put('textStyleOverrides', o.textStyleOverrides)
+      // Written natively too, but the import does not take autofit over
+      // from PowerPoint's markup (it would change how imported decks draw);
+      // the shrink floor has no native form at all.
+      put('autofit', o.autofit)
+      put('minFontSize', o.minFontSize)
+      // OOXML names a face, not a width of it.
+      put('fontStretch', o.fontStretch)
+      // List levels (A4.2b) are written natively into the lstStyle levels,
+      // but the importer neither reads them back nor tells a level's type
+      // from the frame's: the levels ride here, and where level 0 sets its
+      // own type the frame's own values do too (the importer reads the
+      // frame tier from level 1) — or, where the frame has none, the value
+      // the import will read instead, to drop again.
+      put('listLevels', o.listLevels)
+      frameUnderLevelZero(o, ext, implicit)
       break
     }
     case 'image': {
       put('variant', o.variant)
       put('fit', o.fit)
+      // Natively the fitted picture's srcRect; which side it kept is the model's.
+      put('focus', o.focus)
       put('imageRotation', o.imageRotation)
       // A mask the picture's own geometry cannot draw exactly.
       if (o.mask !== undefined && !maskIsNative(o.mask, o.width, o.height)) ext['mask'] = o.mask
@@ -325,6 +376,7 @@ export function objectExtValues(
       break
     }
   }
+  if (Object.keys(implicit).length > 0) ext['implicit'] = implicit
   return ext
 }
 
@@ -448,6 +500,7 @@ const FIELDS: Record<SlideObject['type'], Record<string, Schema>> = {
     ...COMMON,
     variant: oneOf('thumb', 'display', 'original'),
     fit: oneOf('cover', 'contain'),
+    focus: oneOf('top', 'bottom', 'left', 'right'),
     imageRotation: num,
     mask,
     // Set by the parser from `crop` once the crop is checked (parser.ts).
@@ -470,7 +523,22 @@ const FIELDS: Record<SlideObject['type'], Record<string, Schema>> = {
   },
   text: {
     ...COMMON,
-    fontWeight: oneOf(100, 200, 300, 400, 500, 600, 700, 800, 900),
+    fontWeight: oneOf<number | string>(
+      100,
+      200,
+      300,
+      400,
+      500,
+      600,
+      700,
+      800,
+      900,
+      'bold',
+      'normal',
+    ),
+    fontSize: positive,
+    color,
+    listLevels: arr(textListLevel, 9),
     textTransform: oneOf('capitalize'),
     lineHeight: num,
     lineSpacing: num,
@@ -484,6 +552,9 @@ const FIELDS: Record<SlideObject['type'], Record<string, Schema>> = {
     fontFamily: str(200),
     isSlideNumber: bool,
     listStyle: oneOf('bullet', 'numbered'),
+    autofit: oneOf('grow-down', 'shrink'),
+    minFontSize: positive,
+    fontStretch: positive,
     textStyleId: idRef(200),
     textStyleOverrides: arr(
       oneOf(
@@ -496,6 +567,11 @@ const FIELDS: Record<SlideObject['type'], Record<string, Schema>> = {
         'paragraphSpaceAfter',
         'color',
         'textTransform',
+        'minFontSize',
+        'listLevels',
+        'fontStretch',
+        'lineSpacing',
+        'align',
       ),
       16,
     ),
@@ -541,4 +617,7 @@ const IMPLICIT_FIELDS: Record<string, Schema> = {
   autoplay: bool,
   startCap: lineCap,
   endCap: lineCap,
+  fontFamily: str(200),
+  lineSpacing: num,
+  paragraphSpaceBefore: num,
 }

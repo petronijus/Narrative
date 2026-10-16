@@ -38,6 +38,7 @@ export {
 } from './registry.js'
 export {
   commandReadsFolderFonts,
+  commandReadsStylePack,
   commandReadsFolderTokens,
   commandUsesDocument,
   isBatchable,
@@ -66,6 +67,12 @@ export {
 } from './refs.js'
 export { stampMaster, type StampResult } from './commands/components.js'
 export { MAX_RENDER_SLIDES } from './commands/render.js'
+export {
+  MAX_MEASURE_SLIDES,
+  MAX_PDF_SLIDES,
+  type PdfExportResult,
+  type TextMeasurement,
+} from './services/render.js'
 export {
   ANCHORS,
   OPPOSITE_ANCHOR,
@@ -123,11 +130,18 @@ export {
   type ComponentService,
   type PptxService,
   type TokenService,
+  type StylePackService,
   type EditorService,
   type AgentRunService,
 } from './services.js'
 export type * from './services/types.js'
-export { MAX_INSERT_OBJECTS, applyInsertPlan, planInsert, type InsertPlan } from './insert/plan.js'
+export {
+  MAX_INSERT_OBJECTS,
+  applyInsertPlan,
+  planForMaster,
+  planInsert,
+  type InsertPlan,
+} from './insert/plan.js'
 export { MAX_LIST_PAGE_SIZE } from './services/common.js'
 export type {
   AgentRunStatus,
@@ -168,6 +182,7 @@ export {
   effectiveFontWeight,
   matchFontWeight,
   pickPrimaryFamily,
+  stretchRangeFor,
   toNumericWeight,
   type FontFaceWeight,
   type NumericFontWeight,
@@ -183,3 +198,43 @@ export {
   textStyleFieldsFromObject,
   textStyleNameTaken,
 } from './text/textStyle.js'
+export {
+  stylePackEdit,
+  stylePackGet,
+  stylePackCommands,
+  layoutBrief,
+  packSummary,
+} from './commands/stylePacks.js'
+export { parseStylePack, storedStylePack } from './stylePack/parse.js'
+export {
+  archetypeOfLayout,
+  planLayout,
+  type LayoutPlan,
+  type SlotContent,
+} from './stylePack/layout.js'
+export {
+  DeckSpecSchema,
+  MAX_SPEC_BYTES,
+  MAX_SPEC_SLIDES,
+  exampleDeckSpec,
+  inLanguage,
+  validateDeckSpec,
+  type DeckSpec,
+  type SpecIssue,
+} from './stylePack/deckSpec.js'
+export { planBuild, type BuildPlan, type BuiltSlide } from './stylePack/buildPlan.js'
+export {
+  checkDeck,
+  type CheckFinding,
+  type CheckMeasurement,
+  type CheckReport,
+} from './stylePack/check.js'
+export { previousOfUpdate } from './stylePack/change.js'
+export {
+  compileStylePack,
+  compiledTokenId,
+  linkedTextFields,
+  type CompiledComponent,
+  type CompiledToken,
+  type StylePackCompilation,
+} from './stylePack/compile.js'

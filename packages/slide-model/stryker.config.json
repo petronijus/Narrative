@@ -1,22 +1,38 @@
 {
-  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "_comment_purpose": "Mutation-testing pilot. Stryker mutates the source under test (e.g. flips < to <=, swaps + with -) and re-runs the test suite; if all tests still pass with the mutation in place, that mutation is considered 'survived' and the unit tests have a hole. The score = killed / (killed + survived). 80%+ is good for pure-logic packages.",
-  "_comment_scope": "Limited to mutations.ts + slides.ts to keep the run < 5 minutes. Expand by adjusting `mutate` once we have a baseline score.",
-  "_comment_run": "From this directory: `pnpm mutate` — outputs an HTML report at reports/mutation/. CI integration is opt-in (don't gate every PR on this; run nightly or before milestone close).",
+  "$schema": "../../node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "purpose_comment": "Mutation-testing pilot. Stryker mutates the source under test (e.g. flips < to <=, swaps + with -) and re-runs the test suite; if all tests still pass with the mutation in place, that mutation is considered 'survived' and the unit tests have a hole. The score = killed / (killed + survived). 80%+ is good for pure-logic packages.",
+  "scope_comment": "Limited to mutations.ts + slides.ts to keep the run < 5 minutes. Expand by adjusting `mutate` once we have a baseline score.",
+  "run_comment": "`just mutate` (or `pnpm mutate` in this package) — outputs an HTML report at reports/mutation/. CI integration is opt-in (don't gate every PR on this; run nightly or before milestone close).",
+  "root_comment": "Runs from the repo root (the `mutate` script cds there): Stryker copies the working directory into a sandbox, and the vitest config reaches outside this package (../../vitest.timeouts.ts, ../../vitest.cache.ts, ../shared/src). From the root the sandbox keeps the repo's layout; ignorePatterns copy only what these tests need. Paths below are relative to the root.",
   "packageManager": "pnpm",
   "reporters": ["html", "clear-text", "progress"],
+  "htmlReporter": { "fileName": "packages/slide-model/reports/mutation/mutation.html" },
   "testRunner": "vitest",
   "vitest": {
-    "configFile": "vitest.config.ts"
+    "configFile": "packages/slide-model/vitest.config.ts",
+    "dir": "packages/slide-model"
   },
   "coverageAnalysis": "perTest",
   "mutate": [
-    "src/mutations.ts",
-    "src/slides.ts",
-    "!src/**/*.test.ts",
-    "!src/**/*.property.test.ts"
+    "packages/slide-model/src/mutations.ts",
+    "packages/slide-model/src/slides.ts",
+    "!packages/slide-model/src/**/*.test.ts",
+    "!packages/slide-model/src/**/*.property.test.ts"
   ],
-  "ignorePatterns": ["node_modules", "dist", "reports"],
+  "ignorePatterns": [
+    "/*",
+    "!/package.json",
+    "!/tsconfig.base.json",
+    "!/vitest.timeouts.ts",
+    "!/vitest.cache.ts",
+    "!/packages",
+    "/packages/*",
+    "!/packages/slide-model",
+    "!/packages/shared",
+    "/packages/*/node_modules",
+    "/packages/*/dist",
+    "/packages/*/reports"
+  ],
   "thresholds": {
     "high": 80,
     "low": 60,

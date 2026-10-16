@@ -56,8 +56,48 @@ export function isTokenRef(v: unknown): v is TokenRef {
  * - 'url'   → open `href` in the named browsing context (`_blank` default).
  */
 export type ObjectHyperlink =
-  | { kind: 'slide'; slideId: string }
-  | { kind: 'url'; href: string; target?: '_self' | '_blank' }
+  { kind: 'slide'; slideId: string } | { kind: 'url'; href: string; target?: '_self' | '_blank' }
+
+/**
+ * A4.1: what an object is for, small and generic on purpose — what a
+ * restyle maps by (a brand's `statement` is `body`; its page number, footer,
+ * classification and logo are `furniture`), while `slot` keeps the brand's
+ * own name.
+ */
+export const OBJECT_ROLES = [
+  'title',
+  'subtitle',
+  'body',
+  'picture',
+  'chart',
+  'table',
+  'caption',
+  'footnote',
+  'furniture',
+] as const
+
+export type ObjectRole = (typeof OBJECT_ROLES)[number]
+
+/**
+ * A4.1: where a stamped object came from (set by `component.stamp`, carried
+ * by duplicate / paste with a fresh `instance`, dropped by promote).
+ */
+export interface ComponentProvenance {
+  /** The component whose master was stamped. */
+  id: string
+  /** The master object this object copies. */
+  objectId: string
+  /**
+   * One id per stamp: two stamps of one master on a slide stay apart, as
+   * their group tokens do. Unique within a slide, like a group token.
+   */
+  instance: string
+  /**
+   * Where the master object stood when it was stamped; `x − origin.x` is the
+   * stamp's offset, so `component.restamp` puts a moved stamp where it is.
+   */
+  origin: { x: number; y: number }
+}
 
 export interface ShadowStyle {
   /** Shadow color hex or token ref. */
@@ -139,6 +179,16 @@ export interface BaseSlideObject {
    * Same mechanism as `flipH` but on `scale.y`.
    */
   flipV?: boolean
+  /**
+   * A4.1: the brand's slot name (`title`, `pagenum`, `bullets2`, …). A
+   * component's slots are its master objects' `slot ?? name`, so masters
+   * named before A4 keep working.
+   */
+  slot?: string
+  /** A4.1: the object's generic role ({@link ObjectRole}). */
+  role?: ObjectRole
+  /** A4.1: the component stamp this object belongs to. Never set on a master's own objects. */
+  component?: ComponentProvenance
 }
 
 /**
@@ -360,6 +410,9 @@ export type FontWeight = 'normal' | 'bold' | 100 | 200 | 300 | 400 | 500 | 600 |
 
 export type TextVerticalAlign = 'top' | 'middle' | 'bottom'
 
+/** {@link TextObject.autofit}: what a box does with text taller than it. Absent = fixed. */
+export type TextAutofit = 'grow-down' | 'shrink'
+
 /**
  * Legacy frame-wide list flag. Superseded by per-paragraph
  * {@link ParagraphAttrs} stored inside the Y.Text. Kept so decks written
@@ -368,8 +421,42 @@ export type TextVerticalAlign = 'top' | 'middle' | 'bottom'
  */
 export type TextListStyle = 'bullet' | 'numbered'
 
-/** Kind of list a paragraph belongs to. Absent ⇒ plain paragraph. */
-export type ListKind = 'bullet' | 'number'
+/**
+ * Kind of list a paragraph belongs to. Absent ⇒ its level's default in the
+ * box's `listLevels` (a linked text style's levels, A4.2b), else a plain
+ * paragraph; `'none'` ⇒ a plain paragraph whatever the levels say.
+ */
+export type ListKind = 'bullet' | 'number' | 'none'
+
+/**
+ * How paragraphs at one nesting level look by default (agentic A4.2b): the
+ * level style of a folder text style (`levels`), carried onto the linked
+ * box as `TextObject.listLevels[level]`. A paragraph's own attributes win
+ * over it; the renderer, the edit overlay and PPTX export read it.
+ */
+export interface TextListLevel {
+  /** The paragraph's list kind when it sets none of its own. */
+  list?: ListKind
+  /** Bullet glyph (a symbol font's glyph is mapped to Unicode). */
+  bulletChar?: string
+  /** Bullet colour; absent ⇒ the text's. */
+  bulletColor?: number | TokenRef
+  /** Bullet size as a multiple of the text's (PowerPoint `buSzPct`). */
+  bulletScale?: number
+  numberFormat?: ListNumberFormat
+  /** Where the text starts, px from the box's left edge (OOXML `marL`). */
+  indent?: number
+  /** How far left of the text the marker hangs, px (−OOXML `indent`). */
+  hanging?: number
+  /** Space above each paragraph at this level, px. */
+  spaceBefore?: number
+  fontFamily?: string
+  fontWeight?: FontWeight
+  fontSize?: number
+  color?: number | TokenRef
+  /** Line spacing, × the font's normal line (as `TextObject.lineSpacing`). */
+  lineSpacing?: number
+}
 
 /**
  * Numbering scheme for ordered (`number`) list paragraphs. Names mirror
@@ -397,7 +484,10 @@ export const MAX_LIST_LEVEL = 8
  * no `list` is a plain paragraph; `level` still applies as a left indent.
  */
 export interface ParagraphAttrs {
-  /** List kind. Absent ⇒ not a list item (plain paragraph). */
+  /**
+   * List kind. Absent ⇒ the level's default in the box's `listLevels`, else
+   * not a list item; `'none'` ⇒ not a list item whatever the levels say.
+   */
   list?: ListKind
   /** Indent / nesting level, 0..{@link MAX_LIST_LEVEL}. Default 0. */
   level?: number
@@ -461,6 +551,43 @@ export interface TextObject extends BaseSlideObject {
    * in a box sized for one digit. Absent: wrap at the box width.
    */
   wrap?: 'none'
+  /**
+   * How the box answers text that does not fit its height (agentic A4.2).
+   * Absent: fixed — the box keeps its size and text that runs below it is
+   * clipped by nothing but reported as overflow.
+   * - `'grow-down'`: the box is as tall as its laid-out text; its top stays
+   *   put and it grows or shrinks downwards (PowerPoint "resize shape to fit
+   *   text", `<a:spAutoFit/>`). The renderer draws it at the laid-out height
+   *   whatever `height` says; the editor writes that height back when a
+   *   person changes the box, so `height` is current after any human edit
+   *   and may lag behind an agent's or the server's until the next one.
+   *   `vAlign` has no room to act.
+   * - `'shrink'`: the box keeps its size and the type is scaled down, as one
+   *   (sizes, spacing, indents), until the text fits — never below the
+   *   linked text style's `minSize`, or half the size without one
+   *   (PowerPoint "shrink text on overflow", `<a:normAutofit/>`). A box that
+   *   still does not fit at that scale overflows.
+   */
+  autofit?: TextAutofit
+  /**
+   * The smallest size `autofit: 'shrink'` may scale the box's type to, in
+   * px of the box's own `fontSize` (runs scale with it). Linked boxes take
+   * it from their text style's `minSize`. Absent: half of `fontSize`.
+   */
+  minFontSize?: number
+  /**
+   * The width the box's type is set at, % of normal (CSS `font-stretch`, a
+   * variable font's `wdth` axis; A4.2c): Acme Type Extended is 130. Drawn
+   * from the folder face whose width range holds it; absent = 100.
+   */
+  fontStretch?: number
+  /**
+   * Per nesting level (index = `ParagraphAttrs.level`, ≤ 9): the defaults a
+   * paragraph takes when it sets nothing of its own — list kind, bullet,
+   * indent, spacing, type. Linked boxes take it from their text style's
+   * `levels` (A4.2b); absent ⇒ the built-in look (`•` `◦` …, 1.5 em steps).
+   */
+  listLevels?: TextListLevel[]
   /** Letter spacing in px. Default 0. */
   letterSpacing?: number
   /** Vertical space inserted ABOVE each paragraph, in px. Default 0. */
@@ -536,6 +663,11 @@ export type TextStyleOverrideKey =
   | 'paragraphSpaceAfter'
   | 'color'
   | 'textTransform'
+  | 'minFontSize'
+  | 'listLevels'
+  | 'fontStretch'
+  | 'lineSpacing'
+  | 'align'
 
 const TEXT_STYLE_OVERRIDE_KEY_SET: ReadonlySet<TextStyleOverrideKey> = new Set([
   'fontFamily',
@@ -547,6 +679,11 @@ const TEXT_STYLE_OVERRIDE_KEY_SET: ReadonlySet<TextStyleOverrideKey> = new Set([
   'paragraphSpaceAfter',
   'color',
   'textTransform',
+  'minFontSize',
+  'listLevels',
+  'fontStretch',
+  'lineSpacing',
+  'align',
 ])
 
 export const TEXT_STYLE_OVERRIDE_KEYS: ReadonlyArray<TextStyleOverrideKey> = Array.from(
@@ -586,6 +723,9 @@ export type ImageMask =
   | { kind: 'polygon'; sides: number }
   | { kind: 'path'; anchors: NormalizedPathAnchor[]; closed: boolean }
 
+/** {@link ImageObject.focus}: the side of a picture kept in view. */
+export type ImageFocus = 'top' | 'bottom' | 'left' | 'right'
+
 export interface ImageObject extends BaseSlideObject {
   type: 'image'
   /**
@@ -605,6 +745,14 @@ export interface ImageObject extends BaseSlideObject {
    * 'cover' = crop to fill (default), 'contain' = letterbox.
    */
   fit?: 'cover' | 'contain'
+  /**
+   * Which side of the picture stays in view when it does not fill its box
+   * (A5.1, a style pack region's `focus`): with `cover` that edge of the
+   * picture meets the box's edge (a portrait cropped to a band keeps the
+   * face at the top); with `contain` the picture sits against that side.
+   * Undefined ⇒ centred. Applies inside `imageRect` when there is a crop.
+   */
+  focus?: ImageFocus
   /**
    * Optional alt text for accessibility / PDF export.
    */

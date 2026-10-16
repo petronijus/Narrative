@@ -3,7 +3,7 @@
 <!--
   What the hardened runtime grants the Narrative desktop app: only JIT, which
   V8 needs. No camera, microphone, unsigned memory or library validation
-  exception (ADR 0014; docs/plans/desktop-d0-spec.md §3.12).
+  exception (ADR 0015; docs/plans/desktop-d0-spec.md §3.12).
 -->
 <plist version="1.0">
   <dict>

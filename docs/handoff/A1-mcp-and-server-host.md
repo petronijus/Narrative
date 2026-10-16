@@ -1,6 +1,6 @@
 # A1 — MCP server, server host and agent identity — handoff (2026-09-27)
 
-**Status:** committed (`624a3bd`, plugin `e27e9bc`, on top of A0 `9e0e853`)
+**Status:** committed (`4acf6c1`, plugin `083312a`, on top of A0 `c4f8a5f`)
 and released together with A0 as **v0.10.0** (CHANGELOG "0.10.0 — Agents
 over MCP"). Verified on the Linux desktop on 2026-09-27 before the release —
 see "Desktop verification" under Findings. The deploy itself is recorded in
@@ -30,7 +30,7 @@ directly — that is A2.
 2. **`CLOUDFLARED_TRUSTED_PROXIES` must be set to the real cloudflared host
    address.** The shared-tunnel overlay defaults to `192.0.2.101/32`, a
    documentation-range placeholder (every `192.0.2.x` in this repo is one;
-   `~/.ssh/config` has the narrative VM on `192.168.20.147`). Left at the
+   the narrative VM's real LAN address is in `private/release.env`). Left at the
    default, Caddy overwrites `CF-Connecting-IP` on every tunnelled request
    and all visitors share one rate-limit bucket and one WebSocket
    failed-auth throttle. Found by the docs sweep; not verified on the VM.
@@ -188,7 +188,7 @@ WebSocket with a slow database.
 14 scenarios through headless Claude Code, isolated from the developer's
 setup, graded deterministically from the document. Latest full run
 (`results/2026-09-27T12-12-39-753Z.json`, Claude Code 2.1.283, model opus,
-tree `9e0e853+dirty`): **14/14 pass, 80 turns, 65 tool calls, 194 s,
+tree `c4f8a5f+dirty`): **14/14 pass, 80 turns, 65 tool calls, 194 s,
 2.07 USD** list-price equivalent (the earlier full run at 10:38 UTC: 14/14,
 2.13 USD). 11 scenarios have recordings and replay free in
 `packages/commands/src/agentEvalReplay.test.ts`.
@@ -201,7 +201,7 @@ the Claude Code plugin `claude-plugin/narrative/` with a root
 `.claude-plugin/marketplace.json` (install:
 `/plugin marketplace add petronijus/Narrative`), and
 `packages/commands/scripts/skill.test.ts` fails when it is stale. (Was: it
-had been generated into the Woodgrove woodgrove-plugins repo. Petr, 2026-09-27:
+had been generated into the Wingtip an internal plugin repo repo. Petr, 2026-09-27:
 nothing about Narrative belongs there — the unpushed commit was removed and
 the skill moved here.)
 
@@ -306,15 +306,15 @@ add … http://localhost:3001/mcp --header …`, `claude -p "…"`).
   are lazy routes, so where the +28 kB of first-paint payload comes from was
   not investigated.
 - **Real-deck PPTX round trip: A0 + A1 add no difference.** Run on
-  2026-09-27 on two client decks from the desktop's backup (Tailspin Brand
-  Language Examples, 12 slides; Contoso FoM V7, 36 slides): HEAD reports 22 and
+  2026-09-27 on two client decks from the desktop's backup (Tailspin brand
+  examples, 12 slides; Contoso deck, 36 slides): HEAD reports 22 and
   41 differences, and a clean `v0.9.29` worktree reports the **identical**
   22 and 41 (byte-identical reports apart from timings). So A1's changes to
   `pptx/writer.ts` / `appendDeck.ts` / `exportDeck.ts` are neutral, but the
   "5 differences" recorded for 0.9.26–0.9.29 is deck-specific: other real
   decks are much further from 0 (`fontSize` 27.99 → 28, `text.length`,
   geometry and `strokeWidth` on the Contoso deck, run `attrs` lost on 4 slides).
-  The Proseware deck the "5" came from is not on the desktop.
+  The reference deck the "5" came from is not on the desktop.
 - Carried over from A0, not re-checked: Stryker broken on vitest 4,
   `m16-component-flows.spec.ts` hardcoded Drafts id.
 - **Desktop verification (petronijus-PC, Ubuntu 26.04, 2026-09-27).**
@@ -423,7 +423,7 @@ add … http://localhost:3001/mcp --header …`, `claude -p "…"`).
   dynamic behaviour. Where the size really costs is the eval harness, which
   runs without ToolSearch.
 
-  **Resolution (2026-09-28, working tree on top of `ee705da`, uncommitted
+  **Resolution (2026-09-28, working tree on top of `db7ef91`, uncommitted
   at the time of writing; CHANGELOG "Unreleased"):**
   - **No dynamic toolsets.** Every tool stays in `tools/list` from the
     start; nothing is deferred behind `list_changed`.
@@ -474,7 +474,7 @@ add … http://localhost:3001/mcp --header …`, `claude -p "…"`).
     does. ToolSearch calls land in transcripts as non-Narrative calls
     (`command: null`), which grading and replay skip. Result on 2026-09-28
     (opus, Claude Code 2.1.283, `results/2026-09-27T22-38-11-223Z.json`,
-    UTC stamp, git `ee705da+dirty`): 13 pass + 1 error in the full run,
+    UTC stamp, git `db7ef91+dirty`): 13 pass + 1 error in the full run,
     $1.62 list-price equivalent (was ≈ 2 USD), 90 tool calls of which 17
     ToolSearch. The error was `selected-slide-context`: Playwright's bundled
     browser is missing on Ubuntu 26.04; it passed on a rerun with

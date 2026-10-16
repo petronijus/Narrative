@@ -56,7 +56,15 @@ describe('commands ignore object locks', () => {
     const h = harness()
     const out = h.run<{ deleted: string[] }>('object.delete', { slide: 's2', objects: ['lock1'] })
     expect(out.deleted).toEqual(['lock1'])
-    expect(objectsOn(h, 1).map((o) => o.id)).toEqual(['hd1', 'tbl2', 'ln1', 'pa1'])
+    expect(objectsOn(h, 1).map((o) => o.id)).toEqual([
+      'hd1',
+      'tbl2',
+      'ln1',
+      'pa1',
+      'st_bar',
+      'st_title',
+      'st_old',
+    ])
   })
 
   it('has no `force` flag to opt past a lock', () => {

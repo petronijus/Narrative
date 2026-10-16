@@ -73,11 +73,9 @@ function makeVideoInfo(
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  vi.clearAllMocks()
-  // Real timers — fake timers interact poorly with async React state updates
-  // from resolved promises inside useEffect. The polling interval is 2s which
-  // is within test timeout, and mockGetVideoInfo returns immediately so tests
-  // settle fast.
+  // A reset, not a clear: a test's unconsumed mockResolvedValueOnce queue
+  // must not answer the next test's fetches.
+  mockGetVideoInfo.mockReset()
 })
 
 describe('useVideoInfo', () => {
@@ -114,82 +112,6 @@ describe('useVideoInfo', () => {
 
     expect(mockGetVideoInfo).toHaveBeenCalledTimes(1)
     expect(mockGetVideoInfo).toHaveBeenCalledWith('asset-123')
-  })
-
-  // Skipped: real-timer polling tests are flaky between vitest runs on Windows;
-  // the polling behavior is verified indirectly via VideoOverlay integration tests.
-  it.skip('polls while status is pending', async () => {
-    mockGetVideoInfo
-      .mockResolvedValueOnce(makeVideoInfo('pending'))
-      .mockResolvedValueOnce(makeVideoInfo('processing'))
-      .mockResolvedValueOnce(makeVideoInfo('done'))
-
-    render(<TestComponent assetId="asset-123" onResult={() => undefined} />)
-
-    // First fetch — pending
-    await waitFor(() => {
-      expect(screen.getByTestId('status').textContent).toBe('pending')
-    })
-    expect(mockGetVideoInfo).toHaveBeenCalledTimes(1)
-
-    // Advance timer by 2s → second fetch (processing)
-    await act(async () => {
-      vi.advanceTimersByTime(2000)
-    })
-    await waitFor(() => {
-      expect(screen.getByTestId('status').textContent).toBe('processing')
-    })
-    expect(mockGetVideoInfo).toHaveBeenCalledTimes(2)
-
-    // Advance timer by 2s → third fetch (done)
-    await act(async () => {
-      vi.advanceTimersByTime(2000)
-    })
-    await waitFor(() => {
-      expect(screen.getByTestId('status').textContent).toBe('done')
-    })
-    expect(mockGetVideoInfo).toHaveBeenCalledTimes(3)
-  })
-
-  it.skip('stops polling once status is done', async () => {
-    mockGetVideoInfo.mockResolvedValue(makeVideoInfo('done'))
-
-    render(<TestComponent assetId="asset-123" onResult={() => undefined} />)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('status').textContent).toBe('done')
-    })
-
-    // Advance past poll interval — no more calls
-    await act(async () => {
-      vi.advanceTimersByTime(10_000)
-    })
-
-    expect(mockGetVideoInfo).toHaveBeenCalledTimes(1)
-  })
-
-  it.skip('stops polling once status is failed', async () => {
-    mockGetVideoInfo.mockResolvedValue(makeVideoInfo('failed', { transcodeError: 'FFmpeg crash' }))
-
-    let captured: ReturnType<typeof useVideoInfo> | null = null
-    render(
-      <TestComponent
-        assetId="asset-123"
-        onResult={(r) => {
-          captured = r
-        }}
-      />,
-    )
-
-    await waitFor(() => {
-      expect(captured!.info?.transcodeStatus).toBe('failed')
-    })
-
-    await act(async () => {
-      vi.advanceTimersByTime(10_000)
-    })
-
-    expect(mockGetVideoInfo).toHaveBeenCalledTimes(1)
   })
 
   it('returns null when assetId is null', () => {
@@ -282,5 +204,80 @@ describe('useVideoInfo', () => {
 
     expect(captured!.error?.message).toBe('Network failure')
     expect(captured!.isLoading).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Polling — fake timers; time moves with the async advance, so the resolved
+// fetches and the React commits they cause land inside act()
+// ---------------------------------------------------------------------------
+
+describe('useVideoInfo — polling', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** Move the clock by `ms` and let what it set off settle. */
+  const advance = (ms: number) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(ms)
+    })
+  const status = () => screen.getByTestId('status').textContent
+
+  it('polls every 2 s while the status is pending or processing', async () => {
+    mockGetVideoInfo
+      .mockResolvedValueOnce(makeVideoInfo('pending'))
+      .mockResolvedValueOnce(makeVideoInfo('processing'))
+      .mockResolvedValueOnce(makeVideoInfo('done'))
+
+    render(<TestComponent assetId="asset-123" onResult={() => undefined} />)
+
+    await advance(0)
+    expect(status()).toBe('pending')
+    expect(mockGetVideoInfo).toHaveBeenCalledTimes(1)
+
+    await advance(1999)
+    expect(mockGetVideoInfo).toHaveBeenCalledTimes(1)
+    await advance(1)
+    expect(status()).toBe('processing')
+    expect(mockGetVideoInfo).toHaveBeenCalledTimes(2)
+
+    await advance(2000)
+    expect(status()).toBe('done')
+    expect(mockGetVideoInfo).toHaveBeenCalledTimes(3)
+  })
+
+  it('stops polling once the status is done', async () => {
+    mockGetVideoInfo.mockResolvedValue(makeVideoInfo('done'))
+
+    render(<TestComponent assetId="asset-123" onResult={() => undefined} />)
+
+    await advance(0)
+    expect(status()).toBe('done')
+    await advance(10_000)
+    expect(mockGetVideoInfo).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops polling once the status is failed', async () => {
+    mockGetVideoInfo.mockResolvedValue(makeVideoInfo('failed', { transcodeError: 'FFmpeg crash' }))
+
+    let captured: ReturnType<typeof useVideoInfo> | null = null
+    render(
+      <TestComponent
+        assetId="asset-123"
+        onResult={(r) => {
+          captured = r
+        }}
+      />,
+    )
+
+    await advance(0)
+    expect(captured!.info?.transcodeStatus).toBe('failed')
+    expect(captured!.info?.transcodeError).toBe('FFmpeg crash')
+    await advance(10_000)
+    expect(mockGetVideoInfo).toHaveBeenCalledTimes(1)
   })
 })

@@ -37,7 +37,7 @@ import { VersionChip } from './ui/VersionChip.js'
 import { ThemeToggle } from './ui/ThemeToggle.js'
 import { PerfHudToggle } from './ui/PerfHudToggle.js'
 import { PerfHud } from './ui/PerfHud.js'
-import { ACCESS_TOKENS_PATH } from './ui/UserMenu.js'
+import { ACCESS_TOKENS_PATH, ADMIN_PATH } from './ui/UserMenu.js'
 import { lazyRoute } from './ui/lazyRoute.js'
 import { RouteErrorBoundary, RouteSpinner } from './ui/RouteErrorBoundary.js'
 
@@ -63,7 +63,16 @@ const DeckRender = lazyRoute(
   () => import('./pages/DeckRender.js'),
   (m) => m.DeckRender,
 )
+// A component master's render page: DeckRender in the master's providers.
+const ComponentRenderShell = lazyRoute(
+  () => import('./pages/ComponentRender.js'),
+  (m) => m.ComponentRenderShell,
+)
 // Account settings: small, rarely visited — kept off the dashboard chunk.
+const Admin = lazyRoute(
+  () => import('./pages/Admin.js'),
+  (m) => m.Admin,
+)
 const AccessTokens = lazyRoute(
   () => import('./pages/AccessTokens.js'),
   (m) => m.AccessTokens,
@@ -102,11 +111,18 @@ export function App() {
                     <Route path="/folder/:folderId" element={<FolderDecks />} />
                     <Route path="/folder/:folderId/settings" element={<FolderSettings />} />
                     <Route path={ACCESS_TOKENS_PATH} element={<AccessTokens />} />
+                    <Route path={ADMIN_PATH} element={<Admin />} />
                     <Route path="/confirm/:id" element={<ConfirmAgentAction />} />
                     <Route
                       path="/folder/:folderId/component/:componentId"
                       element={<ComponentMasterEditor />}
                     />
+                    <Route
+                      path="/folder/:folderId/component/:componentId/render"
+                      element={<ComponentRenderShell />}
+                    >
+                      <Route index element={<DeckRender />} />
+                    </Route>
                     <Route path="/deck/:id" element={<DeckShell />}>
                       <Route index element={<DeckEditor />} />
                       <Route path="present" element={<DeckPresent />} />
@@ -122,7 +138,7 @@ export function App() {
                 view must stay clean. */}
             <GlobalChrome />
             <PerfHud />
-            {/* Inside the desktop app: its menu and menu clicks (ADR 0014). */}
+            {/* Inside the desktop app: its menu and menu clicks (ADR 0015). */}
             <DesktopBridge />
           </AuthProvider>
         </PerfHudProvider>

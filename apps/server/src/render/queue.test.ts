@@ -35,7 +35,7 @@ describe('bullRenderQueue with Redis down', () => {
       bullRenderQueue.run(
         {
           kind: 'export',
-          deckId: 'd',
+          page: { kind: 'deck', deckId: 'd' },
           uploads: [],
           token: 'nrr_x',
           stateVector: '',

@@ -46,6 +46,7 @@ import { destroyPixiApplication } from './pixiApplication.js'
 import { DEFAULT_BACKGROUND } from '@narrative/shared'
 import type { SlideBackground, SlideObject } from '@narrative/shared'
 import { setRenderingSlideNumber } from './slideNumberContext.js'
+import { withRenderingSurface } from './colourResolver.js'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -86,6 +87,8 @@ export interface ThumbnailRenderer {
     objects: SlideObject[],
     background?: SlideBackground,
     slideNumber?: number,
+    /** The slide's surface (its layout's, A4.2d): its colour tokens resolve on it. */
+    surface?: string,
   ): Promise<string>
 
   /**
@@ -176,6 +179,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     objects: SlideObject[],
     background?: SlideBackground,
     slideNumber?: number,
+    surface?: string,
   ): Promise<string> {
     // Set the page-number context so any text leaf flagged
     // `isSlideNumber` rasterises with this slide's value. Cleared
@@ -269,7 +273,9 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
         continue
       }
       const mountFn = renderer.thumbnailMount ?? renderer.mount
-      const node = mountFn.call(renderer, obj)
+      // Colours are read while mounting: on this slide's surface, without
+      // repainting the editor's canvas (which shows another slide).
+      const node = withRenderingSurface(surface, () => mountFn.call(renderer, obj))
       slideContainer.addChild(node)
       mounted.push({ node, type: obj.type })
       const ready = getThumbnailReady(node)
@@ -377,6 +383,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
       objects: SlideObject[],
       background?: SlideBackground,
       slideNumber?: number,
+      surface?: string,
     ): Promise<string> {
       if (destroyed) {
         return Promise.reject(new Error('[ThumbnailRenderer] renderer has been destroyed'))
@@ -399,7 +406,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
             return
           }
           try {
-            return renderSlideInternal(objects, background, slideNumber).then(
+            return renderSlideInternal(objects, background, slideNumber, surface).then(
               resolveRender,
               rejectRender,
             )

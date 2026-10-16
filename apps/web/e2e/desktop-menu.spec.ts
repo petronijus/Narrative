@@ -1,5 +1,5 @@
 /**
- * The desktop app's menu runs the editor's own shortcuts (ADR 0014;
+ * The desktop app's menu runs the editor's own shortcuts (ADR 0015;
  * apps/web/src/desktop/menu.ts, state/useShortcuts.ts runChord/runAction):
  * Edit ▸ Select All, Delete and Undo do on the canvas what their keys do,
  * and in a text field a menu edit falls back to the native one. Needs the

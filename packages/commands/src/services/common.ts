@@ -61,6 +61,8 @@ export interface FontFaceInfo {
   weight: number | null
   style: string | null
   postscriptName: string | null
+  /** A variable face's weight and width axis ranges, [min, max] (A4.2c). */
+  axes?: { wght?: [number, number]; wdth?: [number, number] }
   /** Short-lived presigned URL of the font file. */
   url: string
   sizeBytes: number

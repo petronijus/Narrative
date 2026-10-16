@@ -2,7 +2,7 @@
  * desktop.ts
  *
  * The contract between the desktop shell (apps/desktop, Electron) and the
- * web editor it loads from the server (ADR 0014,
+ * web editor it loads from the server (ADR 0015,
  * docs/plans/desktop-d0-spec.md §2). Kept in @narrative/shared so neither
  * app imports the other. Types and constants only.
  *
@@ -13,7 +13,7 @@
  * adds methods and raises the version — it never changes or removes one.
  *
  * Presenting on a chosen display is a web-app feature (the Window
- * Management API, ADR 0014 decision 8); the bridge adds one call for the
+ * Management API, ADR 0015 decision 8); the bridge adds one call for the
  * compositors where a page cannot place its own window (Wayland).
  */
 
@@ -139,7 +139,7 @@ export interface NarrativeDesktopBridge {
   readonly role: DesktopRole
   info(): Promise<DesktopInfo>
   /**
-   * Start the sign-in in the system browser (ADR 0014). 'refused' within a
+   * Start the sign-in in the system browser (ADR 0015). 'refused' within a
    * few seconds of the last start, or when the shell cannot take the answer
    * (an unpackaged build on macOS); a new start replaces a pending one.
    */

@@ -9,7 +9,11 @@
  *     limits — for small type, a table, an alignment;
  *   - `sheet`: the slides in a grid with the largest tiles the limits allow,
  *     each labelled with its number in the deck — for pacing and repetition
- *     across a deck.
+ *     across a deck;
+ *   - `thumbnail`: the slide as the deck's card picture on the folder page
+ *     (`THUMBNAIL_WIDTH`×`THUMBNAIL_HEIGHT`);
+ *   - `compare`: the slide before an agent run changed it and now, side by
+ *     side, labelled — the "before" drawn on a frozen page by the worker.
  *
  * Always a PNG (sharp text); one that comes out over `MAX_LOOK_BYTES` (photo
  * heavy) is composed again smaller, so it stays within what an MCP client
@@ -23,7 +27,12 @@
  * (`assertIntact`), never a blank picture.
  */
 
-import { LOOK_MAX_EDGE, LOOK_MAX_PIXELS } from '@narrative/shared'
+import {
+  LOOK_MAX_EDGE,
+  LOOK_MAX_PIXELS,
+  THUMBNAIL_HEIGHT,
+  THUMBNAIL_WIDTH,
+} from '@narrative/shared'
 import { SLIDE_HEIGHT, SLIDE_WIDTH } from '../renderer/constants.js'
 import { canvasToPng } from '../renderer/captureSlide.js'
 
@@ -40,6 +49,9 @@ export type LookRequest =
   | { mode: 'slide' }
   | { mode: 'region'; region: { x: number; y: number; width: number; height: number } }
   | { mode: 'sheet' }
+  | { mode: 'thumbnail' }
+  /** `before`: the slide as it was (null: it did not exist then); the frame is the slide now. */
+  | { mode: 'compare'; before: CanvasImageSource | null }
 
 export interface ComposedLook {
   png: Blob
@@ -113,6 +125,33 @@ export function sheetLayout(
     .reduce((a, b) => (offAspect(b) < offAspect(a) ? b : a))
 }
 
+/** Two 16:9 tiles side by side, as large as the limits allow (`SHEET_GAP` around each). */
+export function compareLayout(
+  maxEdge: number,
+  maxPixels: number,
+): { tileWidth: number; tileHeight: number } {
+  const size = (tw: number) => ({
+    w: 2 * tw + 3 * SHEET_GAP,
+    h: Math.round((tw * SLIDE_HEIGHT) / SLIDE_WIDTH) + 2 * SHEET_GAP,
+  })
+  let tw = Math.floor((maxEdge - 3 * SHEET_GAP) / 2)
+  while (tw > 1 && size(tw).w * size(tw).h > maxPixels) tw -= 1
+  return { tileWidth: tw, tileHeight: Math.round((tw * SLIDE_HEIGHT) / SLIDE_WIDTH) }
+}
+
+/** A dark tab with `label` in a tile's top-left corner (the sheet's numbers, a compare's sides). */
+function drawTab(ctx: CanvasRenderingContext2D, label: string, x: number, y: number, size: number) {
+  ctx.font = `600 ${size}px system-ui, sans-serif`
+  const pad = Math.round(size * 0.35)
+  const w = Math.ceil(ctx.measureText(label).width) + pad * 2
+  const h = size + pad * 2
+  ctx.fillStyle = 'rgba(17, 17, 17, 0.85)'
+  ctx.fillRect(x, y, w, h)
+  ctx.fillStyle = '#ffffff'
+  ctx.textBaseline = 'top'
+  ctx.fillText(label, x + pad, y + pad)
+}
+
 function newCanvas(
   width: number,
   height: number,
@@ -145,6 +184,36 @@ function composeAt(
     ctx.drawImage(frames[0]!.canvas, 0, 0, canvas.width, canvas.height)
     return canvas
   }
+  if (request.mode === 'thumbnail') {
+    // Fixed size: far below the limits, and a smaller retry is never needed.
+    const { canvas, ctx } = newCanvas(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT)
+    ctx.drawImage(frames[0]!.canvas, 0, 0, canvas.width, canvas.height)
+    return canvas
+  }
+  if (request.mode === 'compare') {
+    const { tileWidth: tileW, tileHeight: tileH } = compareLayout(maxEdge, maxPixels)
+    const gap = SHEET_GAP
+    const { canvas, ctx } = newCanvas(2 * tileW + 3 * gap, tileH + 2 * gap)
+    ctx.fillStyle = '#d9d9d9'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    const labelSize = Math.max(12, Math.round(tileH * 0.07))
+    if (request.before === null) {
+      ctx.fillStyle = '#ececec'
+      ctx.fillRect(gap, gap, tileW, tileH)
+      ctx.fillStyle = '#555555'
+      ctx.font = `500 ${labelSize}px system-ui, sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('New in this run', gap + tileW / 2, gap + tileH / 2)
+      ctx.textAlign = 'start'
+    } else {
+      ctx.drawImage(request.before, gap, gap, tileW, tileH)
+    }
+    ctx.drawImage(frames[0]!.canvas, 2 * gap + tileW, gap, tileW, tileH)
+    drawTab(ctx, 'Before', gap, gap, labelSize)
+    drawTab(ctx, 'Now', 2 * gap + tileW, gap, labelSize)
+    return canvas
+  }
   if (request.mode === 'region') {
     const r = clampRegion(request.region)
     const scale = fitScale(r.width, r.height, maxEdge, maxPixels)
@@ -174,16 +243,7 @@ function composeAt(
     const y = gap + Math.floor(i / cols) * (tileH + gap)
     ctx.drawImage(frame.canvas, x, y, tileW, tileH)
     // The slide's number in the deck, on a dark tab in the corner.
-    const label = String(frame.index + 1)
-    ctx.font = `600 ${labelSize}px system-ui, sans-serif`
-    const pad = Math.round(labelSize * 0.35)
-    const w = Math.ceil(ctx.measureText(label).width) + pad * 2
-    const h = labelSize + pad * 2
-    ctx.fillStyle = 'rgba(17, 17, 17, 0.85)'
-    ctx.fillRect(x, y, w, h)
-    ctx.fillStyle = '#ffffff'
-    ctx.textBaseline = 'top'
-    ctx.fillText(label, x + pad, y + pad)
+    drawTab(ctx, String(frame.index + 1), x, y, labelSize)
   })
   return canvas
 }
@@ -235,7 +295,25 @@ export async function blobToBase64(blob: Blob): Promise<string> {
  */
 export function shrinkForSheet(source: CanvasImageSource, count: number): HTMLCanvasElement {
   const { tileWidth, tileHeight } = sheetLayout(count, LOOK_MAX_EDGE, LOOK_MAX_PIXELS)
-  const { canvas, ctx } = newCanvas(tileWidth, tileHeight)
-  ctx.drawImage(source, 0, 0, tileWidth, tileHeight)
+  return shrinkTo(source, tileWidth, tileHeight)
+}
+
+/** A captured slide shrunk to a compare's tile (the largest it can have). */
+export function shrinkForCompare(source: CanvasImageSource): HTMLCanvasElement {
+  const { tileWidth, tileHeight } = compareLayout(LOOK_MAX_EDGE, LOOK_MAX_PIXELS)
+  return shrinkTo(source, tileWidth, tileHeight)
+}
+
+function shrinkTo(source: CanvasImageSource, width: number, height: number): HTMLCanvasElement {
+  const { canvas, ctx } = newCanvas(width, height)
+  ctx.drawImage(source, 0, 0, width, height)
   return canvas
+}
+
+/** A PNG handed over as base64 (a compare's "before"), decoded without a fetch the CSP could refuse. */
+export async function decodePng(base64: string): Promise<ImageBitmap> {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return createImageBitmap(new Blob([bytes], { type: 'image/png' }))
 }

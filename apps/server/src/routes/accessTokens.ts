@@ -31,6 +31,7 @@ import { authPreHandler, getAuthOpts } from '../auth/fastifyAuth.js'
 import { PatError, parseCreatePatInput } from '../auth/personalAccessTokens.js'
 import { tokenCreateRouteConfig } from '../http/rateLimit.js'
 import { revokeUploadSessionsForCredential } from '../media/uploadSessions.js'
+import { notifyAccessTokenCreated } from '../email/events.js'
 
 export interface AccessTokenRouteOpts {
   /**
@@ -76,6 +77,16 @@ export function registerAccessTokenRoutes(
         req.log.info(
           { tokenId: summary.id, scopes: summary.scopes },
           'personal access token created',
+        )
+        // Security notice to the account's owner (it acts as them).
+        notifyAccessTokenCreated(
+          { db: getAuthOpts(app).db, log: req.log },
+          {
+            userSub: req.user!.sub,
+            name: summary.name,
+            scopes: summary.scopes,
+            expiresAt: new Date(summary.expiresAt),
+          },
         )
         // The body carries a live secret: keep it out of every cache.
         return reply

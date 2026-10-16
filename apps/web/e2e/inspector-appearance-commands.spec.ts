@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures/test'
 
 /**
  * The Inspector's gradient, shadow and page-number controls dispatch the

@@ -1,6 +1,6 @@
 {
   "name": "@narrative/animation",
-  "version": "0.10.26",
+  "version": "0.14.0",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -15,9 +15,9 @@
   },
   "dependencies": {
     "@narrative/shared": "workspace:*",
-    "gsap": "^3.12.5"
+    "gsap": "^3.15.0"
   },
   "devDependencies": {
-    "vitest": "^4.1.7"
+    "vitest": "^5.0.4"
   }
 }

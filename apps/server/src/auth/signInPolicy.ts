@@ -14,7 +14,8 @@
  *       email only (an invite is addressed to an inbox; an unverified claim
  *       to that address proves nothing):
  *       (a) a non-expired, non-accepted invite in `deck_invites` or
- *           `folder_invites`, or
+ *           `folder_invites`, or an address an instance admin allowed
+ *           (`allowed_emails`, docs/adr/0014), or
  *       (b) a `deck_permissions` row on a deck somebody else created, or a
  *           `folder_permissions` row in a folder somebody else created (via
  *           `users.email`).
@@ -32,6 +33,7 @@
 import { and, eq, gt, isNull, ne, sql } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import {
+  allowedEmails,
   deckInvites,
   deckPermissions,
   decks,
@@ -50,7 +52,7 @@ export interface SignInSubject {
 }
 
 /** Why an account is allowed, or `null` when it is not. */
-export type SignInGrant = 'env' | 'invite' | 'permission'
+export type SignInGrant = 'env' | 'admin' | 'allowlist' | 'invite' | 'permission'
 
 /**
  * Is the account implicitly allowed by a pending invite, or by a deck or a
@@ -62,6 +64,13 @@ export async function allowedByDb(
 ): Promise<Exclude<SignInGrant, 'env'> | null> {
   if (!subject.emailVerified) return null
   const lower = subject.email.toLowerCase()
+
+  const [listed] = await db
+    .select({ email: allowedEmails.email })
+    .from(allowedEmails)
+    .where(eq(allowedEmails.email, lower))
+    .limit(1)
+  if (listed) return 'allowlist'
 
   const [pending] = await db
     .select({ id: deckInvites.id })
@@ -128,6 +137,14 @@ export async function signInGrant(
     allowlist,
   )
   if (envOk) return 'env'
+  // ADMIN_EMAILS lists people, so it admits only a verified address.
+  if (
+    subject.emailVerified &&
+    (allowlist.adminEmails ?? []).some(
+      (e) => e.trim().toLowerCase() === subject.email.toLowerCase(),
+    )
+  )
+    return 'admin'
   return allowedByDb(db, subject)
 }
 

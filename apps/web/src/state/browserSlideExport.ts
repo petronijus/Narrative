@@ -69,7 +69,8 @@ function openFrame(deckId: string, slideId: string): Frame {
     pointerEvents: 'none',
     zIndex: '-1',
   })
-  iframe.src = `/deck/${encodeURIComponent(deckId)}/render?slide=${encodeURIComponent(slideId)}`
+  // paint=off: the frame is never looked at, only asked for captures.
+  iframe.src = `/deck/${encodeURIComponent(deckId)}/render?slide=${encodeURIComponent(slideId)}&paint=off`
   document.body.appendChild(iframe)
   return { deckId, iframe, idleTimer: null }
 }

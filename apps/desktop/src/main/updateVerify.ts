@@ -2,7 +2,7 @@
  * main/updateVerify.ts
  *
  * The gate every downloaded update passes before the app offers to install
- * it (docs/plans/desktop-d0-spec.md §3.11, ADR 0014): the file's SHA-512
+ * it (docs/plans/desktop-d0-spec.md §3.11, ADR 0015): the file's SHA-512
  * goes into the manifest the release signed, and the signature fetched from
  * the feed must verify against the pinned key. One gate for every platform:
  * electron-updater's own Windows hook runs only for Authenticode-signed

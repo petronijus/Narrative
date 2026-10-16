@@ -43,6 +43,7 @@ SMOKE = [
 
 RENDER = [
     "renderer-visual",
+    "text-autofit",
     "render-page",
     "render-export",
     "inspector-flows",
@@ -67,6 +68,7 @@ TEXT = [
     "text-reload-invisible",
     "typography-commands",
     "list-feature-smoke",
+    "text-autofit",
 ]
 SLIDES_PANEL = [
     "slides-panel-drag",
@@ -91,7 +93,7 @@ ACCESS = [
     "folder-sharing",
 ]
 DESKTOP = ["desktop-shell", "desktop-sign-in", "desktop-menu", "desktop-open-file", "desktop-present"]
-TOKENS = ["folder-tokens", "share-link-folder-tokens", "folder-font-preview"]
+TOKENS = ["folder-tokens", "share-link-folder-tokens", "folder-font-preview", "style-pack"]
 COMPONENTS = [
     "component-master-upload",
     "component-picker-search-settings",
@@ -133,15 +135,24 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/components/PresentLayout.tsx", PRESENT),
     ("apps/web/src/components/presentStartSlide.ts", PRESENT),
     ("apps/web/src/pages/DeckPresent.tsx", PRESENT),
+    ("apps/web/src/pages/StylePackTab.tsx", ["style-pack"]),
     # render-export reaches __narrativeRenderShow (the worker's slide switch).
-    ("apps/web/src/pages/DeckRender.tsx", ["render-page", "render-export", "query-render"]),
-    ("apps/web/src/pages/renderLook.ts", ["query-render"]),
+    ("apps/web/src/pages/DeckRender.tsx", ["render-page", "render-export", "query-render", "deck-card"]),
+    # A component master's render page (its card, A3.5).
+    ("apps/web/src/pages/ComponentRender.tsx", ["deck-card"]),
+    # Text boxes that overflow, measured on the render page (A3.6).
+    ("apps/web/src/pages/textFit.ts", ["query-render"]),
+    # The frozen render page of a compare's "before" (A3.6).
+    ("apps/web/src/state/frozenRenderDoc.ts", ["query-render"]),
+    ("apps/web/src/pages/renderLook.ts", ["query-render", "deck-card"]),
     ("apps/web/src/pages/renderSlide.ts", ["render-page"]),
     # The toolbar's PowerPoint download goes through it too.
     ("apps/web/src/lib/download.ts", ["render-export", "pptx-roundtrip"] + SLIDES_PANEL),
     # The editor's in-browser "Export as PNG" (a hidden frame on the render page).
     ("apps/web/src/state/browserSlideExport.ts", ["render-export", "render-page"]),
     ("apps/web/src/lib/stateVector.ts", ["render-export"]),
+    # Pointer → slide coordinates: the canvas tools and a file dropped on the canvas.
+    ("apps/web/src/lib/canvasCoords.ts", CANVAS_TOOLS + MEDIA + ["keyboard-shortcuts"]),
     ("apps/web/src/lib/endpoints.ts", SMOKE + SYNC + ["render-page"]),
     ("apps/web/src/lib/shareToken.ts", ACCESS + TOKENS + MEDIA + ["render-page"]),
     ("apps/web/src/ui/PresenterOverlay.tsx", PRESENT),
@@ -161,6 +172,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/ui/CropOverlay.tsx", MEDIA + ["fill-mode-switch"]),
     ("apps/web/src/ui/Table*", ["table-commands"]),
     ("apps/web/src/ui/TextEditOverlay.tsx", TEXT),
+    ("apps/web/src/ui/AutofitHeights.tsx", ["text-autofit", "text-edit-undo"]),
+    ("apps/web/src/ui/useTextLayoutTick.ts", CANVAS_TOOLS + ["text-autofit"]),
     ("apps/web/src/ui/textEditDom.ts", TEXT),
     ("apps/web/src/ui/Font*", TEXT + ["folder-font-preview"]),
     ("apps/web/src/ui/SlideNotesPanel.tsx", ["text-edit-commands"]),
@@ -232,7 +245,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/state/editorShow.ts", AGENT),
     ("apps/web/src/state/editorNotice.ts", AGENT),
     ("apps/web/src/state/*Component*", COMPONENTS),
-    ("apps/web/src/state/componentDocCache.ts", COMPONENTS),
+    ("apps/web/src/state/componentDocCache.ts", COMPONENTS + ["deck-card"]),
     ("apps/web/src/state/readMasterDoc.ts", COMPONENTS),
     ("apps/web/src/state/useStampComponent.ts", COMPONENTS),
     ("apps/web/src/state/promoteSelectionToComponent.ts", COMPONENTS),
@@ -269,6 +282,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/pages/accessTokenList.ts", ["access-tokens"]),
     ("apps/web/src/pages/ConfirmAgentAction.tsx", ["agent-confirm", "mcp-oauth-consent"]),
     ("apps/web/src/pages/Auth*", ACCESS),
+    # The admin screen (ADR 0014): its rules are the server's, exercised by the access specs.
+    ("apps/web/src/pages/Admin.tsx", ACCESS),
     ("apps/web/src/components/ProtectedRoute.tsx", ACCESS),
     ("apps/web/src/api/*", ACCESS + MEDIA + COMPONENTS + TOKENS),
     # ── server ────────────────────────────────────────────────────────────
@@ -283,13 +298,18 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/services/sharing.ts", ACCESS),
     ("apps/server/src/services/folderSharing.ts", ACCESS),
     ("apps/server/src/routes/folderSharing.ts", ACCESS),
+    ("apps/server/src/routes/auth.ts", ACCESS),
+    ("apps/server/src/routes/admin.ts", ACCESS),
+    ("apps/server/src/services/admin.ts", ACCESS),
     ("apps/server/src/email/*", ACCESS),
+    ("apps/server/src/email/templates/*", ACCESS),
+    ("apps/web/src/pages/AdminEmails.tsx", ACCESS),
     ("apps/server/src/services/shared.ts", ACCESS + TOKENS + COMPONENTS),
     ("apps/server/src/services/folders.ts", ACCESS + ["folder-font-preview"]),
     ("apps/server/src/services/decks.ts", ACCESS + ["slide-duplicate"]),
     ("apps/server/src/routes/sharing.ts", ACCESS),
     ("apps/server/src/routes/folders.ts", ACCESS),
-    ("apps/server/src/routes/decks.ts", ACCESS + SLIDES_PANEL),
+    ("apps/server/src/routes/decks.ts", ACCESS + SLIDES_PANEL + ["deck-card"]),
     ("apps/server/src/services/tokens.ts", TOKENS),
     ("apps/server/src/services/tokenRebind.ts", TOKENS),
     ("apps/server/src/routes/tokens.ts", TOKENS),
@@ -299,6 +319,9 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/services/localiseMedia.ts", COMPONENTS + ACCESS),
     ("apps/server/src/routes/insertObjects.ts", COMPONENTS + ["object-clipboard"]),
     ("apps/server/src/media/*", MEDIA),
+    # Font parsing (opentype.js): the family and weight an uploaded face lists under.
+    ("apps/server/src/media/fontMetadata.ts", ["folder-font-preview"]),
+    ("apps/server/src/media/opentype.d.ts", ["folder-font-preview"]),
     ("apps/server/src/services/media*", MEDIA),
     ("apps/server/src/pptx/*", PPTX),
     ("apps/server/src/services/pptx.ts", PPTX),
@@ -312,7 +335,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/services/index.ts", AGENT + ACCESS),
     ("apps/video-worker/src/*", MEDIA),
     ("apps/render-worker/*", ["render-export", "render-page", "query-render"]),
-    # The desktop shell (ADR 0014): the `electron` project's specs.
+    # The desktop shell (ADR 0015): the `electron` project's specs.
     ("apps/desktop/*", DESKTOP),
     # The bridge contract: types and constants the shell and the web app's
     # desktop module share; the editor does not import it otherwise.
@@ -324,15 +347,18 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/present/*", PRESENT + ["desktop-present"]),
     # Browser and desktop sign-in; the MCP OAuth pages share the page headers
     # and the strict form parser.
-    ("apps/server/src/routes/auth.ts", ACCESS),
     ("apps/server/src/routes/desktopAuth.ts", ACCESS),
     ("apps/server/src/http/htmlHeaders.ts", AGENT),
     ("apps/server/src/http/formBody.ts", AGENT),
     # Error reporting runs only with SENTRY_DSN, which no e2e run sets; its
     # scrubbing is unit-tested.
     ("apps/server/src/observability/*", []),
-    ("apps/server/src/services/render.ts", ["render-export", "query-render"]),
-    ("apps/server/src/render/*", ["render-export", "query-render"]),
+    ("apps/server/src/services/render.ts", ["render-export", "query-render", "deck-card"]),
+    ("apps/server/src/render/*", ["render-export", "query-render", "deck-card"]),
+    # The sweep of export and card renders (exports/ under decks and components).
+    ("apps/server/src/services/exportSweep.ts", ["render-export", "deck-card"]),
+    # The deck's card on the folder page, drawn by the render worker (A3.5).
+    ("apps/server/src/services/deckThumbnail*", ["deck-card"]),
     ("apps/server/src/mcp/results.ts", ["query-render"]),
     ("apps/server/src/routes/pngExport.ts", ["render-export"]),
     # ── packages ──────────────────────────────────────────────────────────
@@ -357,6 +383,7 @@ NO_E2E = [
     "*.test.tsx",
     "*.bench.ts",
     "*/test-support/*",
+    "apps/web/src/test/*",
     "*/testing/*",
     "packages/commands/src/parity/*",
     "*.md",
@@ -368,6 +395,8 @@ NO_E2E = [
     "infra/*",
     "packages/commands/capabilities.json",
     "apps/server/drizzle/*",
+    # Ops scripts run by hand on the server, never in a browser.
+    "apps/server/src/scripts/*",
 ]
 
 SOURCE = ["apps/*/src/*", "packages/*/src/*", "apps/web/index.html", "apps/web/vite.config.ts"]

@@ -32,6 +32,7 @@ import { runMigrations } from './db/runMigrations.js'
 import { runDataMigrations } from './services/dataMigrations.js'
 import { checkMovedMediaAfterStore } from './services/localiseMedia.js'
 import { createHocuspocusServer } from './hocuspocus/index.js'
+import { createDeckThumbnailScheduler } from './services/deckThumbnails.js'
 import { registerHttpRoutes } from './http/registerRoutes.js'
 import {
   createDrizzleUploadSessionStore,
@@ -46,6 +47,7 @@ import { closeRenderQueue, dropStaleRenderJobs } from './render/queue.js'
 import { metricsRegistrationDecision } from './metrics/index.js'
 import { initSentry } from './observability/sentry.js'
 import { createJwtVerifier } from './auth/jwt.js'
+import { parseAdminEmails } from './auth/admin.js'
 import { registerAuthPlugin, assertAuthBootSafety } from './auth/fastifyAuth.js'
 import { ensureDevUserAtBoot } from './auth/devIdentity.js'
 import {
@@ -102,11 +104,20 @@ const verifier = bypassAuth
 
 // Allowlist config — applied in /auth/callback alongside the DB-based
 // implicit-allowlist check (pending invite or existing permission).
-const allowlistConfig = { allowedEmails, allowedDomain }
+const adminEmails = parseAdminEmails(process.env['ADMIN_EMAILS'])
+const allowlistConfig = { allowedEmails, allowedDomain, adminEmails }
 
-if (!bypassAuth && allowedEmails.length === 0 && !allowedDomain) {
+if (!bypassAuth && allowedEmails.length === 0 && !allowedDomain && adminEmails.length === 0) {
+  // Every Google account could sign in, and the admins' allowed list would
+  // gate nothing (docs/adr/0014). Production needs an explicit opt-in.
+  if (isProd && process.env['OIDC_ALLOW_ANY_ACCOUNT'] !== 'true') {
+    throw new Error(
+      '[server] OIDC_ALLOWED_EMAILS, OIDC_ALLOWED_DOMAIN and ADMIN_EMAILS are all empty: any ' +
+        'Google account could sign in. Set one of them, or OIDC_ALLOW_ANY_ACCOUNT=true.',
+    )
+  }
   console.warn(
-    '[server] OIDC_ALLOWED_EMAILS and OIDC_ALLOWED_DOMAIN are both empty — ' +
+    '[server] OIDC_ALLOWED_EMAILS, OIDC_ALLOWED_DOMAIN and ADMIN_EMAILS are all empty — ' +
       'ANY Google account will be allowed to sign in. Set one of them in production.',
   )
 }
@@ -198,6 +209,7 @@ await app.register(cors, {
     'Tus-Max-Size',
     'Tus-Extension',
     'X-Narrative-Asset-Id',
+    'X-Narrative-Deck-Id',
     'X-Narrative-Width',
     'X-Narrative-Height',
     // The download name of an export (.pptx, slide .png) the app saves itself.
@@ -221,7 +233,7 @@ await app.register(cookie, {
 })
 
 // Sentry — init before routes, dev-gated (silent without SENTRY_DSN)
-await initSentry(app)
+await initSentry()
 
 // Auth plugin — must be registered before routes that use authPreHandler
 if (bypassAuth) {
@@ -269,7 +281,16 @@ const principalKeys = createAgentPrincipalKeys(
   agentPrincipalKeySecretFromEnv(process.env, { isProd }),
 )
 
-const hocuspocus = createHocuspocusServer({
+// A deck or a component master nobody has open keeps a current card: after
+// its changes are stored, the render worker draws it (services/deckThumbnails.ts).
+const deckThumbnails = createDeckThumbnailScheduler({
+  db,
+  log: app.log,
+  bypass: bypassAuth,
+  hocuspocus: () => hocuspocus,
+})
+
+const hocuspocusServer = createHocuspocusServer({
   port: HOCUSPOCUS_PORT,
   db,
   bypass: bypassAuth,
@@ -277,12 +298,20 @@ const hocuspocus = createHocuspocusServer({
   principalKeys,
   // An undo in an editor can bring back references to media of a folder the
   // deck has left: pointed at the deck's copies again after the store.
-  onDeckStored: (deckId) =>
+  onDeckStored: (deckId) => {
     checkMovedMediaAfterStore(
       { db, log: app.log, bypass: bypassAuth, hocuspocus: () => hocuspocus },
       deckId,
-    ),
+    )
+    deckThumbnails.cardChanged({ kind: 'deck', id: deckId })
+  },
+  onComponentStored: (componentId) => {
+    deckThumbnails.cardChanged({ kind: 'component', id: componentId })
+  },
 })
+// The document engine (documents, connections, direct connections) every
+// service works with; the WebSocket server around it only listens and closes.
+const hocuspocus = hocuspocusServer.hocuspocus
 
 // The web app's public origin: OAuth redirects back to it, and agents hand
 // users links into it (editor.present.link).
@@ -384,6 +413,7 @@ app.log.info(
 
 const shutdown = async (signal: string) => {
   console.log(`[server] Received ${signal}, shutting down...`)
+  deckThumbnails.stop()
 
   try {
     await app.close()
@@ -402,7 +432,7 @@ const shutdown = async (signal: string) => {
   }
 
   try {
-    await hocuspocus.destroy()
+    await hocuspocusServer.destroy()
     console.log('[server] Hocuspocus closed')
   } catch (err) {
     console.error('[server] Error closing Hocuspocus:', err)
@@ -450,7 +480,7 @@ await Promise.all([
   app.listen({ port: API_PORT, host: HOST }).then(() => {
     console.log(`[server] Fastify API running on http://${HOST}:${API_PORT}`)
   }),
-  hocuspocus.listen().then(() => {
+  hocuspocusServer.listen().then(() => {
     console.log(`[server] Hocuspocus WS running on ws://${HOST}:${HOCUSPOCUS_PORT}`)
   }),
 ])

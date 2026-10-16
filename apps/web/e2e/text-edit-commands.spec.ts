@@ -6,7 +6,7 @@
  * Checked with real keys on a list, read back through the command API.
  */
 
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { test, expect, type APIRequestContext, type Page } from './fixtures/test'
 import { caret } from './fixtures/keys.js'
 
 const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'

@@ -25,12 +25,15 @@ export type {
   TextStyleOverrideKey,
   FontWeight,
   TextVerticalAlign,
+  TextAutofit,
+  TextListLevel,
   TextListStyle,
   ListKind,
   ListNumberFormat,
   ParagraphAttrs,
   ParagraphAttrKey,
   ImageObject,
+  ImageFocus,
   VideoObject,
   TableObject,
   TableCell,
@@ -52,12 +55,14 @@ export type {
   ImageFillStyle,
   FillStyle,
   ObjectHyperlink,
+  ObjectRole,
+  ComponentProvenance,
   ImageMask,
   NormalizedPathAnchor,
 } from './slide.js'
 
 export { TEXT_STYLE_OVERRIDE_KEYS, isTextStyleOverrideKey } from './slide.js'
-export { MAX_LIST_LEVEL, MAX_PATH_ANCHORS } from './slide.js'
+export { MAX_LIST_LEVEL, MAX_PATH_ANCHORS, OBJECT_ROLES } from './slide.js'
 export { hSegKey, vSegKey, getEffectiveBorderSegment } from './slide.js'
 
 export type {
@@ -72,6 +77,10 @@ export type {
   ImageBackground,
   SlideBackground,
   DeckGuide,
+  DeckMeta,
+  SlideLayoutRef,
+  SlideBrief,
+  SlideClaim,
 } from './deck.js'
 
 export { DEFAULT_TRANSITION, DEFAULT_BACKGROUND, computeSlideNumber } from './deck.js'
@@ -128,7 +137,15 @@ export {
   type RenderLookJob,
   type RenderLookSpec,
   type RenderedLook,
+  type RenderPage,
+  type RenderPageLookSpec,
+  type TextOverflow,
+  type GrownText,
+  renderPageName,
+  renderPagePath,
   LOOK_MAX_EDGE,
+  THUMBNAIL_HEIGHT,
+  THUMBNAIL_WIDTH,
   LOOK_MAX_PIXELS,
 } from './render-queue.js'
 
@@ -152,3 +169,16 @@ export {
 } from './desktop.js'
 
 export * from './schema/index.js'
+export { buildImagePdf, jpegInfo, type JpegInfo, type PdfOptions, type PdfPage } from './pdf.js'
+export {
+  CREDENTIAL_PREFIXES,
+  looksLikeNarrativeCredential,
+  maskCredentials,
+  maskShareTokens,
+} from './credentialPatterns.js'
+export {
+  FILTERED,
+  TELEMETRY_DATA_COLLECTION,
+  scrubString,
+  scrubTelemetryPayload,
+} from './telemetryScrub.js'

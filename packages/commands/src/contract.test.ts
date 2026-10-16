@@ -37,12 +37,17 @@ import { createDefaultRegistry } from './catalog.js'
 import { runCommand } from './run.js'
 import { CommandError } from './errors.js'
 import { createFixtureDeck } from './testing/fixtureDeck.js'
-import { createFixtureFolderFonts, createFixtureFolderTokens } from './testing/fixtureTokens.js'
+import {
+  createFixtureFolderFonts,
+  createFixtureStylePack,
+  createFixtureFolderTokens,
+} from './testing/fixtureTokens.js'
 import {
   FIXTURE_COMPONENT_ID,
   FIXTURE_DECK_ID,
   FIXTURE_FOLDER_ID,
   createFakeServices,
+  FIXTURE_RUN_ID,
   type FakeServices,
 } from './testing/fakeServices.js'
 import type { CommandContext, CommandTarget } from './types.js'
@@ -59,9 +64,13 @@ function ctxFor(
     deck: createFixtureDeck(),
     folderTokens: createFixtureFolderTokens(),
     folderFonts: createFixtureFolderFonts(),
+    stylePack: createFixtureStylePack(),
     target,
     services: createFakeServices(),
     session: { key: 'mcp:contract', surface: 'mcp', clientName: 'contract-suite' },
+    // The session's current run, as an agent that changed the deck has one
+    // (query.render's compare shows the deck before it).
+    run: { runId: FIXTURE_RUN_ID, surface: 'mcp' },
   }
 }
 
@@ -94,6 +103,8 @@ const REPORTS_ITS_OWN_CHANGE: Readonly<Record<string, string>> = {
     '`previous` holds the value the first run set: the repeat replaced it with itself',
   'token.seedDefaults':
     '`seeded` / `migrated` are false on a repeat: nothing is left to add or bring up to date',
+  'component.restamp':
+    '`added` / `removed` are empty on a repeat: the stamps already match the master, so what the first run added is among `updated`',
 }
 
 /** Every id that exists in the fixture deck. */
@@ -116,6 +127,9 @@ const FIXTURE_IDS = new Set([
   'a1',
   'a2',
   'gd1',
+  'st_bar',
+  'st_title',
+  'st_old',
 ])
 
 /**

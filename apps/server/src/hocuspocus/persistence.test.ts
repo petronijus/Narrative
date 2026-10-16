@@ -193,16 +193,15 @@ vi.mock('drizzle-orm', () => ({
     preds.reduce((acc, p) => ({ ...acc, ...p }), {}),
 }))
 
+/** An `onStoreDocumentPayload` as Hocuspocus 4 builds it (`lastContext`: the context of the change's connection). */
 function makePayload(documentName: string, doc: Y.Doc, context: unknown = {}) {
   return {
     documentName,
     document: doc,
     instance: {} as never,
-    connection: {} as never,
-    context,
-    requestHeaders: {},
-    requestParameters: new URLSearchParams(),
-    socketId: 'test',
+    lastContext: context,
+    lastTransactionOrigin: undefined,
+    clientsCount: 0,
   }
 }
 

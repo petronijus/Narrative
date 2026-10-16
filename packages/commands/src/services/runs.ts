@@ -25,11 +25,7 @@ export type AgentRunStatus = 'open' | 'closed' | 'reverted'
  * - `not_document`: the run did not target a document (account/folder work).
  */
 export type NotRevertibleReason =
-  | 'reverted'
-  | 'nothing_to_revert'
-  | 'unloaded'
-  | 'expired'
-  | 'not_document'
+  'reverted' | 'nothing_to_revert' | 'unloaded' | 'expired' | 'not_document'
 
 export interface AgentRunSummary {
   id: string
@@ -64,8 +60,7 @@ export interface AgentRunSummary {
  * implicitly and never through these service calls.
  */
 export type RunDocument =
-  | { kind: 'deck'; deckId: string }
-  | { kind: 'component'; componentId: string }
+  { kind: 'deck'; deckId: string } | { kind: 'component'; componentId: string }
 
 export interface StartRunArgs {
   userId: string
@@ -117,4 +112,11 @@ export interface AgentRunService {
    * `conflict` when the run is no longer revertible (with the reason).
    */
   revertRun(args: RevertRunArgs): Promise<RevertRunResult>
+  /**
+   * The document a run changed, as it was just before the run's first write
+   * to it — the "before" of `query.render`'s compare. Null when the run has
+   * written no document yet, or its history is no longer held (it lives as
+   * long as the run's undo history, see `notRevertibleReason`).
+   */
+  stateBefore(runId: string): { document: RunDocument; update: Uint8Array } | null
 }

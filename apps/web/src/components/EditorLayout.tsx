@@ -29,6 +29,8 @@ import { PeerSelectionOverlays } from '../ui/PeerSelectionOverlays'
 import { EditorShowHighlight, EditorShowNotice } from '../ui/EditorShowOverlay'
 import { useEditorShow } from '../ui/useEditorShow'
 import { LockBadges } from '../ui/LockBadges'
+import { AutofitHeights } from '../ui/AutofitHeights'
+import { useTextLayoutTick } from '../ui/useTextLayoutTick'
 import { useSelection } from '../state/SelectionContext'
 import { useTool } from '../state/ToolContext'
 import { useTextEdit } from '../state/TextEditContext'
@@ -69,6 +71,7 @@ import { ZoomControl } from '../ui/ZoomControl.js'
 import { useStageBgColor } from '../state/useStageBgColor.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useZoomLevel, MIN_ZOOM, MAX_ZOOM } from '../state/useZoomLevel.js'
+import { clientToCanvasCoords } from '../lib/canvasCoords.js'
 import { isModHeld, useShortcuts } from '../state/useShortcuts.js'
 import { ShortcutsCheatsheet } from '../ui/ShortcutsCheatsheet.js'
 import { EditorContextMenu } from '../ui/EditorContextMenu.js'
@@ -95,26 +98,6 @@ import { Button } from '@/components/ui/button'
  * coords on purpose so the feel is the same at 25% and 200%.
  */
 const TAP_THRESHOLD_PX = 4
-
-/**
- * Converts viewport (clientX, clientY) coordinates into artboard-local
- * slide coordinates. When the artboard is rendered under a CSS
- * transform:scale, getBoundingClientRect already returns the scaled
- * visual rect — we reverse that scale so slide-coord math stays in
- * unscaled 1920×1080 space.
- */
-function clientToCanvasCoords(
-  clientX: number,
-  clientY: number,
-  canvasRect: DOMRect,
-  zoom: number = 1,
-): { x: number; y: number } {
-  const s = zoom === 0 ? 1 : zoom
-  return {
-    x: (clientX - canvasRect.left) / s,
-    y: (clientY - canvasRect.top) / s,
-  }
-}
 
 /**
  * Applies the Shift-key aspect-ratio constraint to a draft drag
@@ -484,6 +467,13 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const { undo, redo } = useUndoManager()
   const canvasInstance = useCanvasInstance()
+  // A growing text box is as tall as it is drawn, whatever its `height`
+  // says; snapping measures it so (and re-derives when it reflows).
+  const textLayoutTick = useTextLayoutTick(canvasInstance?.sceneGraph ?? null)
+  const drawnHeightOf = useCallback(
+    (o: SlideObject): number => canvasInstance?.sceneGraph.drawnSize(o.id)?.height ?? o.height,
+    [canvasInstance],
+  )
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
   const { color: stageBgColor } = useStageBgColor()
@@ -1316,14 +1306,14 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         if (firstObj !== undefined) {
           const otherBounds = objects
             .filter((o) => !drag.objectIds.includes(o.id))
-            .map((o) => ({ id: o.id, x: o.x, y: o.y, width: o.width, height: o.height }))
+            .map((o) => ({ id: o.id, x: o.x, y: o.y, width: o.width, height: drawnHeightOf(o) }))
 
           const snapResult = computeSnap(
             {
               x: firstProposed.x,
               y: firstProposed.y,
               width: firstObj.width,
-              height: firstObj.height,
+              height: drawnHeightOf(firstObj),
             },
             otherBounds,
             10,
@@ -2246,8 +2236,10 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     () =>
       objects
         .filter((o) => !selectedIds.has(o.id))
-        .map((o) => ({ id: o.id, x: o.x, y: o.y, width: o.width, height: o.height })),
-    [objects, selectedIds],
+        .map((o) => ({ id: o.id, x: o.x, y: o.y, width: o.width, height: drawnHeightOf(o) })),
+    // textLayoutTick: a growing box reflowed without a document change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [objects, selectedIds, drawnHeightOf, textLayoutTick],
   )
 
   // Memoize the deck-guides derivation — same rationale as otherBounds.
@@ -2504,6 +2496,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
 
                     {/* P5a: padlock badge over each locked object. */}
                     <LockBadges />
+                    <AutofitHeights />
 
                     {/* P8: click-to-play video preview in the editor.
                       Mounted BEFORE TransformHandles so the handles +

@@ -22,9 +22,11 @@ Translate into <language> (scope: <scope>).
 3. Write back with `text_set` in the rich form, mapping formatted runs to
    the corresponding words in the translation so emphasis survives. Keep
    list structure (levels, bullets, numbering) unchanged.
-4. Translations are often longer. After writing, compare each box's text
-   length with its size; if a translation clearly overflows, shorten the
+4. Translations are often longer. After writing, look at each slide with
+   `query_render` (a sheet for several): its `overflow` lists the boxes
+   whose text no longer fits, measured with the real fonts. Shorten the
    wording before you consider shrinking type, and never go below the size
-   the rest of the deck uses for the same role.
+   the rest of the deck uses for the same role; look again until none is
+   left.
 5. One `ops_apply` per slide keeps each slide revertible on its own; say so
    in your report, together with anything you left untranslated and why.

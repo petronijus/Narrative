@@ -1,0 +1,185 @@
+{
+  "scenario": "text-autofit-grow",
+  "tag": "ev4067a9",
+  "recordedAt": "2026-10-12T19:14:39.122Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.296 (Claude Code)",
+  "fixture": {
+    "deckId": "wHnMfPqMwsqR",
+    "title": "Status ev4067a9",
+    "heading": "kkJv0ksA4qR24j34rlfUu",
+    "body": "j0IcnZcP9TIpnop6rj9Uw"
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "In the Narrative deck \"Status ev4067a9\" (deckId wHnMfPqMwsqR), make the body text box on the first slide grow with its text instead of keeping a fixed height.",
+        "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_slide,mcp__narrative-eval__object_update,mcp__narrative-eval__text_setBoxTypography,ReadMcpResourceTool",
+              "max_results": 5
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "wHnMfPqMwsqR",
+              "slide": {
+                "index": 0
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "iqzE00SfSc1z1SQ59Q9ZT",
+              "index": 0,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "kkJv0ksA4qR24j34rlfUu",
+                  "type": "text",
+                  "x": 120,
+                  "y": 80,
+                  "width": 1680,
+                  "height": 120,
+                  "rotation": 0,
+                  "text": "Status",
+                  "fontSize": 64,
+                  "fontWeight": "bold",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                },
+                {
+                  "id": "j0IcnZcP9TIpnop6rj9Uw",
+                  "type": "text",
+                  "x": 120,
+                  "y": 280,
+                  "width": 1680,
+                  "height": 400,
+                  "rotation": 0,
+                  "text": "We shipped the importer. The exporter follows next week.",
+                  "fontSize": 28,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                }
+              ],
+              "animations": [],
+              "notes": ""
+            },
+            "text": "{\"id\":\"iqzE00SfSc1z1SQ59Q9ZT\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"kkJv0ksA4qR24j34rlfUu\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Status\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"j0IcnZcP9TIpnop6rj9Uw\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"We shipped the importer. The exporter follows next week.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "wHnMfPqMwsqR",
+              "request": "Make the body text box on the first slide grow with its text"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_IX6j5EsaqfLZnqSW"
+            },
+            "text": "{\"runId\":\"run_IX6j5EsaqfLZnqSW\"}"
+          },
+          {
+            "tool": "object_update",
+            "command": "object.update",
+            "input": {
+              "deckId": "wHnMfPqMwsqR",
+              "slide": {
+                "index": 0
+              },
+              "object": "j0IcnZcP9TIpnop6rj9Uw",
+              "patch": {
+                "autofit": "grow-down"
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "updated": ["j0IcnZcP9TIpnop6rj9Uw"]
+            },
+            "text": "{\"updated\":[\"j0IcnZcP9TIpnop6rj9Uw\"]}"
+          },
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "wHnMfPqMwsqR",
+              "slide": {
+                "index": 0
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "iqzE00SfSc1z1SQ59Q9ZT",
+              "index": 0,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "kkJv0ksA4qR24j34rlfUu",
+                  "type": "text",
+                  "x": 120,
+                  "y": 80,
+                  "width": 1680,
+                  "height": 120,
+                  "rotation": 0,
+                  "text": "Status",
+                  "fontSize": 64,
+                  "fontWeight": "bold",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                },
+                {
+                  "id": "j0IcnZcP9TIpnop6rj9Uw",
+                  "type": "text",
+                  "x": 120,
+                  "y": 280,
+                  "width": 1680,
+                  "height": 400,
+                  "rotation": 0,
+                  "text": "We shipped the importer. The exporter follows next week.",
+                  "fontSize": 28,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "autofit": "grow-down"
+                }
+              ],
+              "animations": [],
+              "notes": ""
+            },
+            "text": "{\"id\":\"iqzE00SfSc1z1SQ59Q9ZT\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"kkJv0ksA4qR24j34rlfUu\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Status\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"j0IcnZcP9TIpnop6rj9Uw\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"We shipped the importer. The exporter follows next week.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"autofit\":\"grow-down\"}],\"animations\":[],\"notes\":\"\"}"
+          }
+        ],
+        "finalText": "The body text box on slide 1 of \"Status ev4067a9\" now grows with its text. That's the box reading \"We shipped the importer. The exporter follows next week.\" I changed its autofit setting from a fixed height to \"grow-down\", and when I read the slide back the new setting was saved.\n\nThe box's stored height still shows 400px, the old fixed height. The tool notes that the stored height can lag behind until it's recalculated. It should shrink to fit the one line of text once the editor lays it out again, but I didn't check that in a render.\n\nThis change is its own run in the Agent activity popover, so you can undo it in one step there.",
+        "turns": 6,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

@@ -127,8 +127,9 @@ export const ParagraphInputSchema = ParagraphAttrsSchema.extend({
 export const RichTextInputSchema = z
   .strictObject({ paragraphs: z.array(ParagraphInputSchema).min(1).max(1000) })
   .describe(
-    'Structured body: paragraphs, each with its list attributes (list "bullet"|"number", level 0..8, bulletChar, ' +
-      'numberFormat, startAt) and either plain `text` or formatted `runs`.',
+    'Structured body: paragraphs, each with its list attributes (list "bullet"|"number"|"none", level 0..8, ' +
+      "bulletChar, numberFormat, startAt; without `list` a paragraph takes its level's default from the box's " +
+      'listLevels) and either plain `text` or formatted `runs`.',
   )
 
 export const TextBodyInputSchema = z
@@ -364,7 +365,7 @@ export const RunOutputSchema = z.object({
 
 export const ParagraphOutputSchema = z.object({
   runs: z.array(RunOutputSchema),
-  list: z.enum(['bullet', 'number']).optional(),
+  list: z.enum(['bullet', 'number', 'none']).optional(),
   level: z.number().optional(),
   bulletChar: z.string().optional(),
   numberFormat: z.string().optional(),

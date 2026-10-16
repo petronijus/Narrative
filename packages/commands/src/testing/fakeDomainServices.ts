@@ -24,6 +24,7 @@
 
 import { MAX_RENDER_SLIDES } from '../commands/render.js'
 import type { RenderSlideRef } from '../services/render.js'
+import type { AgentRunService } from '../services/runs.js'
 import * as Y from 'yjs'
 import {
   addObjects,
@@ -41,13 +42,25 @@ import {
   updateFolderToken,
   type FolderTokensSnapshot,
   type TokenCategory,
+  readStylePack,
+  setStylePack,
+  patchStylePack,
+  deleteStylePack,
+  mergeStylePackPatch,
+  readMasterOrigin,
+  replaceMasterObjects,
 } from '@narrative/slide-model'
 import { createFixtureFolderTokens } from './fixtureTokens.js'
 import { InvalidTokenFields, parseNewTokenFields, parseTokenPatch } from '../commands/tokens.js'
 import { textStyleNameTaken } from '../text/textStyle.js'
-import type { TextObject, RectangleObject } from '@narrative/shared'
+import type { TextObject, RectangleObject, StylePack } from '@narrative/shared'
+import { exampleStylePack } from '@narrative/shared'
+import { parseStylePack } from '../stylePack/parse.js'
+import { previousOfUpdate } from '../stylePack/change.js'
+import { compileStylePack } from '../stylePack/compile.js'
+import { storedStylePack } from '../stylePack/parse.js'
 import { CommandError } from '../errors.js'
-import { applyInsertPlan } from '../insert/plan.js'
+import { applyInsertPlan, planForMaster } from '../insert/plan.js'
 import { objectsOf, requireObjects, resolveSlide } from '../refs.js'
 import { createFixtureDeck, FIXTURE_SLIDE_IDS } from './fixtureDeck.js'
 import type { ServerServices } from '../services.js'
@@ -153,6 +166,7 @@ export type DomainFakes = Pick<
   | 'pptx'
   | 'render'
   | 'tokens'
+  | 'stylePacks'
 > & {
   /**
    * A deep copy of everything the fakes hold (and the id counter, so a
@@ -213,12 +227,21 @@ function pickFixtureSlides(
 export function createDomainFakes(
   world: FakeWorld,
   recorder: (service: keyof ServerServices) => Recorder,
+  /** The fake runs' before-states (query.render's compare reads them, as the real service does). */
+  runs: Pick<AgentRunService, 'stateBefore'> = { stateBefore: () => null },
 ): DomainFakes {
   // The fixture folder's tokens are the ones the contract suite gives
   // commands as `ctx.folderTokens`; the other folders have none yet.
   const folderDocs = new Map<string, Y.Doc>([
     [world.folderId, folderDocWith(createFixtureFolderTokens())],
   ])
+  // The fixture folder carries the example style pack (A4.3): style.pack.* examples read and change it.
+  setStylePack(
+    folderDocs.get(world.folderId)!,
+    exampleStylePack() as unknown as Record<string, unknown>,
+  )
+  /** Masters a pack's compile made, by component id (the fixture's own master is fixtureComponentState). */
+  const packMasters = new Map<string, Y.Doc>()
   const folderDoc = (folderId: string): Y.Doc => {
     let doc = folderDocs.get(folderId)
     if (doc === undefined) {
@@ -427,6 +450,7 @@ export function createDomainFakes(
     return pickFixtureSlides(deckId === world.deckId, refs)
   }
   const rTokens = recorder('tokens')
+  const rStyle = recorder('stylePacks')
 
   return {
     snapshot: () =>
@@ -582,7 +606,10 @@ export function createDomainFakes(
         return {
           apply(objects) {
             return {
-              objectIds: applyInsertPlan(objects, args.plan),
+              objectIds: applyInsertPlan(
+                objects,
+                'componentId' in args.target ? planForMaster(args.plan) : args.plan,
+              ),
               mediaRegistered: media.length,
               skippedImages: 0,
               droppedLinks: 0,
@@ -975,6 +1002,26 @@ export function createDomainFakes(
         requireFolder(args.folderId)
         return [...components.values()].filter((c) => c.folderId === args.folderId)
       },
+      async create(args) {
+        rComponents('create', args)
+        requireFolder(args.folderId)
+        // The real service's rules (services/componentStaging.ts createEmptyComponent).
+        const name = args.name.trim()
+        if (name.length > 200) {
+          throw new CommandError('invalid_input', 'name too long (max 200)')
+        }
+        const c: ComponentRecord = {
+          id: fresh('cmp'),
+          folderId: args.folderId,
+          name: name.length > 0 ? name : 'Untitled component',
+          thumbnailKey: null,
+          thumbnailUrl: null,
+          createdAt: T0,
+          updatedAt: T0,
+        }
+        components.set(c.id, c)
+        return c
+      },
       async rename(args) {
         rComponents('rename', args)
         const c = { ...requireComponent(args.componentId, args.folderId), name: args.name }
@@ -1033,6 +1080,15 @@ export function createDomainFakes(
       async prepareStamp(args) {
         rComponents('prepareStamp', args)
         const folderId = requireDeck(args.deckId).folderId ?? undefined
+        // The real service's restamp rule (services/components.ts): stamps of
+        // a component of another folder are refused as such.
+        const own = components.get(args.componentId)
+        if (args.purpose === 'restamp' && own !== undefined && own.folderId !== folderId) {
+          throw new CommandError(
+            'conflict',
+            "These stamps come from a component of another folder (the deck moved, or they were copied from a deck there); a deck restamps only its own folder's components",
+          )
+        }
         // The fixture master shows no pictures: nothing to copy or catch up.
         return {
           master: {
@@ -1175,19 +1231,83 @@ export function createDomainFakes(
               failedFonts: [],
             }
       },
+      async exportPdf(args) {
+        rRender('exportPdf', args)
+        // The fixture deck skips none of its slides; a PDF is a page per slide asked for.
+        const chosen = pickRenderSlides(args.deckId, args.slides)
+        const base = {
+          pages: chosen.length,
+          leftOut: 0,
+          sizeBytes: 2048 * chosen.length,
+          failedLoads: 0,
+          failedFonts: [],
+        }
+        return args.delivery === 'base64'
+          ? { ...base, delivery: 'base64', base64: 'JVBERi0xLjQK' }
+          : {
+              ...base,
+              delivery: 'url',
+              url: 'https://storage.test/exports/deck.pdf?X-Amz-Signature=fixture',
+              expiresAt: T0,
+            }
+      },
+      async refreshThumbnail(args) {
+        rRender('refreshThumbnail', args)
+        if ('componentId' in args.target) {
+          if (!components.has(args.target.componentId)) {
+            throw notFound('component', args.target.componentId)
+          }
+          return {
+            thumbnailUrl: `https://img.test/insecure/components/${args.target.componentId}/thumb-x.png`,
+            updatedAt: T0,
+          }
+        }
+        requireDeck(args.target.deckId)
+        if (args.target.deckId !== world.deckId) {
+          throw new CommandError('invalid_input', 'The deck has no slides to draw its card from')
+        }
+        return {
+          thumbnailUrl: `https://img.test/insecure/decks/${args.target.deckId}/thumb-x.png?v=1`,
+          updatedAt: T0,
+        }
+      },
       async look(args) {
         rRender('look', args)
-        const sheet = 'sheet' in args.view
+        const { view } = args
+        // The real service's refusals (services/render.ts stateBeforeRun).
+        if ('compare' in view) {
+          const before = view.runId === null ? null : runs.stateBefore(view.runId)
+          if (before === null) {
+            throw new CommandError(
+              'invalid_input',
+              'Nothing to compare yet: your current run has not changed this deck (or its history is gone)',
+            )
+          }
+          if (before.document.kind !== 'deck' || before.document.deckId !== args.deckId) {
+            throw new CommandError(
+              'invalid_input',
+              'Your current run changed another document, not this deck',
+            )
+          }
+        }
         const chosen = pickRenderSlides(
           args.deckId,
-          'sheet' in args.view ? args.view.sheet : [args.view.slide],
+          'sheet' in view ? view.sheet : 'compare' in view ? [view.compare] : [view.slide],
         )
-        const region = 'slide' in args.view ? args.view.region : undefined
+        const mode =
+          'sheet' in view
+            ? 'sheet'
+            : 'compare' in view
+              ? 'compare'
+              : view.region !== undefined
+                ? 'region'
+                : 'slide'
         return {
-          mode: sheet ? 'sheet' : region !== undefined ? 'region' : 'slide',
-          width: 1430,
-          height: 804,
+          mode,
+          width: mode === 'compare' ? 1568 : 1430,
+          height: mode === 'compare' ? 450 : 804,
           slides: chosen.map(({ id, index }) => ({ slideId: id, index, failedLoads: 0 })),
+          overflow: [],
           failedFonts: [],
           image: {
             mimeType: 'image/png',
@@ -1195,6 +1315,114 @@ export function createDomainFakes(
               'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==',
           },
         }
+      },
+      async measure(args) {
+        rRender('measure', args)
+        // As the real service: in sheets, so its limit is the measure's, not one sheet's.
+        const ids: readonly string[] = args.deckId === world.deckId ? FIXTURE_SLIDE_IDS : []
+        const chosen = (args.slides === 'all' ? ids.map((id) => ({ id })) : args.slides).flatMap(
+          (ref) => pickRenderSlides(args.deckId, [ref]),
+        )
+        if (chosen.length === 0)
+          throw new CommandError('invalid_input', 'The deck has no slides to check')
+        // The fixture's text fits its boxes; growing boxes are drawn at their stored height.
+        return {
+          slides: chosen.map(({ id, index }) => ({ slideId: id, index })),
+          overflow: [],
+          grown: [],
+          failedFonts: [],
+        }
+      },
+    },
+
+    stylePacks: {
+      async get(args) {
+        rStyle('get', args)
+        requireFolder(args.folderId)
+        return readStylePack(folderDoc(args.folderId)) as StylePack | null
+      },
+      async set(args) {
+        rStyle('set', args)
+        requireFolder(args.folderId)
+        const pack = parseStylePack(args.pack)
+        const doc = folderDoc(args.folderId)
+        const previous = readStylePack(doc)
+        setStylePack(doc, pack as unknown as Record<string, unknown>)
+        return { previous }
+      },
+      async update(args) {
+        rStyle('update', args)
+        requireFolder(args.folderId)
+        const doc = folderDoc(args.folderId)
+        const current = readStylePack(doc)
+        if (current === null)
+          throw new CommandError('not_found', 'The folder has no style pack; set one first')
+        parseStylePack(mergeStylePackPatch(current, args.patch))
+        patchStylePack(doc, args.patch)
+        return { previous: previousOfUpdate(current, args.patch) }
+      },
+      async delete(args) {
+        rStyle('delete', args)
+        requireFolder(args.folderId)
+        const doc = folderDoc(args.folderId)
+        const previous = readStylePack(doc)
+        if (previous !== null) deleteStylePack(doc)
+        return { previous }
+      },
+      async compile(args) {
+        rStyle('compile', args)
+        requireFolder(args.folderId)
+        const doc = folderDoc(args.folderId)
+        const pack = readStylePack(doc) as StylePack | null
+        if (pack === null)
+          throw new CommandError('not_found', 'The folder has no style pack to compile')
+        const fonts = (folderFonts.get(args.folderId) ?? []).map((f) => ({
+          family: f.family ?? '',
+          weight: f.weight ?? 400,
+        }))
+        const plan = compileStylePack(storedStylePack(pack), {
+          tokens: readFolderTokens(doc),
+          fonts,
+        })
+        const counts = {
+          colors: { created: 0, updated: 0 },
+          textStyles: { created: 0, updated: 0 },
+          components: { created: 0, updated: 0 },
+        }
+        for (const category of ['colors', 'textStyles'] as const) {
+          for (const t of plan[category]) {
+            const fields = parseNewTokenFields(category, t.fields)
+            if (category === 'textStyles') fields['builtin'] = false
+            fields['origin'] = t.origin
+            if (t.exists) updateFolderToken(doc, category, t.id, fields, { replace: true })
+            else addFolderToken(doc, category, t.id, fields)
+            counts[category][t.exists ? 'updated' : 'created']++
+          }
+        }
+        for (const c of plan.components) {
+          let id = [...packMasters].find(
+            ([cid, d]) =>
+              components.get(cid)?.folderId === args.folderId &&
+              readMasterOrigin(d)?.key === c.origin.key &&
+              readMasterOrigin(d)?.pack === c.origin.pack,
+          )?.[0]
+          if (id === undefined) {
+            id = fresh('cmp')
+            components.set(id, {
+              id,
+              folderId: args.folderId,
+              name: c.name,
+              thumbnailKey: null,
+              thumbnailUrl: null,
+              createdAt: T0,
+              updatedAt: T0,
+            })
+            packMasters.set(id, new Y.Doc())
+            counts.components.created++
+          } else counts.components.updated++
+          replaceMasterObjects(packMasters.get(id)!, c.objects, c.origin)
+        }
+        return { ...counts, missingFonts: plan.missingFonts }
       },
     },
 

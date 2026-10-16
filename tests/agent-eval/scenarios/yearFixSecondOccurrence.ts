@@ -1,5 +1,6 @@
 import {
   Checks,
+  callsOf,
   isBoldWeight,
   objectById,
   paragraphsOf,
@@ -54,7 +55,7 @@ export default defineScenario({
   steps: (fx) => [
     `In the body text on slide 1 of the Narrative deck ${deckRef(fx)}, the SECOND "2024" (in "By 2024 we had doubled revenue") is a typo for 2025. Fix only that one number; everything else, including the bold word, must stay as it is.`,
   ],
-  async grade({ world, fixture: fx }) {
+  async grade({ world, fixture: fx, transcript }) {
     const c = new Checks()
     const slide = await readSlide(world, { deckId: fx.deckId }, { index: 0 })
     const body = objectById(slide, fx.bodyId)
@@ -70,6 +71,12 @@ export default defineScenario({
       runs.some((r) => r.text === 'doubled' && isBoldWeight(r.fontWeight)) &&
         runs.filter((r) => r.text !== 'doubled').every((r) => !isBoldWeight(r.fontWeight)),
       JSON.stringify(runs),
+    )
+    // The deck's card follows an ordinary edit by itself (A3.5).
+    c.eq(
+      'it did not redraw the deck card after an ordinary edit',
+      callsOf(transcript, 'deck.refreshThumbnail').length,
+      0,
     )
     return c.done()
   },

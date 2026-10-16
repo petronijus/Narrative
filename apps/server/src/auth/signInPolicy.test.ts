@@ -38,20 +38,39 @@ describe('signInGrant', () => {
 
   const bela = { email: 'bela@example.org', emailVerified: true }
 
+  it('admits an address an admin allowed, before looking at invites', async () => {
+    const db = scriptedDb({ selects: [[{ email: 'bela@example.org' }]] })
+    await expect(signInGrant(db.db, byEmail, bela)).resolves.toBe('allowlist')
+    expect(db.remaining().selects).toBe(0)
+  })
+
+  it('admits ADMIN_EMAILS with a verified email only, without the database', async () => {
+    const admins = { allowedEmails: ['petr@example.com'], adminEmails: ['boss@example.org'] }
+    const db = scriptedDb()
+    await expect(
+      signInGrant(db.db, admins, { email: 'Boss@Example.org', emailVerified: true }),
+    ).resolves.toBe('admin')
+    expect(db.remaining().selects).toBe(0)
+    // Unverified: not admitted by the env, and the database admits no unverified email.
+    await expect(
+      signInGrant(scriptedDb().db, admins, { email: 'boss@example.org', emailVerified: false }),
+    ).resolves.toBeNull()
+  })
+
   it('admits a pending deck invite, then a pending folder invite', async () => {
     await expect(
-      signInGrant(scriptedDb({ selects: [[{ id: 'inv' }]] }).db, byEmail, bela),
+      signInGrant(scriptedDb({ selects: [[], [{ id: 'inv' }]] }).db, byEmail, bela),
     ).resolves.toBe('invite')
-    const db = scriptedDb({ selects: [[], [{ id: 'finv' }]] })
+    const db = scriptedDb({ selects: [[], [], [{ id: 'finv' }]] })
     await expect(signInGrant(db.db, byEmail, bela)).resolves.toBe('invite')
     expect(db.remaining().selects).toBe(0)
   })
 
   it('admits an existing deck permission, then a membership in a shared folder', async () => {
     await expect(
-      signInGrant(scriptedDb({ selects: [[], [], [{ deckId: 'd1' }]] }).db, byEmail, bela),
+      signInGrant(scriptedDb({ selects: [[], [], [], [{ deckId: 'd1' }]] }).db, byEmail, bela),
     ).resolves.toBe('permission')
-    const db = scriptedDb({ selects: [[], [], [], [{ folderId: 'f1' }]] })
+    const db = scriptedDb({ selects: [[], [], [], [], [{ folderId: 'f1' }]] })
     await expect(signInGrant(db.db, byEmail, bela)).resolves.toBe('permission')
     expect(db.remaining().selects).toBe(0)
   })
@@ -66,7 +85,7 @@ describe('signInGrant', () => {
 
   it('refuses everyone else', async () => {
     await expect(
-      isAllowedToSignIn(scriptedDb({ selects: [[], [], [], []] }).db, byEmail, {
+      isAllowedToSignIn(scriptedDb({ selects: [[], [], [], [], []] }).db, byEmail, {
         email: 'removed@example.org',
         emailVerified: true,
       }),

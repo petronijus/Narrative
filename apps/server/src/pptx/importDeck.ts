@@ -26,6 +26,7 @@
  * client (matches `apps/web/src/api/client.ts:ImportPptxResult`).
  */
 
+import type { PlaceholderHints } from './writer.js'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { PutObjectCommand } from '@aws-sdk/client-s3'
@@ -83,6 +84,8 @@ export interface ImportDeckResult {
    *  list of fonts already available (system + embedded + folder) to
    *  surface a "fonts referenced but missing" upload prompt. */
   referencedFontFamilies: string[]
+  /** Per slide, the placeholder each object filled (writer.ts PlaceholderHints). */
+  placeholders?: PlaceholderHints
 }
 
 /**
@@ -158,7 +161,7 @@ export async function importDeckFromPptxBytes(args: {
   const { uploadedImageCount, skippedUnsupportedImages, uploadedFontCount, skippedFontCount } =
     media
 
-  const { state, slideCount, objectsCreated, skipped } = buildDeckUpdate(parsed)
+  const { state, slideCount, objectsCreated, skipped, placeholders } = buildDeckUpdate(parsed)
 
   // The deck, its owner grant and its first document state commit in the
   // same transaction as the media rows — the rows reference the deck, and a
@@ -246,6 +249,7 @@ export async function importDeckFromPptxBytes(args: {
       slideHeight: parsed.slideHeight,
       embeddedFontCount: uploadedFontCount,
       referencedFontFamilies,
+      ...(placeholders.length > 0 ? { placeholders } : {}),
     },
   }
 }
@@ -493,6 +497,7 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
       fontWeight: metadata.weight,
       fontStyle: metadata.style,
       fontPostscriptName: metadata.postscriptName,
+      fontAxes: metadata.axes ?? {},
     })
     uploadedFontCount++
   }

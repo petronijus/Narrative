@@ -300,6 +300,9 @@ export function duplicateObject(
  *   ungrouped copy (a group of one means nothing). Copying a group
  *   therefore produces an independent group, instead of silently growing
  *   the original one.
+ * - A stamped object keeps its `component` link with a fresh `instance`:
+ *   the copies of one stamp share one new instance, so a copied stamp is a
+ *   stamp of its own (restamped apart from the original).
  * - Unknown ids are skipped.
  *
  * @returns the plain copies, in z-order.
@@ -318,7 +321,8 @@ export function duplicateObjects(
  * relative order, in one transaction. Same rules as {@link duplicateObjects}:
  * fresh ids, every property and rich text kept (tables' cell text too), a
  * crop moved with its frame by `offset`, a group copied whole becomes its
- * own new group and a lone member of a group comes out ungrouped.
+ * own new group and a lone member of a group comes out ungrouped, a stamp's
+ * copies get a fresh stamp `instance` (one per source instance).
  * Animations are not copied. Returns the copies in their new order.
  */
 export function copyObjectsTo(
@@ -346,8 +350,9 @@ export function copyObjectsTo(
   for (const [g, count] of membersPerGroup) {
     if (count >= 2) groupRemap.set(g, nanoid())
   }
+  const instanceRemap = freshStampInstances(sources.map((m) => m.get('component')))
 
-  const prepared = sources.map((m) => buildDuplicateYMap(m, offset, groupRemap))
+  const prepared = sources.map((m) => buildDuplicateYMap(m, offset, groupRemap, instanceRemap))
   const firstNewIndex = ctx.objects.length
   ctx.doc.transact(() => {
     ctx.objects.push(prepared.map((p) => p.yMap))
@@ -367,6 +372,42 @@ export function copyObjectsTo(
 type RichTextDelta = ReturnType<Y.Text['toDelta']>
 
 /**
+ * One fresh stamp instance per distinct `component.instance` among
+ * `provenances` (objects' `component` values): what a copy operation gives
+ * the stamps it copies, so each copied stamp is restamped on its own.
+ */
+export function freshStampInstances(provenances: Iterable<unknown>): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const c of provenances) {
+    const instance = stampInstanceOf(c)
+    if (instance !== undefined && !out.has(instance)) out.set(instance, nanoid())
+  }
+  return out
+}
+
+/** The `instance` of an object's `component` value, if it has a usable one. */
+function stampInstanceOf(component: unknown): string | undefined {
+  if (typeof component !== 'object' || component === null) return undefined
+  const instance = (component as { instance?: unknown }).instance
+  return typeof instance === 'string' && instance !== '' ? instance : undefined
+}
+
+/**
+ * `component` with its instance remapped by `instances`
+ * ({@link freshStampInstances}); undefined (drop the link) when it has no
+ * usable instance.
+ */
+export function withStampInstance(
+  component: unknown,
+  instances: ReadonlyMap<string, string>,
+): Record<string, unknown> | undefined {
+  const instance = stampInstanceOf(component)
+  const to = instance === undefined ? undefined : instances.get(instance)
+  if (to === undefined) return undefined
+  return { ...(component as Record<string, unknown>), instance: to }
+}
+
+/**
  * Build a detached Y.Map copy of `source`. Any Yjs CRDT values (Y.Text /
  * Y.Map / Y.Array) are deep-CLONED — Yjs forbids the same CRDT instance
  * from living in two parents at once, and reusing an already-integrated
@@ -378,6 +419,7 @@ function buildDuplicateYMap(
   source: Y.Map<unknown>,
   offset: { x: number; y: number },
   groupRemap: ReadonlyMap<string, string>,
+  instanceRemap: ReadonlyMap<string, string>,
 ): { yMap: Y.Map<unknown>; richTextDeltas: Array<{ path: string[]; delta: RichTextDelta }> } {
   const plain = Object.fromEntries(source.entries()) as Record<string, unknown>
   plain['id'] = nanoid()
@@ -392,6 +434,11 @@ function buildDuplicateYMap(
     const remapped = groupRemap.get(g)
     if (remapped === undefined) delete plain['groupId']
     else plain['groupId'] = remapped
+  }
+  if (plain['component'] !== undefined) {
+    const component = withStampInstance(plain['component'], instanceRemap)
+    if (component === undefined) delete plain['component']
+    else plain['component'] = component
   }
 
   const richTextDeltas: Array<{ path: string[]; delta: RichTextDelta }> = []

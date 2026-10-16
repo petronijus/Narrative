@@ -2,7 +2,7 @@
  * desktop/DesktopBridge.tsx
  *
  * Connects the editor to the desktop app's shell when it runs inside it
- * (ADR 0014); renders nothing, and does nothing in a browser. It sends the
+ * (ADR 0015); renders nothing, and does nothing in a browser. It sends the
  * editor's menu after every route change (the shell resets its menu on each
  * navigation, so a page that left never leaves its items behind), runs the
  * menu's clicks, and queues the PowerPoint files the app was asked to open —

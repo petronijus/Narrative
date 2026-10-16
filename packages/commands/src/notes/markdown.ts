@@ -319,15 +319,13 @@ function blockToMdast(n: NotesNode): BlockContent[] {
           ordered,
           ...(ordered ? { start: Number.isFinite(start) ? start : 1 } : {}),
           spread: false,
-          children: (n.content ?? []).map(
-            (item): ListItem => ({
-              type: 'listItem',
-              spread: false,
-              children: isNotesText(item)
-                ? [{ type: 'paragraph', children: runToMdast(item) }]
-                : (item.content ?? []).flatMap(blockToMdast),
-            }),
-          ),
+          children: (n.content ?? []).map((item): ListItem => ({
+            type: 'listItem',
+            spread: false,
+            children: isNotesText(item)
+              ? [{ type: 'paragraph', children: runToMdast(item) }]
+              : (item.content ?? []).flatMap(blockToMdast),
+          })),
         },
       ]
     }

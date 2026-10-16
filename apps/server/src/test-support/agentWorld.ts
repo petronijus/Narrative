@@ -16,7 +16,8 @@
 
 import * as Y from 'yjs'
 import {
-  Hocuspocus,
+  Server,
+  type Hocuspocus,
   type Extension,
   type onLoadDocumentPayload,
   type onStoreDocumentPayload,
@@ -29,13 +30,15 @@ import {
   addObjects,
   addSlide,
   getSlideObjectsCtx,
+  setStylePack,
   type DeckMutationContext,
 } from '@narrative/slide-model'
 import type { Database } from '../db/client.js'
 import type { AgentAccess } from '../agent/access.js'
 import { createMemoryRunStore, type MemoryRunStore } from '../agent/runStore.js'
 import { createFolderFontsReader } from '../agent/folderFonts.js'
-import { createFolderTokensReader } from '../agent/folderTokens.js'
+import { createFolderTokensReader, type FolderTokensSources } from '../agent/folderTokens.js'
+import { createFolderStylePackReader } from '../agent/folderStylePack.js'
 import { createAgentRuntime, type AgentRuntime } from '../agent/runtime.js'
 import type { ConfirmationLookups } from '../agent/confirmationSummary.js'
 import { awarenessOwnershipExtension } from '../hocuspocus/awarenessOwnership.js'
@@ -126,12 +129,14 @@ export interface AgentWorld {
   createDeck(deckId: string, build?: (doc: Y.Doc) => void): void
   /**
    * Put a deck or component master (by id) in a folder whose document holds
-   * `tokens` (the folder document's `tokens` map), stored like any document.
+   * `tokens` (the folder document's `tokens` map) and, given one, a style
+   * pack, stored like any document.
    */
   setFolder(
     targetId: string,
     folderId: string,
     tokens?: Record<string, Record<string, Record<string, unknown>>>,
+    stylePack?: Record<string, unknown>,
   ): void
   /** The font faces uploaded to `folderId` (the fake of its font assets). */
   setFolderFonts(folderId: string, faces: ReadonlyArray<FontFaceWeight>): void
@@ -154,6 +159,7 @@ export interface AgentWorldOptions {
   documentLingerMs?: number
   runIdleMs?: number
   maxOpenRunsPerUser?: number
+  beforeStatesBudgetBytes?: number
   presenceIdleMs?: number
   /** Hocuspocus store debounce (production: 2000). */
   debounce?: number
@@ -176,7 +182,12 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
   const persistence = new MemoryPersistence()
   const roles = new Map<string, Role>()
   const principalKeys = createAgentPrincipalKeys(TEST_AGENT_PRINCIPAL_KEY_SECRET)
-  const hocuspocus = new Hocuspocus({
+  // The WebSocket server (listen / destroy) around the document engine the
+  // services use (`hocuspocus`), as in production since Hocuspocus 3.
+  const server = new Server({
+    // A free port: `listen(0)` would fall back to the configured default
+    // (Hocuspocus 4 reads a falsy port argument as "none").
+    port: 0,
     quiet: true,
     stopOnSignals: false,
     // The production lifecycle settings (hocuspocus/index.ts), with a short debounce.
@@ -203,10 +214,11 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
       const userId = data.token
       const role = roles.get(`${data.documentName}|${userId}`)
       if (role === undefined) throw new Error('Forbidden')
-      data.connection.readOnly = role === 'viewer'
+      data.connectionConfig.readOnly = role === 'viewer'
       return { userId, role }
     },
   })
+  const hocuspocus = server.hocuspocus
   const access: AgentAccess = {
     deckRole: async (deckId, userId) => roles.get(`${deckId}|${userId}`) ?? null,
     componentRole: async (componentId, userId) =>
@@ -246,7 +258,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     const id = target.deckId ?? target.componentId
     return id === undefined ? null : (folderOfTarget.get(id) ?? null)
   }
-  const folderTokens = createFolderTokensReader({
+  const folderSources: FolderTokensSources = {
     folderOf: folderOfFixture,
     async readFolder(folderId) {
       const doc = new Y.Doc()
@@ -258,7 +270,9 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
       if (state !== undefined) Y.applyUpdate(doc, state)
       return doc
     },
-  })
+  }
+  const folderTokens = createFolderTokensReader(folderSources)
+  const folderStylePack = createFolderStylePackReader(folderSources)
   const fontsOfFolder = new Map<string, ReadonlyArray<FontFaceWeight>>()
   const folderFonts = createFolderFontsReader({
     folderOf: (target) => folderOfFixture(target),
@@ -268,6 +282,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     db: {} as Database,
     folderTokens,
     folderFonts,
+    folderStylePack,
     log: opts.log ?? quietLog,
     hocuspocus,
     ...(opts.registry === undefined ? {} : { registry: opts.registry }),
@@ -284,6 +299,9 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
       : { urlFetchAllowedHosts: opts.urlFetchAllowedHosts }),
     documentLingerMs: opts.documentLingerMs ?? 0,
     ...(opts.runIdleMs === undefined ? {} : { runIdleMs: opts.runIdleMs }),
+    ...(opts.beforeStatesBudgetBytes === undefined
+      ? {}
+      : { beforeStatesBudgetBytes: opts.beforeStatesBudgetBytes }),
     ...(opts.maxOpenRunsPerUser === undefined
       ? {}
       : { maxOpenRunsPerUser: opts.maxOpenRunsPerUser }),
@@ -304,7 +322,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     grant(id, userId, role) {
       roles.set(`${id}|${userId}`, role)
     },
-    setFolder(targetId, folderId, tokens = {}) {
+    setFolder(targetId, folderId, tokens = {}, stylePack) {
       folderOfTarget.set(targetId, folderId)
       const doc = new Y.Doc()
       const root = doc.getMap<unknown>('tokens')
@@ -317,6 +335,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
           for (const [k, v] of Object.entries(fields)) token.set(k, v)
         }
       }
+      if (stylePack !== undefined) setStylePack(doc, stylePack)
       persistence.snapshots.set(`folder:${folderId}`, Y.encodeStateAsUpdate(doc))
       doc.destroy()
     },
@@ -331,7 +350,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     },
     async connect(documentName, userId) {
       if (!listening) {
-        await hocuspocus.listen(0)
+        await server.listen()
         listening = true
       }
       const doc = new Y.Doc()
@@ -340,16 +359,10 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
       let synced!: () => void
       const whenSynced = new Promise<void>((resolve) => (synced = resolve))
       const provider = new HocuspocusProvider({
-        url: `ws://127.0.0.1:${hocuspocus.address.port}`,
+        url: `ws://127.0.0.1:${server.address.port}`,
         name: documentName,
         document: doc,
         token: userId,
-        // Every provider in this one Node process shares a BroadcastChannel,
-        // so without this each client would relay the others' awareness to
-        // the server over its own socket — something browsers of DIFFERENT
-        // users never do (same-browser tabs of one user do, and
-        // hocuspocus/awarenessOwnership.ts allows that).
-        broadcast: false,
         onSynced: () => synced(),
         onStateless: ({ payload }) => stateless.push(payload),
       })
@@ -373,13 +386,19 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     async destroy() {
       for (const c of clients) c.disconnect()
       await runtime.shutdown()
-      await hocuspocus.destroy()
+      await server.destroy()
     },
   }
 }
 
-/** Resolve once `predicate` holds, polling (WebSocket delivery is asynchronous). */
-export async function eventually(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+/**
+ * Resolve once `predicate` holds, polling (WebSocket delivery is asynchronous).
+ * The limit ends a hang, it does not measure speed (vitest.timeouts.ts): the
+ * wait returns the moment the condition holds, and 2 s was crossed on a busy
+ * machine (editor.test.ts at a load of 30–40, 2026-09-28 and 2026-10-14).
+ * 15 s stays inside the 30 s test limit.
+ */
+export async function eventually(predicate: () => boolean, timeoutMs = 15_000): Promise<void> {
   const start = Date.now()
   while (!predicate()) {
     if (Date.now() - start > timeoutMs) throw new Error('condition not met in time')

@@ -27,7 +27,7 @@
  * one may not, so DECK_ID is required rather than fabricated.
  */
 
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 
 const DECK_ID = process.env['DECK_ID'] ?? ''
 /** Rounding and momentum noise; a real jump is hundreds of pixels. */

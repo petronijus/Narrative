@@ -1,0 +1,56 @@
+---
+name: insert-restyle
+title: Insert slides and make them ours
+description: Bring another deck's slides (a Narrative deck or a .pptx) into this deck and restyle them with its brand.
+arguments:
+  - name: source
+    description: The deck or .pptx to take slides from, and which slides.
+    required: true
+  - name: position
+    description: Where they go, e.g. "after slide 4" (default the end).
+    required: false
+    default: the end
+---
+
+Insert {{source}} into this deck at {{position}} and make the slides look
+like the rest of it.
+
+1. Look first: `query.deck` (this deck's layouts and variant), and
+   `query.render` a sheet of the source slides where you can (a Narrative
+   deck), so you can compare before and after. Read this deck's pack with
+   `style.pack.get` ("summary"); without a pack, follow `restyle-lite`'s
+   tokens branch after inserting.
+2. `deck.insertFrom` with the source and `at`. Note what it returns:
+   - `slideIds`, the inserted slides;
+   - from a .pptx, `placeholders`: per slide, the PowerPoint placeholder
+     each object filled (`title`/`ctrTitle` → role title, `subTitle` →
+     subtitle, `body`/`obj` → body, `pic` → picture) — your hint for step 4;
+   - from a deck in another folder, `tokens`: its colours were already
+     re-pointed at this folder's by purpose.
+3. Slides that followed another pack's layout: `style.deck.apply` with
+   `relayout: "archetype"` and `slides` set to the inserted ids. Each takes
+   this pack's layout for its kind of slide, its text and pictures by slot
+   and role. `restyled` lists what moved; `unmatched` what did not.
+4. The rest (plain slides, every .pptx slide), one `ops.apply` per slide:
+   - give each content object a `role` with `object.update` — from the
+     placeholder hint, else from its size, place and text (the largest text
+     at the top is the title; a full-bleed picture is a picture; logos,
+     page numbers and decoration get none);
+   - `slide.applyLayout` with the layout (or `archetype`) whose purpose
+     fits the slide. Content moves in by role, top to bottom, left to right;
+   - delete what `unplaced` lists unless the slide still needs it, and
+     never keep the source's own footer, page number or logo: the layout
+     draws this deck's.
+5. `query.check` the inserted slides and fix every error (shorten text that
+   does not fit; do not shrink it). Then `query.render` the sheet again and
+   compare with the deck around them.
+
+Report which slides moved by archetype, which you laid out by hand (and
+with which layout), and anything you deleted or could not place.
+
+Do not:
+
+- restyle slides that were not inserted;
+- keep literal colours or fonts from the source where a slot of this
+  pack's layout holds the content — the layout gives the brand's;
+- move or resize layout objects to make text fit.

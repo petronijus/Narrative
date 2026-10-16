@@ -156,7 +156,7 @@ export const fontWeight = union<unknown>(
 )
 /** A paragraph's list attributes (slide-model `ParagraphAttrs`). */
 export const paragraphAttrs = obj<ParagraphAttrs>({
-  list: oneOf('bullet', 'number'),
+  list: oneOf('bullet', 'number', 'none'),
   level: int(0, 8),
   bulletChar: str(8),
   numberFormat: oneOf(
@@ -294,3 +294,29 @@ export function slideExtFields(values: Record<string, unknown>): Record<string, 
   }
   return out
 }
+
+/** One `TextObject.listLevels` entry (A4.2b), colours resolved to 0xRRGGBB. */
+export const textListLevel = obj<Record<string, unknown>>({
+  list: oneOf('bullet', 'number', 'none'),
+  bulletChar: str(4),
+  bulletColor: color,
+  bulletScale: positive,
+  numberFormat: oneOf(
+    'decimal',
+    'decimalParen',
+    'lowerAlpha',
+    'lowerAlphaParen',
+    'upperAlpha',
+    'upperAlphaParen',
+    'lowerRoman',
+    'upperRoman',
+  ),
+  indent: nonNeg,
+  hanging: nonNeg,
+  spaceBefore: nonNeg,
+  fontFamily: str(200),
+  fontWeight: oneOf<number | string>(100, 200, 300, 400, 500, 600, 700, 800, 900, 'bold', 'normal'),
+  fontSize: positive,
+  color,
+  lineSpacing: positive,
+})

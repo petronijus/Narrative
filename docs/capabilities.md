@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **137**. Known missing: **5**. Deliberately excluded: **22**.
+Commands: **146**. Known missing: **0**. Deliberately excluded: **23**.
 
 ## agent
 
@@ -29,30 +29,34 @@ Commands: **137**. Known missing: **5**. Deliberately excluded: **22**.
 
 | Command             | What it does                | Role   | Undo         | Confirm | Hints      |
 | ------------------- | --------------------------- | ------ | ------------ | ------- | ---------- |
+| `component.create`  | Create component            | editor | undoable     | never   |            |
 | `component.delete`  | Delete component            | editor | irreversible | always  |            |
 | `component.get`     | Read component              | viewer | n/a          | never   | read-only  |
 | `component.list`    | List components             | viewer | n/a          | never   | read-only  |
 | `component.promote` | Make component from objects | editor | undoable     | never   |            |
 | `component.rename`  | Rename component            | editor | undoable     | never   | idempotent |
+| `component.restamp` | Restamp component           | editor | undoable     | never   | idempotent |
 | `component.stamp`   | Stamp component             | editor | undoable     | never   |            |
 
 ## deck
 
-| Command              | What it does                      | Role   | Undo         | Confirm                    | Hints      |
-| -------------------- | --------------------------------- | ------ | ------------ | -------------------------- | ---------- |
-| `deck.activeEditors` | Who is editing                    | viewer | n/a          | never                      | read-only  |
-| `deck.create`        | Create deck                       | owner  | undoable     | never                      |            |
-| `deck.delete`        | Delete deck                       | owner  | irreversible | always                     |            |
-| `deck.duplicate`     | Duplicate deck                    | editor | undoable     | never                      |            |
-| `deck.exportPng`     | Export slides as PNG              | viewer | n/a          | never                      |            |
-| `deck.exportPptx`    | Export PowerPoint                 | editor | n/a          | never                      |            |
-| `deck.fonts.list`    | Deck fonts                        | viewer | n/a          | never                      | read-only  |
-| `deck.get`           | Deck details                      | viewer | n/a          | never                      | read-only  |
-| `deck.importPptx`    | Import PowerPoint                 | editor | undoable     | never (asks for URL files) |            |
-| `deck.insertFrom`    | Insert slides from a file or deck | editor | undoable     | never (asks for URL files) |            |
-| `deck.list`          | List decks                        | viewer | n/a          | never                      | read-only  |
-| `deck.moveToFolder`  | Move deck to folder               | owner  | irreversible | always                     | idempotent |
-| `deck.rename`        | Rename deck                       | editor | undoable     | never                      | idempotent |
+| Command                 | What it does                      | Role                   | Undo         | Confirm                    | Hints      |
+| ----------------------- | --------------------------------- | ---------------------- | ------------ | -------------------------- | ---------- |
+| `deck.activeEditors`    | Who is editing                    | viewer                 | n/a          | never                      | read-only  |
+| `deck.create`           | Create deck                       | owner                  | undoable     | never                      |            |
+| `deck.delete`           | Delete deck                       | owner                  | irreversible | always                     |            |
+| `deck.duplicate`        | Duplicate deck                    | editor                 | undoable     | never                      |            |
+| `deck.exportPdf`        | Export slides as PDF              | viewer                 | n/a          | never                      |            |
+| `deck.exportPng`        | Export slides as PNG              | viewer                 | n/a          | never                      |            |
+| `deck.exportPptx`       | Export PowerPoint                 | editor                 | n/a          | never                      |            |
+| `deck.fonts.list`       | Deck fonts                        | viewer                 | n/a          | never                      | read-only  |
+| `deck.get`              | Deck details                      | viewer                 | n/a          | never                      | read-only  |
+| `deck.importPptx`       | Import PowerPoint                 | editor                 | undoable     | never (asks for URL files) |            |
+| `deck.insertFrom`       | Insert slides from a file or deck | editor                 | undoable     | never (asks for URL files) |            |
+| `deck.list`             | List decks                        | viewer                 | n/a          | never                      | read-only  |
+| `deck.moveToFolder`     | Move deck to folder               | owner                  | irreversible | always                     | idempotent |
+| `deck.refreshThumbnail` | Redraw the deck card              | editor; master: editor | n/a          | never                      |            |
+| `deck.rename`           | Rename deck                       | editor                 | undoable     | never                      | idempotent |
 
 ## editor
 
@@ -139,12 +143,13 @@ Commands: **137**. Known missing: **5**. Deliberately excluded: **22**.
 
 ## query
 
-| Command        | What it does   | Role   | Undo | Confirm | Hints     |
-| -------------- | -------------- | ------ | ---- | ------- | --------- |
-| `query.deck`   | Deck outline   | viewer | n/a  | never   | read-only |
-| `query.object` | Read object    | viewer | n/a  | never   | read-only |
-| `query.render` | Look at slides | viewer | n/a  | never   | read-only |
-| `query.slide`  | Read slide     | viewer | n/a  | never   | read-only |
+| Command        | What it does                     | Role   | Undo | Confirm | Hints     |
+| -------------- | -------------------------------- | ------ | ---- | ------- | --------- |
+| `query.check`  | Check the deck against its brand | viewer | n/a  | never   | read-only |
+| `query.deck`   | Deck outline                     | viewer | n/a  | never   | read-only |
+| `query.object` | Read object                      | viewer | n/a  | never   | read-only |
+| `query.render` | Look at slides                   | viewer | n/a  | never   | read-only |
+| `query.slide`  | Read slide                       | viewer | n/a  | never   | read-only |
 
 ## share
 
@@ -162,21 +167,30 @@ Commands: **137**. Known missing: **5**. Deliberately excluded: **22**.
 
 ## slide
 
-| Command               | What it does               | Role   | Undo     | Confirm | Hints      |
-| --------------------- | -------------------------- | ------ | -------- | ------- | ---------- |
-| `slide.add`           | Add slide                  | editor | undoable | never   |            |
-| `slide.collapse`      | Collapse slide section     | editor | undoable | never   | idempotent |
-| `slide.copyTo`        | Copy slides                | editor | undoable | never   |            |
-| `slide.delete`        | Delete slides              | editor | undoable | never   |            |
-| `slide.duplicate`     | Duplicate slide            | editor | undoable | never   |            |
-| `slide.indent`        | Set slide outline level    | editor | undoable | never   | idempotent |
-| `slide.move`          | Move slides                | editor | undoable | never   |            |
-| `slide.notes.get`     | Read speaker notes         | viewer | n/a      | never   | read-only  |
-| `slide.notes.set`     | Set speaker notes          | editor | undoable | never   | idempotent |
-| `slide.rename`        | Rename slide               | editor | undoable | never   | idempotent |
-| `slide.setBackground` | Set slide background       | editor | undoable | never   | idempotent |
-| `slide.setTransition` | Set slide transition       | editor | undoable | never   | idempotent |
-| `slide.skip`          | Skip slide in presentation | editor | undoable | never   | idempotent |
+| Command               | What it does                       | Role   | Undo     | Confirm | Hints      |
+| --------------------- | ---------------------------------- | ------ | -------- | ------- | ---------- |
+| `slide.add`           | Add slide                          | editor | undoable | never   |            |
+| `slide.applyLayout`   | Lay a slide out with a pack layout | editor | undoable | never   |            |
+| `slide.collapse`      | Collapse slide section             | editor | undoable | never   | idempotent |
+| `slide.copyTo`        | Copy slides                        | editor | undoable | never   |            |
+| `slide.delete`        | Delete slides                      | editor | undoable | never   |            |
+| `slide.duplicate`     | Duplicate slide                    | editor | undoable | never   |            |
+| `slide.indent`        | Set slide outline level            | editor | undoable | never   | idempotent |
+| `slide.move`          | Move slides                        | editor | undoable | never   |            |
+| `slide.notes.get`     | Read speaker notes                 | viewer | n/a      | never   | read-only  |
+| `slide.notes.set`     | Set speaker notes                  | editor | undoable | never   | idempotent |
+| `slide.rename`        | Rename slide                       | editor | undoable | never   | idempotent |
+| `slide.setBackground` | Set slide background               | editor | undoable | never   | idempotent |
+| `slide.setTransition` | Set slide transition               | editor | undoable | never   | idempotent |
+| `slide.skip`          | Skip slide in presentation         | editor | undoable | never   | idempotent |
+
+## style
+
+| Command            | What it does                           | Role                                       | Undo     | Confirm | Hints     |
+| ------------------ | -------------------------------------- | ------------------------------------------ | -------- | ------- | --------- |
+| `style.deck.apply` | Re-style a deck with its folder's pack | editor                                     | undoable | never   |           |
+| `style.pack.edit`  | Change the folder's style pack         | editor                                     | undoable | never   |           |
+| `style.pack.get`   | Read the folder's style pack           | viewer; also a guest of the folder's decks | n/a      | never   | read-only |
 
 ## table
 
@@ -225,18 +239,14 @@ Commands: **137**. Known missing: **5**. Deliberately excluded: **22**.
 
 ## Known missing
 
-| Capability                   | Phase | Today in                                                                      | Note                                                                                                                                                                                                                                                                                                |
-| ---------------------------- | ----- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `deck.refreshThumbnail`      | A3    | apps/web/src/ui/SlidesPanel.tsx; `PUT /decks/:id/thumbnail`                   | the browser renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                                                                                                                                |
-| `component.refreshThumbnail` | A3    | apps/web/src/pages/ComponentMasterEditor.tsx; `PUT /components/:id/thumbnail` | the master editor renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                                                                                                                          |
-| `component.create`           | A4    | `POST /folders/:folderId/components`                                          | create a master from a spec (component.promote makes one from objects); the route makes an empty master, which the tests and the eval seed with; the pack compiler uses it only for the few recurring blocks (pagination, headline, subline, copy, a repeated column/grid) — layouts stay pack data |
-| `component.restamp`          | A4    | new                                                                           | reapply a changed master to the stamps made from it, keeping their slot content (needs component provenance)                                                                                                                                                                                        |
-| `deck.exportPdf`             | A5    | new                                                                           | moved out of A3 by Petr (2026-10-10): not wanted yet; the render worker (A3) makes it a raster PDF of its PNGs when it is                                                                                                                                                                           |
+| Capability | Phase | Today in | Note |
+| ---------- | ----- | -------- | ---- |
 
 ## Deliberately excluded
 
 | Capability                                                                                                    | Routes                                                                                                                                                                                                                                                                                                                                                  | Reason                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Instance administration (admins, who may sign in, which emails are sent)                                      | `GET /admin/users`, `PATCH /admin/users/:userId`, `GET /admin/allowed-emails`, `POST /admin/allowed-emails`, `DELETE /admin/allowed-emails/:email`, `GET /admin/emails`, `PATCH /admin/emails/:kind`, `GET /admin/emails/:kind/preview`                                                                                                                 | Deliberately human-only (ADR 0014): text inside a deck is data written by other people, and an instruction hidden there must not be able to let a stranger into Narrative or promote one to owner of every folder. Admins act in the admin screen.                                                                                                                                   |
 | Zoom and pan                                                                                                  |                                                                                                                                                                                                                                                                                                                                                         | Per-tab view state of one editor window; nothing in the document changes.                                                                                                                                                                                                                                                                                                            |
 | Stage background colour                                                                                       |                                                                                                                                                                                                                                                                                                                                                         | Per-tab editor preference, not document content.                                                                                                                                                                                                                                                                                                                                     |
 | Rulers on/off                                                                                                 |                                                                                                                                                                                                                                                                                                                                                         | Per-browser editor preference stored in localStorage.                                                                                                                                                                                                                                                                                                                                |
@@ -247,8 +257,8 @@ Commands: **137**. Known missing: **5**. Deliberately excluded: **22**.
 | Shortcut cheatsheet                                                                                           |                                                                                                                                                                                                                                                                                                                                                         | Help overlay for humans; agents read tool descriptions instead.                                                                                                                                                                                                                                                                                                                      |
 | FPS overlay                                                                                                   |                                                                                                                                                                                                                                                                                                                                                         | Developer diagnostics overlay with no document effect.                                                                                                                                                                                                                                                                                                                               |
 | Present-mode navigation, fullscreen, presenter window, the display fullscreen goes on                         |                                                                                                                                                                                                                                                                                                                                                         | Human presentation runtime, not document state; agents get editor.present.link to open a deck at a slide. The presentation display is a setting of one computer (Window Management API); an agent has no device.                                                                                                                                                                     |
-| Browser sign-in and session (Google OAuth start/callback, current user, sign-out, desktop-app sign-in ticket) | `GET /auth/start`, `GET /auth/callback`, `GET /auth/me`, `POST /auth/logout`, `POST /auth/desktop/redeem`                                                                                                                                                                                                                                               | The interactive browser login that mints the session cookie. Agents never sign in this way: they authenticate with a personal access token (or MCP OAuth) and every MCP session is already bound to one user. The desktop app's sign-in redeems a one-time ticket from the system browser into its own window session (ADR 0014).                                                    |
-| Desktop app shell: native menu, opening .pptx files from the OS, server choice, app updates                   |                                                                                                                                                                                                                                                                                                                                                         | Device-local behaviour of one installed app with no document effect (ADR 0014); an agent has no device. The import an opened file starts runs deck.importPptx, and the menu items run existing catalog actions.                                                                                                                                                                      |
+| Browser sign-in and session (Google OAuth start/callback, current user, sign-out, desktop-app sign-in ticket) | `GET /auth/start`, `GET /auth/callback`, `GET /auth/me`, `POST /auth/logout`, `POST /auth/desktop/redeem`                                                                                                                                                                                                                                               | The interactive browser login that mints the session cookie. Agents never sign in this way: they authenticate with a personal access token (or MCP OAuth) and every MCP session is already bound to one user. The desktop app's sign-in redeems a one-time ticket from the system browser into its own window session (ADR 0015).                                                    |
+| Desktop app shell: native menu, opening .pptx files from the OS, server choice, app updates                   |                                                                                                                                                                                                                                                                                                                                                         | Device-local behaviour of one installed app with no document effect (ADR 0015); an agent has no device. The import an opened file starts runs deck.importPptx, and the menu items run existing catalog actions.                                                                                                                                                                      |
 | Render tokens for the e2e suite (development only)                                                            | `POST /dev/render-token`                                                                                                                                                                                                                                                                                                                                | POST /dev/render-token exists only with BYPASS_AUTH (refused in production) so the e2e suite can open the render page as the render worker does. Render tokens are credentials only the server mints for its own render jobs; an agent asks for a render (query.render, deck.exportPng) and never holds one.                                                                         |
 | Personal access tokens (list, create, revoke)                                                                 | `GET /access-tokens`, `POST /access-tokens`, `DELETE /access-tokens/:id`                                                                                                                                                                                                                                                                                | Credential management. An agent must not mint or revoke credentials: a leaked agent token that could create tokens would outlive its own revocation. The routes accept only the browser session cookie and reject any personal access token (apps/server/src/routes/accessTokens.ts).                                                                                                |
 | Command API transport (POST /commands, public /api/commands)                                                  | `POST /commands`                                                                                                                                                                                                                                                                                                                                        | Not a capability of its own: the HTTP transport that runs registered commands for scripts, exactly as the MCP server does for Claude clients. Everything it can do is a command in this registry, authorised and logged by the server host.                                                                                                                                          |

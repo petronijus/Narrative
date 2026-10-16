@@ -6,7 +6,7 @@
  * with a 422 — "Source image resolution is too big". The limit is not arbitrary:
  * decoding is roughly 4 bytes per pixel, so a 147 MP PNG costs ~600 MB per
  * request on a 4 GB VM. An image above it therefore never renders at all; the
- * editor shows its broken-image placeholder. The Proseware deck's slide
+ * editor shows its broken-image placeholder. The reference deck's slide
  * background (a 9903×14853 photo shown in a 1294 px frame) was exactly this.
  *
  * So an oversize raster is brought under the limit once, when it is stored —

@@ -3,7 +3,7 @@
  *
  * PKCE with S256 (RFC 7636), shared by the MCP OAuth server
  * (mcp/oauth/service.ts) and the desktop sign-in tickets
- * (auth/desktopTickets.ts, ADR 0014): a client keeps a random verifier, sends
+ * (auth/desktopTickets.ts, ADR 0015): a client keeps a random verifier, sends
  * only its SHA-256 (the challenge) up front, and proves possession later by
  * presenting the verifier.
  */

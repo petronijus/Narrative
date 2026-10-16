@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures/test'
 
 /**
  * P11c regression — right-click context menu on a non-selected object
@@ -22,6 +22,10 @@ async function createDeckAndOpen(page: Page): Promise<void> {
   })
   const { id } = (await res.json()) as { id: string }
   await page.goto(`/deck/${id}`)
+  // The editor, not only its document: the test API arrives with the
+  // document (DeckShell) while the editor route (DeckEditor, the artboard)
+  // is a separate lazy module that may still be loading.
+  await expect(page.locator('.artboard')).toBeVisible({ timeout: 30_000 })
   await page.waitForFunction(
     () =>
       (window as unknown as { __narrative_test_api?: unknown }).__narrative_test_api !== undefined,

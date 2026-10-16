@@ -298,6 +298,8 @@ export async function matrixDeck(): Promise<ImportedDeck> {
       paragraphSpaceAfter: 6,
       textTransform: 'uppercase',
       wrap: 'none',
+      autofit: 'shrink',
+      minFontSize: 18,
       hyperlink: { kind: 'url', href: 'https://example.com/' },
       stroke: 0xff00ff,
       strokeWidth: 2,
@@ -323,7 +325,64 @@ export async function matrixDeck(): Promise<ImportedDeck> {
       vAlign: 'bottom',
       lineSpacing: 1.1,
       textTransform: 'capitalize',
+      autofit: 'grow-down',
       flipH: true,
+    },
+    {
+      id: 'tx-levels',
+      type: 'text',
+      ...frame(1000, 760, 800, 300),
+      // A4.2b: paragraphs that take their level's defaults, one made plain
+      // against them, one numbered on its own.
+      text: rich((t) => {
+        t.insert(0, 'Inherits level 0')
+        t.insert(16, PARAGRAPH_SEP)
+        t.insert(17, 'Inherits level 1')
+        t.insert(33, PARAGRAPH_SEP, { level: 1 })
+        t.insert(34, 'Plain on purpose')
+        t.insert(50, PARAGRAPH_SEP, { list: 'none' })
+        t.insert(51, 'Own numbering')
+        t.insert(64, PARAGRAPH_SEP, { list: 'number', numberFormat: 'lowerAlpha' })
+      }),
+      fontSize: 28,
+      fontWeight: 400,
+      // A4.2c: a width on a variable face (extension only).
+      fontStretch: 125,
+      color: 0x101010,
+      align: 'left',
+      listLevels: [
+        {
+          list: 'bullet',
+          bulletChar: '–',
+          bulletColor: 0xf50537,
+          bulletScale: 1.5,
+          indent: 40,
+          hanging: 24,
+          spaceBefore: 6,
+          fontSize: 36,
+          fontWeight: 700,
+          lineSpacing: 0.9,
+        },
+        { list: 'bullet', indent: 80, hanging: 24 },
+      ],
+    },
+    {
+      id: 'tx-numlevel',
+      type: 'text',
+      ...frame(100, 980, 800, 80),
+      // A bullet with no glyph of its own under a numbered level: written
+      // with the glyph Narrative draws, or PowerPoint would number it.
+      text: rich((t) => {
+        t.insert(0, 'Numbered by its level')
+        t.insert(21, PARAGRAPH_SEP)
+        t.insert(22, 'Bullet under numbers')
+        t.insert(42, PARAGRAPH_SEP, { list: 'bullet' })
+      }),
+      fontSize: 24,
+      fontWeight: 400,
+      color: 0x101010,
+      align: 'left',
+      listLevels: [{ list: 'number', numberFormat: 'decimal' }],
     },
     {
       id: 'tx4',
@@ -650,6 +709,14 @@ export async function matrixDeck(): Promise<ImportedDeck> {
       fit: 'cover',
       imageRect: { x: 850, y: 50, width: 400, height: 400 },
     },
+    // A focus: the 2:1 picture covers a square frame keeping its left edge.
+    {
+      id: 'pf6',
+      type: 'image',
+      ...frame(1300, 100, 300, 300),
+      assetId: 'img-wide',
+      focus: 'left',
+    },
     {
       id: 'pf4',
       type: 'video',
@@ -831,4 +898,32 @@ export async function matrixDeck(): Promise<ImportedDeck> {
 
   const slides = listSlides(ctx)
   return { slides, assets, notes: notesOf(ctx, slides) }
+}
+
+/**
+ * `deck` with A4.1's provenance on every object — a brand slot name, a role
+ * and a stamp link. PowerPoint has no place for any of them and they are
+ * decided to stay out of PPTX (docs/plans/a4-style-packs.md, "Decided"):
+ * export writes none, import sets none. roundtrip.test.ts holds the export
+ * of this deck byte-identical to the export of `deck`, so they leave no
+ * noise in the file.
+ */
+export function withProvenance(deck: ImportedDeck): ImportedDeck {
+  return {
+    ...deck,
+    slides: deck.slides.map((slide) => ({
+      ...slide,
+      objects: slide.objects.map((o, i): SlideObject => ({
+        ...o,
+        slot: `slot-${i}`,
+        role: i % 2 === 0 ? 'body' : 'furniture',
+        component: {
+          id: 'cmp-matrix',
+          objectId: `master-${i}`,
+          instance: `stamp-${slide.id}`,
+          origin: { x: o.x - 10, y: o.y - 20 },
+        },
+      })),
+    })),
+  }
 }

@@ -159,7 +159,7 @@ http://{$DOMAIN:localhost} {
     reverse_proxy server:3001
   }
 
-  # ── Desktop app update feed (ADR 0014) ─────────────────────────────────────
+  # ── Desktop app update feed (ADR 0015) ─────────────────────────────────────
   # The installers, their update metadata (latest*.yml, blockmaps) and the
   # signed manifests the app verifies before it installs anything. Files only:
   # written by `just desktop-publish` into /opt/narrative/desktop-feed on the

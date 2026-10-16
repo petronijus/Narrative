@@ -337,11 +337,12 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
     const objects = latestObjectsRef.current.get(slideId) ?? []
     const background = latestBackgroundRef.current.get(slideId)
     const slideNumber = computeSlideNumber(slidesRef.current, slideId)
+    const surface = slidesRef.current.find((s) => s.id === slideId)?.layout?.surface
     const id = slideId
     inFlightRef.current = id
 
     renderer
-      .renderSlide(objects, background, slideNumber)
+      .renderSlide(objects, background, slideNumber, surface)
       .then((dataUrl) => {
         // The renderer works: whatever was parked while it did not gets
         // another go, with a fresh budget.

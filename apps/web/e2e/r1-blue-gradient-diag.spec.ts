@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 
 /**
  * Diagnostic for R1 — slide 5 radial-gradient ellipses render solid
@@ -192,8 +192,7 @@ test('dump slide 5 ellipse fill state', async ({ page }) => {
           if (typeof fs['color'] === 'number') child.contextFillColor = fs['color']
           if (typeof fs['alpha'] === 'number') child.contextFillAlpha = fs['alpha']
           const tex = fs['texture'] as
-            | { width?: number; height?: number; label?: string }
-            | undefined
+            { width?: number; height?: number; label?: string } | undefined
           if (tex) {
             child.hasTexture = true
             child.textureWidth = tex.width

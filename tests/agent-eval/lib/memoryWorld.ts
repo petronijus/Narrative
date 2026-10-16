@@ -25,6 +25,10 @@
  *     the same slide-model writers and field parsers as the server, and a
  *     token change carried into the folder's decks (`propagateTextStyles`,
  *     outside any run, as the server's propagation is);
+ *   - folder style packs — in the folder document, set / update / delete
+ *     through the same slide-model writers and parser as the server;
+ *     compile writes the pack's tokens (component masters are not modelled:
+ *     a layout draws a component's objects from the pack itself);
  *   - the ServerHost's confirmation gate — a `confirm: 'always'` command
  *     runs only with the harness's explicit `confirm: [id]` (like a script
  *     on POST /commands); an agent call is refused (`confirmation_required`,
@@ -46,7 +50,12 @@ import {
   agentOrigin,
   createSlideDoc,
   deleteFolderToken,
+  deleteStylePack,
   hasNoTokens,
+  mergeStylePackPatch,
+  patchStylePack,
+  readStylePack,
+  setStylePack,
   migrateFolderTokens,
   readFolderTokens,
   seedDefaultTokens,
@@ -63,8 +72,12 @@ import {
   textStyleNameTaken,
   commandReadsFolderFonts,
   commandReadsFolderTokens,
+  commandReadsStylePack,
   commandUsesDocument,
+  compileStylePack,
   createDefaultRegistry,
+  parseStylePack,
+  previousOfUpdate,
   runCommand,
   type AgentRunSummary,
   type AnyCommandDef,
@@ -77,6 +90,7 @@ import {
   type ServerServices,
   type ShareLinkEntry,
 } from '../../../packages/commands/src/index.js'
+import type { StylePack } from '@narrative/shared'
 import { createFakeServices } from '../../../packages/commands/src/testing/fakeServices.js'
 import { splitToolArguments } from './mcpNames.js'
 import {
@@ -582,6 +596,50 @@ export class MemoryWorld implements World {
         status: remaining === 0 ? 'reverted' : run.status,
       }
     }
+    // Folder style packs, as services/stylePacks.ts keeps them.
+    s.stylePacks.get = async ({ folderId }) =>
+      readStylePack(this.folderDoc(folderId)) as StylePack | null
+    const packInput = <T>(parse: () => T): T => fields(parse)
+    s.stylePacks.set = async ({ folderId, pack }) => {
+      const doc = this.folderDoc(folderId)
+      const parsed = packInput(() => parseStylePack(pack))
+      const previous = readStylePack(doc)
+      setStylePack(doc, parsed as unknown as Record<string, unknown>)
+      return { previous }
+    }
+    s.stylePacks.update = async ({ folderId, patch }) => {
+      const doc = this.folderDoc(folderId)
+      const current = readStylePack(doc)
+      if (current === null)
+        throw new CommandError('not_found', 'The folder has no style pack; set one first')
+      packInput(() => parseStylePack(mergeStylePackPatch(current, patch)))
+      patchStylePack(doc, patch)
+      return { previous: previousOfUpdate(current, patch) }
+    }
+    s.stylePacks.delete = async ({ folderId }) => {
+      const doc = this.folderDoc(folderId)
+      const previous = readStylePack(doc)
+      if (previous !== null) deleteStylePack(doc)
+      return { previous }
+    }
+    s.stylePacks.compile = async ({ folderId }) => {
+      const doc = this.folderDoc(folderId)
+      const pack = readStylePack(doc) as StylePack | null
+      if (pack === null)
+        throw new CommandError('not_found', 'The folder has no style pack to compile')
+      const plan = compileStylePack(pack, { tokens: readFolderTokens(doc), fonts: [] })
+      const counts = { colors: { created: 0, updated: 0 }, textStyles: { created: 0, updated: 0 } }
+      for (const category of ['colors', 'textStyles'] as const)
+        for (const t of plan[category]) {
+          const parsed = fields(() => parseNewTokenFields(category, t.fields))
+          if (category === 'textStyles') parsed['builtin'] = false
+          parsed['origin'] = t.origin
+          if (t.exists) updateFolderToken(doc, category, t.id, parsed)
+          else addFolderToken(doc, category, t.id, parsed)
+          counts[category][t.exists ? 'updated' : 'created']++
+        }
+      return { ...counts, components: { created: 0, updated: 0 }, missingFonts: plan.missingFonts }
+    }
     return s
   }
 
@@ -650,6 +708,26 @@ export class MemoryWorld implements World {
         throw new CommandError('not_found', `deck '${args.target.deckId}' does not exist`)
     }
     const writes = def.effects.includes('doc')
+    // A named run must be this session's open run on this target, as the
+    // server checks for every agent call (services/runs.ts runFor).
+    if (args.attachRunId !== undefined && !(writes && deck !== undefined)) {
+      const named = this.runs.get(args.attachRunId)
+      if (named === undefined || named.status !== 'open' || named.sessionKey !== args.sessionKey)
+        throw new CommandError(
+          'conflict',
+          `run '${args.attachRunId}' is not open (it was closed, reverted or never existed); start a new one with agent.startRun`,
+        )
+      if (deck === undefined)
+        throw new CommandError(
+          'conflict',
+          `run '${args.attachRunId}' works on deck:${named.deckId}; this command changes no deck or master (a folder or account change, not part of that run): call it without runId`,
+        )
+      if (named.deckId !== deck.record.id)
+        throw new CommandError(
+          'conflict',
+          `run '${args.attachRunId}' works on deck:${named.deckId}, not deck:${deck.record.id}`,
+        )
+    }
     const run =
       writes && deck !== undefined
         ? this.runFor(args.sessionKey, deck.record.id, args.attachRunId)
@@ -666,6 +744,15 @@ export class MemoryWorld implements World {
       // The deck's folder tokens, as the server reads them (agent/folderTokens.ts).
       ...(deck !== undefined && commandReadsFolderTokens(this.registry, args.command, args.input)
         ? { folderTokens: this.folderTokensOf(deck.record.folderId) }
+        : {}),
+      // The deck's folder style pack, as the server reads it (agent/folderStylePack.ts).
+      ...(deck !== undefined && commandReadsStylePack(this.registry, args.command, args.input)
+        ? {
+            stylePack:
+              deck.record.folderId === null
+                ? null
+                : (readStylePack(this.folderDoc(deck.record.folderId)) as StylePack | null),
+          }
         : {}),
       // Nor did anyone upload fonts to them.
       ...(deck !== undefined && commandReadsFolderFonts(this.registry, args.command, args.input)

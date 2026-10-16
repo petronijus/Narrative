@@ -22,7 +22,7 @@
  * determinism — same trade-off as inspector-flows.spec.ts.
  */
 
-import { expect, test, type BrowserContext, type Page } from '@playwright/test'
+import { expect, test, type BrowserContext, type Page } from './fixtures/test'
 
 async function createDeck(page: Page, title = 'multi-client-collab'): Promise<string> {
   const res = await page.request.post('http://localhost:3001/decks', { data: { title } })
@@ -30,8 +30,17 @@ async function createDeck(page: Page, title = 'multi-client-collab'): Promise<st
   return id
 }
 
+/**
+ * Open the deck and wait for the whole editor, not only its document. The
+ * test API arrives with the document (DeckShell syncs it), while the editor
+ * route (DeckEditor) is a separate lazy module still loading; a client taken
+ * offline in that gap fails the route load, the error boundary unmounts the
+ * document, and the spec reads "no live deck document". The artboard is
+ * the editor's.
+ */
 async function openDeckReady(page: Page, deckId: string): Promise<void> {
   await page.goto(`/deck/${deckId}`)
+  await expect(page.locator('.artboard')).toBeVisible({ timeout: 30_000 })
   await expect
     .poll(() => page.evaluate(() => typeof window.__narrative_test_api), { timeout: 15_000 })
     .toBe('object')
@@ -99,9 +108,13 @@ test.describe('Multi-client convergence', () => {
         pages.push(await ctx.newPage())
       }
 
-      // Client A creates the deck — the other two open the same URL.
+      // Client A creates the deck — the other two open the same URL. One
+      // after another: what converges here are the parallel edits below,
+      // and three cold editor loads at once on the dev server (unbundled
+      // modules, Pixi init) took 13–17 s each under a parallel suite — past
+      // openDeckReady's 15 s, the flake recorded on 2026-09-26.
       const deckId = await createDeck(pages[0]!)
-      await Promise.all(pages.map((p) => openDeckReady(p, deckId)))
+      for (const p of pages) await openDeckReady(p, deckId)
 
       // Each client adds two slides. End state: 1 (initial) + 6 = 7 slides.
       await Promise.all(

@@ -119,8 +119,12 @@ async function owners() {
 }
 
 /** Let the fire-and-forget invitation email finish. */
-async function settleEmail() {
-  await vi.waitFor(() => expect(sendEmail).toHaveBeenCalled())
+async function settleEmail(to?: string) {
+  await vi.waitFor(() =>
+    to === undefined
+      ? expect(sendEmail).toHaveBeenCalled()
+      : expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to })),
+  )
 }
 
 describe('folder sharing', () => {
@@ -153,7 +157,19 @@ describe('folder sharing', () => {
       role: 'editor',
       reason: 'folder',
     })
-    // No email: they already use Narrative.
+    // They already use Narrative: an email says it is theirs now — no invite to accept.
+    await settleEmail()
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: email(known),
+        subject: expect.stringContaining('shared "Client" with you'),
+        text: expect.stringContaining('It is already in your Narrative'),
+      }),
+    )
+    // The same role again: nothing new, no second email.
+    sendEmail.mockClear()
+    await service.invite({ userId: owner, folderId: folder, email: email(known), role: 'editor' })
+    await new Promise((r) => setTimeout(r, 50))
     expect(sendEmail).not.toHaveBeenCalled()
   })
 
@@ -181,6 +197,8 @@ describe('folder sharing', () => {
     ).rejects.toMatchObject({ code: 'not_found' })
     expect(await roleOf(loner)).toBeNull()
     await service.removeMember({ userId: owner, folderId: folder, memberId: coOwner })
+    // Removing someone emails them (email/events.ts): let it land here.
+    await settleEmail(email(coOwner))
   })
 
   it('an unknown address gets a pending invite and one email; a new role emails again', async () => {
@@ -194,7 +212,7 @@ describe('folder sharing', () => {
       kind: 'pending',
       invite: { email: email(newcomer), role: 'viewer', replaced: false },
     })
-    await settleEmail()
+    await settleEmail(email(newcomer))
     expect(sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
         to: email(newcomer),

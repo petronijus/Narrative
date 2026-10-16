@@ -41,6 +41,23 @@ interface InstalledFont {
  * Renders nothing; installs/removes folder fonts from document.fonts on
  * each change to the folder font list.
  */
+/**
+ * The `font-weight` and `font-stretch` a face is declared with: its own
+ * weight and normal width, or a variable face's axis ranges (A4.2c).
+ */
+export function faceRanges(font: Pick<FolderFontSummary, 'weight' | 'axes'>): {
+  weight: string
+  stretch: string
+} {
+  const wght = font.axes?.wght
+  const wdth = font.axes?.wdth
+  return {
+    weight:
+      wght !== undefined ? `${Math.round(wght[0])} ${Math.round(wght[1])}` : String(font.weight),
+    stretch: wdth !== undefined ? `${wdth[0]}% ${wdth[1]}%` : '100%',
+  }
+}
+
 export function FolderFontLoader(): null {
   const { fonts: folderFonts, refresh: refreshFolderFonts } = useFolderFonts()
   // When mounted inside a deck, also pull deck-scoped promoted fonts so
@@ -107,9 +124,13 @@ export function FolderFontLoader(): null {
             const response = await fetch(font.url)
             if (!response.ok) throw new Error(`font download failed: HTTP ${response.status}`)
             const bytes = await response.arrayBuffer()
+            // A variable face covers its axes' ranges (A4.2c): any weight
+            // and width in them is drawn from it, not synthesised.
+            const { weight, stretch } = faceRanges(font)
             const face = new FontFace(font.family, bytes, {
-              weight: String(font.weight),
+              weight,
               style: font.style,
+              stretch,
               display: 'swap',
             })
             await face.load()
@@ -144,8 +165,9 @@ export function FolderFontLoader(): null {
             setHtmlTextFace({
               key: font.assetId,
               family: font.family,
-              weight: String(font.weight),
+              weight,
               style: font.style,
+              stretch,
               bytes,
             })
           } catch (err) {

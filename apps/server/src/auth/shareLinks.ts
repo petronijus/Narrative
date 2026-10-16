@@ -24,7 +24,7 @@ import { shareLinks } from '../db/schema.js'
 import { resolveDeckAccess, type DeckRole } from './permissions.js'
 import { closeShareTokenConnections } from '../hocuspocus/connections.js'
 import { isRenderToken, resolveRenderToken } from './renderTokens.js'
-import { looksLikeNarrativeCredential } from './credentialPatterns.js'
+import { looksLikeNarrativeCredential } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -111,14 +111,13 @@ export async function findShareLink(
 ): Promise<{ deckId: string; role: DeckRole } | null> {
   if (isRenderToken(shareToken)) {
     const grant = resolveRenderToken(shareToken)
-    if (!grant) return null
+    // A component master's render token is no share link of any deck.
+    if (!grant || grant.target.kind !== 'deck') return null
+    const deckId = grant.target.id
     // The requester must still read the deck (and the deck must still
     // exist): a render never outlives the access that asked for it.
-    const requester = await resolveDeckAccess(db, {
-      deckId: grant.deckId,
-      userId: grant.requestedBy,
-    })
-    return requester ? { deckId: grant.deckId, role: 'viewer' } : null
+    const requester = await resolveDeckAccess(db, { deckId, userId: grant.requestedBy })
+    return requester ? { deckId, role: 'viewer' } : null
   }
   const [row] = await db.select().from(shareLinks).where(eq(shareLinks.id, shareToken)).limit(1)
 

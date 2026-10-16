@@ -1,0 +1,30 @@
+diff --git a/dist/src/stryker-setup.js b/dist/src/stryker-setup.js
+index aecfacbe47b285c272c47e54b3d66a716adfdc41..0594e4466cb3b2c71d7259226030fed843d16a5b 100644
+--- a/dist/src/stryker-setup.js
++++ b/dist/src/stryker-setup.js
+@@ -63,7 +63,9 @@ function collectTestName({ name, suite, }) {
+         nameParts.unshift(currentSuite.name);
+         currentSuite = currentSuite.suite;
+     }
+-    return nameParts.join(' ').trim();
++    // Narrative patch (stryker-js#6210): Vitest 5 matches testNamePattern against the
++    // describe chain joined with ' > ', without the file's own (empty) suite name.
++    return nameParts.map((part) => part.trim()).filter(Boolean).join(' > ');
+ }
+ function toRawTestId(test) {
+     return `${test.file?.filepath ?? 'unknown.js'}#${collectTestName(test)}`;
+diff --git a/dist/src/test-helpers.js b/dist/src/test-helpers.js
+index 56cc786f30c524ae18ce87eef1a67fdf26b703c5..84093254e4fb6ab467e61c0d39b2e939c9aa8ae8 100644
+--- a/dist/src/test-helpers.js
++++ b/dist/src/test-helpers.js
+@@ -8,7 +8,9 @@ export function collectTestName({ name, suite, }) {
+         nameParts.unshift(currentSuite.name);
+         currentSuite = currentSuite.suite;
+     }
+-    return nameParts.join(' ').trim();
++    // Narrative patch (stryker-js#6210): Vitest 5 matches testNamePattern against the
++    // describe chain joined with ' > ', without the file's own (empty) suite name.
++    return nameParts.map((part) => part.trim()).filter(Boolean).join(' > ');
+ }
+ export function toRawTestId(test) {
+     return `${test.file?.filepath ?? 'unknown.js'}#${collectTestName(test)}`;

@@ -10,7 +10,13 @@ import { describe, it, expect, vi } from 'vitest'
 import { Readable } from 'node:stream'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import type { SQL } from 'drizzle-orm'
-import { createDeckAssetLoader, deckAssetScope } from './exportDeck.js'
+import {
+  createDeckAssetLoader,
+  deckAssetScope,
+  resolveSlideTokens,
+  safeFilename,
+} from './exportDeck.js'
+import type { Slide } from '@narrative/shared'
 import type { Database } from '../db/client.js'
 
 const dialect = new PgDialect()
@@ -80,5 +86,55 @@ describe('createDeckAssetLoader', () => {
     await expect(load('someone-elses-asset')).resolves.toBeNull()
     expect(s3.send).not.toHaveBeenCalled()
     expect(wheres).toHaveLength(1)
+  })
+})
+
+describe('resolveSlideTokens (A4.2d)', () => {
+  const tokens = {
+    colors: {
+      text: {
+        id: 'text',
+        name: 'Text',
+        value: '#001e50',
+        byVariant: { axis: 'background', values: { dc: '#ffffff' } },
+        bySurface: { band: '#ff0000' },
+      },
+      muted: { id: 'muted', name: 'Muted', value: '#00000080' },
+    },
+    textStyles: {},
+    effectStyles: {},
+  }
+  const slide = (surface?: string): Slide =>
+    ({
+      id: 's',
+      objects: [
+        { id: 'a', type: 'rectangle', fill: { $token: 'colors.text' }, fillAlpha: 1 },
+        { id: 'b', type: 'rectangle', fill: { $token: 'colors.muted' }, fillAlpha: 0.5 },
+      ],
+      animations: [],
+      transition: { kind: 'none', durationMs: 0 },
+      ...(surface !== undefined ? { layout: { packId: 'p', layoutId: 'l', surface } } : {}),
+    }) as unknown as Slide
+
+  it('resolves on the deck variant and the slide surface, and multiplies token alpha in', () => {
+    const plain = resolveSlideTokens(slide(), tokens).objects as unknown as Array<
+      Record<string, unknown>
+    >
+    expect(plain[0]!['fill']).toBe(0x001e50)
+    expect(plain[1]).toMatchObject({ fill: 0x000000, fillAlpha: 0.251 })
+    const dc = resolveSlideTokens(slide(), tokens, { background: 'dc' })
+      .objects as unknown as Array<Record<string, unknown>>
+    expect(dc[0]!['fill']).toBe(0xffffff)
+    const band = resolveSlideTokens(slide('band'), tokens, { background: 'dc' })
+      .objects as unknown as Array<Record<string, unknown>>
+    expect(band[0]!['fill']).toBe(0xff0000)
+  })
+})
+
+describe('safeFilename', () => {
+  it('drops what could make a download name lie about its kind', () => {
+    expect(safeFilename('invoice\u202Efdp.exe')).toBe('invoice fdp.exe')
+    expect(safeFilename('Q3 / "review"\n')).toBe('Q3 review')
+    expect(safeFilename('   ')).toBe('deck')
   })
 })

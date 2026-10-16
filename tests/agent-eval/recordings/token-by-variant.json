@@ -1,0 +1,545 @@
+{
+  "scenario": "token-by-variant",
+  "tag": "eve14f66",
+  "recordedAt": "2026-10-13T21:02:22.631Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.296 (Claude Code)",
+  "fixture": {
+    "folderId": "zv643xG1YtUu",
+    "deckId": "SupdmfDPn5Nr",
+    "title": "Variant colour eve14f66",
+    "slideIds": ["lyCmr3wH5oETGTvI95E8J"],
+    "tokenId": "B2pPfFoi8Q"
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "In the Narrative folder that holds the deck \"Variant colour eve14f66\" (folder id zv643xG1YtUu), the folder colour \"Highlight\" should be white on decks in the brand's dark background variant; on light decks it stays as it is.",
+        "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__token_list,mcp__narrative-eval__token_update,mcp__narrative-eval__style_pack_get,mcp__narrative-eval__style_pack_edit,mcp__narrative-eval__deck_list,mcp__narrative-eval__agent_startRun,ReadMcpResourceTool",
+              "max_results": 10
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
+          {
+            "tool": "token_list",
+            "command": "token.list",
+            "input": {
+              "folderId": "zv643xG1YtUu"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "colors": [
+                {
+                  "id": "p-example-color-navy",
+                  "name": "Navy",
+                  "value": "#001e50",
+                  "origin": {
+                    "pack": "example",
+                    "key": "color:navy"
+                  }
+                },
+                {
+                  "id": "p-example-color-white",
+                  "name": "White",
+                  "value": "#ffffff",
+                  "origin": {
+                    "pack": "example",
+                    "key": "color:white"
+                  }
+                },
+                {
+                  "id": "p-example-color-grey",
+                  "name": "Grey",
+                  "value": "#7a8590",
+                  "origin": {
+                    "pack": "example",
+                    "key": "color:grey"
+                  }
+                },
+                {
+                  "id": "p-example-color-red",
+                  "name": "Red",
+                  "value": "#e4002b",
+                  "origin": {
+                    "pack": "example",
+                    "key": "color:red"
+                  }
+                },
+                {
+                  "id": "p-example-role-background",
+                  "name": "Background",
+                  "value": "#ffffff",
+                  "byVariant": {
+                    "axis": "background",
+                    "values": {
+                      "light": "#ffffff",
+                      "dark": "#001e50"
+                    }
+                  },
+                  "origin": {
+                    "pack": "example",
+                    "key": "role:background"
+                  }
+                },
+                {
+                  "id": "p-example-role-text",
+                  "name": "Text",
+                  "value": "#001e50",
+                  "byVariant": {
+                    "axis": "background",
+                    "values": {
+                      "light": "#001e50",
+                      "dark": "#ffffff"
+                    }
+                  },
+                  "bySurface": {
+                    "picture-dark": "#ffffff"
+                  },
+                  "origin": {
+                    "pack": "example",
+                    "key": "role:text"
+                  }
+                },
+                {
+                  "id": "p-example-role-textMuted",
+                  "name": "Text muted",
+                  "value": "#7a8590",
+                  "byVariant": {
+                    "axis": "background",
+                    "values": {
+                      "light": "#7a8590",
+                      "dark": "#7a8590"
+                    }
+                  },
+                  "origin": {
+                    "pack": "example",
+                    "key": "role:textMuted"
+                  }
+                },
+                {
+                  "id": "p-example-role-accent",
+                  "name": "Accent",
+                  "value": "#e4002b",
+                  "byVariant": {
+                    "axis": "background",
+                    "values": {
+                      "light": "#e4002b",
+                      "dark": "#e4002b"
+                    }
+                  },
+                  "origin": {
+                    "pack": "example",
+                    "key": "role:accent"
+                  }
+                },
+                {
+                  "id": "_FQusCs4TS",
+                  "name": "Primary",
+                  "value": "#3b82f6"
+                },
+                {
+                  "id": "K1Z9WH5_PG",
+                  "name": "Secondary",
+                  "value": "#8b5cf6"
+                },
+                {
+                  "id": "upd0dptag9",
+                  "name": "Tertiary",
+                  "value": "#ec4899"
+                },
+                {
+                  "id": "WDGr_ZS94D",
+                  "name": "White",
+                  "value": "#ffffff"
+                },
+                {
+                  "id": "87Jn1ZkoXW",
+                  "name": "Neutral 100",
+                  "value": "#f1f5f9"
+                },
+                {
+                  "id": "Y-Xo389Mpf",
+                  "name": "Neutral 300",
+                  "value": "#cbd5e1"
+                },
+                {
+                  "id": "B5WSsUrRZM",
+                  "name": "Neutral 500",
+                  "value": "#64748b"
+                },
+                {
+                  "id": "IgZB2vqZ2j",
+                  "name": "Neutral 700",
+                  "value": "#334155"
+                },
+                {
+                  "id": "w-tOrInxCK",
+                  "name": "Neutral 900",
+                  "value": "#0f172a"
+                },
+                {
+                  "id": "LbtHrv3rYx",
+                  "name": "Black",
+                  "value": "#000000"
+                },
+                {
+                  "id": "B2pPfFoi8Q",
+                  "name": "Highlight",
+                  "value": "#e4002b"
+                }
+              ],
+              "textStyles": [
+                {
+                  "id": "p-example-textStyle-title",
+                  "name": "Title (Example)",
+                  "family": "Inter",
+                  "weight": 700,
+                  "size": 64,
+                  "lineSpacing": 0.9,
+                  "color": {
+                    "$token": "colors.p-example-role-text"
+                  }
+                },
+                {
+                  "id": "p-example-textStyle-body",
+                  "name": "Body (Example)",
+                  "family": "Inter",
+                  "weight": 400,
+                  "size": 32,
+                  "minSize": 24,
+                  "lineSpacing": 1.1,
+                  "color": {
+                    "$token": "colors.p-example-role-text"
+                  },
+                  "levels": [
+                    {
+                      "list": "bullet",
+                      "bulletChar": "–",
+                      "bulletColor": {
+                        "$token": "colors.p-example-role-accent"
+                      },
+                      "indent": 36,
+                      "hanging": 36,
+                      "spaceBefore": 12
+                    },
+                    {
+                      "list": "bullet",
+                      "bulletChar": "–",
+                      "indent": 72,
+                      "hanging": 36,
+                      "fontSize": 28
+                    }
+                  ]
+                },
+                {
+                  "id": "p-example-textStyle-footer",
+                  "name": "Footer",
+                  "family": "Inter",
+                  "weight": 400,
+                  "size": 18,
+                  "color": {
+                    "$token": "colors.p-example-role-textMuted"
+                  }
+                },
+                {
+                  "id": "2C8XVIbn9x",
+                  "name": "Title",
+                  "family": "Inter",
+                  "weight": 700,
+                  "size": 96,
+                  "lineHeight": 1,
+                  "letterSpacing": -0.02,
+                  "color": {
+                    "$token": "colors._FQusCs4TS"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "hnU2UjHfxp",
+                  "name": "Chapter",
+                  "family": "Inter",
+                  "weight": 700,
+                  "size": 72,
+                  "lineHeight": 1.05,
+                  "letterSpacing": -0.015,
+                  "color": {
+                    "$token": "colors.w-tOrInxCK"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "RMIctoJxbS",
+                  "name": "Heading 1",
+                  "family": "Inter",
+                  "weight": 700,
+                  "size": 48,
+                  "lineHeight": 1.1,
+                  "letterSpacing": -0.01,
+                  "color": {
+                    "$token": "colors.w-tOrInxCK"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "2k6MwiisMo",
+                  "name": "Heading 2",
+                  "family": "Inter",
+                  "weight": 600,
+                  "size": 36,
+                  "lineHeight": 1.15,
+                  "letterSpacing": -0.01,
+                  "color": {
+                    "$token": "colors.w-tOrInxCK"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "BaAxeIJV5Z",
+                  "name": "Heading 3",
+                  "family": "Inter",
+                  "weight": 600,
+                  "size": 28,
+                  "lineHeight": 1.2,
+                  "letterSpacing": 0,
+                  "color": {
+                    "$token": "colors.w-tOrInxCK"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "Sz37zOSEY-",
+                  "name": "Body",
+                  "family": "Inter",
+                  "weight": 400,
+                  "size": 20,
+                  "lineHeight": 1.5,
+                  "letterSpacing": 0,
+                  "color": {
+                    "$token": "colors.IgZB2vqZ2j"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "V0M3T4dJFV",
+                  "name": "Bullet",
+                  "family": "Inter",
+                  "weight": 400,
+                  "size": 20,
+                  "lineHeight": 1.6,
+                  "letterSpacing": 0,
+                  "color": {
+                    "$token": "colors.IgZB2vqZ2j"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "ExessrNpCw",
+                  "name": "Quote",
+                  "family": "Inter",
+                  "weight": 500,
+                  "size": 24,
+                  "lineHeight": 1.35,
+                  "letterSpacing": -0.005,
+                  "color": {
+                    "$token": "colors.IgZB2vqZ2j"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "NpsPHSiGg0",
+                  "name": "Caption",
+                  "family": "Inter",
+                  "weight": 400,
+                  "size": 14,
+                  "lineHeight": 1.4,
+                  "letterSpacing": 0.01,
+                  "color": {
+                    "$token": "colors.B5WSsUrRZM"
+                  },
+                  "builtin": true
+                },
+                {
+                  "id": "EzTw9A3JKC",
+                  "name": "Footnotes and pages",
+                  "family": "Inter",
+                  "weight": 400,
+                  "size": 11,
+                  "lineHeight": 1.4,
+                  "letterSpacing": 0.04,
+                  "color": {
+                    "$token": "colors.B5WSsUrRZM"
+                  },
+                  "builtin": true
+                }
+              ],
+              "effectStyles": []
+            },
+            "text": "{\"colors\":[{\"id\":\"p-example-color-navy\",\"name\":\"Navy\",\"value\":\"#001e50\",\"origin\":{\"pack\":\"example\",\"key\":\"color:navy\"}},{\"id\":\"p-example-color-white\",\"name\":\"White\",\"value\":\"#ffffff\",\"origin\":{\"pack\":\"example\",\"key\":\"color:white\"}},{\"id\":\"p-example-color-grey\",\"name\":\"Grey\",\"value\":\"#7a8590\",\"origin\":{\"pack\":\"example\",\"key\":\"color:grey\"}},{\"id\":\"p-example-color-red\",\"name\":\"Red\",\"value\":\"#e4002b\",\"origin\":{\"pack\":\"example\",\"key\":\"color:red\"}},{\"id\":\"p-example-role-background\",\"name\":\"Background\",\"value\":\"#ffffff\",\"byVariant\":{\"axis\":\"background\",\"values\":{\"light\":\"#ffffff\",\"dark\":\"#001e50\"}},\"origin\":{\"pack\":\"example\",\"key\":\"role:background\"}},{\"id\":\"p-example-role-text\",\"name\":\"Text\",\"value\":\"#001e50\",\"byVariant\":{\"axis\":\"background\",\"values\":{\"light\":\"#001e50\",\"dark\":\"#ffffff\"}},\"bySurface\":{\"picture-dark\":\"#ffffff\"},\"origin\":{\"pack\":\"example\",\"key\":\"role:text\"}},{\"id\":\"p-example-role-textMuted\",\"name\":\"Text muted\",\"value\":\"#7a8590\",\"byVariant\":{\"axis\":\"background\",\"values\":{\"light\":\"#7a8590\",\"dark\":\"#7a8590\"}},\"origin\":{\"pack\":\"example\",\"key\":\"role:textMuted\"}},{\"id\":\"p-example-role-accent\",\"name\":\"Accent\",\"value\":\"#e4002b\",\"byVariant\":{\"axis\":\"background\",\"values\":{\"light\":\"#e4002b\",\"dark\":\"#e4002b\"}},\"origin\":{\"pack\":\"example\",\"key\":\"role:accent\"}},{\"id\":\"_FQusCs4TS\",\"name\":\"Primary\",\"value\":\"#3b82f6\"},{\"id\":\"K1Z9WH5_PG\",\"name\":\"Secondary\",\"value\":\"#8b5cf6\"},{\"id\":\"upd0dptag9\",\"name\":\"Tertiary\",\"value\":\"#ec4899\"},{\"id\":\"WDGr_ZS94D\",\"name\":\"White\",\"value\":\"#ffffff\"},{\"id\":\"87Jn1ZkoXW\",\"name\":\"Neutral 100\",\"value\":\"#f1f5f9\"},{\"id\":\"Y-Xo389Mpf\",\"name\":\"Neutral 300\",\"value\":\"#cbd5e1\"},{\"id\":\"B5WSsUrRZM\",\"name\":\"Neutral 500\",\"value\":\"#64748b\"},{\"id\":\"IgZB2vqZ2j\",\"name\":\"Neutral 700\",\"value\":\"#334155\"},{\"id\":\"w-tOrInxCK\",\"name\":\"Neutral 900\",\"value\":\"#0f172a\"},{\"id\":\"LbtHrv3rYx\",\"name\":\"Black\",\"value\":\"#000000\"},{\"id\":\"B2pPfFoi8Q\",\"name\":\"Highlight\",\"value\":\"#e4002b\"}],\"textStyles\":[{\"id\":\"p-example-textStyle-title\",\"name\":\"Title (Example)\",\"family\":\"Inter\",\"weight\":700,\"size\":64,\"lineSpacing\":0.9,\"color\":{\"$token\":\"colors.p-example-role-text\"}},{\"id\":\"p-example-textStyle-body\",\"name\":\"Body (Example)\",\"family\":\"Inter\",\"weight\":400,\"size\":32,\"minSize\":24,\"lineSpacing\":1.1,\"color\":{\"$token\":\"colors.p-example-role-text\"},\"levels\":[{\"list\":\"bullet\",\"bulletChar\":\"–\",\"bulletColor\":{\"$token\":\"colors.p-example-role-accent\"},\"indent\":36,\"hanging\":36,\"spaceBefore\":12},{\"list\":\"bullet\",\"bulletChar\":\"–\",\"indent\":72,\"hanging\":36,\"fontSize\":28}]},{\"id\":\"p-example-textStyle-footer\",\"name\":\"Footer\",\"family\":\"Inter\",\"weight\":400,\"size\":18,\"color\":{\"$token\":\"colors.p-example-role-textMuted\"}},{\"id\":\"2C8XVIbn9x\",\"name\":\"Title\",\"family\":\"Inter\",\"weight\":700,\"size\":96,\"lineHeight\":1,\"letterSpacing\":-0.02,\"color\":{\"$token\":\"colors._FQusCs4TS\"},\"builtin\":true},{\"id\":\"hnU2UjHfxp\",\"name\":\"Chapter\",\"family\":\"Inter\",\"weight\":700,\"size\":72,\"lineHeight\":1.05,\"letterSpacing\":-0.015,\"color\":{\"$token\":\"colors.w-tOrInxCK\"},\"builtin\":true},{\"id\":\"RMIctoJxbS\",\"name\":\"Heading 1\",\"family\":\"Inter\",\"weight\":700,\"size\":48,\"lineHeight\":1.1,\"letterSpacing\":-0.01,\"color\":{\"$token\":\"colors.w-tOrInxCK\"},\"builtin\":true},{\"id\":\"2k6MwiisMo\",\"name\":\"Heading 2\",\"family\":\"Inter\",\"weight\":600,\"size\":36,\"lineHeight\":1.15,\"letterSpacing\":-0.01,\"color\":{\"$token\":\"colors.w-tOrInxCK\"},\"builtin\":true},{\"id\":\"BaAxeIJV5Z\",\"name\":\"Heading 3\",\"family\":\"Inter\",\"weight\":600,\"size\":28,\"lineHeight\":1.2,\"letterSpacing\":0,\"color\":{\"$token\":\"colors.w-tOrInxCK\"},\"builtin\":true},{\"id\":\"Sz37zOSEY-\",\"name\":\"Body\",\"family\":\"Inter\",\"weight\":400,\"size\":20,\"lineHeight\":1.5,\"letterSpacing\":0,\"color\":{\"$token\":\"colors.IgZB2vqZ2j\"},\"builtin\":true},{\"id\":\"V0M3T4dJFV\",\"name\":\"Bullet\",\"family\":\"Inter\",\"weight\":400,\"size\":20,\"lineHeight\":1.6,\"letterSpacing\":0,\"color\":{\"$token\":\"colors.IgZB2vqZ2j\"},\"builtin\":true},{\"id\":\"ExessrNpCw\",\"name\":\"Quote\",\"family\":\"Inter\",\"weight\":500,\"size\":24,\"lineHeight\":1.35,\"letterSpacing\":-0.005,\"color\":{\"$token\":\"colors.IgZB2vqZ2j\"},\"builtin\":true},{\"id\":\"NpsPHSiGg0\",\"name\":\"Cap…"
+          },
+          {
+            "tool": "style_pack_get",
+            "command": "style.pack.get",
+            "input": {
+              "folderId": "zv643xG1YtUu",
+              "part": "summary"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "part": "summary",
+              "value": {
+                "id": "example",
+                "name": "Example",
+                "variants": [
+                  {
+                    "axis": "background",
+                    "default": "light",
+                    "values": ["light", "dark"]
+                  }
+                ],
+                "surfaces": ["picture-dark"],
+                "colors": {
+                  "navy": "#001e50",
+                  "white": "#ffffff",
+                  "grey": "#7a8590",
+                  "red": "#e4002b"
+                },
+                "fonts": {
+                  "head": "Inter",
+                  "text": "Inter"
+                },
+                "textStyles": {
+                  "title": "Title 64px",
+                  "body": "Body 32px",
+                  "footer": "Footer 18px"
+                },
+                "layouts": [
+                  "title: The opening slide: the deck title and a subtitle.",
+                  "title-bullets: A headline and up to six bullet points.",
+                  "picture: A full-bleed picture with a short statement on it."
+                ],
+                "components": ["pagination (pagination)", "headline (headline)"],
+                "furniture": ["pagenum", "footer"],
+                "archetypeMap": {
+                  "cover": ["title"],
+                  "content": ["title-bullets"],
+                  "picture": ["picture"]
+                },
+                "editorial": {
+                  "titleMode": "action-title",
+                  "title": {
+                    "maxWords": 12,
+                    "trailingPeriod": "forbid"
+                  },
+                  "languages": ["en"]
+                }
+              }
+            },
+            "text": "{\"part\":\"summary\",\"value\":{\"id\":\"example\",\"name\":\"Example\",\"variants\":[{\"axis\":\"background\",\"default\":\"light\",\"values\":[\"light\",\"dark\"]}],\"surfaces\":[\"picture-dark\"],\"colors\":{\"navy\":\"#001e50\",\"white\":\"#ffffff\",\"grey\":\"#7a8590\",\"red\":\"#e4002b\"},\"fonts\":{\"head\":\"Inter\",\"text\":\"Inter\"},\"textStyles\":{\"title\":\"Title 64px\",\"body\":\"Body 32px\",\"footer\":\"Footer 18px\"},\"layouts\":[\"title: The opening slide: the deck title and a subtitle.\",\"title-bullets: A headline and up to six bullet points.\",\"picture: A full-bleed picture with a short statement on it.\"],\"components\":[\"pagination (pagination)\",\"headline (headline)\"],\"furniture\":[\"pagenum\",\"footer\"],\"archetypeMap\":{\"cover\":[\"title\"],\"content\":[\"title-bullets\"],\"picture\":[\"picture\"]},\"editorial\":{\"titleMode\":\"action-title\",\"title\":{\"maxWords\":12,\"trailingPeriod\":\"forbid\"},\"languages\":[\"en\"]}}}"
+          },
+          {
+            "tool": "deck_list",
+            "command": "deck.list",
+            "input": {
+              "query": "Variant colour eve14f66",
+              "folderId": "zv643xG1YtUu"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "decks": [
+                {
+                  "id": "SupdmfDPn5Nr",
+                  "title": "Variant colour eve14f66",
+                  "folderId": "zv643xG1YtUu",
+                  "updatedAt": "2026-10-13T21:02:02.029Z",
+                  "role": "owner"
+                }
+              ],
+              "nextCursor": null
+            },
+            "text": "{\"decks\":[{\"id\":\"SupdmfDPn5Nr\",\"title\":\"Variant colour eve14f66\",\"folderId\":\"zv643xG1YtUu\",\"updatedAt\":\"2026-10-13T21:02:02.029Z\",\"role\":\"owner\"}],\"nextCursor\":null}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "SupdmfDPn5Nr",
+              "request": "Make folder colour Highlight white on dark-background decks"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_uMNeI4sKKciRkI_B"
+            },
+            "text": "{\"runId\":\"run_uMNeI4sKKciRkI_B\"}"
+          },
+          {
+            "tool": "token_update",
+            "command": "token.update",
+            "input": {
+              "folderId": "zv643xG1YtUu",
+              "category": "colors",
+              "tokenId": "B2pPfFoi8Q",
+              "byVariant": {
+                "axis": "background",
+                "values": {
+                  "light": "#e4002b",
+                  "dark": "#ffffff"
+                }
+              },
+              "runId": "run_uMNeI4sKKciRkI_B"
+            },
+            "isError": true,
+            "errorCode": "conflict",
+            "result": null,
+            "text": "Error (conflict): run 'run_uMNeI4sKKciRkI_B' works on deck:SupdmfDPn5Nr, not account"
+          },
+          {
+            "tool": "token_update",
+            "command": "token.update",
+            "input": {
+              "folderId": "zv643xG1YtUu",
+              "category": "colors",
+              "tokenId": "B2pPfFoi8Q",
+              "byVariant": {
+                "axis": "background",
+                "values": {
+                  "light": "#e4002b",
+                  "dark": "#ffffff"
+                }
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "previous": {
+                "byVariant": null
+              },
+              "propagated": {
+                "decks": 0,
+                "components": 0,
+                "objects": 0,
+                "failed": []
+              }
+            },
+            "text": "{\"previous\":{\"byVariant\":null},\"propagated\":{\"decks\":0,\"components\":0,\"objects\":0,\"failed\":[]}}"
+          }
+        ],
+        "finalText": "I changed the folder colour **Highlight** so it's white (`#ffffff`) on decks that use the brand's dark background and stays red (`#e4002b`) on light decks. This is a folder-wide change, so it applies to every deck in that folder, not just \"Variant colour eve14f66\".\n\n- **Nothing changed on any slide yet:** the update re-styled 0 decks, components and objects. I didn't check which objects use Highlight, so this may simply mean nothing uses it yet. Anything that uses it will follow the new rule.\n- **It isn't in the deck's undo history:** a folder colour can't be added to a deck's agent run, so it won't appear in that deck's Agent activity and agent_revert won't undo it. To reverse it, remove the light/dark setting from Highlight, which returns it to plain `#e4002b` everywhere. I can do that if you want.",
+        "turns": 8,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

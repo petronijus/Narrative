@@ -19,6 +19,7 @@ import type {
 } from '@narrative/commands'
 import { components, decks, folderPermissions, folders, mediaAssets, users } from '../db/schema.js'
 import type { DeckRole } from '../auth/permissions.js'
+import { adminProbe } from '../auth/admin.js'
 import {
   componentIdsInKeys,
   purgeComponentBucketPrefix,
@@ -35,6 +36,7 @@ import {
 } from '../media/assets.js'
 import { parseFontMetadata } from '../media/fontMetadata.js'
 import type { ServiceDeps } from './deps.js'
+import { folderAudience, notifyDeleted } from '../email/events.js'
 import { seedNewFolder } from './tokens.js'
 import { badRequest, conflict, failed, notFound, unprocessable } from './errors.js'
 import {
@@ -203,7 +205,28 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
    * (the dev user and the legacy demo user). `grantedBy` names who shared
    * the folder with the caller: null for the folders they created.
    */
-  function memberships(userId: string) {
+  function memberships(userId: string, admin: boolean) {
+    const ids = ownerIdsFor(userId, deps.bypass)
+    if (admin) {
+      // An instance admin (ADR 0014) is owner of every folder but other
+      // people's Drafts; `grantedBy` still names who shared one with them.
+      return db
+        .select({
+          folderId: folders.id,
+          role: sql<DeckRole>`CASE WHEN ${folders.isDrafts} THEN min(${folderPermissions.role}) ELSE 'owner' END`.as(
+            'role',
+          ),
+          grantedBy: sql<string | null>`max(${folderPermissions.grantedBy})`.as('granted_by'),
+        })
+        .from(folders)
+        .leftJoin(
+          folderPermissions,
+          and(eq(folderPermissions.folderId, folders.id), inArray(folderPermissions.userId, ids)),
+        )
+        .groupBy(folders.id)
+        .having(sql`count(${folderPermissions.userId}) > 0 OR NOT ${folders.isDrafts}`)
+        .as('my_folders')
+    }
     return db
       .select({
         folderId: folderPermissions.folderId,
@@ -212,7 +235,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
         grantedBy: sql<string | null>`max(${folderPermissions.grantedBy})`.as('granted_by'),
       })
       .from(folderPermissions)
-      .where(inArray(folderPermissions.userId, ownerIdsFor(userId, deps.bypass)))
+      .where(inArray(folderPermissions.userId, ids))
       .groupBy(folderPermissions.folderId)
       .as('my_folders')
   }
@@ -229,7 +252,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
 
   async function list(args: { userId: string }): Promise<FolderSummary[]> {
     const deckCountSub = deckCounts()
-    const mine = memberships(args.userId)
+    const mine = memberships(args.userId, await adminProbe(db, args.userId))
     const rows = await db
       .select({
         id: folders.id,
@@ -274,7 +297,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
       filters.push(sql`(${folderNameKey}, ${folders.id}) > (${args.after.key}, ${args.after.id})`)
 
     const deckCountSub = deckCounts()
-    const mine = memberships(args.userId)
+    const mine = memberships(args.userId, await adminProbe(db, args.userId))
     const rows = await db
       .select({
         id: folders.id,
@@ -355,6 +378,8 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
     const id = args.folderId
     const existing = await requireFolderRole(db, id, args.userId, 'owner', { bypass: deps.bypass })
     if (existing.isDrafts) throw conflict('cannot_delete_drafts')
+    // Who to tell, read before the rows cascade away.
+    const audience = await folderAudience(deps, id, args.userId)
 
     // Capture deck ids so MinIO blobs can be swept after the cascade.
     const containedDecks = await db
@@ -426,6 +451,13 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
     await Promise.all([sweepPrefixes(), purgeUnreferencedKeys(db, explicitKeys, deps.log)])
     // What was too young to sweep (a transcode or a copy still writing).
     sweepAgainAfterGrace(sweepPrefixes, deps.log, { folderId: id })
+    notifyDeleted(deps, {
+      actorId: args.userId,
+      audience,
+      kind: 'folder',
+      title: existing.name,
+      deckCount: containedDecks.length,
+    })
     return { deletedDeckCount: containedDecks.length }
   }
 
@@ -512,6 +544,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
       fontWeight: meta.weight,
       fontStyle: meta.style,
       fontPostscriptName: meta.postscriptName,
+      fontAxes: meta.axes ?? {},
     })
 
     return {
@@ -561,6 +594,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
             fontWeight: asset.fontWeight,
             fontStyle: asset.fontStyle,
             fontPostscriptName: asset.fontPostscriptName,
+            fontAxes: asset.fontAxes,
           })),
         )
       }

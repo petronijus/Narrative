@@ -194,9 +194,11 @@ describe('commandTargetProblems', () => {
     // Everything that needs an actual deck; pinned so a change is deliberate.
     expect(refusing).toEqual([
       'component.promote',
+      'component.restamp',
       'component.stamp',
       'deck.delete',
       'deck.duplicate',
+      'deck.exportPdf',
       'deck.exportPng',
       'deck.exportPptx',
       'deck.fonts.list',
@@ -207,6 +209,7 @@ describe('commandTargetProblems', () => {
       'editor.context',
       'editor.present.link',
       'editor.show',
+      'query.check',
       'query.render',
       'share.invites.cancel',
       'share.invites.list',

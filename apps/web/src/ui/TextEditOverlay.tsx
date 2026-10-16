@@ -32,7 +32,7 @@
  * - Paste is normalised to plain text.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { powerpointLineOffsetPx, resolveLineHeightPx } from '../lib/fontLineMetrics.js'
 import { firstLineFontSizePx, listedHtmlOptionsFor, paragraphsOf } from '../lib/textLayout.js'
 import * as Y from 'yjs'
@@ -161,6 +161,7 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
       fontSize: `${obj.fontSize}px`,
       fontWeight: weightToCss(obj.fontWeight),
       fontStyle: obj.italic === true ? 'italic' : 'normal',
+      ...(obj.fontStretch !== undefined ? { fontStretch: `${obj.fontStretch}%` } : {}),
       textDecoration: obj.underline === true ? 'underline' : 'none',
       // Match Pixi: fixed pixel line heights. Each paragraph carries its own
       // (buildListedHtml, from the fonts in it); this is the frame's, for
@@ -195,6 +196,7 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
       obj.letterSpacing,
       obj.align,
       obj.textTransform,
+      obj.fontStretch,
     ],
   )
 
@@ -549,13 +551,27 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
     return true
   }
 
+  // Autofit (A4.2), drawn as the renderer draws it: a growing box is as tall
+  // as the text being typed into it; a shrinking box shows its type at the
+  // scale the renderer found, re-read whenever the renderer rescales it.
+  const grows = obj.autofit === 'grow-down'
+  const [, setLayoutTick] = useState(0)
+  useEffect(() => {
+    if (canvas === null || obj.autofit !== 'shrink') return
+    return canvas.sceneGraph.onTextLayout((id) => {
+      if (id === obj.id) setLayoutTick((n) => n + 1)
+    })
+  }, [canvas, obj.id, obj.autofit])
+  const shrinkScale =
+    obj.autofit === 'shrink' ? (canvas?.sceneGraph.textLayout(obj.id)?.scale ?? 1) : 1
+
   const wrapperStyle = useMemo<React.CSSProperties>(
     () => ({
       position: 'absolute',
       left: obj.x,
       top: obj.y,
       width: obj.width,
-      height: obj.height,
+      height: grows ? 'auto' : obj.height,
       transform: `rotate(${obj.rotation}rad)`,
       transformOrigin: 'top left',
       outline: '2px dashed rgba(59, 130, 246, 0.8)',
@@ -567,12 +583,16 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
       display: 'flex',
       flexDirection: 'column',
       justifyContent:
-        obj.vAlign === 'middle' ? 'center' : obj.vAlign === 'bottom' ? 'flex-end' : 'flex-start',
+        grows || obj.vAlign === undefined || obj.vAlign === 'top'
+          ? 'flex-start'
+          : obj.vAlign === 'middle'
+            ? 'center'
+            : 'flex-end',
       // An unwrapped line may extend past the box, as it renders; clipping
       // it here would hide the caret at the end of it.
-      overflow: obj.wrap === 'none' ? 'visible' : 'hidden',
+      overflow: obj.wrap === 'none' || grows ? 'visible' : 'hidden',
     }),
-    [obj.x, obj.y, obj.width, obj.height, obj.rotation, obj.vAlign, obj.wrap],
+    [obj.x, obj.y, obj.width, obj.height, obj.rotation, obj.vAlign, obj.wrap, grows],
   )
 
   const editorStyle = useMemo<React.CSSProperties>(
@@ -581,7 +601,10 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
       // size to content (auto height) and only cap at the box height
       // so very tall text still clips inside the box edge.
       width: '100%',
-      maxHeight: '100%',
+      maxHeight: grows ? 'none' : '100%',
+      // `zoom` (not a transform) so the scaled text also lays out scaled:
+      // lines break at the box width at the smaller size, as rendered.
+      ...(shrinkScale !== 1 ? { zoom: shrinkScale } : {}),
       boxSizing: 'border-box',
       background: 'transparent',
       border: 'none',
@@ -603,7 +626,7 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
         : {}),
       ...baseStyle,
     }),
-    [baseStyle, obj.wrap, obj.align],
+    [baseStyle, obj.wrap, obj.align, grows, shrinkScale],
   )
 
   return (

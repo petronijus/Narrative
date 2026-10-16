@@ -18,6 +18,14 @@
  *                          becomes its current value, or stays a reference
  *                          the renderer resolves when it cannot be resolved
  *   textTransform        ← textTransform (default 'none')
+ *   fontStretch          ← fontStretch
+ *   lineSpacing          ← lineSpacing (a style with one line measure
+ *                          clears the box's other: the two are exclusive)
+ *   align                ← align
+ *   minFontSize          ← minSize (text boxes only: a table cell never
+ *                          shrinks its type)
+ *   listLevels           ← levels, colours as for `color` (text boxes only:
+ *                          cells have no list levels)
  *
  * A field the style leaves unset is not written (the box keeps its own).
  */
@@ -28,20 +36,34 @@ import {
   type SlideObject,
   type SlideObjectPatch,
   type TableDefaults,
+  type TextListLevel,
   type TextStyleOverrideKey,
 } from '@narrative/shared'
 import {
   getSlideObjectsCtx,
+  isContextualColor,
   isTokenRef,
   resolveTokenValue,
   setTableDefaultsPatch,
   updateObject,
   type DeckMutationContext,
   type FolderTokensSnapshot,
+  type TextStyleLevel,
   type TextStyleTokenSnapshot,
 } from '@narrative/slide-model'
 
 const HEX6 = /^#[0-9a-f]{6}$/i
+
+/** Style fields a table's defaults have no place for. */
+const TEXT_ONLY_STYLE_KEYS: ReadonlySet<TextStyleOverrideKey> = new Set([
+  'minFontSize',
+  'listLevels',
+  // A cell is drawn by the table renderer, which sets no width.
+  'fontStretch',
+  // Table defaults have line height only, and cells align on their own.
+  'lineSpacing',
+  'align',
+])
 
 /** The text style a page-number field is meant to wear (seeded into every folder). */
 export const PAGE_NUMBER_TEXT_STYLE_NAME = 'Footnotes and pages'
@@ -67,18 +89,56 @@ export function textStyleField(
       return style.paragraphSpaceBefore ?? 0
     case 'paragraphSpaceAfter':
       return style.paragraphSpaceAfter ?? 0
-    case 'color': {
-      const c = style.color
-      if (typeof c === 'string') return HEX6.test(c) ? parseInt(c.slice(1), 16) : undefined
-      if (c !== undefined && isTokenRef(c)) {
-        const resolved = resolveTokenValue(c, tokens)
-        return resolved !== null && HEX6.test(resolved) ? parseInt(resolved.slice(1), 16) : c
-      }
-      return undefined
-    }
+    case 'color':
+      return objectColor(style.color, tokens)
     case 'textTransform':
       return style.textTransform ?? 'none'
+    case 'minFontSize':
+      return style.minSize
+    case 'fontStretch':
+      return style.fontStretch
+    case 'lineSpacing':
+      return style.lineSpacing
+    case 'align':
+      return style.align
+    case 'listLevels':
+      return style.levels === undefined ? undefined : style.levels.map((l) => listLevel(l, tokens))
   }
+}
+
+/**
+ * A style's colour as a box holds it: a hex becomes 0xRRGGBB; a colour
+ * token becomes its current value — unless its value depends on the deck's
+ * variant or the slide's surface, or carries alpha (A4.2d): then, like a
+ * token that cannot be resolved here, it stays a reference the renderer
+ * resolves where the box is drawn.
+ */
+function objectColor(
+  c: string | { $token: string } | undefined,
+  tokens: FolderTokensSnapshot,
+): number | { $token: string } | undefined {
+  if (typeof c === 'string') return HEX6.test(c) ? parseInt(c.slice(1), 16) : undefined
+  if (c !== undefined && isTokenRef(c)) {
+    const id = c.$token.startsWith('colors.') ? c.$token.slice('colors.'.length) : undefined
+    const token =
+      id !== undefined && Object.hasOwn(tokens.colors, id) ? tokens.colors[id] : undefined
+    if (isContextualColor(token)) return c
+    const resolved = resolveTokenValue(c, tokens)
+    return resolved !== null && HEX6.test(resolved) ? parseInt(resolved.slice(1), 16) : c
+  }
+  return undefined
+}
+
+/** A style level as a linked box's `listLevels` entry (colours as the box holds them). */
+function listLevel(level: TextStyleLevel, tokens: FolderTokensSnapshot): TextListLevel {
+  const { bulletColor, color, fontWeight, ...rest } = level
+  const out: Record<string, unknown> = { ...rest }
+  const bc = objectColor(bulletColor, tokens)
+  if (bc !== undefined) out['bulletColor'] = bc
+  const c = objectColor(color, tokens)
+  if (c !== undefined) out['color'] = c
+  if (fontWeight !== undefined) out['fontWeight'] = fontWeight
+  return out as TextListLevel
 }
 
 /**
@@ -89,13 +149,37 @@ export function textStyleFields(
   style: TextStyleTokenSnapshot,
   tokens: FolderTokensSnapshot,
   overrides: Iterable<string> = [],
+  target: 'text' | 'table' = 'text',
 ): Record<string, unknown> {
   const skip = new Set(overrides)
+  if (target === 'table') for (const key of TEXT_ONLY_STYLE_KEYS) skip.add(key)
   const fields: Record<string, unknown> = {}
   for (const key of TEXT_STYLE_OVERRIDE_KEYS) {
     if (skip.has(key)) continue
     const value = textStyleField(style, key, tokens)
     if (value !== undefined) fields[key] = value
+  }
+  // Line height (× size) and line spacing (× the font's line) are two
+  // measures of one thing, and a box's lineHeight wins over its
+  // lineSpacing: a style that sets one clears the box's other (A4.2e).
+  // (A table's defaults know only lineHeight: theirs stays.)
+  if (
+    target === 'text' &&
+    style.lineSpacing !== undefined &&
+    style.lineHeight === undefined &&
+    !skip.has('lineHeight')
+  )
+    fields['lineHeight'] = undefined
+  if (style.lineHeight !== undefined && style.lineSpacing === undefined && !skip.has('lineSpacing'))
+    fields['lineSpacing'] = undefined
+  // A width, list levels and a shrink floor exist on a linked box only
+  // because its style set them (a person's own value is an override): a
+  // style that does not set them — or no longer does, after an edit or a
+  // style pack compile — takes them off the box.
+  if (target === 'text') {
+    for (const key of ['fontStretch', 'listLevels', 'minFontSize'] as const) {
+      if (!skip.has(key) && !(key in fields)) fields[key] = undefined
+    }
   }
   return fields
 }
@@ -182,7 +266,7 @@ export function propagateTextStyles(
           typeof sid === 'string' && styleIds.has(sid) ? tokens.textStyles[sid] : undefined
         if (style === undefined) continue
         const patch = differingFields(
-          textStyleFields(style, tokens, overridesOf(defaults.get('textStyleOverrides'))),
+          textStyleFields(style, tokens, overridesOf(defaults.get('textStyleOverrides')), 'table'),
           (key) => defaults.get(key),
         )
         if (Object.keys(patch).length === 0) continue
@@ -240,6 +324,11 @@ export function textStyleFieldsFromObject(obj: {
   paragraphSpaceAfter?: unknown
   color?: unknown
   textTransform?: unknown
+  minFontSize?: unknown
+  listLevels?: unknown
+  fontStretch?: unknown
+  lineSpacing?: unknown
+  align?: unknown
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (typeof obj.fontFamily === 'string' && obj.fontFamily !== '') out['family'] = obj.fontFamily
@@ -247,6 +336,23 @@ export function textStyleFieldsFromObject(obj: {
     obj.fontWeight === 'bold' ? 700 : obj.fontWeight === 'normal' ? 400 : obj.fontWeight
   if (typeof weight === 'number') out['weight'] = weight
   if (typeof obj.fontSize === 'number') out['size'] = obj.fontSize
+  if (typeof obj.minFontSize === 'number') out['minSize'] = obj.minFontSize
+  if (typeof obj.fontStretch === 'number') out['fontStretch'] = obj.fontStretch
+  if (typeof obj.lineSpacing === 'number' && typeof obj.lineHeight !== 'number')
+    out['lineSpacing'] = obj.lineSpacing
+  if (obj.align === 'left' || obj.align === 'center' || obj.align === 'right')
+    out['align'] = obj.align
+  if (Array.isArray(obj.listLevels) && obj.listLevels.length > 0) {
+    out['levels'] = (obj.listLevels as Array<Record<string, unknown>>).map((l) => {
+      const level: Record<string, unknown> = { ...l }
+      for (const key of ['bulletColor', 'color'] as const) {
+        const c = l[key]
+        if (typeof c === 'number') level[key] = hexOf(c)
+        else if (!isTokenRef(c) || !c.$token.startsWith('colors.')) delete level[key]
+      }
+      return level
+    })
+  }
   if (typeof obj.lineHeight === 'number') out['lineHeight'] = obj.lineHeight
   out['letterSpacing'] = typeof obj.letterSpacing === 'number' ? obj.letterSpacing : 0
   out['paragraphSpaceBefore'] =

@@ -29,6 +29,8 @@ function createMockSceneGraph(
     getBounds: vi.fn().mockReturnValue(bounds),
     getMultiBounds: vi.fn().mockReturnValue(multiBounds),
     hitTest: vi.fn().mockReturnValue(null),
+    drawnSize: vi.fn().mockReturnValue(null),
+    onTextLayout: vi.fn().mockReturnValue(() => {}),
     render: vi.fn(),
     addObject: vi.fn(),
     updateObject: vi.fn(),

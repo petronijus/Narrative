@@ -9,7 +9,7 @@
  *     sets the `narrative_session` HttpOnly cookie, then redirects back to
  *     the SPA. The browser never sees the id_token. Inside the desktop app
  *     Google refuses that dance, so `login()` asks the shell to run it in the
- *     system browser instead (desktop/bridge.ts, ADR 0014); the shell then
+ *     system browser instead (desktop/bridge.ts, ADR 0015); the shell then
  *     loads `returnTo` signed in.
  *   - `logout()`  → POST /auth/logout with credentials:'include' to revoke
  *     and clear the cookie, then redirect to /auth/login.
@@ -42,6 +42,8 @@ export interface AuthUser {
   sub: string
   email: string
   name?: string | null
+  /** An instance admin (docs/adr/0014); the server decides, the UI only shows the screen. */
+  isAdmin?: boolean
 }
 
 export type LoginOutcome = 'navigating' | 'opened' | 'refused'

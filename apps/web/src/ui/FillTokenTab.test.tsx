@@ -100,6 +100,7 @@ vi.mock('../state/FolderDocProvider', () => ({
   useFolderTokens: () => mockTokenSnapshot,
   useFolderTokensOptional: () => mockTokenSnapshot,
   useFolderTokensForCommands: () => mockTokenSnapshot,
+  useFolderStylePack: () => undefined,
   // No writer: the folder is not known (a shared deck); preset actions are disabled.
   useFolderTokenWriter: () => null,
   FolderDocProvider: ({ children }: { children: React.ReactNode }) => children,

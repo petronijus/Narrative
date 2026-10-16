@@ -167,6 +167,7 @@ describe('POST /decks/:id/permissions (invite by email)', () => {
     vi.clearAllMocks()
     mockResolveDeckAccess.mockResolvedValue({ role: 'owner', reason: 'direct' })
     mockGrantPermission.mockResolvedValue(undefined)
+    mockListPermissions.mockResolvedValue([])
   })
 
   it('grants directly with kind=granted when the email already has a user row', async () => {
@@ -199,10 +200,8 @@ describe('POST /decks/:id/permissions (invite by email)', () => {
       expect.objectContaining({ userId: 'sub-bob', role: 'editor', grantedBy: 'dev-user' }),
     )
     expect(mockCreateInvite).not.toHaveBeenCalled()
-    // Instant-grant path does NOT send an invite email — the collaborator
-    // already has an account, the dialog already shows them in the list.
-    await new Promise((r) => setImmediate(r))
-    expect(mockSendEmail).not.toHaveBeenCalled()
+    // The email that tells them the deck is theirs now reads the deck row;
+    // it is asserted against Postgres in services/sharing.integration.test.ts.
   })
 
   it('creates a pending invite with kind=pending when the email is unknown', async () => {

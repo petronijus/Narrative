@@ -75,8 +75,77 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * A3.4 (2026-10-11): 182,500 → 184,500 for query.render ≈ 1.6 KB (the agent
  * looks at slides) and `failedFonts` on deck.exportPng: 183,680 bytes in url
  * mode, 137 tools.
+ * A3.5a (2026-10-11): no raise for deck.refreshThumbnail ≈ 0.7 KB (the deck's
+ * card): 184,396 bytes in url mode, 138 tools — 104 bytes left, so
+ * component.refreshThumbnail (A3.5b) needs a raise.
+ * A3.5b–A3.7 (2026-10-11): 184,500 → 185,500. A master's card went onto
+ * deck.refreshThumbnail (`componentId`, no tool of its own: +0.1 KB, where a
+ * component.refreshThumbnail tool would have taken ≈ 0.7 KB), query.render
+ * gained `compare` and `overflow` (≈ +0.2 KB): 184,714 bytes in url mode,
+ * 138 tools.
+ * A4.1 (2026-10-12): 185,500 → 188,000 for component.restamp ≈ 1.3 KB (it
+ * says it resets stamps and overwrites local edits, and to ask before a
+ * whole deck), component.create ≈ 0.6 and the object properties `slot`,
+ * `role` and `component`, which reach object.create and object.path.create
+ * through their create schemas (≈ 0.45 KB each) and object.update's
+ * description and example (≈ 0.2): 187,928 bytes in url mode, 140 tools
+ * (descriptions trimmed once before measuring) — 72 bytes left.
+ * A4.2a (2026-10-12): 188,000 → 189,000 for text autofit: `autofit` and
+ * `minFontSize` in the text create schema (object.create, object.path.create
+ * ≈ 0.1 KB each), a sentence and an example in object.update, minFontSize in
+ * text.setBoxTypography and `minSize` in the token tools: 188,673 bytes in
+ * url mode, 188,805 in link mode, 140 tools (descriptions trimmed once
+ * before measuring).
+ * A4.2b (2026-10-12): 189,000 → 192,500 for list levels: `listLevels` in the
+ * text create schema (object.create ≈ 0.8 KB) and a text style's `levels`
+ * in token.create and token.update (≈ 1.1 KB each; level descriptions
+ * trimmed, listLevels kept out of text.setBoxTypography — object.update
+ * sets it): 191,971 bytes in url mode, 140 tools.
+ * A4.2c–A4.4 (2026-10-12): 192,500 → 198,500 for the style pack tools —
+ * style.pack.get ≈ 0.9 KB, style.pack.edit ≈ 1.6 KB, slide.applyLayout ≈ 1.5 KB
+ * (its slot content takes the text body, now a shared shape: −1.2 KB on
+ * each of three tools), style.deck.apply ≈ 1.3 KB — and colour tokens' alpha,
+ * byVariant and bySurface plus fontStretch, lineSpacing and align on text
+ * styles in token.create / token.update (≈ 0.9 KB): 198,073 bytes in url mode,
+ * 144 tools.
+ * A4.5 (2026-10-12): 198,500 → 200,000 for query.check ≈ 1.4 KB (the
+ * brand checker; its rules are listed once, in its description):
+ * 199,492 bytes in url mode, 145 tools.
+ * A5.0 (2026-10-14), the review before A5 adds tools, no command id
+ * changed: 200,000 → 194,200. Measured in link mode, now the largest:
+ * 199,977 → 193,154 bytes, 145 tools. Nullable fields as one schema with a
+ * null type (−1.0 KB, schemaCompact.ts pass 5) and string-constant unions
+ * as one enum (−0.2, pass 6); the shared descriptions stripped before
+ * compacting too, so definitions they made large inline (−0.3); the file
+ * input and a text `range` as shared shapes, and shapes matched through
+ * `$ref`s (object_create's text body; −2.8); the animation presets, triggers
+ * and rotation units said by the schema rather than both descriptions
+ * (−1.1); the confirmation line shorter per mode (−0.4 in url mode); example
+ * calls that show nothing the schema does not left out (−0.5); token_create's
+ * prose no longer repeating its fields (−0.2). From here it rises per A5
+ * tool change, itemised as before.
+ * A5.1 (2026-10-14): no raise. slide.applyLayout's `archetype`, `unplaced`,
+ * a picture's `focus` and an example by archetype, query.check's rhythm
+ * rule and its cap only when measuring, the image `focus` in the create
+ * schema and `archetype` in the query outputs: 193,802 bytes in link mode,
+ * 145 tools (398 left).
+ * A5.3 (2026-10-14): 194,200 → 199,000 for the build. style.deck.apply's
+ * `spec` and `replace` ≈ 4.0 KB (the deck spec's schema: slides by layout or
+ * archetype, slot content, what is drawn on the grid, notes, message,
+ * claims; its output per built slide) and an example; query.deck's `spec`
+ * and `specSlides` ≈ 0.3; query.slide's `brief` ≈ 0.2: 198,265 bytes in
+ * link mode, 145 tools.
+ * A5.3 review, A5.4, A5.5 (2026-10-14): no raise. style.deck.apply's
+ * `relayout`, `slides`, `restyled`, `spec: null` and removed slides' titles,
+ * query.deck's `specInvalid`, the import results' `placeholders`
+ * (deck.importPptx, deck.insertFrom), with descriptions trimmed: 198,948
+ * bytes in link mode, 145 tools (52 left).
+ * A5.6 (2026-10-14): 199,000 → 200,000 for deck.exportPdf ≈ 1.0 KB
+ * (description trimmed once before measuring): 199,927 bytes in link mode,
+ * 146 tools. Back at the budget A5.0 started from: A5 spent the room it
+ * made. The next room is the table and path tool merges D4 put after A5.
  */
-export const TOOL_LIST_BUDGET_BYTES = 184_500
+export const TOOL_LIST_BUDGET_BYTES = 200_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

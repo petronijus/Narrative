@@ -28,7 +28,7 @@
  * role it authenticated with, so they reconnect and get the new one.
  */
 
-import { and, eq, inArray, isNull, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import type {
   DeckRole,
   FolderSharingService,
@@ -47,6 +47,7 @@ import {
   folders,
 } from '../db/schema.js'
 import { listFolderPermissions, roleAtLeast } from '../auth/permissions.js'
+import { adminProbe } from '../auth/admin.js'
 import {
   createFolderInvite,
   listPendingInvitesForFolder,
@@ -55,13 +56,16 @@ import {
 import { getUserByEmail, getUserBySub } from '../auth/users.js'
 import { closeUserFolderConnections } from '../hocuspocus/connections.js'
 import { endRenderSessions } from '../render/sessions.js'
-import { sendEmail } from '../email/client.js'
-import { renderFolderInviteEmail } from '../email/templates/deckInvite.js'
+import { notify } from '../email/notify.js'
+import { notifyAccessRemoved } from '../email/events.js'
+import { renderFolderInviteEmail, type EmailAccess } from '../email/templates/deckInvite.js'
 import type { ServiceDeps } from './deps.js'
 import { conflict, forbidden, notFound } from './errors.js'
 import { bypassAliases, folderRoleRefusal, iso, requireFolderRole } from './shared.js'
 import {
   SELF_ROLE_CHANGE,
+  appOrigin,
+  emailThumbnailUrl,
   inviteSignInUrl,
   requireInviteEmail,
   withUserDetails,
@@ -104,8 +108,11 @@ export function createFolderSharingService(deps: ServiceDeps): FolderSharingServ
       deckIds: deckRows.map((d) => d.id),
       componentIds: componentRows.map((c) => c.id),
     })
-    // Pages kept for their render sessions read those decks too.
+    // Pages kept for their render sessions read those decks too, and the
+    // masters' card pages (every master's session of theirs: as coarse as
+    // their membership ending, never too short).
     for (const d of deckRows) endRenderSessions({ userId: memberId, deckId: d.id })
+    if (componentRows.length > 0) endRenderSessions({ userId: memberId, components: true })
   }
 
   /**
@@ -138,7 +145,8 @@ export function createFolderSharingService(deps: ServiceDeps): FolderSharingServ
         .select({ userId: folderPermissions.userId, role: folderPermissions.role })
         .from(folderPermissions)
         .where(eq(folderPermissions.folderId, folderId))
-      requireOwnerAmong(members, userId)
+      // An instance admin owns every folder but Drafts (which is never shared).
+      if (!(await adminProbe(tx as unknown as Database, userId))) requireOwnerAmong(members, userId)
 
       const current = (members.find((m) => m.userId === memberId)?.role ?? null) as DeckRole | null
       if (current === null && (change.kind === 'remove' || change.membersOnly)) {
@@ -224,30 +232,61 @@ export function createFolderSharingService(deps: ServiceDeps): FolderSharingServ
   const memberNotFound = () =>
     notFound('That user is not a member of this folder; invite them with their email instead.')
 
-  /** Fire-and-forget invitation email; the invite row exists either way. */
-  function sendInviteEmail(folderId: string, email: string, role: DeckRole, inviterSub: string) {
-    void (async () => {
-      try {
+  /**
+   * Fire-and-forget email; the invite row or the membership exists either
+   * way. `granted`: someone who already uses Narrative became a member at once.
+   */
+  function sendInviteEmail(
+    folderId: string,
+    email: string,
+    role: DeckRole,
+    inviterSub: string,
+    access: EmailAccess = 'invite',
+  ) {
+    void notify({
+      db,
+      log: deps.log,
+      kind: 'folder-shared',
+      to: email,
+      render: async () => {
         const [folderRow] = await db
           .select({ name: folders.name })
           .from(folders)
           .where(eq(folders.id, folderId))
           .limit(1)
         const inviter = await getUserBySub(db, inviterSub)
-        if (!folderRow || !inviter) return
-        const { subject, html, text } = renderFolderInviteEmail({
-          recipientEmail: email.toLowerCase(),
-          folderName: folderRow.name,
-          inviterName: inviter.name ?? inviter.email,
-          inviterEmail: inviter.email,
-          role,
-          signInUrl: inviteSignInUrl(`/folder/${folderId}`),
-        })
-        await sendEmail({ to: email.toLowerCase(), subject, html, text, replyTo: inviter.email })
-      } catch (err) {
-        deps.log.warn({ err, folderId, email }, '[invite] folder invitation email failed')
-      }
-    })()
+        if (!folderRow || !inviter) return null
+        // Its three most recently changed decks, and how many there are.
+        const recent = await db
+          .select({ title: decks.title, thumbnailKey: decks.thumbnailKey })
+          .from(decks)
+          .where(eq(decks.folderId, folderId))
+          .orderBy(desc(decks.updatedAt))
+          .limit(3)
+        const [counted] = await db
+          .select({ n: sql<number>`cast(count(*) as int)` })
+          .from(decks)
+          .where(eq(decks.folderId, folderId))
+        return {
+          ...renderFolderInviteEmail({
+            recipientEmail: email.toLowerCase(),
+            folderName: folderRow.name,
+            inviterName: inviter.name ?? inviter.email,
+            inviterEmail: inviter.email,
+            role,
+            signInUrl: inviteSignInUrl(`/folder/${folderId}`),
+            access,
+            appOrigin: appOrigin(),
+            decks: recent.map((d) => ({
+              title: d.title,
+              previewUrl: emailThumbnailUrl(d.thumbnailKey),
+            })),
+            deckCount: counted?.n ?? recent.length,
+          }),
+          replyTo: inviter.email,
+        }
+      },
+    })
   }
 
   async function listMembers(args: {
@@ -275,11 +314,14 @@ export function createFolderSharingService(deps: ServiceDeps): FolderSharingServ
 
     const existingUser = await getUserByEmail(db, email)
     if (existingUser) {
-      await changeMembership(folderId, userId, existingUser.sub, {
+      const previous = await changeMembership(folderId, userId, existingUser.sub, {
         kind: 'set',
         role,
         membersOnly: false,
       })
+      // Member at once, and an email saying so: on a new membership or a new
+      // role, never for the same role again.
+      if (previous !== role) sendInviteEmail(folderId, existingUser.email, role, userId, 'granted')
       return {
         kind: 'granted',
         user: {
@@ -325,8 +367,18 @@ export function createFolderSharingService(deps: ServiceDeps): FolderSharingServ
     folderId: string
     memberId: string
   }): Promise<void> {
-    await requireOwner(args.folderId, args.userId)
-    await changeMembership(args.folderId, args.userId, args.memberId, { kind: 'remove' })
+    const folder = await requireOwner(args.folderId, args.userId)
+    const was = await changeMembership(args.folderId, args.userId, args.memberId, {
+      kind: 'remove',
+    })
+    if (was !== null)
+      notifyAccessRemoved(deps, {
+        actorId: args.userId,
+        memberId: args.memberId,
+        kind: 'folder',
+        title: folder.name,
+        role: was,
+      })
   }
 
   async function listInvites(args: { userId: string; folderId: string }): Promise<PendingInvite[]> {

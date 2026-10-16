@@ -11,6 +11,7 @@ import type { z } from 'zod'
 import type { DeckMutationContext, FolderTokensSnapshot } from '@narrative/slide-model'
 import type { ServerServices } from './services.js'
 import type { FontFaceWeight } from './text/fontWeights.js'
+import type { StylePack } from '@narrative/shared'
 
 /** Deck roles, ordered: a higher role may do everything a lower one may. */
 export type Role = 'viewer' | 'editor' | 'owner'
@@ -234,6 +235,15 @@ export interface CommandContext {
    * (agent/folderFonts.ts).
    */
   folderFonts?: ReadonlyArray<FontFaceWeight> | null
+  /**
+   * The style pack of that folder (agentic A4.4), read-only — for commands
+   * that lay slides out with it (`readsStylePack`: `slide.applyLayout`,
+   * `style.deck.apply`). `null`: no folder, or the folder has no pack;
+   * absent: the host did not provide it. The browser host passes the
+   * folder document's live pack, the server host reads it
+   * (agent/folderStylePack.ts).
+   */
+  stylePack?: StylePack | null
 }
 
 /**
@@ -343,6 +353,11 @@ export interface CommandDef<
    * `commandReadsFolderFonts`).
    */
   readsFolderFonts?: true
+  /**
+   * The handler reads the target folder's style pack (`ctx.stylePack`).
+   * Loaded like `readsFolderTokens` (see `commandReadsStylePack`).
+   */
+  readsStylePack?: true
   /**
    * The command changes nothing anywhere: no document, no database row, no
    * file, no message to anyone — it only reads and returns (lists, gets,

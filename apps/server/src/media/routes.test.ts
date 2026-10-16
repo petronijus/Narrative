@@ -142,6 +142,7 @@ const FIXTURE_ASSET: MediaAsset = {
   fontWeight: null,
   fontStyle: null,
   fontPostscriptName: null,
+  fontAxes: null,
 }
 
 // ---------------------------------------------------------------------------

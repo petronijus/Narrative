@@ -22,7 +22,7 @@
  *     pnpm --filter web test:e2e zoom-text-probe
  */
 
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 
 /**
  * The shapes this probe reads off the dev-only `window.__narrative_scene_graph`

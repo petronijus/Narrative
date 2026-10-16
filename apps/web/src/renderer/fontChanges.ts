@@ -48,6 +48,8 @@ interface Face {
   family: string
   weight: string
   style: string
+  /** `font-stretch` of the rule: a width or a variable range (A4.2c). */
+  stretch: string
   dataUrl: string
 }
 
@@ -103,6 +105,8 @@ export function subscribeFontFamilyChanges(listener: Listener): () => void {
 
 const WEIGHT = /^\d{1,3}(?: \d{1,3})?$/
 const STYLE = /^(?:normal|italic|oblique)$/
+/** One width or a variable face's range (A4.2c): `100%`, `75% 125%`. */
+const STRETCH = /^\d{1,3}(?:\.\d+)?%(?: \d{1,3}(?:\.\d+)?%)?$/
 
 /** The `@font-face` rules for every registered face of `family`, as Pixi embeds them. */
 function familyCss(family: string): string {
@@ -112,7 +116,7 @@ function familyCss(family: string): string {
     .map(
       (face) =>
         `@font-face { font-family: ${quoted}; font-weight: ${face.weight}; ` +
-        `font-style: ${face.style}; src: url('${face.dataUrl}'); }`,
+        `font-style: ${face.style}; font-stretch: ${face.stretch}; src: url('${face.dataUrl}'); }`,
     )
     .join('\n')
 }
@@ -157,8 +161,11 @@ function base64(bytes: Uint8Array): string {
 export function setHtmlTextFace(face: {
   key: string
   family: string
+  /** A weight, or a variable face's range ("100 900"). */
   weight: string
   style: string
+  /** A width, or a variable face's range ("75% 125%"); absent = normal. */
+  stretch?: string
   bytes: ArrayBuffer
 }): void {
   if (!isEmbeddableFamilyName(face.family)) return
@@ -168,6 +175,7 @@ export function setHtmlTextFace(face: {
     family: face.family,
     weight: WEIGHT.test(face.weight) ? face.weight : '400',
     style: STYLE.test(face.style) ? face.style : 'normal',
+    stretch: face.stretch !== undefined && STRETCH.test(face.stretch) ? face.stretch : '100%',
     dataUrl: `data:${fontMime(view)};base64,${base64(view)}`,
   })
   if (previous !== undefined && previous.family !== face.family) {
@@ -185,6 +193,35 @@ export function removeHtmlTextFace(key: string): void {
   faces.delete(key)
   publishFamily(face.family)
   announceFontFamilyChanged(face.family)
+}
+
+/**
+ * A filter for `document.fonts`' `loadingdone` events: true when the event
+ * brought a face whose descriptors (family, weight, style, stretch, range)
+ * had not loaded before — the only kind of load that can change how text
+ * lays out.
+ *
+ * Pixi's HTMLText measures and rasterises with the family's `@font-face`
+ * CSS put into the document, so every measurement of text in an embedded
+ * family (the bundled Inter, every folder font) adds `FontFace` objects of
+ * its own that load at once and end in `loadingdone` — the same faces
+ * again. Treating each as news re-laid every autofit box out, which
+ * measured and rasterised again, which loaded the faces again: the render
+ * page never settled on a slide with an autofit box (2026-10-13).
+ */
+export function createFontLoadFilter(): (faces: Iterable<FontFace>) => boolean {
+  const seen = new Set<string>()
+  return (faces) => {
+    let fresh = false
+    for (const face of faces) {
+      if (face.status !== 'loaded') continue
+      const key = [face.family, face.weight, face.style, face.stretch, face.unicodeRange].join('|')
+      if (seen.has(key)) continue
+      seen.add(key)
+      fresh = true
+    }
+    return fresh
+  }
 }
 
 /** Test helper. */

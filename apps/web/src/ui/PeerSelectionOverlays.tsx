@@ -38,6 +38,7 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { peerSelectionOnSlide } from './peerPresence.js'
 import { useBoundsSettled } from './useBoundsSettled.js'
+import { useTextLayoutTick } from './useTextLayoutTick.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -106,8 +107,10 @@ export function PeerSelectionOverlays() {
   const canvasInstance = useCanvasInstance()
   const { activeSlideId } = useActiveSlide()
   // Subscribed for its re-renders only (see the header): bounds are read
-  // from the scene graph, which the reconciler updates from these objects.
+  // from the scene graph, which the reconciler updates from these objects
+  // (and a growing text box without a document change).
   useSlideObjects()
+  useTextLayoutTick(canvasInstance?.sceneGraph ?? null)
 
   // Each peer's selection as far as it applies to this slide.
   const selections = remotePeers.map((peer) => ({

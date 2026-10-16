@@ -1,4 +1,4 @@
-import { test, type Page } from '@playwright/test'
+import { test, type Page } from './fixtures/test'
 
 /**
  * Open one specific deck, switch to slide 2, drag an object, and capture all

@@ -192,6 +192,12 @@ export function useFolderFontsForCommands(): ReadonlyArray<FontFaceWeight> | nul
   const fonts = known ? ctx.fonts : undefined
   return useMemo(() => {
     if (fonts === undefined) return undefined
-    return fonts.length === 0 ? null : fonts.map((f) => ({ family: f.family, weight: f.weight }))
+    return fonts.length === 0
+      ? null
+      : fonts.map((f) => ({
+          family: f.family,
+          weight: f.weight,
+          ...(f.axes !== undefined ? { axes: f.axes } : {}),
+        }))
   }, [fonts])
 }

@@ -193,6 +193,7 @@ export function createPptxService(deps: ServiceDeps): ServerPptxService {
             unknownShapes: written.skipped.unknownShapes,
           },
           ignoredElements: staged.staged.parsed.ignoredElements,
+          ...(written.placeholders.length > 0 ? { placeholders: written.placeholders } : {}),
         }
       },
       async discard() {

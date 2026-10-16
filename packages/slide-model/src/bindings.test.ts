@@ -41,6 +41,25 @@ describe('plainObjectToYMap → yMapToPlainObject round-trip', () => {
     expect(result).toEqual(rect)
   })
 
+  it('stores no entry for a field that is undefined', () => {
+    const doc = new Y.Doc()
+    const yMap = plainObjectToYMap({
+      id: 'rect-2',
+      type: 'rectangle',
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+      fill: 0,
+      rotation: 0,
+      opacity: 1,
+      name: undefined,
+    } as unknown as RectangleObject)
+    doc.getArray<Y.Map<unknown>>('objects').push([yMap])
+    expect(yMap.has('name')).toBe(false)
+    expect(yMap.get('width')).toBe(10)
+  })
+
   it('ellipse round-trip (v Y.Doc)', () => {
     const ellipse: EllipseObject = {
       id: 'ellipse-1',

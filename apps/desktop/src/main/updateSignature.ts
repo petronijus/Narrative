@@ -1,7 +1,7 @@
 /**
  * main/updateSignature.ts
  *
- * Whether a downloaded update is one Petr released (ADR 0014,
+ * Whether a downloaded update is one Petr released (ADR 0015,
  * docs/plans/desktop-d0-spec.md §3.11). Every artefact in the update feed
  * comes with a manifest — its name, version and SHA-512 — signed with the
  * dedicated key held in 1Password ("Narrative desktop update signing key"),

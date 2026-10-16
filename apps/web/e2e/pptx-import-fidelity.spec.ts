@@ -2,7 +2,7 @@ import { mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 
 /**
  * Diagnostic: import a real .pptx fixture and screenshot every slide in

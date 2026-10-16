@@ -14,7 +14,7 @@ import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { applyFlip } from './applyFlip.js'
 import { fillStyleToPixi, imageFillToPixiFill, releaseProceduralFill } from '../fillStyleToPixi.js'
 import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
-import { resolveColour } from '../colourResolver.js'
+import { resolveAlpha, resolveColour } from '../colourResolver.js'
 
 const GRAPHICS_TAG = Symbol('pathGraphics')
 const LATEST_DATA_TAG = Symbol('pathLatestData')
@@ -45,7 +45,7 @@ function buildPath(data: PathObject): GraphicsPath | null {
   // hole in that outer subpath (earcut with holes). Without this the
   // outer fill and each inner fill draw independently in the same
   // colour, producing a solid silhouette with no visible holes — the
-  // exact AFRY-badge bug. For multi-subpath shapes whose subpaths are
+  // exact letterform-badge bug. For multi-subpath shapes whose subpaths are
   // NOT nested (dot grids on slide 8), containsPolygon's bounds check
   // fast-rejects in O(1) per pair so the path renders as before.
   const wantClose = data.closed === true
@@ -139,7 +139,7 @@ function drawPath(g: Graphics, container: PixiContainer, data: PathObject): void
       if (texture !== null) {
         g.fill(imageFillToPixiFill(data.fillStyle, texture, data.width, data.height))
       } else {
-        g.fill({ color: fillColour, alpha: data.fillAlpha ?? 1 })
+        g.fill({ color: fillColour, alpha: (data.fillAlpha ?? 1) * resolveAlpha(data.fill) })
       }
     } else {
       releaseImageFill(container)
@@ -153,7 +153,7 @@ function drawPath(g: Graphics, container: PixiContainer, data: PathObject): void
       )
       const fillInput =
         data.fillStyle === undefined
-          ? { color: fillColour, alpha: data.fillAlpha ?? 1 }
+          ? { color: fillColour, alpha: (data.fillAlpha ?? 1) * resolveAlpha(data.fill) }
           : resolved.input
       g.fill(fillInput)
     }
@@ -174,7 +174,7 @@ function drawPath(g: Graphics, container: PixiContainer, data: PathObject): void
     g.path(path)
     g.stroke({
       color: resolveColour(data.stroke),
-      alpha: data.strokeAlpha ?? 1,
+      alpha: (data.strokeAlpha ?? 1) * resolveAlpha(data.stroke),
       width: data.strokeWidth,
       cap: 'round',
       join: 'round',

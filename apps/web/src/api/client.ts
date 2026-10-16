@@ -69,6 +69,11 @@ export interface ApiClient {
    */
   exportSlidePng(deckId: string, slideId: string): Promise<{ blob: Blob; filename: string }>
   /**
+   * The deck as one PDF, rendered on the server (`deck.exportPdf`, agentic
+   * A5.6; skipped slides left out): the file and the name the server gives it.
+   */
+  exportDeckPdf(deckId: string): Promise<{ blob: Blob; filename: string }>
+  /**
    * Copy chosen slides of another deck into `deckId` at `at` (the slides
    * panel's cross-deck paste). The server checks editor access to the source
    * deck, copies the media the slides show and rebinds token references
@@ -147,6 +152,16 @@ export interface ApiClient {
   removeFolderMember(folderId: string, userId: string): Promise<void>
   listFolderInvites(folderId: string): Promise<DeckInvite[]>
   cancelFolderInvite(folderId: string, inviteId: string): Promise<void>
+  // Instance administration (admins only; the server answers 403 to anyone else).
+  listAdminUsers(): Promise<AdminUser[]>
+  setUserAdmin(userId: string, isAdmin: boolean): Promise<AdminUser>
+  listAllowedEmails(): Promise<AllowedEmail[]>
+  allowEmail(email: string): Promise<AllowedEmail>
+  /** `signedOut`: nothing else admitted them, so their sessions were ended. */
+  removeAllowedEmail(email: string): Promise<{ signedOut: boolean }>
+  listEmailKinds(): Promise<EmailKindSetting[]>
+  setEmailEnabled(kind: string, enabled: boolean): Promise<EmailKindSetting>
+  previewEmail(kind: string): Promise<{ subject: string; html: string }>
   /**
    * Bulk-move decks from srcFolderId to destFolderId: the caller owns every
    * deck and is an editor of both folders; the decks must live in
@@ -312,6 +327,17 @@ export interface ApiClient {
    * no longer revertible (already reverted, unloaded, expired), 404, 403.
    */
   revertAgentRun(runId: string, lastOps?: number): Promise<RevertRunResult>
+
+  // ---------------------------------------------------------------------------
+  // Agentic A4.6 — a folder's style pack (Folder Settings)
+  // ---------------------------------------------------------------------------
+  /**
+   * Run a folder command through the command API (`POST /commands`, the
+   * door scripts and agents use), as the signed-in user: `style.pack.get`,
+   * `style.pack.edit`. Its result; throws `ApiRequestError` with the
+   * command's own message (400 with what is invalid, 403, 404).
+   */
+  runFolderCommand<T>(folderId: string, command: string, input: unknown): Promise<T>
 }
 
 /**
@@ -583,6 +609,8 @@ export interface FolderFontSummary {
   weight: number
   style: 'normal' | 'italic'
   postscriptName: string
+  /** A variable face's weight and width axis ranges, [min, max] (A4.2c). */
+  axes?: { wght?: [number, number]; wdth?: [number, number] }
   /** Presigned MinIO URL — valid for ~1 h. Refresh by calling listFolderFonts again. */
   url: string
   sizeBytes: number
@@ -694,6 +722,33 @@ export interface VideoInfoResponse {
   thumbnailUrl: string | null
   playbackUrl: string | null
   transcodeError: string | null
+}
+
+/** Instance administration (docs/adr/0014): who uses Narrative and who may sign in. */
+export interface AdminUser {
+  userId: string
+  email: string
+  name: string | null
+  isAdmin: boolean
+  firstSeenAt: string
+  lastSeenAt: string
+}
+
+export interface AllowedEmail {
+  email: string
+  addedBy: string | null
+  addedAt: string
+  signedIn: boolean
+}
+
+/** One kind of email Narrative sends, and whether admins left it on. */
+export interface EmailKindSetting {
+  kind: string
+  label: string
+  description: string
+  recipient: string
+  group: string
+  enabled: boolean
 }
 
 /** A refused request, with the status and the server's own explanation (`{ error }`). */
@@ -839,6 +894,12 @@ export function createApiClient(): ApiClient {
       return { blob: await res.blob(), filename: attachmentFilename(res, 'slide.png') }
     },
 
+    exportDeckPdf: async (deckId) => {
+      const res = await request(`/decks/${encodeURIComponent(deckId)}/export.pdf`)
+      if (!res.ok) throw await apiError(res)
+      return { blob: await res.blob(), filename: attachmentFilename(res, 'deck.pdf') }
+    },
+
     uploadDeckThumbnail: (id, dataUrl) =>
       requestJson<DeckSummary>(`/decks/${id}/thumbnail`, {
         method: 'PUT',
@@ -967,6 +1028,55 @@ export function createApiClient(): ApiClient {
     },
 
     listFolderInvites: (folderId) => requestJson<DeckInvite[]>(`/folders/${folderId}/invites`),
+
+    listAdminUsers: () => requestJson<AdminUser[]>('/admin/users'),
+
+    setUserAdmin: async (userId, isAdmin) => {
+      const res = await request(`/admin/users/${encodeURIComponent(userId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isAdmin }),
+      })
+      if (!res.ok) throw await apiError(res)
+      return res.json() as Promise<AdminUser>
+    },
+
+    listAllowedEmails: () => requestJson<AllowedEmail[]>('/admin/allowed-emails'),
+
+    allowEmail: async (email) => {
+      const res = await request('/admin/allowed-emails', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+      if (!res.ok) throw await apiError(res)
+      return res.json() as Promise<AllowedEmail>
+    },
+
+    removeAllowedEmail: async (email) => {
+      const res = await request(`/admin/allowed-emails/${encodeURIComponent(email)}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) throw await apiError(res)
+      return res.json() as Promise<{ signedOut: boolean }>
+    },
+
+    listEmailKinds: () => requestJson<EmailKindSetting[]>('/admin/emails'),
+
+    setEmailEnabled: async (kind, enabled) => {
+      const res = await request(`/admin/emails/${encodeURIComponent(kind)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      })
+      if (!res.ok) throw await apiError(res)
+      return res.json() as Promise<EmailKindSetting>
+    },
+
+    previewEmail: (kind) =>
+      requestJson<{ subject: string; html: string }>(
+        `/admin/emails/${encodeURIComponent(kind)}/preview`,
+      ),
 
     cancelFolderInvite: async (folderId, inviteId) => {
       const res = await request(`/folders/${folderId}/invites/${inviteId}`, { method: 'DELETE' })
@@ -1275,6 +1385,16 @@ export function createApiClient(): ApiClient {
       if (!res.ok) throw await apiRequestError(res)
       const data = (await res.json()) as { runs: AgentRunSummary[] }
       return data.runs
+    },
+
+    runFolderCommand: async <T>(folderId: string, command: string, input: unknown) => {
+      const res = await request('/commands', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: { folderId }, command, input, client: 'Folder settings' }),
+      })
+      if (!res.ok) throw await apiRequestError(res)
+      return ((await res.json()) as { result: T }).result
     },
 
     revertAgentRun: async (runId, lastOps) => {

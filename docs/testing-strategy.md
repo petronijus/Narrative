@@ -2,7 +2,7 @@
 
 > Last updated 2026-09-30, after A2.13 (A2 closed; the counts table below is still the A2.11 measurement; see "Added in A2.13" and "Added in A2.12b"). Was 2026-09-30 after A2.12b, 2026-09-30 after A2.11, 2026-09-29 after A2.10 and after A2.9; before that 2026-09-28, 2026-09-27, 2026-09-26, 2026-09-09 and 2026-05-09.
 > Current state, **measured** with `pnpm -r test` on 2026-09-30 (the A2.11
-> tree, uncommitted at the time, on top of `925c08c` / v0.10.12), all green
+> tree, uncommitted at the time, on top of `92cead3` / v0.10.12), all green
 > in the docs sweep's run. `pnpm typecheck` re-run by the sweep: exit 0.
 > `pnpm lint` re-run by the sweep: 0 errors, 221 warnings (animation 2,
 > server 7, web 212) — **only with `NODE_OPTIONS="--import=tsx"`** on
@@ -134,7 +134,7 @@
 > being edited, not a test failure); eval scenarios `table-resize-recolour` and
 > `table-header-gradient` (recorded, replayed).
 >
-> (2026-09-28, MCP tool-list compaction on top of `ee705da` / v0.10.0: 225
+> (2026-09-28, MCP tool-list compaction on top of `db7ef91` / v0.10.0: 225
 > files, 3,205 passed, 32 skipped — server 80 / 1,133, web 75 / 686 + 30
 > skipped, commands 21 / 645, slide-model 27 / 392, shared 8 / 193,
 > animation 13 / 144. The web skips fell from 30 to 28 in 0.10.2 (A2.2):
@@ -153,7 +153,7 @@
 > that pins the bottom corners; eval scenarios `agenda-step-timing` and
 > `photo-animations-hand-over`.
 >
-> (2026-09-27, A1 working tree on top of `9e0e853`: 223 files, 3,192 passed —
+> (2026-09-27, A1 working tree on top of `c4f8a5f`: 223 files, 3,192 passed —
 > server 79 / 1,126, commands 20 / 639; `pnpm typecheck` + `pnpm lint` exit 0,
 > lint 0 errors, 218 warnings in `apps/web`.)
 >
@@ -191,12 +191,14 @@
 > Bundle budgets enforced via `size-limit` (`pnpm size`). Property-based CRDT convergence,
 > server lifecycle/leak coverage, multi-client e2e collab, destructive-
 > flow coverage, sampled-thumbnail visual regression all active.
-> Lighthouse + Stryker mutation testing wired in (opt-in) — but **Stryker is
-> broken as of 2026-09-26**: the dry run crashes with `Cannot destructure
-property 'moduleGraph' of 'project.server' as it is undefined`
-> (`@stryker-mutator/vitest-runner` 8.7.1 does not support vitest 4.1.7).
-> `pnpm --filter @narrative/slide-model mutate` produces no report until the
-> runner is upgraded. Pre-existing; not caused by A0.
+> Lighthouse + Stryker mutation testing wired in (opt-in). Stryker was
+> broken 2026-09-26 → 2026-10-14 (runner 8.x vs vitest 4); fixed with
+> Stryker 10, a fresh `node_modules` (a stale nested `@babel/parser` 7 under
+> `@babel/core` 8 broke its instrumenter) and a run from the repo root (the
+> sandbox has to keep the repo's layout — see `stryker.config.json`).
+> Baseline 2026-10-14: 49% (`mutations.ts` 65%, `slides.ts` 26%).
+> On Vitest 5 the runner needs a patch (stryker-js#6210, see
+> `docs/plans/dependency-majors.md` → Vitest 5); 49% again on 2026-10-15.
 >
 > Added in agentic-layer A1 (2026-09-27):
 >
@@ -263,9 +265,15 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 > and e2e for crop-carrying moves, "viewing never writes", duplicate/undo
 > and the context-menu layer labels.
 >
-> ⚠️ Red as of 2026-09-26, all pre-existing at `4e3c503`: `pnpm size`
+> ⚠️ Red as of 2026-09-26, all pre-existing at `cc38918`: `pnpm size`
 > (Tiptap chunk 132.64 kB gz vs a 120 kB budget — still exactly that on
-> 2026-09-27 at A1; total first paint 633.9 of 800 kB, was 605.45 at A0); the real-deck PPTX round
+> 2026-09-27 at A1; 120.89 kB on 2026-10-14 once the vendor groups got
+> priorities: Rolldown's manualChunks let `@tiptap/y-tiptap` pull yjs and
+> lib0 into vendor-tiptap; the remaining 0.89 kB is Tiptap's own code (the
+> notes' Link mark stays: PowerPoint import writes links), so the limit went
+> to 122 kB the same day, Petr's call, and to 131 kB that evening with
+> Tiptap 3.23 → 3.32 (129.63 kB; first paint 737 → 615 kB with Vite 8.3),
+> then to 137 kB with @tiptap/y-tiptap 3.0.3 → 3.0.10 (135.43 kB); total first paint 633.9 of 800 kB, was 605.45 at A0); the real-deck PPTX round
 > trip (5 differences, AGENTS.md requires 0); `m16-component-flows.spec.ts`
 > (hardcoded Drafts folder id, fails on any other database — fixed in
 > A2.12b, 2026-09-30: the spec seeds its own folder and component).
@@ -276,7 +284,7 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 > other eight defects of that arc — see _Environment traps_.
 >
 > ⚠️ **There is no CI.** GitHub Actions was removed on 2026-09-07 (commit
-> `573ba64`); nothing runs these suites but a human or an agent following
+> `f55be7b`); nothing runs these suites but a human or an agent following
 > `AGENTS.md`'s auto-run policy.
 >
 > ⚠️ **The e2e suite does not run on Ubuntu 26.04 as configured** — see
@@ -312,7 +320,7 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 | e2e (Playwright)           | `apps/web/e2e/*.spec.ts`                                                                                                                                              | User-visible behaviour — keyboard shortcuts, drag/drop, multi-window sync, full Inspector flows, present mode navigation                                                                                                                                                                                                                                   | Strong (67 spec files)                                                                                       |
 | Visual regression          | `apps/web/e2e/renderer-visual.spec.ts` (`visual-check.spec.ts` writes PNGs, compares nothing)                                                                         | Renderer output for canonical scenes (rect, text, image, magic-move keyframes)                                                                                                                                                                                                                                                                             | Sampled-thumbnail tests (Tier B.2); pixel-perfect baselines opt-in (`RUN_VISUAL_BASELINES=1`), not committed |
 | Load / soak                | `tests/load/{hotEdit,awarenessFlood,docGrowth}.ts` (`just load`)                                                                                                      | Throughput, awareness rate, doc growth                                                                                                                                                                                                                                                                                                                     | Thresholds fail the run; drift warnings against a local baseline                                             |
-| Desktop shell (unit)       | `apps/desktop/{src,scripts}/**/*.test.ts`                                                                                                                             | The Electron main process without Electron: server and settings rules, navigation and permission policy, deep links, the sign-in controller, IPC schemas, the menu template, opened files, update signatures against real `ssh-keygen` output and a throwaway `ssh-agent`, the bundles (preloads require only `electron`) and the packaging config (fuses) | Since D0 (ADR 0014); the Electron e2e specs follow with D0 step 9                                            |
+| Desktop shell (unit)       | `apps/desktop/{src,scripts}/**/*.test.ts`                                                                                                                             | The Electron main process without Electron: server and settings rules, navigation and permission policy, deep links, the sign-in controller, IPC schemas, the menu template, opened files, update signatures against real `ssh-keygen` output and a throwaway `ssh-agent`, the bundles (preloads require only `electron`) and the packaging config (fuses) | Since D0 (ADR 0015); the Electron e2e specs follow with D0 step 9                                            |
 | Property-based             | `packages/slide-model/src/*.property.test.ts`                                                                                                                         | CRDT convergence: random op sequences from N clients converge; table-structure invariants under random insert/delete/merge                                                                                                                                                                                                                                 | Active (Tier B.1; tables in A0)                                                                              |
 
 ## What was just cleaned up
@@ -417,7 +425,7 @@ All six items landed:
 
 1. **Procedural-texture leak test** — ⏸ deferred. Blocked on the shared procedural-texture lifecycle landing (see memory note `procedural-texture-leak.md`). Add the test in the same PR that fixes the leak so they ship together.
 2. ✅ **Destructive-flow e2e** — `apps/web/e2e/destructive-flows.spec.ts`. Five tests covering deck delete + share-link cascade, share-link revoke happy-path + IDOR-guard regression (Tier 1 fix), folder delete cascade, Drafts-folder protection.
-3. ✅ **Mutation-testing pilot** — Stryker config at `packages/slide-model/stryker.config.json`. Run via `pnpm --filter @narrative/slide-model mutate`. Targets `mutations.ts` + `slides.ts` (highest-stakes files). HTML report → `reports/mutation/`. Threshold guidance: high=80%, low=60%, no break-build (informational; surface dead tests rather than gate).
+3. ✅ **Mutation-testing pilot** — Stryker config at `packages/slide-model/stryker.config.json`. Run via `just mutate` (from the repo root, see the config's `root_comment`). Targets `mutations.ts` + `slides.ts` (highest-stakes files). HTML report → `reports/mutation/`. Threshold guidance: high=80%, low=60%, no break-build (informational; surface dead tests rather than gate).
 4. ✅ **Multi-client e2e harness** — `apps/web/e2e/multi-client-collab.spec.ts`. Two scenarios: three browser contexts each adding slides + objects in parallel converge through real Hocuspocus sync; one context goes offline via `setOffline(true)`, peer makes changes, reconnect triggers Hocuspocus initial-sync handshake. Asserts deep-equal `listSlides()` snapshots across all contexts. The e2e analog to the unit-level CRDT property test from Tier B.1.
 5. ✅ **Lighthouse CI** — `.lighthouserc.json` + `pnpm lighthouse` script. Audits the editor route on a built preview server. Budgets: performance ≥ 0.7, FCP < 2.5s, LCP < 4s, TBT < 600ms, CLS < 0.1, TTI < 5s. Currently `warn`-level (not `error`) so it's informational; promote after one or two PR cycles confirm CI stability.
 
@@ -463,10 +471,17 @@ in a container with a supported base image.
   "condition not met in time" during a full `pnpm -r test` on 2026-09-28,
   while the web and server suites ran in parallel. It passed 5/5 alone and
   in a full server-suite rerun (1,133 passed / 1 skipped). A wait-for timeout
-  under load, not a regression; not fixed. Rerun the server suite before
-  blaming your change.
-- `multi-client-collab` e2e, "three clients … converge" — flaky as of
-  2026-09-26 (AGENTS.md records the numbers).
+  under load, not a regression. Seen again on 2026-10-14 at a load of 30–40;
+  `eventually` (test-support/agentWorld.ts) now waits up to 15 s instead of
+  2 s, like the suite's own limits (vitest.timeouts.ts).
+- `multi-client-collab` e2e — flaky 2026-09-26 → 2026-10-14. Both tests
+  drove their clients as soon as the test API existed, which arrives with
+  the document (DeckShell) while the editor route (DeckEditor) is a
+  separate lazy module still loading: three cold loads at once outran the
+  15 s wait, and a client set offline mid-load failed the route import, so
+  the error boundary unmounted its document. The spec now waits for the
+  artboard and opens its clients one after another; 40/40 under 6
+  workers.
 
 ### Diagnostic probes are not tests
 
@@ -523,11 +538,13 @@ Coding agents read [`/AGENTS.md`](../AGENTS.md) on every conversation
 (Claude Code through `CLAUDE.md`, which imports it; until 2026-09-30 the
 table lived in CLAUDE.md itself). Its "When to run what" table maps "files
 you touched" → "what else to run" on top of `just check`, which the Claude
-Code Stop hook and the pre-push hook run by themselves. It is the operating
+Code Stop hook (narrowed to the packages a change reaches, `just
+check-affected`, since 2026-10-12) and the pre-push hook run by themselves. It is the operating
 contract for autonomous changes; update it when you add a new test target
 or retire an existing one. Examples of the policy:
 
-- Edit anything → `just check` (always; the Stop and pre-push hooks run it).
+- Edit anything → `just check` (always; the pre-push hook runs it, the Stop
+  hook its affected lane).
 - Touch the renderer → also run `renderer-visual` + `inspector-flows` e2e.
 - Touch Yjs mutations → also run the property-based CRDT test +
   `multi-client-collab` e2e.
@@ -550,7 +567,7 @@ The slow gates (`pnpm lighthouse`, Stryker `mutate`, the full
 release (and `agent:eval` after the guidance changes above).
 
 Nothing runs any of this automatically: **there is no CI** (was GitHub Actions
-on every push and PR, removed 2026-09-07 — commit `573ba64` — after both
+on every push and PR, removed 2026-09-07 — commit `f55be7b` — after both
 workflows had been red since 2026-06-17 on a pnpm version conflict). The
 baseline (`just check`) is enforced by the pre-push hook and Claude Code's
 Stop hook since 2026-09-30; the rest of the policy in `AGENTS.md` is honoured

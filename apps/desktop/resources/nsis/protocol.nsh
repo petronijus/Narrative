@@ -1,6 +1,6 @@
 ; resources/nsis/protocol.nsh
 ;
-; What the per-user installer registers besides the app (ADR 0014,
+; What the per-user installer registers besides the app (ADR 0015,
 ; docs/plans/desktop-d0-spec.md §3.5, §3.6), all under HKCU:
 ;   - narrative://, which brings the sign-in back from the browser;
 ;   - "Open with Narrative" for .pptx, without taking over the type's

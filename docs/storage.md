@@ -226,3 +226,57 @@ mc mirror local/narrative-media remote/narrative-media-backup
 ```
 
 `mc mirror` is idempotent and safe to run in cron. Full backup automation is planned for M29.
+
+### Security notes
+
+- `IMGPROXY_KEY` and `IMGPROXY_SALT` are never committed: they keep signed
+  image URLs from being rewritten.
+- The MinIO console (`minio.${DOMAIN}`) is admin-only; prefer the SSH tunnel
+  above to exposing the subdomain.
+- imgproxy only reads from MinIO — `IMGPROXY_ALLOWED_SOURCES` is restricted to
+  `minio:9000`.
+
+## Video pipeline
+
+Uploaded videos are prepared for playback by `apps/video-worker` (ffmpeg),
+queued through BullMQ on a dedicated Redis. Since M12 phase 2 it keeps the
+source quality: one progressive, faststart MP4 played by a plain `<video>`
+over MinIO byte-range requests — no HLS ladder any more
+(`apps/video-worker/src/processors/transcode.ts`;
+[handoff](./handoff/M12-phase2-video-pipeline.md)):
+
+```
+tus upload completes (apps/server/src/media/tus.ts → enqueueVideoTranscode)
+  → BullMQ job on media-redis (queue video-transcode)
+  → video-worker: ffprobe, then playback.mp4 at source resolution —
+      h264 / vp9 / av1 / vp8: stream copy; anything else (ProRes, HEVC, …): libx264 + aac
+  → poster.jpg and thumb.jpg (400 px) at the 1 s mark
+  → outputs to MinIO under <prefix>/videos/<assetId>/
+  → the media_assets row gets the keys, duration, size, transcode_status=done
+  → the editor reads GET /api/media/:assetId/video-info for the playback URL
+```
+
+A failed job is retried three times, then the row is marked `failed`.
+
+`<prefix>` is the owner's namespace, `decks/<deckId>` or
+`components/<componentId>` (bucket layout above; a folder's videos keep the
+key they were written under). `just dev` runs the worker
+against the `media-redis` that `just services` starts; in containers:
+
+```bash
+cd infra
+docker compose --env-file ../.env up -d media-redis video-worker
+docker compose --env-file ../.env logs -f video-worker
+MEDIA_REDIS_URL=redis://127.0.0.1:6380 ./scripts/verify-redis.sh
+```
+
+| Variable                | Default                  | Where                                           |
+| ----------------------- | ------------------------ | ----------------------------------------------- |
+| `MEDIA_REDIS_PORT`      | `6380`                   | Host port for media-redis                       |
+| `MEDIA_REDIS_URL`       | `redis://127.0.0.1:6380` | The server and the dev worker enqueue/read here |
+| `WORKER_CONCURRENCY`    | `2`                      | Parallel ffmpeg jobs per worker container       |
+| `MEDIA_REDIS_DATA_PATH` | _(named volume)_         | Prod: ZFS path for queue persistence            |
+
+Inside Docker the worker reads `REDIS_URL=redis://media-redis:6379` and
+`MINIO_ENDPOINT=http://minio:9000` from compose. Not built: GPU encoding,
+audio normalisation, resource limits on the worker.

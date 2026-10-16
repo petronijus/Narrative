@@ -30,21 +30,34 @@
  * Every caller waits at most `RENDER_WAIT_MS`, under Cloudflare's 100 s origin
  * timeout (an answer, never a 524 page): a one-slide request behind a running
  * twenty-slide job still fits (70 s + 22.5 s).
+ *
+ * A deck's card picture (`refreshThumbnail`, and `backgroundThumbnail` for
+ * services/deckThumbnails.ts) is a `thumbnail` look of its first slide,
+ * checked and then stored like the editor's upload
+ * (services/deckThumbnailStore.ts). The background ones nobody waits for run
+ * behind every person's job (`BACKGROUND_PRIORITY`) and take no one's
+ * in-flight share.
  */
 
-import { GetObjectCommand } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import { nanoid } from 'nanoid'
 import { listSlides } from '@narrative/slide-model'
 import * as Y from 'yjs'
+import { eq } from 'drizzle-orm'
+import sharp from 'sharp'
 import {
   parseRenderFailure,
   type RenderJobData,
   type RenderJobResult,
   type RenderLookSpec,
+  type RenderPage,
   type RenderedSlide,
+  buildImagePdf,
 } from '@narrative/shared'
-import { MAX_RENDER_SLIDES } from '@narrative/commands'
+import { MAX_MEASURE_SLIDES, MAX_PDF_SLIDES, MAX_RENDER_SLIDES } from '@narrative/commands'
 import type {
+  TextMeasurement,
+  PdfExportResult,
   PngExportResult,
   RenderLookResult,
   RenderService,
@@ -52,7 +65,16 @@ import type {
   RenderView,
   RenderedPngInfo,
 } from '@narrative/commands'
-import { resolveDeckAccess } from '../auth/permissions.js'
+import { resolveComponentAccess, resolveDeckAccess } from '../auth/permissions.js'
+import { components, decks } from '../db/schema.js'
+import { componentRecord } from './components.js'
+import { deckRecord } from './decks.js'
+import {
+  storeComponentThumbnail,
+  storeDeckThumbnail,
+  ThumbnailStorageError,
+  type CardRef,
+} from './deckThumbnailStore.js'
 import { buildS3Client, MEDIA_BUCKET, presignGetUrl, presignPutUrl } from '../media/s3Client.js'
 import {
   clearRenderSessionsForTests,
@@ -67,9 +89,28 @@ import {
   type RenderQueue,
 } from '../render/queue.js'
 import type { ServiceDeps } from './deps.js'
-import { badRequest, failed, forbidden, notFound, tooLarge } from './errors.js'
+import { badRequest, failed, forbidden, notFound, ServiceError, tooLarge } from './errors.js'
+import { cardDrawnFrom, cardSourceOf, noteCardDrawn } from '../render/cardState.js'
 import { readDocCopy } from './liveDocs.js'
+import { MAX_BEFORE_STATE_BYTES } from './runs.js'
 import { EXPORT_URL_TTL_SEC, MAX_INLINE_EXPORT_BYTES } from './pptx.js'
+
+/** The largest slide PNG a PDF page is made from (a photo-heavy 1920×1080 slide, with slack). */
+const MAX_PDF_PAGE_PNG_BYTES = 16_000_000
+/** JPEG quality of a PDF page: slides of text and pictures, at about a fifth of the PNG's size. */
+const PDF_JPEG_QUALITY = 85
+/** The largest picture a page is decoded from: the render's 1920×1080, up to twice that. */
+const MAX_PDF_PAGE_PIXELS = 3840 * 2160
+/** A further PDF job is started only with this much of the caller's time left. */
+const MIN_PDF_JOB_MS = 30_000
+/** A PDF over this many bytes is refused (40 photo-heavy slides stay far below). */
+const MAX_PDF_BYTES = 64 * 1024 * 1024
+
+/** A PNG's size from its header (IHDR), before anything decodes it. */
+function pngSize(png: Uint8Array): { width: number; height: number } {
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength)
+  return { width: view.getUint32(16), height: view.getUint32(20) }
+}
 
 /** How long a caller waits for its render, queueing included (Cloudflare gives up at 100 s). */
 export const RENDER_WAIT_MS = 95_000
@@ -93,6 +134,19 @@ export const MAX_IN_FLIGHT_PER_USER = 2
 export const MAX_IN_FLIGHT_DEV = 8
 /** Jobs the queue holds before it refuses new ones. */
 export const MAX_WAITING_JOBS = 20
+/**
+ * The renderer could not take the job (busy, unavailable, or the job waited
+ * in the queue past its time) — worth asking again later, unlike a job that
+ * failed on its page.
+ */
+export class RendererBusyError extends ServiceError {}
+const busy = (message: string, status: 503 | 504): RendererBusyError =>
+  new RendererBusyError('failed', status, message)
+
+/** A job nobody waits for: after every person's (BullMQ: lower runs first; at most 2^21). */
+export const BACKGROUND_PRIORITY = 1_000_000
+/** A card picture is 400×225: far below this, whatever the slide. */
+const MAX_THUMBNAIL_BYTES = 1_000_000
 
 export interface RenderServiceDeps extends ServiceDeps {
   /** The worker's queue; the process-wide BullMQ queue unless a test passes one. */
@@ -145,19 +199,25 @@ const MAX_LOOK_BYTES = 4_000_000
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
 /**
- * A PNG the worker stored, read back — refused when it is larger than
+ * A PNG the worker stored, read back and deleted — refused when it is larger than
  * `maxBytes` or not a PNG: the presigned upload signs the type, not the
  * bytes, so the server does not take the worker's word for what it holds
  * before passing it on as an image.
  */
 async function readStoredPng(key: string, maxBytes: number): Promise<Uint8Array> {
-  const object = await buildS3Client().send(
-    new GetObjectCommand({ Bucket: MEDIA_BUCKET, Key: key }),
-  )
-  if (object.ContentLength !== undefined && object.ContentLength > maxBytes) {
-    throw failed('The renderer returned an image that is too large', 503)
+  const s3 = buildS3Client()
+  const object = await s3.send(new GetObjectCommand({ Bucket: MEDIA_BUCKET, Key: key }))
+  let bytes: Uint8Array
+  try {
+    if (object.ContentLength !== undefined && object.ContentLength > maxBytes) {
+      throw failed('The renderer returned an image that is too large', 503)
+    }
+    bytes = await object.Body!.transformToByteArray()
+  } finally {
+    // A picture handed back inline is read once: it does not wait a day for
+    // the export sweep (best effort — the sweep still gets a stray one).
+    void s3.send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: key })).catch(() => undefined)
   }
-  const bytes = await object.Body!.transformToByteArray()
   if (bytes.byteLength > maxBytes || !PNG_SIGNATURE.equals(Buffer.from(bytes.subarray(0, 8)))) {
     throw failed('The renderer returned something that is not a PNG', 503)
   }
@@ -172,6 +232,35 @@ type JobRequest =
   | { kind: 'export'; uploads: Array<{ slideId: string; key: string }> }
   | { kind: 'look'; look: RenderLookSpec; key: string }
 
+/** What a background card picture came to. */
+export type BackgroundThumbnailOutcome =
+  | { status: 'stored' }
+  /** The first slide is as it was when the card was last drawn (render/cardState.ts). */
+  | { status: 'unchanged' }
+  | { status: 'no-slides' }
+  /** The deck or the master is gone. */
+  | { status: 'gone' }
+  /** Not stored: by the time it was drawn, someone had it open (`stillWanted`). */
+  | { status: 'superseded' }
+
+/** A live document the worker renders: what it holds now, and the page that shows it. */
+interface LiveDoc {
+  card: CardRef
+  page: RenderPage
+  role: 'viewer' | 'editor' | 'owner'
+  slides: Array<{ id: string; skipped?: true }>
+  stateVector: string
+  /** What its card shows (render/cardState.ts), when asked for; null without slides. */
+  cardSource: string | null
+}
+
+/** Overflowing text boxes a look reports at most (the rest: `overflowTruncated`). */
+export const MAX_OVERFLOW_REPORTED = 50
+
+/** Where a render job's pictures wait to be read back (the export sweep removes strays). */
+const exportsPrefix = (card: CardRef): string =>
+  `${card.kind === 'deck' ? 'decks' : 'components'}/${card.id}/exports/${nanoid(16)}/`
+
 export function createRenderService(deps: RenderServiceDeps): RenderService & {
   /** Render and keep the PNGs in storage; the keys, for the editor's download route. */
   renderStored(args: {
@@ -179,28 +268,79 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     deckId: string
     slides: RenderSlideRef[] | 'all'
   }): Promise<StoredRenders>
+  /** The slides as PDF bytes, for the editor's download route (A5.6). */
+  buildPdf(args: {
+    userId: string
+    deckId: string
+    slides: RenderSlideRef[] | 'all'
+    includeSkipped: boolean
+    signal?: AbortSignal
+  }): Promise<
+    Omit<PdfExportResult, 'delivery' | 'url' | 'expiresAt' | 'base64'> & {
+      bytes: Uint8Array
+      title: string | null
+    }
+  >
+  /**
+   * The card picture of a deck or master nobody has open, drawn as `userId`
+   * (the deck's owner, the master's folder's owner) behind everyone's jobs;
+   * skipped when its first slide is as it was drawn last, and not stored
+   * when `stillWanted` says no by then.
+   */
+  backgroundThumbnail(args: {
+    userId: string
+    card: CardRef
+    stillWanted?: () => boolean
+  }): Promise<BackgroundThumbnailOutcome>
 } {
   const { db } = deps
   const queue = deps.renderQueue ?? bullRenderQueue
   const now = deps.now ?? Date.now
 
-  /** The caller may read the deck; its slides and state vector, from the live document. */
-  async function liveDeck(args: { userId: string; deckId: string }): Promise<{
-    slides: Array<{ id: string }>
-    stateVector: string
-  }> {
-    const access = await resolveDeckAccess(db, { deckId: args.deckId, userId: args.userId })
-    if (!access) throw forbidden()
-    const doc = await readDocCopy(deps, 'deck', args.deckId)
+  /** The caller may read it; its slides and state vector, from the live document. */
+  async function live(
+    userId: string,
+    card: CardRef,
+    opts: { cardSource?: boolean } = {},
+  ): Promise<LiveDoc> {
+    let role: LiveDoc['role']
+    let page: RenderPage
+    if (card.kind === 'deck') {
+      const access = await resolveDeckAccess(db, { deckId: card.id, userId })
+      if (!access) throw forbidden()
+      role = access.role
+      page = { kind: 'deck', deckId: card.id }
+    } else {
+      const access = await resolveComponentAccess(db, { componentId: card.id, userId })
+      const [row] = await db
+        .select({ folderId: components.folderId })
+        .from(components)
+        .where(eq(components.id, card.id))
+        .limit(1)
+      if (!access || row === undefined) throw forbidden()
+      role = access.role
+      page = { kind: 'component', componentId: card.id, folderId: row.folderId }
+    }
+    const doc = await readDocCopy(deps, card.kind, card.id)
     try {
       return {
-        slides: listSlides({ doc, slides: doc.getArray('slides') }).map((s) => ({ id: s.id })),
+        card,
+        page,
+        role,
+        slides: listSlides({ doc, slides: doc.getArray('slides') }).map((s) => ({
+          id: s.id,
+          ...(s.skipped === true ? { skipped: true } : {}),
+        })),
         stateVector: Buffer.from(Y.encodeStateVector(doc)).toString('base64'),
+        cardSource: opts.cardSource === true ? cardSourceOf(doc) : null,
       }
     } finally {
       doc.destroy()
     }
   }
+
+  const liveDeck = (args: { userId: string; deckId: string }) =>
+    live(args.userId, { kind: 'deck', id: args.deckId })
 
   /**
    * One job for the worker: a fair share of the queue (`slides` weighs it),
@@ -208,42 +348,53 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
    * clocks; the worker's failure mapped for the caller.
    */
   async function runJob(
-    args: { userId: string; deckId: string },
+    userId: string,
+    doc: Pick<LiveDoc, 'card' | 'page' | 'stateVector'>,
     slides: number,
-    stateVector: string,
     request: JobRequest,
+    opts: {
+      background?: boolean
+      /** A caller's deadline when the job is one of several (a PDF): never later than its own. */
+      deadline?: number
+    } = {},
   ): Promise<RenderJobResult> {
     // The shared queue: a fair share per person (the slot is taken here,
     // synchronously, so concurrent requests cannot all pass the check), and a
-    // bound overall.
-    const mine = inFlight.get(args.userId) ?? { jobs: 0, slides: 0 }
-    if (mine.jobs >= (deps.bypass === true ? MAX_IN_FLIGHT_DEV : MAX_IN_FLIGHT_PER_USER)) {
+    // bound overall. A background job takes nobody's share and goes last.
+    const background = opts.background === true
+    const mine = inFlight.get(userId) ?? { jobs: 0, slides: 0 }
+    if (
+      !background &&
+      mine.jobs >= (deps.bypass === true ? MAX_IN_FLIGHT_DEV : MAX_IN_FLIGHT_PER_USER)
+    ) {
       throw failed(
         `You have ${mine.jobs} renders in progress; wait for them to finish, then ask again`,
         429,
       )
     }
     const held = { jobs: mine.jobs + 1, slides: mine.slides + slides }
-    inFlight.set(args.userId, held)
+    if (!background) inFlight.set(userId, held)
     try {
       let waiting: number
       try {
         waiting = await queue.waiting()
       } catch {
-        throw failed('The renderer is unavailable right now; try again shortly', 503)
+        throw busy('The renderer is unavailable right now; try again shortly', 503)
       }
       if (waiting >= MAX_WAITING_JOBS) {
-        throw failed('The renderer is busy right now; try again in a minute', 503)
+        throw busy('The renderer is busy right now; try again in a minute', 503)
       }
-      const deadline = now() + RENDER_WAIT_MS
+      const deadline = Math.min(now() + RENDER_WAIT_MS, opts.deadline ?? Number.POSITIVE_INFINITY)
       const workBudgetMs = RENDER_WORK_BASE_MS + RENDER_WORK_PER_SLIDE_MS * slides
       const uploadTtlSec = Math.ceil((RENDER_WAIT_MS + TOKEN_MARGIN_MS) / 1000)
       const target = (key: string) => presignPutUrl(key, 'image/png', uploadTtlSec)
       const base = {
-        deckId: args.deckId,
-        stateVector,
+        page: doc.page,
+        stateVector: doc.stateVector,
         deadline,
         workBudgetMs,
+        // Background work leaves people's warm pages where they are.
+        ...(background ? { keepPage: false } : {}),
       }
       const job: JobWithoutToken<RenderJobData> =
         request.kind === 'export'
@@ -258,11 +409,18 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
               ),
             }
           : { ...base, kind: 'look', look: request.look, upload: await target(request.key) }
-      const token = sessionTokenFor(args, RENDER_WAIT_MS + TOKEN_MARGIN_MS, now())
+      const token = sessionTokenFor(
+        { target: doc.card, userId, lane: background ? 'background' : 'person' },
+        RENDER_WAIT_MS + TOKEN_MARGIN_MS,
+        now(),
+      )
       try {
-        return await queue.run({ ...job, token }, { priority: held.slides })
+        return await queue.run(
+          { ...job, token },
+          { priority: background ? BACKGROUND_PRIORITY : held.slides },
+        )
       } catch (err) {
-        const mapped = await mapFailure(err, args)
+        const mapped = await mapFailure(err, userId, doc.card)
         // The page was refused: whatever the reason, that session is over.
         if (parseRenderFailure(err instanceof Error ? err.message : '') === 'access-refused') {
           endRenderSession(token)
@@ -272,14 +430,19 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
         sessionJobEnded(token, now())
       }
     } finally {
-      const current = inFlight.get(args.userId)
-      const left = {
-        jobs: (current?.jobs ?? 1) - 1,
-        slides: (current?.slides ?? slides) - slides,
-      }
-      if (left.jobs > 0) inFlight.set(args.userId, left)
-      else inFlight.delete(args.userId)
+      if (!background) release(userId, slides)
     }
+  }
+
+  /** Give back a person's in-flight share of one job. */
+  function release(userId: string, slides: number): void {
+    const current = inFlight.get(userId)
+    const left = {
+      jobs: (current?.jobs ?? 1) - 1,
+      slides: (current?.slides ?? slides) - slides,
+    }
+    if (left.jobs > 0) inFlight.set(userId, left)
+    else inFlight.delete(userId)
   }
 
   async function renderStored(args: {
@@ -295,9 +458,9 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
         `That is ${chosen.length} slides; one request renders at most ${MAX_RENDER_SLIDES} — ask for them in parts`,
       )
     }
-    const prefix = `decks/${args.deckId}/exports/${nanoid(16)}/`
+    const prefix = exportsPrefix(deck.card)
     const keys = new Map(chosen.map((s) => [s.id, `${prefix}slide-${s.index + 1}.png`]))
-    const result = await runJob(args, chosen.length, deck.stateVector, {
+    const result = await runJob(args.userId, deck, chosen.length, {
       kind: 'export',
       uploads: chosen.map((s) => ({ slideId: s.id, key: keys.get(s.id)! })),
     })
@@ -308,14 +471,58 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     }
   }
 
+  /**
+   * The deck as it was before run `runId` first changed it, for a compare:
+   * the caller's own run on this very deck.
+   */
+  function stateBeforeRun(deckId: string, runId: string | null): Uint8Array {
+    const before = runId === null ? null : (deps.runs?.stateBefore(runId) ?? null)
+    if (before === null) {
+      throw badRequest(
+        'Nothing to compare yet: your current run has not changed this deck (or its history is gone)',
+      )
+    }
+    if (before.document.kind !== 'deck' || before.document.deckId !== deckId) {
+      throw badRequest('Your current run changed another document, not this deck')
+    }
+    if (before.update.byteLength > MAX_BEFORE_STATE_BYTES) {
+      throw tooLarge('The deck is too large to compare with how it was')
+    }
+    return before.update
+  }
+
+  /**
+   * Store a compare's "before" state for its job, read back by the worker
+   * through a presigned GET (it never travels in the queue); the key, to
+   * delete once the job is over (the export sweep takes a stray one).
+   */
+  async function stageBefore(
+    card: CardRef,
+    update: Uint8Array,
+  ): Promise<{ key: string; url: string }> {
+    const key = `${exportsPrefix(card)}before.bin`
+    await buildS3Client().send(
+      new PutObjectCommand({
+        Bucket: MEDIA_BUCKET,
+        Key: key,
+        Body: update,
+        ContentType: 'application/octet-stream',
+        CacheControl: 'private, no-store',
+      }),
+    )
+    const ttlSec = Math.ceil((RENDER_WAIT_MS + TOKEN_MARGIN_MS) / 1000)
+    return { key, url: await presignGetUrl(key, ttlSec) }
+  }
+
   async function look(args: {
     userId: string
     deckId: string
     view: RenderView
   }): Promise<RenderLookResult> {
     const deck = await liveDeck(args)
-    let spec: RenderLookSpec
+    let spec: Exclude<RenderLookSpec, { mode: 'thumbnail' }>
     let weight: number
+    let staged: string | null = null
     if ('sheet' in args.view) {
       const chosen = pickSlides(deck.slides, args.view.sheet)
       if (chosen.length === 0) throw badRequest('The deck has no slides to look at')
@@ -326,6 +533,14 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
       }
       spec = { mode: 'sheet', slideIds: chosen.map((s) => s.id) }
       weight = chosen.length
+    } else if ('compare' in args.view) {
+      const [one] = pickSlides(deck.slides, [args.view.compare])
+      if (one === undefined) throw badRequest('The deck has no slides to look at')
+      const before = await stageBefore(deck.card, stateBeforeRun(args.deckId, args.view.runId))
+      staged = before.key
+      spec = { mode: 'compare', slideId: one.id, before: { url: before.url } }
+      // Two pages and two slides: the frozen "before" page, then the live one.
+      weight = 4
     } else {
       const [one] = pickSlides(deck.slides, [args.view.slide])
       if (one === undefined) throw badRequest('The deck has no slides to look at')
@@ -335,29 +550,159 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
           : { mode: 'region', slideId: one.id, region: args.view.region }
       weight = 1
     }
-    const key = `decks/${args.deckId}/exports/${nanoid(16)}/look.png`
-    const result = await runJob(args, weight, deck.stateVector, { kind: 'look', look: spec, key })
+    const key = `${exportsPrefix(deck.card)}look.png`
+    let result: RenderJobResult
+    try {
+      result = await runJob(args.userId, deck, weight, { kind: 'look', look: spec, key })
+    } finally {
+      if (staged !== null) {
+        const stale = staged
+        void buildS3Client()
+          .send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: stale }))
+          .catch(() => undefined)
+      }
+    }
     if (result.kind !== 'look') throw failed('The renderer answered another job', 503)
     const bytes = await readStoredPng(key, MAX_LOOK_BYTES)
+    const indexOf = new Map(deck.slides.map((s, i) => [s.id, i]))
+    const overflow = result.look.overflow ?? []
     return {
       mode: spec.mode,
       width: result.look.width,
       height: result.look.height,
       slides: result.look.slides,
+      // A bounded answer for the model, however many boxes a sheet holds.
+      overflow: overflow.slice(0, MAX_OVERFLOW_REPORTED).map((o) => ({
+        slideId: o.slideId,
+        index: indexOf.get(o.slideId) ?? -1,
+        objectId: o.objectId,
+        boxHeight: o.boxHeight,
+        textHeight: o.textHeight,
+      })),
+      ...(overflow.length > MAX_OVERFLOW_REPORTED ? { overflowTruncated: true } : {}),
+      ...(result.look.newSlide === true ? { newSlide: true } : {}),
       failedFonts: result.failedFonts,
       image: { mimeType: 'image/png', base64: Buffer.from(bytes).toString('base64') },
     }
   }
 
+  /**
+   * Draw the first slide as the card picture and store it; the card's URL and
+   * time after, or why it was not stored.
+   */
+  async function drawCard(
+    userId: string,
+    doc: LiveDoc,
+    opts: { background: boolean; stillWanted?: () => boolean },
+  ): Promise<
+    | { status: 'stored'; thumbnailUrl: string; updatedAt: string }
+    | { status: 'gone' | 'superseded' }
+  > {
+    const first = doc.slides[0]!
+    const key = `${exportsPrefix(doc.card)}thumb.png`
+    const result = await runJob(
+      userId,
+      doc,
+      1,
+      { kind: 'look', look: { mode: 'thumbnail', slideId: first.id }, key },
+      { background: opts.background },
+    )
+    if (result.kind !== 'look') throw failed('The renderer answered another job', 503)
+    const bytes = await readStoredPng(key, MAX_THUMBNAIL_BYTES)
+    // A background card may have waited a while: someone who opened it
+    // meanwhile uploads a newer one, which this must not replace.
+    if (opts.stillWanted?.() === false) return { status: 'superseded' }
+    const picture = { bytes, mime: 'image/png' } as const
+    let stored: { thumbnailUrl: string | null; updatedAt: string | null } | null
+    try {
+      if (doc.card.kind === 'deck') {
+        const row = await storeDeckThumbnail(db, doc.card.id, picture)
+        const record = row === null ? null : deckRecord(row)
+        stored =
+          record === null
+            ? null
+            : { thumbnailUrl: record.thumbnailUrl, updatedAt: record.thumbnailUpdatedAt }
+      } else {
+        const row = await storeComponentThumbnail(db, doc.card.id, picture)
+        const record = row === null ? null : componentRecord(row)
+        stored =
+          record === null
+            ? null
+            : { thumbnailUrl: record.thumbnailUrl, updatedAt: record.updatedAt }
+      }
+    } catch (err) {
+      if (!(err instanceof ThumbnailStorageError)) throw err
+      deps.log.error(
+        { card: `${doc.card.kind}:${doc.card.id}`, err: err.message },
+        'render: storing the card failed',
+      )
+      throw failed('Storing the card picture failed; try again shortly', 503)
+    }
+    if (stored === null || stored.thumbnailUrl === null || stored.updatedAt === null) {
+      return { status: 'gone' }
+    }
+    if (doc.cardSource !== null) noteCardDrawn(doc.card, doc.cardSource)
+    return { status: 'stored', thumbnailUrl: stored.thumbnailUrl, updatedAt: stored.updatedAt }
+  }
+
+  async function refreshThumbnail(args: {
+    userId: string
+    target: { deckId: string } | { componentId: string }
+  }): Promise<{ thumbnailUrl: string; updatedAt: string }> {
+    const card: CardRef =
+      'deckId' in args.target
+        ? { kind: 'deck', id: args.target.deckId }
+        : { kind: 'component', id: args.target.componentId }
+    const doc = await live(args.userId, card, { cardSource: true })
+    // The card is its face on the folder page: its editors redraw it.
+    if (doc.role === 'viewer') {
+      throw forbidden(
+        card.kind === 'deck'
+          ? 'Only editors of the deck can redraw its card'
+          : 'Only editors of the folder can redraw a master’s card',
+      )
+    }
+    if (doc.slides.length === 0) {
+      throw badRequest(
+        card.kind === 'deck'
+          ? 'The deck has no slides to draw its card from'
+          : 'The master has no slide to draw its card from',
+      )
+    }
+    const drawn = await drawCard(args.userId, doc, { background: false })
+    if (drawn.status !== 'stored') {
+      throw notFound(card.kind === 'deck' ? 'The deck was deleted' : 'The component was deleted')
+    }
+    return { thumbnailUrl: drawn.thumbnailUrl, updatedAt: drawn.updatedAt }
+  }
+
+  async function backgroundThumbnail(args: {
+    userId: string
+    card: CardRef
+    stillWanted?: () => boolean
+  }): Promise<BackgroundThumbnailOutcome> {
+    const doc = await live(args.userId, args.card, { cardSource: true })
+    if (doc.cardSource === null) return { status: 'no-slides' }
+    if (cardDrawnFrom(args.card) === doc.cardSource) return { status: 'unchanged' }
+    const drawn = await drawCard(args.userId, doc, {
+      background: true,
+      ...(args.stillWanted !== undefined ? { stillWanted: args.stillWanted } : {}),
+    })
+    return drawn.status === 'stored' ? { status: 'stored' } : { status: drawn.status }
+  }
+
   /** What the caller hears when a job fails. */
-  async function mapFailure(
-    err: unknown,
-    args: { userId: string; deckId: string },
-  ): Promise<Error> {
-    if (err instanceof RenderTimeoutError) return failed('The render did not finish in time', 504)
+  async function mapFailure(err: unknown, userId: string, card: CardRef): Promise<Error> {
+    const where = { [card.kind === 'deck' ? 'deckId' : 'componentId']: card.id }
+    if (err instanceof RenderTimeoutError) {
+      // Still waiting for its turn: busy. Started and not done: the slide is slow.
+      return err.started
+        ? failed('The render did not finish in time', 504)
+        : busy('The render did not finish in time', 504)
+    }
     if (err instanceof RenderUnavailableError) {
-      deps.log.warn({ deckId: args.deckId, err: err.message }, 'render: queue unavailable')
-      return failed('The renderer is unavailable right now; try again shortly', 503)
+      deps.log.warn({ ...where, err: err.message }, 'render: queue unavailable')
+      return busy('The renderer is unavailable right now; try again shortly', 503)
     }
     const message = err instanceof Error ? err.message : String(err)
     switch (parseRenderFailure(message)) {
@@ -369,16 +714,21 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
       case 'access-refused': {
         // Refused for real (the caller lost access during the job), or a
         // renderer-side problem with the token: only the first is a 403.
-        const still = await resolveDeckAccess(db, { deckId: args.deckId, userId: args.userId })
+        const still =
+          card.kind === 'deck'
+            ? await resolveDeckAccess(db, { deckId: card.id, userId })
+            : await resolveComponentAccess(db, { componentId: card.id, userId })
         if (!still) return forbidden()
-        deps.log.error({ deckId: args.deckId, err: message }, 'render: the page was refused')
+        deps.log.error({ ...where, err: message }, 'render: the page was refused')
         return failed('The render failed', 503)
       }
-      case 'deadline':
+      // It waited too long for its turn.
       case 'late':
+        return busy('The render did not finish in time', 504)
+      case 'deadline':
         return failed('The render did not finish in time', 504)
       default:
-        deps.log.error({ deckId: args.deckId, err: message }, 'render: job failed')
+        deps.log.error({ ...where, err: message }, 'render: job failed')
         return failed('The render failed', 503)
     }
   }
@@ -425,7 +775,231 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     return { delivery: 'url', slides, expiresAt, failedFonts }
   }
 
-  return { exportPng, renderStored, look }
+  /**
+   * The text of up to MAX_MEASURE_SLIDES slides, measured in sheets of
+   * MAX_RENDER_SLIDES (the sheet's picture is the job's by-product, never
+   * read): every overflow, and every growing box's drawn height.
+   */
+  async function measure(args: {
+    userId: string
+    deckId: string
+    slides: RenderSlideRef[] | 'all'
+  }): Promise<TextMeasurement> {
+    const deck = await liveDeck(args)
+    const chosen = pickSlides(deck.slides, args.slides)
+    if (chosen.length === 0) throw badRequest('The deck has no slides to check')
+    if (chosen.length > MAX_MEASURE_SLIDES) {
+      throw tooLarge(
+        `That is ${chosen.length} slides; one check measures at most ${MAX_MEASURE_SLIDES} — ask for them in parts`,
+      )
+    }
+    const key = `${exportsPrefix(deck.card)}measure.png`
+    const indexOf = new Map(chosen.map((s) => [s.id, s.index]))
+    const out: TextMeasurement = { slides: [], overflow: [], grown: [], failedFonts: [] }
+    const fonts = new Set<string>()
+    for (let i = 0; i < chosen.length; i += MAX_RENDER_SLIDES) {
+      const part = chosen.slice(i, i + MAX_RENDER_SLIDES)
+      const result = await runJob(args.userId, deck, part.length, {
+        kind: 'look',
+        look: { mode: 'sheet', slideIds: part.map((s) => s.id) },
+        key,
+      })
+      if (result.kind !== 'look') throw failed('The renderer answered another job', 503)
+      for (const s of result.look.slides) out.slides.push({ slideId: s.slideId, index: s.index })
+      for (const o of result.look.overflow ?? [])
+        out.overflow.push({
+          slideId: o.slideId,
+          index: indexOf.get(o.slideId) ?? -1,
+          objectId: o.objectId,
+          boxHeight: o.boxHeight,
+          textHeight: o.textHeight,
+        })
+      // A renderer older than A4.5 says nothing of growing boxes: not "none".
+      if (result.look.grown === undefined) out.grown = null
+      else if (out.grown !== null) out.grown.push(...result.look.grown)
+      for (const f of result.failedFonts) fonts.add(f)
+    }
+    out.failedFonts = [...fonts]
+    void buildS3Client()
+      .send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: key }))
+      .catch(() => undefined)
+    return out
+  }
+
+  /**
+   * The slides as a PDF (A5.6): rendered in jobs of MAX_RENDER_SLIDES, each
+   * PNG read back and turned into a JPEG one at a time (only the JPEGs are
+   * held), a page each (shared `buildImagePdf`).
+   */
+  async function buildPdf(args: {
+    userId: string
+    deckId: string
+    slides: RenderSlideRef[] | 'all'
+    includeSkipped: boolean
+    /** Stop between steps once the caller has gone (the route's request closed). */
+    signal?: AbortSignal
+    /** Refuse as soon as the pages pass this many bytes (base64 delivery). */
+    maxBytes?: number
+  }): Promise<
+    Omit<PdfExportResult, 'delivery' | 'url' | 'expiresAt' | 'base64'> & {
+      bytes: Uint8Array
+      title: string | null
+    }
+  > {
+    const deck = await liveDeck(args)
+    const picked = pickSlides(deck.slides, args.slides)
+    const chosen = args.includeSkipped
+      ? picked
+      : picked.filter((s) => deck.slides[s.index]?.skipped !== true)
+    const leftOut = picked.length - chosen.length
+    if (chosen.length === 0)
+      throw badRequest(
+        leftOut > 0
+          ? 'Every slide asked for is skipped; includeSkipped keeps them'
+          : 'The deck has no slides to export',
+      )
+    if (chosen.length > MAX_PDF_SLIDES)
+      throw tooLarge(
+        `That is ${chosen.length} slides; one PDF takes at most ${MAX_PDF_SLIDES} — ask for them in parts`,
+      )
+    const prefix = exportsPrefix(deck.card)
+    const jpegs: Uint8Array[] = []
+    const fonts = new Set<string>()
+    let failedLoads = 0
+    let pageBytes = 0
+    const maxBytes = Math.min(args.maxBytes ?? MAX_PDF_BYTES, MAX_PDF_BYTES)
+    // One deadline for the whole file, as for every render: a caller waits
+    // at most RENDER_WAIT_MS (Cloudflare gives up at 100 s). Every job ends
+    // by it, and a further job starts only with time left to render.
+    const deadline = now() + RENDER_WAIT_MS
+    const gone = (): void => {
+      if (args.signal?.aborted === true) throw failed('The request was cancelled', 499)
+    }
+    for (let i = 0; i < chosen.length; i += MAX_RENDER_SLIDES) {
+      gone()
+      if (i > 0 && deadline - now() < MIN_PDF_JOB_MS)
+        throw failed(
+          `The renderer is busy: ${chosen.length} slides take too long now; export at most ` +
+            `${MAX_RENDER_SLIDES} at a time, or try again in a minute`,
+          503,
+        )
+      const part = chosen.slice(i, i + MAX_RENDER_SLIDES)
+      const keys = new Map(part.map((s) => [s.id, `${prefix}slide-${s.index + 1}.png`]))
+      const result = await runJob(
+        args.userId,
+        deck,
+        part.length,
+        { kind: 'export', uploads: part.map((s) => ({ slideId: s.id, key: keys.get(s.id)! })) },
+        { deadline },
+      )
+      if (result.kind !== 'export') throw failed('The renderer answered another job', 503)
+      const rendered = new Map(result.slides.map((r) => [r.slideId, r]))
+      for (const s of part) {
+        const r = rendered.get(s.id)
+        if (r === undefined) throw failed('The renderer left out a slide', 503)
+        failedLoads += r.failedLoads
+        const png = await readStoredPng(keys.get(s.id)!, MAX_PDF_PAGE_PNG_BYTES)
+        gone()
+        // The worker's bytes are not taken on its word: a page is the
+        // render's size, checked before anything decodes it.
+        const size = pngSize(png)
+        if (size.width * size.height > MAX_PDF_PAGE_PIXELS || size.width === 0 || size.height === 0)
+          throw failed('The renderer returned a picture of an unexpected size', 503)
+        const jpeg = await sharp(png, {
+          limitInputPixels: MAX_PDF_PAGE_PIXELS,
+          sequentialRead: true,
+        })
+          .flatten({ background: '#ffffff' })
+          .jpeg({ quality: PDF_JPEG_QUALITY })
+          .toBuffer()
+        pageBytes += jpeg.byteLength
+        if (pageBytes > maxBytes)
+          throw tooLarge(
+            maxBytes < MAX_PDF_BYTES
+              ? `The PDF passes the ${maxBytes}-byte inline limit; use delivery "url" or fewer slides`
+              : 'The PDF is too large; export fewer slides at a time',
+          )
+        jpegs.push(jpeg)
+      }
+      for (const f of result.failedFonts) fonts.add(f)
+    }
+    const [row] = await db
+      .select({ title: decks.title })
+      .from(decks)
+      .where(eq(decks.id, args.deckId))
+      .limit(1)
+    const title = row?.title ?? null
+    const bytes = buildImagePdf(
+      jpegs.map((jpeg) => ({ jpeg })),
+      title !== null ? { title } : {},
+    )
+    return {
+      bytes,
+      title,
+      pages: jpegs.length,
+      leftOut,
+      sizeBytes: bytes.byteLength,
+      failedLoads,
+      failedFonts: [...fonts],
+    }
+  }
+
+  async function exportPdf(args: {
+    userId: string
+    deckId: string
+    slides: RenderSlideRef[] | 'all'
+    includeSkipped: boolean
+    delivery: 'url' | 'base64'
+  }): Promise<PdfExportResult> {
+    const {
+      bytes,
+      title: _title,
+      ...info
+    } = await buildPdf({
+      ...args,
+      ...(args.delivery === 'base64' ? { maxBytes: MAX_INLINE_EXPORT_BYTES } : {}),
+    })
+    if (args.delivery === 'base64') {
+      if (bytes.byteLength > MAX_INLINE_EXPORT_BYTES)
+        throw tooLarge(
+          `The PDF is ${bytes.byteLength} bytes, over the ${MAX_INLINE_EXPORT_BYTES}-byte inline limit; ` +
+            'use delivery "url" or fewer slides',
+        )
+      return {
+        ...info,
+        delivery: 'base64',
+        base64: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64'),
+      }
+    }
+    const deck = { kind: 'deck', id: args.deckId } as const
+    const key = `${exportsPrefix(deck)}deck.pdf`
+    await buildS3Client().send(
+      new PutObjectCommand({
+        Bucket: MEDIA_BUCKET,
+        Key: key,
+        Body: bytes,
+        ContentType: 'application/pdf',
+        CacheControl: 'private, no-store',
+      }),
+    )
+    return {
+      ...info,
+      delivery: 'url',
+      url: await presignGetUrl(key, EXPORT_URL_TTL_SEC),
+      expiresAt: new Date(now() + EXPORT_URL_TTL_SEC * 1000).toISOString(),
+    }
+  }
+
+  return {
+    exportPng,
+    exportPdf,
+    buildPdf,
+    renderStored,
+    look,
+    measure,
+    refreshThumbnail,
+    backgroundThumbnail,
+  }
 }
 
 /** Test helper: forget the in-flight counts. */

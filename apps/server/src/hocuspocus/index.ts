@@ -36,7 +36,7 @@ import { PostgresPersistence } from './persistence.js'
 import { metrics } from '../metrics/index.js'
 import { setHocuspocusInstance } from './presence.js'
 import { subsystemLogger } from '../observability/logger.js'
-import { createOnAuthenticate } from './authenticate.js'
+import { PEER_ADDRESS_HEADER, createOnAuthenticate } from './authenticate.js'
 import { awarenessOwnershipExtension } from './awarenessOwnership.js'
 import { awarenessRedactionExtension } from './awarenessRedaction.js'
 import { agentPrincipalExtension } from './agentPrincipal.js'
@@ -66,18 +66,31 @@ export interface HocuspocusServerOptions {
    * copies again (services/localiseMedia.ts).
    */
   onDeckStored?: (deckId: string) => void
+  /** After a component master's snapshot was stored, off the store's path (its card). */
+  onComponentStored?: (componentId: string) => void
 }
 
-export function createHocuspocusServer(opts: HocuspocusServerOptions) {
+/**
+ * The sync server: `listen()` / `destroy()` on it, the documents and
+ * connections on `server.hocuspocus` (Hocuspocus 3+ split the WebSocket
+ * server from the document engine; `Server.configure` is gone).
+ */
+export function createHocuspocusServer(opts: HocuspocusServerOptions): Server {
   const { db, bypass = false } = opts
 
-  const server = Server.configure({
+  const server = new Server({
     port: opts.port,
+    // The process's own shutdown (index.ts) closes the agent host first and
+    // then this server; Hocuspocus's signal handler would race it.
+    stopOnSignals: false,
 
     extensions: [
       new PostgresPersistence({
         db,
         ...(opts.onDeckStored === undefined ? {} : { onDeckStored: opts.onDeckStored }),
+        ...(opts.onComponentStored === undefined
+          ? {}
+          : { onComponentStored: opts.onComponentStored }),
       }),
       // Binds awareness client ids to the connection (principal) that first
       // announced them, so editor.context never trusts a forged state (M9).
@@ -107,16 +120,32 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
     debounce: 2_000,
     maxDebounce: 10_000,
 
+    // The hooks get a web Request (no socket); the upgrade still sees the
+    // Node request. Its peer address travels into onAuthenticate (the
+    // failed-attempt throttle's key without a proxy header) in a header the
+    // server always writes itself — a client's own value never survives.
+    async onUpgrade({ request }) {
+      const address = request.socket.remoteAddress
+      if (address === undefined) delete request.headers[PEER_ADDRESS_HEADER]
+      else request.headers[PEER_ADDRESS_HEADER] = address
+    },
+
     // Credential + document-access resolution lives in ./authenticate.ts
     // (session cookie or share token; personal access tokens are refused —
     // agents write through the server host, ADR 0011).
     onAuthenticate: createOnAuthenticate({ db, bypass, clientIpHeader: opts.clientIpHeader }),
 
     async onConnect(data) {
-      metrics.incConnections()
       // userId is populated by onAuthenticate (which runs AFTER
       // onConnect), so presence registration happens there instead.
       log.info({ doc: data.documentName }, 'connect')
+    },
+
+    // Counted once established: a connection whose authentication fails
+    // never reaches onDisconnect, so counting at onConnect let refused
+    // attempts raise the gauge for good.
+    async connected() {
+      metrics.incConnections()
     },
 
     async onDisconnect(data) {
@@ -137,7 +166,7 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
 
   // Register the live instance so the /folders/:id/active-editors
   // route can read presence directly off Hocuspocus' connection map.
-  setHocuspocusInstance(server)
+  setHocuspocusInstance(server.hocuspocus)
 
   return server
 }

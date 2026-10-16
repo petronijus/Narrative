@@ -30,7 +30,7 @@ export async function registerDevRenderRoutes(app: FastifyInstance, db: Database
       const userId = request.user!.sub
       const access = await resolveDeckAccess(db, { deckId, userId })
       if (!access) return reply.status(403).send({ error: 'Forbidden' })
-      return reply.send({ token: mintRenderToken(deckId, userId) })
+      return reply.send({ token: mintRenderToken({ kind: 'deck', id: deckId }, userId) })
     },
   )
 }

@@ -2,7 +2,7 @@
  * scripts/builderConfig.test.ts
  *
  * The packaging config keeps the promises the shell's security rests on
- * (ADR 0014): the Electron it packages is the one pinned and tested, the
+ * (ADR 0015): the Electron it packages is the one pinned and tested, the
  * fuses are set, the app ships only the bundles, and the update feed is
  * the one the shell verifies.
  */

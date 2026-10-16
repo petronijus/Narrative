@@ -160,7 +160,7 @@ describe('cssFontFamily', () => {
   })
 
   it('re-quotes a quoted name, and keeps a quoted generic a name', () => {
-    expect(cssFontFamily("'Proseware Pro', sans-serif")).toBe('"Proseware Pro", sans-serif')
+    expect(cssFontFamily("'Brand Sans', sans-serif")).toBe('"Brand Sans", sans-serif')
     expect(cssFontFamily('"serif", serif')).toBe('"serif", serif')
   })
 })

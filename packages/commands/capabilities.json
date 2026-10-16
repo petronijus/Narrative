@@ -54,7 +54,7 @@
       "id": "animation.add",
       "domain": "animation",
       "title": "Add animation",
-      "description": "Append an animation step for an object to the end of its slide's timeline. Omitted fields take the editor defaults: trigger afterPrevious, duration 0.6 s, delay 0 s, easing \"power2.out\"; moveTo targets the slide centre (960, 540) and rotateTo turns to 180°. Presets: fadeIn, fadeOut, slideIn, slideOut, scaleIn, scaleOut, zoomIn, rotateIn, bounceIn, flipIn, popIn, dissolveIn, wipeIn, moveTo, rotateTo. Triggers: afterPrevious (starts when the previous step ends), withPrevious (starts together with the previous step), onClick (waits for a click or the next key). The first step (step 0) with afterPrevious or withPrevious starts as soon as the slide appears; an onClick step 0 waits for the first click. Steps of older decks may read back as trigger onEnter (legacy: starts with the slide wherever it sits); it cannot be chosen, and a step keeps it until its trigger is changed. Rotation units differ by preset, as the animation engine defines them: rotateIn `angle` is in RADIANS (the starting offset, default -1.5708 = a quarter turn), rotateTo `angleDeg` is in DEGREES (the absolute end angle). Use animation.reorder to move the step, animation.update to change it.",
+      "description": "Append an animation step for an object to the end of its slide's timeline. Omitted fields take the editor defaults: trigger afterPrevious, duration 0.6 s, delay 0 s, easing \"power2.out\"; moveTo targets the slide centre (960, 540) and rotateTo turns to 180°. Use animation.reorder to move the step, animation.update to change it.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -111,13 +111,30 @@
       "id": "animation.update",
       "domain": "animation",
       "title": "Update animation",
-      "description": "Change an animation step: preset, trigger, duration (s), delay (s), easing, params. `params` is MERGED into the current params (a key set to null is removed; params: null clears them all). Changing `preset` drops params the new preset does not use and fills its defaults (moveTo: slide centre, rotateTo: 180°). The animated object cannot be changed here. Presets: fadeIn, fadeOut, slideIn, slideOut, scaleIn, scaleOut, zoomIn, rotateIn, bounceIn, flipIn, popIn, dissolveIn, wipeIn, moveTo, rotateTo. Triggers: afterPrevious (starts when the previous step ends), withPrevious (starts together with the previous step), onClick (waits for a click or the next key). The first step (step 0) with afterPrevious or withPrevious starts as soon as the slide appears; an onClick step 0 waits for the first click. Steps of older decks may read back as trigger onEnter (legacy: starts with the slide wherever it sits); it cannot be chosen, and a step keeps it until its trigger is changed. Rotation units differ by preset, as the animation engine defines them: rotateIn `angle` is in RADIANS (the starting offset, default -1.5708 = a quarter turn), rotateTo `angleDeg` is in DEGREES (the absolute end angle).",
+      "description": "Change an animation step: preset, trigger, duration (s), delay (s), easing, params. `params` is MERGED into the current params (a key set to null is removed; params: null clears them all). Changing `preset` drops params the new preset does not use and fills its defaults (moveTo: slide centre, rotateTo: 180°). The animated object cannot be changed here. Steps of older decks may read back as trigger onEnter (legacy: starts with the slide wherever it sits); it cannot be chosen, and a step keeps it until its trigger is changed.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
       "idempotent": true,
       "hosts": ["browser", "server"]
+    },
+    {
+      "id": "component.create",
+      "domain": "component",
+      "title": "Create component",
+      "description": "Make an empty component in the folder, for a block that recurs on many slides. Fill its master with the object and text commands pointed at it (componentId); from objects on a slide use component.promote. Needs the editor role in the folder. Undo: component.delete.",
+      "role": "editor",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/folders/:folderId/components"
+        }
+      ]
     },
     {
       "id": "component.delete",
@@ -140,7 +157,7 @@
       "id": "component.get",
       "domain": "component",
       "title": "Read component",
-      "description": "One component's master: its objects with every property (the shapes query.slide returns), its animations, its bounding box, and its slot map — every NAMED object is a slot; text slots show their placeholder text. Read it before component.stamp to know which slot names to fill. To change the master itself, target the component (componentId) with the ordinary document commands. Any member of the folder.",
+      "description": "One component's master: its objects with every property (the shapes query.slide returns), its animations, its bounding box, and its slot map — an object with a `slot` (else a name) is a slot; text slots show their placeholder text. Read it before component.stamp to know which slot names to fill. To change the master itself, target the component (componentId) with the ordinary document commands. Any member of the folder.",
       "role": "viewer",
       "effects": ["server"],
       "undo": "n/a",
@@ -170,7 +187,7 @@
       "id": "component.promote",
       "domain": "component",
       "title": "Make component from objects",
-      "description": "Make a new component of this deck's folder from objects on one of its slides, for a block that recurs on many slides (a headline block, the pagination, a card grid) — a folder keeps only a few. The objects become the master as they are: a group brings its members, rich text, tables and their animations come along; the slide is not changed. Pictures and videos are copied into the component; links to slides are removed. Named objects are the component's slots (component.stamp fills text slots by name), so name the text boxes (object.update name) first. Needs the editor role in the deck's folder. Undo: component.delete.",
+      "description": "Make a new component of this deck's folder from objects on one of its slides, for a block that recurs on many slides (a headline block, the pagination, a card grid) — a folder keeps only a few. The objects become the master as they are: a group brings its members, rich text, tables and their animations come along; the slide is not changed. Pictures and videos are copied into the component; links to slides are removed. An object's `slot` (else its name) makes it a slot (component.stamp fills text slots by it), so set `slot` on the text boxes (object.update) first; a stamp link (`component`) is dropped. Needs the editor role in the deck's folder. Undo: component.delete.",
       "role": "editor",
       "effects": ["server"],
       "undo": "undoable",
@@ -202,10 +219,22 @@
       ]
     },
     {
+      "id": "component.restamp",
+      "domain": "component",
+      "title": "Restamp component",
+      "description": "Reset a component's stamps to its current master — on `slide`, or without it the whole deck — only when the user asks to bring them up to date: stamps are detached, a master change never reaches them by itself. Change the master first (object and text commands with componentId); for a new stamp use component.stamp. Each stamp is updated in place (ids, so animations, kept; where people moved it) with every master property, overwriting local edits to it (colour, size, name, lock, link…), except slot content: a text slot keeps its text in the master formatting, a picture slot its picture, a table slot its cells. Every master object comes back, also ones deleted from the stamp; objects no longer in the master go with their animations. Ask the user before restamping a whole deck. An empty master is refused. Needs the editor role on the deck and a role in its folder.",
+      "role": "editor",
+      "effects": ["doc", "server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "idempotent": true,
+      "hosts": ["server"]
+    },
+    {
       "id": "component.stamp",
       "domain": "component",
       "title": "Stamp component",
-      "description": "Place one of the deck's folder components on a slide and fill its text slots in the same step. The master's objects are copied as ordinary objects with fresh ids — rich text, groups and table content included; the master's animations are not copied — so editing the master later does not change this stamp. Without `at` the copy lands where the master was drawn (its bounding box top-left); `at` moves that corner. `slots` maps slot names (component.get lists them: the names of the master objects) to text: a plain string keeps the slot's formatting, { paragraphs } sets it explicitly. The stamp shows the master's own pictures and videos (linked, not copied: a deck may show its folder's component media). Returns the new object ids in stacking order. Use the folder's existing components for the roles they cover; do not stamp for one-off content. Needs the editor role on the deck and a role in its folder (the folder's components are its members').",
+      "description": "Place one of the deck's folder components on a slide and fill its text slots in the same step. The master's objects are copied as ordinary objects with fresh ids — rich text, groups and table content included; the master's animations are not copied. Each copy records its component (`component`): component.restamp re-applies a changed master. Without `at` the copy lands where the master was drawn (its bounding box top-left); `at` moves that corner. `slots` maps slot names (component.get lists them) to text: a plain string keeps the slot's formatting, { paragraphs } sets it explicitly. The stamp shows the master's own pictures and videos (linked, not copied: a deck may show its folder's component media). Returns the new object ids in stacking order. Use the folder's existing components for the roles they cover; do not stamp for one-off content. Needs the editor role on the deck and a role in its folder (the folder's components are its members').",
       "role": "editor",
       "effects": ["doc", "server"],
       "undo": "undoable",
@@ -284,6 +313,23 @@
         {
           "method": "POST",
           "path": "/decks/:id/duplicate"
+        }
+      ]
+    },
+    {
+      "id": "deck.exportPdf",
+      "domain": "deck",
+      "title": "Export slides as PDF",
+      "description": "The deck as one PDF, a page per slide as the editor shows it now: pictures of the slides, not editable text (that is deck.exportPptx). Skipped slides are left out unless `includeSkipped`. A download URL for 15 minutes — a bearer link, only for the user who asked — or `delivery: \"base64\"` (≤ 8 MB). At most 40 slides a call; about a second a slide. Any reader of the deck.",
+      "role": "viewer",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks/:id/export.pdf"
         }
       ]
     },
@@ -379,7 +425,7 @@
       "id": "deck.insertFrom",
       "domain": "deck",
       "title": "Insert slides from a file or deck",
-      "description": "Insert slides into this deck at position `at` (0-based; omitted = at the end; past the end = at the end), taken from a .pptx file (URL or base64, at most 200 MB) or from another Narrative deck you can edit (optionally slides `from`..`to`, or exactly the slide ids in `slides`; copying needs the same editor access as exporting that deck, so a deck you can only view is refused). Slides keep their objects, animations, speaker notes, transition and background; media this deck could not show is copied into it, the source folder's linked media included. From a deck in another folder, token references are rebound to this folder the way deck.moveToFolder does it. It is one change, reverted as one step. Returns the new slide ids — restyle them next if they should match this deck. For a new deck from a file use deck.importPptx.",
+      "description": "Insert slides into this deck at position `at` (0-based; omitted = at the end; past the end = at the end), taken from a .pptx file (URL or base64, at most 200 MB) or from another Narrative deck you can edit (optionally slides `from`..`to`, or exactly the slide ids in `slides`; copying needs the same editor access as exporting that deck, so a deck you can only view is refused). Slides keep their objects, animations, speaker notes, transition and background; media this deck could not show is copied into it, the source folder's linked media included. From a deck in another folder, token references are rebound to this folder the way deck.moveToFolder does it. One change, reverted as one step. To make the new slides match this deck: style.deck.apply { relayout: \"archetype\", slides }, then slide.applyLayout for what it lists unmatched (the insert-restyle prompt). A new deck from a file is deck.importPptx.",
       "role": "editor",
       "effects": ["doc", "server"],
       "undo": "undoable",
@@ -430,6 +476,30 @@
         {
           "method": "POST",
           "path": "/folders/:id/move-decks"
+        }
+      ]
+    },
+    {
+      "id": "deck.refreshThumbnail",
+      "domain": "deck",
+      "title": "Redraw the deck card",
+      "description": "Redraw the card picture — what the folder page shows for the deck, or for a component master (componentId) in its component list — from the first slide, now. The card follows changes by itself: from the editor while someone has the deck open, else about 15 s after the last change (once a minute at most); call this only when it must be right at once (before sending someone to the folder). Returns the new picture’s URL. Takes a few seconds. Editors of the deck (a master: of its folder).",
+      "role": "editor",
+      "roleOn": {
+        "component": "editor"
+      },
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "PUT",
+          "path": "/decks/:id/thumbnail"
+        },
+        {
+          "method": "PUT",
+          "path": "/components/:id/thumbnail"
         }
       ]
     },
@@ -1167,7 +1237,7 @@
       "id": "object.update",
       "domain": "object",
       "title": "Update object properties",
-      "description": "ROTATION IS IN RADIANS here (the stored unit): 90 degrees = 1.5708, 180 = 3.1416; object.rotate takes degrees. Change properties of an object — fill, stroke, opacity, font size, corner radius, shadow, name, lock, x/y/width/height, rotation, … — validated against its type before anything is written (unknown keys fail). `null` removes an optional property. Use `updates` to patch several objects on one slide in one step. Not for tables' rows/columns/cells (table.* commands) or relative moves (object.move). Raw fields do exactly what they say and no more; where the editor does more, compose it yourself: (1) Setting x/y of a cropped image moves its crop along, but width/height do NOT scale the crop (`imageRect`) — resize with object.resize, which does. (2) `flipH` / `flipV` only mirror the content without negating `rotation` as the editor's Flip does — flip with object.flip. (3) Box typography (fontFamily, fontSize, fontWeight, color, …) set here is only the default under inline formatting, leaves fontWeight as is on a family change and does not mark a linked text style overridden — use text.setBoxTypography, which does what the Inspector does. (4) `textStyleId` only links a folder text style without applying it — use text.style.apply. (5) A video's `videoTrigger` + `videoDelay` (s, >= 0) place its clip on the editor's timeline: onEnter from the slide start, withPrevious / afterPrevious from the start / end of the slide's LAST animation step; they are exported to PowerPoint, but present mode starts a video by `autoplay` / `playOnClick` only. `text` on a text box replaces the body with plain text (formatting is dropped; use text.set for formatted text, text.format for styling ranges). `locked` is an editor-only flag (it stops a person dragging, resizing or deleting the object on the canvas); it does not restrict commands, so locked objects can be changed and `locked` set or cleared like any property. Units: the slide is 1920 x 1080 px, origin top-left, y down; x/y/width/height in slide px; rotation in RADIANS (90 degrees = 1.5708); opacity and *Alpha 0..1; colours as \"#RRGGBB\", a 0xRRGGBB integer, or a colour token { \"$token\": \"colors.<id>\" }.",
+      "description": "ROTATION IS IN RADIANS here (the stored unit): 90 degrees = 1.5708, 180 = 3.1416; object.rotate takes degrees. Change properties of an object — fill, stroke, opacity, font size, corner radius, shadow, name, lock, x/y/width/height, rotation, … — validated against its type before anything is written (unknown keys fail). `null` removes an optional property. Use `updates` to patch several objects on one slide in one step. Not for tables' rows/columns/cells (table.* commands) or relative moves (object.move). Raw fields do exactly what they say and no more; where the editor does more, compose it yourself: (1) Setting x/y of a cropped image moves its crop along, but width/height do NOT scale the crop (`imageRect`) — resize with object.resize, which does. (2) `flipH` / `flipV` only mirror the content without negating `rotation` as the editor's Flip does — flip with object.flip. (3) Box typography (fontFamily, fontSize, fontWeight, color, …) set here is only the default under inline formatting, leaves fontWeight as is on a family change and does not mark a linked text style overridden — use text.setBoxTypography, which does what the Inspector does. (4) `textStyleId` only links a folder text style without applying it — use text.style.apply. (5) A video's `videoTrigger` + `videoDelay` (s, >= 0) place its clip on the editor's timeline: onEnter from the slide start, withPrevious / afterPrevious from the start / end of the slide's LAST animation step; they are exported to PowerPoint, but present mode starts a video by `autoplay` / `playOnClick` only. `text` on a text box replaces the body with plain text (formatting is dropped; use text.set for formatted text, text.format for styling ranges). `locked` is an editor-only flag (it stops a person dragging, resizing or deleting the object on the canvas); it does not restrict commands, so locked objects can be changed and `locked` set or cleared like any property. `slot` (a component or brand slot name) and `role` (title, subtitle, body, picture, chart, table, caption, footnote, furniture) say what an object is for; `component` is a stamp's link, set by component.stamp. A text box's `autofit`: \"grow-down\" = as tall as its text (`height` may lag behind your edits; look), \"shrink\" = type scaled down to fit, not below `minFontSize`; null = fixed. Units: the slide is 1920 x 1080 px, origin top-left, y down; x/y/width/height in slide px; rotation in RADIANS (90 degrees = 1.5708); opacity and *Alpha 0..1; colours as \"#RRGGBB\", a 0xRRGGBB integer, or a colour token { \"$token\": \"colors.<id>\" }.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -1187,10 +1257,22 @@
       "hosts": ["browser", "server"]
     },
     {
+      "id": "query.check",
+      "domain": "query",
+      "title": "Check the deck against its brand",
+      "description": "Check slides against the deck's folder style pack, as the brand's QA does: text that does not fit (measured with the real fonts; a growing box against what is below it), partial overlaps, content outside the margins, text colours outside the pack, a background of another variant, missing footer or page number, placeholder text, empty picture regions, and the editorial rules (capitals, italics, bullet glyphs, title periods and length, the accent budget, typography, emoji); on the whole deck, one layout on most slides. Each finding names its slide, object (and table cell), the rule and an error or warning level; fix the errors before you report a slide done. `fit: false` skips the measurement (a few seconds per 20 slides; at most 100 slides measured at once). A font that did not load leaves the fit unverified (`fitVerified: false`, an error). Any reader of the deck.",
+      "role": "viewer",
+      "effects": [],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"]
+    },
+    {
       "id": "query.deck",
       "domain": "query",
       "title": "Deck outline",
-      "description": "A compact outline of the whole deck, built to fit a model's context: every slide with its id, 0-based index, name, a title guessed from its largest text, outline indent, skipped flag, transition kind and object / animation counts, plus the deck's alignment guides. Start here, then read one slide with query.slide. Slides are 1920 x 1080 px.",
+      "description": "A compact outline of the whole deck, built to fit a model's context: every slide with its id, 0-based index, name, a title guessed from its largest text, outline indent, skipped flag, transition kind and object / animation counts and its style pack layout, plus the deck's alignment guides and its meta (pack variant, footer fields, language; set with style.deck.apply). A deck built from a spec says how many slides it has (`specSlides`); `spec: true` returns the spec itself, to build again. Start here, then read one slide with query.slide. Slides are 1920 x 1080 px.",
       "role": "viewer",
       "effects": [],
       "undo": "n/a",
@@ -1214,7 +1296,7 @@
       "id": "query.render",
       "domain": "query",
       "title": "Look at slides",
-      "description": "See slides as they really look — the image comes back to you (fonts, pictures, layout, as the editor draws them, seconds-old edits included). Look after every visible change before you report it done. `slide`: the whole slide (1430×804). `slide` + `region` (slide px, 1920×1080 space): that part at full resolution, for small type, a table or an alignment. `slides` (\"all\" or a list, at most 20): one contact sheet, each slide numbered, for pacing and repetition across the deck. `failedLoads` counts missing pictures per slide; `failedFonts` names fonts that fell back. A few seconds the first time on a deck, about a second after. Files for the user are deck.exportPng. Any reader of the deck.",
+      "description": "See slides as they really look — the image comes back to you (fonts, pictures, layout, as the editor draws them, seconds-old edits included). Look after every visible change before you report it done. `slide`: the whole slide (1430×804). `slide` + `region` (slide px, 1920×1080 space): that part at full resolution, for small type, a table or an alignment. `slides` (\"all\" or a list, at most 20): one contact sheet, each slide numbered, for pacing and repetition across the deck. `slide` + `compare: \"before\"`: the slide before your current run first changed it, beside it now (`newSlide`: your run added it). `overflow`: text boxes whose text runs below the box with the real fonts — fix those you caused. `failedLoads` counts missing pictures per slide; `failedFonts` names fonts that fell back. A few seconds the first time on a deck, about a second after. Files for the user are deck.exportPng. Any reader of the deck.",
       "role": "viewer",
       "effects": [],
       "undo": "n/a",
@@ -1226,7 +1308,7 @@
       "id": "query.slide",
       "domain": "query",
       "title": "Read slide",
-      "description": "Everything on one slide: every object with all its properties in stacking order (first = backmost), the animation steps in play order, the transition, the background (null = default white) and the speaker notes as plain text (slide.notes.get has them as Markdown with their formatting). Text bodies come as plain `text` (blank line between paragraphs) plus `paragraphs` with runs and list attributes when formatted; colours as \"#rrggbb\" or { $token }. For one object use query.object. It also reads a component master: target the component (componentId) and read slide { index: 0 } — edit the master with the same object and text commands.",
+      "description": "Everything on one slide: every object with all its properties in stacking order (first = backmost), the animation steps in play order, the transition, the background (null = default white), the style pack layout it follows (slide.applyLayout), its brief (the message and claims of the spec that built it) and the speaker notes as plain text (slide.notes.get has them as Markdown with their formatting). Text bodies come as plain `text` (blank line between paragraphs) plus `paragraphs` with runs and list attributes when formatted; colours as \"#rrggbb\" or { $token }. For one object use query.object. It also reads a component master: target the component (componentId) and read slide { index: 0 } — edit the master with the same object and text commands.",
       "role": "viewer",
       "effects": [],
       "undo": "n/a",
@@ -1397,6 +1479,17 @@
       "hosts": ["browser", "server"]
     },
     {
+      "id": "slide.applyLayout",
+      "domain": "slide",
+      "title": "Lay a slide out with a pack layout",
+      "description": "Lay a slide out with one of its folder's style pack layouts (style.pack.get \"layouts\" lists them by purpose and slots): each slot becomes a box in the brand's text style and place, a picture, or the pack's component; the pack's footer, page number and decoration are drawn. `content` fills slots by name: text (a string or { paragraphs }) or a picture { assetId }. On a slide that has a layout already, the text and pictures already on the slide move into the slots of the same name, else of their `role` (top to bottom, left to right; set roles with object.update first to lay out a plain slide); `unplaced` lists what stayed where it was. `archetype` instead of `layoutId` takes the layout the pack maps to that kind of slide. `surface`: where the layout offers a choice (a photo tone). The pack must have been compiled. Undo: one step.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
       "id": "slide.collapse",
       "domain": "slide",
       "title": "Collapse slide section",
@@ -1535,6 +1628,41 @@
       "confirm": "never",
       "idempotent": true,
       "hosts": ["browser", "server"]
+    },
+    {
+      "id": "style.deck.apply",
+      "domain": "style",
+      "title": "Re-style a deck with its folder's pack",
+      "description": "Re-lay every slide of the deck that follows a pack layout with its folder's style pack, keeping each slot's content, and redraw the pack's footer, page numbers and decoration. `variant` sets the deck's variant, one value per pack axis (style.pack.get \"summary\" lists them) — its colours follow; `fields` fills the footer's fields (null clears one); `lang` picks the footer language; `guides` (default true) adds the pack's grid as guides. A slide whose layout this pack does not have is left as it is and listed; one on a surface its layout no longer offers goes to the default (listed). `spec` instead builds the whole deck from a deck spec (the build-deck playbook), checked against the pack first. Building again keeps the slides of unchanged spec slides, edits included, and builds the rest fresh; slides not built from a spec are refused unless `replace: true`. Not in ops.apply. The deck keeps the spec (query.deck { spec: true }) to build again; it is deck content every viewer has (spec: null forgets it). `relayout: \"archetype\"` also restyles slides on another pack's layout: each takes this pack's layout for its archetype, its content by slot and role, its colours and text styles this pack's by purpose; `slides` limits it. Undo: one step.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "style.pack.edit",
+      "domain": "style",
+      "title": "Change the folder's style pack",
+      "description": "Change the folder's style pack. `op`: \"set\" replaces it with `pack` (a whole pack, as style.pack.get \"pack\" returns one); \"update\" applies `patch`, a JSON merge patch (null removes; `layouts` and `components` may be an object keyed by id to change, add or, with null, remove single ones); \"delete\" removes it; \"compile\" turns it into the folder's colour and text-style tokens and its component masters (only what an earlier compile made is updated; tokens and masters people made are left alone) and names the fonts the folder still needs. The result is validated whole; nothing is written when it is not valid. `previous`: for an update, the update that undoes it; for set/delete, the pack before (set it back; null: there was none). Undo a compile: put the pack back, compile again (what a first compile created stays). Only when the user asked for a change to the brand. Needs the editor role in the folder.",
+      "role": "editor",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["server"]
+    },
+    {
+      "id": "style.pack.get",
+      "domain": "style",
+      "title": "Read the folder's style pack",
+      "description": "The folder's style pack — its brand as layouts, text styles, colour variants, components and rules. `part`: \"summary\" (start here), \"layouts\" (each layout's id, purpose and slots: pick one by purpose), \"layout\" (one, in full, with `layoutId`) or \"pack\" (all of it, large). null when the folder has none. Any member of the folder, and anyone with access to one of its decks.",
+      "role": "viewer",
+      "folderReaders": "content",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"]
     },
     {
       "id": "table.border.preset",
@@ -1734,7 +1862,7 @@
       "id": "text.list",
       "domain": "text",
       "title": "Set list formatting",
-      "description": "Turn paragraphs into a bullet or numbered list, change nesting, glyph or numbering, or remove the list — on the paragraphs a range touches (omit `range` for every paragraph; a range of length 0 targets the paragraph containing it), exactly like the Inspector list controls. `kind`: \"bullet\" | \"number\" | \"none\" (removes the list and its level/glyph/numbering); `toggle`: the editor toolbar button (removes the list if every targeted paragraph already has that kind, else applies it); `level` 0..8 sets nesting, `indent` +1/-1 shifts it; `bulletChar` (implies bullet; null = default glyph), `numberFormat` (implies number), `startAt` (restart numbering; null clears). To write new list text use text.set with list paragraphs.",
+      "description": "Turn paragraphs into a bullet or numbered list, change nesting, glyph or numbering, or remove the list — on the paragraphs a range touches (omit `range` for every paragraph; a range of length 0 targets the paragraph containing it), exactly like the Inspector list controls. `kind`: \"bullet\" | \"number\" | \"none\" (removes the list and its level/glyph/numbering; on a box with listLevels it writes list \"none\" so the level's default list no longer applies); `toggle`: the editor toolbar button (removes the list if every targeted paragraph already has that kind, else applies it); `level` 0..8 sets nesting, `indent` +1/-1 shifts it; `bulletChar` (implies bullet; null = default glyph), `numberFormat` (implies number), `startAt` (restart numbering; null clears). To write new list text use text.set with list paragraphs.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -1768,7 +1896,7 @@
       "id": "text.setBoxTypography",
       "domain": "text",
       "title": "Set box typography",
-      "description": "Set text boxes' own typography — fontFamily, fontWeight, fontSize, italic, underline, color, align, vAlign, lineHeight, letterSpacing, textTransform, paragraph spacing — as the Inspector does: inline formatting of the same attributes is removed so the new value shows in the whole box; a new fontFamily without fontWeight moves the weight to the nearest cut the family has; on a box linked to a folder text style the fields you set stop following the style. `null` clears an optional field. Part of a body: text.format. Tables: table.style.*.",
+      "description": "Set text boxes' own typography — fontFamily, fontWeight, fontSize, italic, underline, color, align, vAlign, lineHeight, letterSpacing, textTransform, paragraph spacing, minFontSize (the shrink floor), fontStretch (width %, within a variable folder font's wdth range) — as the Inspector does: inline formatting of the same attributes is removed so the new value shows in the whole box; a new fontFamily without fontWeight moves the weight to the nearest cut the family has; on a box linked to a folder text style the fields you set stop following the style. `null` clears an optional field. Part of a body: text.format. Tables: table.style.*.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -1814,7 +1942,7 @@
       "id": "token.create",
       "domain": "token",
       "title": "Add a design token",
-      "description": "Add a colour or a text style to the folder, for every deck in it. A colour is { name, value }; a folder holds at most 24 colours. A text style names what linked text takes — family, weight, size, lineHeight (multiple of the size), letterSpacing, paragraph spacing, colour (a hex or a folder colour), textTransform; apply it with text.style.apply; its name must be new in the folder (token.list). Returns the new id. Undo: token.delete. Needs the editor role in the folder.",
+      "description": "Add a colour or a text style to the folder, for every deck in it. A colour is { name, value } (\"#RRGGBB\" or \"#RRGGBBAA\"), optionally byVariant { axis, values } (a value per deck variant) and bySurface; a folder holds at most 24 colours. A text style holds the typography linked text takes (its fields are the schema's); apply it with text.style.apply; its name must be new in the folder (token.list). Returns the new id. Undo: token.delete. Needs the editor role in the folder.",
       "role": "editor",
       "effects": ["server"],
       "undo": "undoable",
@@ -1906,59 +2034,46 @@
       ]
     }
   ],
-  "knownMissing": [
+  "knownMissing": [],
+  "allowlist": [
     {
-      "capability": "deck.refreshThumbnail",
-      "phase": "A3",
-      "source": "web",
-      "where": "apps/web/src/ui/SlidesPanel.tsx",
+      "capability": "Instance administration (admins, who may sign in, which emails are sent)",
+      "reason": "Deliberately human-only (ADR 0014): text inside a deck is data written by other people, and an instruction hidden there must not be able to let a stranger into Narrative or promote one to owner of every folder. Admins act in the admin screen.",
       "routes": [
         {
-          "method": "PUT",
-          "path": "/decks/:id/thumbnail"
-        }
-      ],
-      "note": "the browser renders the thumbnail and uploads it; the render worker takes over in A3"
-    },
-    {
-      "capability": "component.refreshThumbnail",
-      "phase": "A3",
-      "source": "web",
-      "where": "apps/web/src/pages/ComponentMasterEditor.tsx",
-      "routes": [
+          "method": "GET",
+          "path": "/admin/users"
+        },
         {
-          "method": "PUT",
-          "path": "/components/:id/thumbnail"
-        }
-      ],
-      "note": "the master editor renders the thumbnail and uploads it; the render worker takes over in A3"
-    },
-    {
-      "capability": "component.create",
-      "phase": "A4",
-      "source": "route",
-      "routes": [
+          "method": "PATCH",
+          "path": "/admin/users/:userId"
+        },
+        {
+          "method": "GET",
+          "path": "/admin/allowed-emails"
+        },
         {
           "method": "POST",
-          "path": "/folders/:folderId/components"
+          "path": "/admin/allowed-emails"
+        },
+        {
+          "method": "DELETE",
+          "path": "/admin/allowed-emails/:email"
+        },
+        {
+          "method": "GET",
+          "path": "/admin/emails"
+        },
+        {
+          "method": "PATCH",
+          "path": "/admin/emails/:kind"
+        },
+        {
+          "method": "GET",
+          "path": "/admin/emails/:kind/preview"
         }
-      ],
-      "note": "create a master from a spec (component.promote makes one from objects); the route makes an empty master, which the tests and the eval seed with; the pack compiler uses it only for the few recurring blocks (pagination, headline, subline, copy, a repeated column/grid) — layouts stay pack data"
+      ]
     },
-    {
-      "capability": "component.restamp",
-      "phase": "A4",
-      "source": "new",
-      "note": "reapply a changed master to the stamps made from it, keeping their slot content (needs component provenance)"
-    },
-    {
-      "capability": "deck.exportPdf",
-      "phase": "A5",
-      "source": "new",
-      "note": "moved out of A3 by Petr (2026-10-10): not wanted yet; the render worker (A3) makes it a raster PDF of its PNGs when it is"
-    }
-  ],
-  "allowlist": [
     {
       "capability": "Zoom and pan",
       "reason": "Per-tab view state of one editor window; nothing in the document changes."
@@ -2001,7 +2116,7 @@
     },
     {
       "capability": "Browser sign-in and session (Google OAuth start/callback, current user, sign-out, desktop-app sign-in ticket)",
-      "reason": "The interactive browser login that mints the session cookie. Agents never sign in this way: they authenticate with a personal access token (or MCP OAuth) and every MCP session is already bound to one user. The desktop app's sign-in redeems a one-time ticket from the system browser into its own window session (ADR 0014).",
+      "reason": "The interactive browser login that mints the session cookie. Agents never sign in this way: they authenticate with a personal access token (or MCP OAuth) and every MCP session is already bound to one user. The desktop app's sign-in redeems a one-time ticket from the system browser into its own window session (ADR 0015).",
       "routes": [
         {
           "method": "GET",
@@ -2027,7 +2142,7 @@
     },
     {
       "capability": "Desktop app shell: native menu, opening .pptx files from the OS, server choice, app updates",
-      "reason": "Device-local behaviour of one installed app with no document effect (ADR 0014); an agent has no device. The import an opened file starts runs deck.importPptx, and the menu items run existing catalog actions."
+      "reason": "Device-local behaviour of one installed app with no document effect (ADR 0015); an agent has no device. The import an opened file starts runs deck.importPptx, and the menu items run existing catalog actions."
     },
     {
       "capability": "Render tokens for the e2e suite (development only)",

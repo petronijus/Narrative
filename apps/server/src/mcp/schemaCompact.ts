@@ -4,7 +4,7 @@
  * into the model's context (≈ 235 KB of JSON before this existed), so bytes
  * here are paid on every turn of every session.
  *
- * Five passes, all pure and per tool (every tool's schema stays
+ * Seven passes, all pure and per tool (every tool's schema stays
  * self-contained: `$defs` never cross tools):
  *
  *   0. Bounds that tell a model nothing are dropped: `minLength: 1` (197
@@ -41,6 +41,16 @@
  *      `object.create` the stroke and alpha fields were the same schema per
  *      kind. Duplicates are dropped; a union left with one alternative
  *      becomes that alternative (its siblings, e.g. a description, kept).
+ *   5. A nullable field is one schema. zod renders `.nullable()` (a field
+ *      `null` clears: token_update, the table styles,
+ *      text_setBoxTypography — 57 fields) as `anyOf: [X, { type: 'null' }]`;
+ *      when X is a plain typed schema it becomes X with `type: [t, 'null']`
+ *      (and `null` added to an `enum`), the same set of valid values in
+ *      about 18 fewer bytes.
+ *   6. A union of string constants is one enum. A discriminated union's
+ *      tag read on its own (`category: 'colors' | 'textStyles'`, an `op`)
+ *      renders as `anyOf` of `const` branches; it becomes
+ *      `{ type: 'string', enum: [...] }`, duplicates said once.
  */
 
 type JsonSchema = Record<string, unknown>
@@ -283,7 +293,11 @@ function replaceRefs(value: unknown, name: string, definition: JsonSchema): unkn
   return out
 }
 
-function inlineCheapDefinitions(root: JsonSchema): JsonSchema {
+/**
+ * Drop definitions nothing refers to any more and inline the ones that became
+ * cheap (sharedShapes.ts calls it after replacing subtrees that used them).
+ */
+export function inlineCheapDefinitions(root: JsonSchema): JsonSchema {
   let schema = root
   for (;;) {
     const defs = defsOf(schema)
@@ -351,6 +365,55 @@ function dedupeUnionAlternatives(node: JsonSchema): JsonSchema {
   return node
 }
 
+// ---------------------------------------------------------------------------
+// 5. Nullable fields
+// ---------------------------------------------------------------------------
+
+const NULL_TYPE = JSON.stringify({ type: 'null' })
+
+function mergeNullable(node: JsonSchema): JsonSchema {
+  const branches = node['anyOf']
+  if (!Array.isArray(branches) || branches.length !== 2) return node
+  const nullAt = branches.findIndex((b) => JSON.stringify(b) === NULL_TYPE)
+  if (nullAt === -1) return node
+  const other = branches[1 - nullAt]
+  // Only a plain typed schema: a $ref, a union or a const has no `type` to widen.
+  if (
+    !isObject(other) ||
+    typeof other['type'] !== 'string' ||
+    ['$ref', 'anyOf', 'oneOf', 'allOf', 'const'].some((k) => k in other)
+  )
+    return node
+  const { anyOf: _anyOf, ...siblings } = node
+  const enumValues = other['enum']
+  return {
+    ...other,
+    ...siblings,
+    type: [other['type'], 'null'],
+    ...(Array.isArray(enumValues) ? { enum: [...enumValues, null] } : {}),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 6. String constants
+// ---------------------------------------------------------------------------
+
+function mergeStringConstants(node: JsonSchema): JsonSchema {
+  const key = Array.isArray(node['anyOf']) ? 'anyOf' : Array.isArray(node['oneOf']) ? 'oneOf' : null
+  if (key === null) return node
+  const branches = node[key] as unknown[]
+  // Only bare constants: a branch's own description would be lost.
+  const bare = (b: unknown): b is JsonSchema =>
+    isObject(b) &&
+    b['type'] === 'string' &&
+    ('const' in b || Array.isArray(b['enum'])) &&
+    Object.keys(b).every((k) => k === 'type' || k === 'const' || k === 'enum')
+  if (branches.length < 2 || !branches.every(bare)) return node
+  const values = branches.flatMap((b) => ('const' in b ? [b['const']] : (b['enum'] as unknown[])))
+  const { [key]: _all, ...siblings } = node
+  return { ...siblings, type: 'string', enum: [...new Set(values)] }
+}
+
 /** The passes, in order. Returns a new schema; `root` is not modified. */
 export function compactInputSchema(input: JsonSchema): JsonSchema {
   const root = mapSchema(input, dropUninformativeBounds) as JsonSchema
@@ -369,5 +432,7 @@ export function compactInputSchema(input: JsonSchema): JsonSchema {
   const inlined = inlineCheapDefinitions(
     Object.keys(defs).length > 0 ? { ...collapsed, $defs: defs } : collapsed,
   )
-  return mapSchema(dropNestedClosedness(inlined, 0), dedupeUnionAlternatives) as JsonSchema
+  return mapSchema(dropNestedClosedness(inlined, 0), (node) =>
+    mergeStringConstants(mergeNullable(dedupeUnionAlternatives(node))),
+  ) as JsonSchema
 }

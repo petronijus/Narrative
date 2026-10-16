@@ -11,8 +11,12 @@
  *   - signed in: the server reads the `narrative_session` cookie on the
  *     WebSocket upgrade;
  *   - a share-link visit (`?share_token=…` in the page URL): the token goes
- *     as the `share_token` parameter, which the server checks first
- *     (apps/server/src/hocuspocus/authenticate.ts).
+ *     as the `share_token` query parameter of the WebSocket URL, which the
+ *     server checks first (apps/server/src/hocuspocus/authenticate.ts).
+ *
+ * The URL is built here, not passed as the provider's `parameters`: that
+ * option is gone since Hocuspocus 3, and a provider given it anyway ignores
+ * it silently — a share link would then connect without its token.
  */
 
 /** The share token of the current page, or null. */
@@ -20,13 +24,17 @@ export function shareTokenFrom(search: string): string | null {
   return new URLSearchParams(search).get('share_token')
 }
 
-/** The HocuspocusProvider options that authenticate a connection from a page with this query string. */
-export function hocuspocusAuthOptions(search: string): {
-  token: string
-  parameters?: { share_token: string }
-} {
+/**
+ * The HocuspocusProvider `url` and `token` that authenticate a connection to
+ * the sync server at `baseUrl` from a page with this query string.
+ */
+export function hocuspocusAuthOptions(
+  baseUrl: string,
+  search: string,
+): { url: string; token: string } {
   const shareToken = shareTokenFrom(search)
-  return shareToken === null
-    ? { token: 'cookie' }
-    : { token: 'cookie', parameters: { share_token: shareToken } }
+  if (shareToken === null) return { url: baseUrl, token: 'cookie' }
+  const url = new URL(baseUrl)
+  url.searchParams.set('share_token', shareToken)
+  return { url: url.toString(), token: 'cookie' }
 }

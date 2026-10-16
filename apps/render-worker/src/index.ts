@@ -12,7 +12,12 @@
 // bullmq and ioredis are CJS without an exports map; see apps/video-worker/src/index.ts.
 import bullmq from 'bullmq'
 import IORedisModule from 'ioredis'
-import { RENDER_QUEUE, type RenderJobData, type RenderJobResult } from '@narrative/shared'
+import {
+  RENDER_QUEUE,
+  renderPageName,
+  type RenderJobData,
+  type RenderJobResult,
+} from '@narrative/shared'
 import { readConfig } from './config.js'
 import { BrowserHolder } from './browser.js'
 import { WarmPages } from './warmPages.js'
@@ -82,14 +87,15 @@ worker.on('active', (job) => {
     job.data.kind === 'export'
       ? `export of ${job.data.uploads.length} slide(s)`
       : `look (${job.data.look.mode})`
-  log(`job=${job.id} deck=${job.data.deckId} ${what} started`)
+  log(`job=${job.id} ${renderPageName(job.data.page)} ${what} started`)
 })
 worker.on('completed', (job, result) => {
   const done = result.kind === 'export' ? `${result.slides.length} slide(s)` : 'look'
-  log(`job=${job.id} deck=${job.data.deckId} rendered ${done} (warm pages: ${warm.size})`)
+  log(`job=${job.id} ${renderPageName(job.data.page)} rendered ${done} (warm pages: ${warm.size})`)
 })
 worker.on('failed', (job, err) => {
-  log(`job=${job?.id} deck=${job?.data.deckId} failed: ${maskTokens(err.message)}`)
+  const page = job === undefined ? 'unknown' : renderPageName(job.data.page)
+  log(`job=${job?.id} ${page} failed: ${maskTokens(err.message)}`)
 })
 worker.on('error', (err) => {
   log(`worker error: ${maskTokens(err.message)}`)

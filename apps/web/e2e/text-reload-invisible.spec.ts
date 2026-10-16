@@ -18,7 +18,7 @@
  * is logged so the parent can pinpoint the broken layer.
  */
 
-import { test, type Page } from '@playwright/test'
+import { test, type Page } from './fixtures/test'
 import * as path from 'path'
 
 /**

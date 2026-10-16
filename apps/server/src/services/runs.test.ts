@@ -6,7 +6,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
-import { getSlideObjectsCtx } from '@narrative/slide-model'
+import { exampleStylePack } from '@narrative/shared'
+import { getSlideObjectsCtx, readDeckMeta } from '@narrative/slide-model'
 import type { PeerAwarenessState } from '@narrative/shared'
 import {
   createAgentWorld,
@@ -148,6 +149,39 @@ describe('revert', () => {
     expect(prop(serverDoc, 'r1', 'fill')).toBe(0x00ff00)
   })
 
+  it("puts the deck's meta back: a reverted style.deck.apply restores variant and fields", async () => {
+    // A folder with the pack and a token (style.deck.apply wants the pack compiled).
+    world.setFolder(
+      'deck1',
+      'f1',
+      { colors: { navy: { name: 'Navy', value: '#001e50' } } },
+      exampleStylePack() as unknown as Record<string, unknown>,
+    )
+    world.grant('f1', 'ed', 'editor')
+    const first = await must({
+      invocation: { command: 'style.deck.apply', input: { variant: { background: 'dark' } } },
+    })
+    await must({
+      invocation: {
+        command: 'style.deck.apply',
+        input: { fields: { client: 'Acme' }, lang: 'de' },
+      },
+    })
+    const doc = world.hocuspocus.documents.get('deck1')!
+    expect(readDeckMeta(doc)).toEqual({
+      variant: { background: 'dark' },
+      fields: { client: 'Acme' },
+      lang: 'de',
+    })
+    const reverted = await world.runtime.runs.revertRun({
+      userId: 'ed',
+      target: { kind: 'deck', deckId: 'deck1' },
+      runId: first.runId!,
+    })
+    expect(reverted).toMatchObject({ revertedChanges: 2, status: 'reverted' })
+    expect(readDeckMeta(doc)).toEqual({})
+  })
+
   it('reverts only the last N changes of a run', async () => {
     const run = await must({ invocation: update('r1', { fill: '#111111' }) })
     await must({ invocation: update('r2', { fill: '#222222' }) })
@@ -244,6 +278,58 @@ describe('revert', () => {
       invocation: { command: 'agent.revert', input: { runId: run.runId } },
     })
     expect(out).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+  })
+})
+
+describe('the state before a run (query.render compare)', () => {
+  beforeEach(() => setup())
+
+  it('is the document as it was just before the run first wrote it, kept with the history', async () => {
+    // The fixture's r1 is 0x4060e0 (the revert tests restore it).
+    const first = await must({ invocation: update('r1', { fill: '#ff0000' }) })
+    await must({ invocation: update('r2', { opacity: 0.5 }) })
+    const before = world.runtime.runs.stateBefore(first.runId!)
+    expect(before?.document).toEqual({ kind: 'deck', deckId: 'deck1' })
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, before!.update)
+    // Neither of the run's writes: the first one's state, not the second's.
+    expect(prop(doc, 'r1', 'fill')).toBe(0x4060e0)
+    expect(prop(doc, 'r2', 'opacity')).toBe(1)
+    // A run that wrote nothing, or an unknown one, has none.
+    expect(world.runtime.runs.stateBefore('no-such-run')).toBeNull()
+  })
+
+  it('is let go when the run closes (only the current run is compared with)', async () => {
+    const first = await must({ invocation: update('r1', { fill: '#ff0000' }) })
+    expect(world.runtime.runs.stateBefore(first.runId!)).not.toBeNull()
+    await must({ invocation: { command: 'agent.startRun', input: { request: 'next' } } })
+    expect(world.runtime.runs.stateBefore(first.runId!)).toBeNull()
+  })
+
+  it('lets the oldest go past the process-wide budget, and keeps none over 8 MB', async () => {
+    await world.destroy()
+    await setup({ beforeStatesBudgetBytes: 1 })
+    world.createDeck('deck2')
+    world.grant('deck2', 'ed', 'editor')
+    const first = await must({ invocation: update('r1', { fill: '#ff0000' }) })
+    expect(world.runtime.runs.stateBefore(first.runId!)).not.toBeNull()
+    // A second deck's run: within a 1-byte budget only the newest is kept.
+    const second = await must({
+      target: { deckId: 'deck2' },
+      invocation: update('r1', { fill: '#00ff00' }),
+    })
+    expect(world.runtime.runs.stateBefore(second.runId!)).not.toBeNull()
+    expect(world.runtime.runs.stateBefore(first.runId!)).toBeNull()
+  })
+
+  it('goes with the history when the run is reverted', async () => {
+    const first = await must({ invocation: update('r1', { fill: '#ff0000' }) })
+    await world.runtime.runs.revertRun({
+      userId: 'ed',
+      target: { kind: 'deck', deckId: 'deck1' },
+      runId: first.runId!,
+    })
+    expect(world.runtime.runs.stateBefore(first.runId!)).toBeNull()
   })
 })
 
@@ -377,6 +463,19 @@ describe('run lifecycle', () => {
       patch: { hyperlink: 'https://example.com/p' },
       file: { base64: { redacted: 'base64', bytes: 8 } },
     })
+  })
+
+  it('logs a large input as its size and digest, and a long refusal bounded', async () => {
+    await setup()
+    const text = 'Hello, world. '.repeat(6_500)
+    await exec({
+      invocation: { command: 'text.set', input: { target: { slide: 's1', object: 'nope' }, text } },
+    })
+    const op = world.store.ops.at(-1)!
+    expect(op.input).toMatchObject({ truncated: true, bytes: expect.any(Number) })
+    expect(JSON.stringify(op.input)).not.toContain('Hello, world')
+    expect((op.input as { sha256: string }).sha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(op.error?.message.length).toBeLessThanOrEqual(8 * 1024)
   })
 
   it('closes runs left open by a previous process at startup', async () => {

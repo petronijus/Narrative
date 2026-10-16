@@ -43,13 +43,13 @@ only after a very long time. The shortcut only exposed it: the thumbnail menu's
    (background = opening pass, urgent = anything after), one render in flight.
    Gotcha found on the way: the order effect first runs with an **empty** list
    (before sync) — only a non-empty run counts as the opening.
-   Measured on the Proseware deck: copy's thumbnail 12 s → 1.7 s.
+   Measured on the reference deck: copy's thumbnail 12 s → 1.7 s.
 
 ## Verified
 
 - `pnpm typecheck`, `pnpm lint` (no new warnings), `pnpm -r test`: 1,632 tests,
   32 skipped.
-- Real Proseware ch1-ch2 deck (local), slide 7 duplicated: canvas draws, no render
+- Real reference deck (local), slide 7 duplicated: canvas draws, no render
   error, texts survive a reload, thumbnail ~1.7 s after Ctrl+D.
 - New e2e `apps/web/e2e/slide-duplicate.spec.ts` (image slide → Mod+D → the copy
   draws the image and an edit on it reaches the canvas) passes.
@@ -57,7 +57,7 @@ only after a very long time. The shortcut only exposed it: the thumbnail menu's
 ## Verified on the MacBook (2026-09-25, evening)
 
 - **Negative control holds.** `slide-duplicate.spec.ts` against the v0.9.28
-  `ResourceManager.ts` (everything else at `1b1dab4`): 3/3 runs fail — the
+  `ResourceManager.ts` (everything else at `6d8a91b`): 3/3 runs fail — the
   copy's canvas stays blank (98 blue pixels where ~3,700 are expected). Back
   on the fixed file: 3/3 pass. The single 64 px test image is enough to hit
   the race; the spec needs no heavier slide.

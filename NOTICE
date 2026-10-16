@@ -12,6 +12,10 @@ Third-party dependencies
   license: free for commercial and noncommercial use, but it may not be resold
   or used to build a competing product (https://gsap.com/standard-license).
   GSAP is installed from npm and is not redistributed by this repository.
+- Codicon (https://github.com/microsoft/vscode-codicons), Copyright (c)
+  Microsoft Corporation — `apps/web/e2e/fixtures/codicon.ttf`, a test fixture
+  font, redistributed under CC BY 4.0
+  (https://creativecommons.org/licenses/by/4.0/).
 - All other dependencies are under permissive open-source licenses (MIT,
   Apache-2.0, BSD-2/3-Clause, ISC, 0BSD, OFL-1.1, Unlicense). Run
   `pnpm licenses list --prod` for the authoritative list.

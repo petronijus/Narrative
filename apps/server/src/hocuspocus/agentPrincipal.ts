@@ -47,13 +47,9 @@ export function agentPrincipalMessageFor(
 /** The Hocuspocus extension that sends the message on every new connection. */
 export function agentPrincipalExtension(opts: { principalKeys: AgentPrincipalKeys }): Extension {
   return {
-    async connected({
-      documentName,
-      context,
-      connectionInstance,
-    }: connectedPayload): Promise<void> {
+    async connected({ documentName, context, connection }: connectedPayload): Promise<void> {
       const message = agentPrincipalMessageFor(opts.principalKeys, documentName, context)
-      if (message !== null) connectionInstance.sendStateless(JSON.stringify(message))
+      if (message !== null) connection.sendStateless(JSON.stringify(message))
     },
   }
 }

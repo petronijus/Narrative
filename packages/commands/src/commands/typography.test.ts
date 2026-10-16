@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { createUndoManager, readParagraphAttrsForRange } from '@narrative/slide-model'
 import type { TableObject } from '@narrative/shared'
 import { harness, type Harness } from '../testing/harness.js'
-import { FIXTURE_FONT_FAMILY, FIXTURE_PAGE_NUMBER_STYLE_ID } from '../testing/fixtureTokens.js'
+import {
+  FIXTURE_FONT_FAMILY,
+  FIXTURE_PAGE_NUMBER_STYLE_ID,
+  FIXTURE_VARIABLE_FAMILY,
+} from '../testing/fixtureTokens.js'
+import { propagateTextStyles, textStyleFieldsFromObject } from '../text/textStyle.js'
 
 /** Inline formatting of a body as [text, attributes] runs. */
 const runs = (h: Harness, slide = 's1', id = 't1') =>
@@ -12,6 +17,21 @@ const runs = (h: Harness, slide = 's1', id = 't1') =>
   ])
 
 describe('text.setBoxTypography', () => {
+  it("sets a width within the family's wdth axis and refuses one outside it", () => {
+    const h = harness()
+    const set = (style: Record<string, unknown>) =>
+      h.run('text.setBoxTypography', { slide: 's1', objects: ['t1'], style })
+    set({ fontFamily: FIXTURE_VARIABLE_FAMILY, fontStretch: 130 })
+    expect(h.plain('s1', 't1')['fontStretch']).toBe(130)
+    expect(() => set({ fontStretch: 150 })).toThrow(/widths 100–130/)
+    // A family without a width axis is drawn at 100 only.
+    expect(() => set({ fontFamily: FIXTURE_FONT_FAMILY, fontStretch: 125 })).toThrow(
+      /no width axis/,
+    )
+    set({ fontFamily: FIXTURE_FONT_FAMILY, fontStretch: 100 })
+    expect(h.plain('s1', 't1')['fontStretch']).toBe(100)
+  })
+
   it('sets the box value and removes the inline formatting that would hide it', () => {
     const h = harness()
     // t1 is "Quarterly results" with "results" bold inline.
@@ -78,7 +98,8 @@ describe('text.setBoxTypography', () => {
     expect(h.plain('s1', 't1')).toMatchObject({
       textStyleId: 'title',
       fontSize: 48,
-      textStyleOverrides: ['fontSize'],
+      // Text styles carry alignment since A4.2e: set by hand, it is an override too.
+      textStyleOverrides: ['fontSize', 'align'],
     })
   })
 
@@ -162,6 +183,74 @@ describe('text.style.apply', () => {
     )
     // Unlinking needs no tokens.
     h.run('text.style.apply', { slide: 's1', objects: ['t1'], style: null })
+  })
+})
+
+describe('the shrink floor (A4.2a)', () => {
+  function withBodyFloor(h: Harness, minSize: number): void {
+    h.ctx.folderTokens!.textStyles['body']!.minSize = minSize
+  }
+
+  it("reaches a linked text box as minFontSize, never a table's defaults", () => {
+    const h = harness()
+    withBodyFloor(h, 18)
+    h.run('text.style.apply', { slide: 's1', objects: ['t1', 'tbl1'], style: 'Body' })
+    expect(h.plain('s1', 't1')).toMatchObject({ textStyleId: 'body', minFontSize: 18 })
+    const table = h.plain('s1', 'tbl1') as unknown as TableObject
+    expect(table.defaults.textStyleId).toBe('body')
+    expect(table.defaults).not.toHaveProperty('minFontSize')
+    h.run('text.style.apply', { slide: 's1', objects: ['tbl1'], style: 'Body', reset: true })
+    expect(h.plain('s1', 'tbl1') as unknown as TableObject).not.toHaveProperty(
+      'defaults.minFontSize',
+    )
+  })
+
+  it('follows a changed style on boxes, not on tables, unless the box set its own', () => {
+    const h = harness()
+    h.run('text.style.apply', { slide: 's1', objects: ['t1', 'tbl1'], style: 'Body' })
+    withBodyFloor(h, 12)
+    expect(propagateTextStyles(h.ctx.deck!, h.ctx.folderTokens!, new Set(['body']))).toBe(1)
+    expect(h.plain('s1', 't1')['minFontSize']).toBe(12)
+    expect((h.plain('s1', 'tbl1') as unknown as TableObject).defaults).not.toHaveProperty(
+      'minFontSize',
+    )
+    // Set by hand on the box: an override the style no longer reaches.
+    h.run('text.setBoxTypography', { slide: 's1', objects: ['t1'], style: { minFontSize: 20 } })
+    expect(h.plain('s1', 't1')['textStyleOverrides']).toEqual(['minFontSize'])
+    withBodyFloor(h, 10)
+    propagateTextStyles(h.ctx.deck!, h.ctx.folderTokens!, new Set(['body']))
+    expect(h.plain('s1', 't1')['minFontSize']).toBe(20)
+  })
+
+  it("carries the style's list levels onto a linked box, colours resolved, not to a table (A4.2b)", () => {
+    const h = harness()
+    h.ctx.folderTokens!.textStyles['body']!.levels = [
+      { list: 'bullet', bulletChar: '›', bulletColor: { $token: 'colors.brandBlue' }, indent: 30 },
+      { list: 'bullet', color: '#888888' },
+    ]
+    h.run('text.style.apply', { slide: 's1', objects: ['t1', 'tbl1'], style: 'Body' })
+    expect(h.plain('s1', 't1')['listLevels']).toEqual([
+      { list: 'bullet', bulletChar: '›', bulletColor: 0x2040c0, indent: 30 },
+      { list: 'bullet', color: 0x888888 },
+    ])
+    expect((h.plain('s1', 'tbl1') as unknown as TableObject).defaults).not.toHaveProperty(
+      'listLevels',
+    )
+    expect(
+      textStyleFieldsFromObject({ fontSize: 24, listLevels: h.plain('s1', 't1')['listLevels'] })[
+        'levels'
+      ],
+    ).toEqual([
+      { list: 'bullet', bulletChar: '›', bulletColor: '#2040c0', indent: 30 },
+      { list: 'bullet', color: '#888888' },
+    ])
+  })
+
+  it('a style made from a box takes its floor', () => {
+    expect(textStyleFieldsFromObject({ fontSize: 24, minFontSize: 12 })).toMatchObject({
+      size: 24,
+      minSize: 12,
+    })
   })
 })
 

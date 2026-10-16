@@ -1,7 +1,7 @@
 /**
  * lib/fontFileMetrics.test.ts
  *
- * A hand-built sfnt with just `head`, `hhea` and `OS/2`, using Proseware Pro's
+ * A hand-built sfnt with just `head`, `hhea` and `OS/2`, using Brand Sans's
  * real numbers: hhea 964/−198/0 and typo 704/−198/75 with USE_TYPO_METRICS
  * set. The point of the whole module is that PowerPoint uses the first and
  * the browser the second, so both must come out exactly.
@@ -81,7 +81,7 @@ describe('readFontVerticalMetrics', () => {
       typoDescender: -198,
       typoLineGap: 75,
     })
-    // PowerPoint's single spacing for Proseware Pro — not the 0.977 the
+    // PowerPoint's single spacing for Brand Sans — not the 0.977 the
     // browser derives from the typo metrics.
     expect(powerpointLineHeightRatio(m!)).toBeCloseTo(1.162, 6)
   })

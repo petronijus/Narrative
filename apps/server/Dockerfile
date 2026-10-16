@@ -2,12 +2,14 @@
 # Instaluje všechny deps (incl. devDeps) a kompiluje TypeScript → dist/
 FROM node:24-alpine AS builder
 
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+RUN corepack enable && corepack prepare pnpm@12.11.2 --activate
 
 WORKDIR /app
 
 # Kopírujeme workspace manifesty (využití Docker layer cache)
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+# pnpm-workspace.yaml names patches (patchedDependencies); install refuses without them
+COPY patches ./patches
 COPY apps/server/package.json            apps/server/package.json
 COPY packages/shared/package.json        packages/shared/package.json
 COPY packages/slide-model/package.json   packages/slide-model/package.json
@@ -29,12 +31,14 @@ RUN pnpm --filter @narrative/server build
 # Minimální image — node_modules z builderu (prod-only deps via prune), dist, drizzle
 FROM node:24-alpine AS runtime
 
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+RUN corepack enable && corepack prepare pnpm@12.11.2 --activate
 
 WORKDIR /app
 
 # Zkopírujeme workspace manifesty
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+# pnpm-workspace.yaml names patches (patchedDependencies); install refuses without them
+COPY patches ./patches
 COPY apps/server/package.json            apps/server/package.json
 COPY packages/shared/package.json        packages/shared/package.json
 COPY packages/slide-model/package.json   packages/slide-model/package.json

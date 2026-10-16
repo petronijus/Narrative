@@ -162,9 +162,9 @@ describe('hyperlinks', () => {
   it('stores the sanitised form of a safe href', () => {
     const out = RectangleObjectSchema.parse({
       ...rect,
-      hyperlink: { kind: 'url', href: 'woodgrove.com/work' },
+      hyperlink: { kind: 'url', href: 'example.com/work' },
     })
-    expect(out.hyperlink).toEqual({ kind: 'url', href: 'https://woodgrove.com/work' })
+    expect(out.hyperlink).toEqual({ kind: 'url', href: 'https://example.com/work' })
   })
 })
 
@@ -183,7 +183,7 @@ describe('text', () => {
   it('rejects duplicate and unknown text-style override keys', () => {
     const dup = TextObjectSchema.safeParse({ ...text, textStyleOverrides: ['color', 'color'] })
     expect(issuePaths(dup)).toEqual([['textStyleOverrides']])
-    const unknown = TextObjectSchema.safeParse({ ...text, textStyleOverrides: ['align'] })
+    const unknown = TextObjectSchema.safeParse({ ...text, textStyleOverrides: ['vAlign'] })
     expect(issuePaths(unknown)).toEqual([['textStyleOverrides', 0]])
   })
 

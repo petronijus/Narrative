@@ -217,6 +217,13 @@ export interface ParsedTextRun {
 
 export interface ParsedShape {
   kind: ParsedShapeKind
+  /**
+   * The PowerPoint placeholder the shape fills (`<p:ph type>`: title,
+   * ctrTitle, subTitle, body, pic, obj when untyped, …), on a slide shape
+   * only. A hint for what the object is for (A5.5): import results report
+   * it, nothing stores it.
+   */
+  placeholderType?: string
   /** Top-left in slide-local px (96 DPI). */
   x: number
   y: number
@@ -501,7 +508,8 @@ const presentationLevelMarginsStore = new WeakMap<ThemeColourMap, Array<number |
  * inheritance chain instead of persisting raw OOXML markup like `+mn-lt`
  * into the deck's `fontFamily`.
  */
-function resolveTypeface(raw: unknown, theme: ThemeColourMap): string | undefined {
+/** A `<a:latin typeface>` value with theme references (`+mj-lt`, `+mn-lt`) resolved. */
+export function resolveTypeface(raw: unknown, theme: ThemeColourMap): string | undefined {
   if (typeof raw !== 'string') return undefined
   const tf = raw.trim()
   if (tf.length === 0) return undefined
@@ -869,7 +877,7 @@ interface TextStyleDefaults {
  * down the inheritance chain and resolving it once at the end keeps the two
  * questions — *which layer wins* and *what the number means* — apart.
  */
-type LineSpacingDecl = { kind: 'pct'; value: number } | { kind: 'pts'; value100: number }
+export type LineSpacingDecl = { kind: 'pct'; value: number } | { kind: 'pts'; value100: number }
 
 /** `<a:spcBef>` / `<a:spcAft>` as px, when given in points (`<a:spcPts>`). */
 function readSpacingPts(pPrChildren: XmlNode[], name: 'a:spcBef' | 'a:spcAft'): number | undefined {
@@ -1006,7 +1014,7 @@ function readOnOff(v: unknown): boolean | undefined {
  * (`<a:pPr>`, `<a:lvl1pPr>`, …). Returns undefined when absent or malformed,
  * so the caller falls through to the next layer.
  */
-function readLineSpacingDecl(pPrChildren: XmlNode[]): LineSpacingDecl | undefined {
+export function readLineSpacingDecl(pPrChildren: XmlNode[]): LineSpacingDecl | undefined {
   const lnSpc = findFirst(pPrChildren, 'a:lnSpc')
   if (lnSpc === undefined) return undefined
   const lnSpcChildren = getChildren(lnSpc, 'a:lnSpc')
@@ -1125,7 +1133,7 @@ interface PlaceholderEntry {
   /**
    * The placeholder's own `<p:spPr>` fill. A slide shape bound to this
    * placeholder that declares no fill of its own inherits it, as PowerPoint
-   * does — the Proseware deck's black corner mark is a body placeholder whose
+   * does — the reference deck's black corner mark is a body placeholder whose
    * slide copy carries only the path, the black living on the layout.
    */
   fill?: PlaceholderFill
@@ -1289,7 +1297,7 @@ function mapBuAutoNumType(raw: string | undefined): ListNumberFormat {
  * with full fidelity. `kind === 'none'` is an explicit `<a:buNone/>` that
  * vetoes an inherited bullet; `undefined` means "no declaration here".
  */
-interface BulletDecl {
+export interface BulletDecl {
   kind: 'bullet' | 'numbered' | 'none'
   /** Glyph from `<a:buChar char="…">` (bullet kind only). */
   bulletChar?: string
@@ -1305,7 +1313,7 @@ interface BulletDecl {
  * child wins (buNone / buChar / buAutoNum are mutually exclusive in valid
  * OOXML).
  */
-function extractBulletDecl(pPrLike: XmlNode, tag: string): BulletDecl | undefined {
+export function extractBulletDecl(pPrLike: XmlNode, tag: string): BulletDecl | undefined {
   for (const ch of getChildren(pPrLike, tag)) {
     const t = getTag(ch)
     if (t === 'a:buNone') return { kind: 'none' }
@@ -2102,9 +2110,12 @@ function parseShape(
   /** Captured from the slide shape's `<p:ph type="…">`. Drives master
    *  `<p:txStyles>` bucket lookup (title vs body vs other) below. */
   let slideShapePhType: string | undefined
+  /** The shape fills a placeholder (an untyped `<p:ph>` is an "obj"). */
+  let placeholderHint = false
   {
     const ph = findPlaceholderNode(sp, sourceTag)
     if (ph) {
+      placeholderHint = true
       const phAttrs = getAttrs(ph)
       const type = typeof phAttrs['@type'] === 'string' ? (phAttrs['@type'] as string) : undefined
       const idx = typeof phAttrs['@idx'] === 'string' ? (phAttrs['@idx'] as string) : undefined
@@ -2418,7 +2429,7 @@ function parseShape(
   // takes nothing from `fillRef`; one whose `<a:ln>` declares a fill takes
   // no outline colour from `lnRef` — `<a:ln><a:noFill/></a:ln>` with an
   // accent `lnRef` is "no outline", and drawing the accent colour put a red
-  // frame round every grey box of the Proseware deck's wireframes.
+  // frame round every grey box of the reference deck's wireframes.
   // `styleFontColor` is captured here and consumed in the text-parsing block
   // below as the fall-back run colour when `<a:rPr><a:solidFill>` is absent.
   let styleFontColor: number | undefined
@@ -3057,7 +3068,7 @@ function parseShape(
     // outline level whose `marL` applies. Narrative renders `level` as a fixed
     // per-level indent, so on a plain paragraph the level is kept only when
     // that level's margin, resolved down the same chain PowerPoint uses, is
-    // actually non-zero. Keeping it unconditionally pushed the Proseware deck's
+    // actually non-zero. Keeping it unconditionally pushed the reference deck's
     // "We made it to our first Camp!" (lvl 1, marL 0, indent 0) 108 px right.
     const shapeLstStyle =
       txBody !== undefined ? findFirst(getChildren(txBody, 'p:txBody'), 'a:lstStyle') : undefined
@@ -3158,6 +3169,7 @@ function parseShape(
     if (frameTextStrokeAlpha !== undefined) shape.textStrokeAlpha = frameTextStrokeAlpha
     if (frameTextStrokeWidth !== undefined) shape.textStrokeWidth = frameTextStrokeWidth
   }
+  if (placeholderHint) shape.placeholderType = slideShapePhType ?? 'obj'
   return shape
 }
 
@@ -4415,7 +4427,16 @@ function parseSlide(
 async function parseThemeColours(zip: JSZip): Promise<ThemeColourMap> {
   const themeEntry = zip.file('ppt/theme/theme1.xml')
   if (themeEntry === null) return {}
-  const xml = await themeEntry.async('string')
+  return themeFromXml(await themeEntry.async('string'))
+}
+
+/**
+ * A theme part's colour scheme, its font scheme registered alongside so
+ * `resolveTypeface` resolves `+mj-lt` / `+mn-lt` against it. The deck
+ * import reads theme1; the master reader (masterReader.ts) reads each
+ * master's own theme through its rels.
+ */
+export function themeFromXml(xml: string): ThemeColourMap {
   const xmlParser = ooxmlParser()
   const tree = xmlParser.parse(xml) as XmlNode[]
   const map: ThemeColourMap = {}

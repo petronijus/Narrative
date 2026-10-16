@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { test, expect, type Page, type Download } from '@playwright/test'
+import { test, expect, type Page, type Download } from './fixtures/test'
 
 /**
  * E2E: full M28 happy path.
@@ -119,14 +119,15 @@ test.describe('M28 pptx round-trip', () => {
     await page.goto(`/deck/${id}`)
     await expect(page.locator('canvas').first()).toBeVisible({ timeout: 10_000 })
 
-    // Hit the toolbar Export button — owner-gated, so it should be visible on
-    // a freshly created deck.
-    const exportButton = page.getByRole('button', { name: /Export to PowerPoint/i })
-    await expect(exportButton).toBeVisible({ timeout: 5_000 })
+    // The toolbar's Export menu; its PowerPoint item is owner-gated, so it is
+    // there on a freshly created deck.
+    const exportMenu = page.getByRole('button', { name: /^Export$/ })
+    await expect(exportMenu).toBeVisible({ timeout: 5_000 })
+    await exportMenu.click()
 
-    // The toolbar button opens a compatibility-warning dialog first (D2); the
-    // fetch that produces the file happens when the user confirms inside it.
-    await exportButton.click()
+    // The item opens a compatibility-warning dialog first (D2); the fetch
+    // that produces the file happens when the user confirms inside it.
+    await page.getByRole('menuitem', { name: /Export to PowerPoint/i }).click()
     const exportDialog = page.getByRole('dialog', { name: /Export to PowerPoint/i })
     await expect(exportDialog).toBeVisible({ timeout: 5_000 })
 

@@ -1,7 +1,7 @@
 /**
  * routes/desktopAuth.test.ts
  *
- * The desktop app's sign-in through the real routes (ADR 0014): the
+ * The desktop app's sign-in through the real routes (ADR 0015): the
  * desktop start parameters, the callback's hand-off page instead of a
  * session, and the ticket redeem with its cross-site guard. Google, the
  * database and the sign-in policy are stubbed; the cookies, the signed state

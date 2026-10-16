@@ -1,7 +1,7 @@
 /**
  * auth/desktopTickets.test.ts
  *
- * The desktop sign-in tickets (auth/desktopTickets.ts, ADR 0014): one
+ * The desktop sign-in tickets (auth/desktopTickets.ts, ADR 0015): one
  * redeem, 60 s, only with the PKCE verifier of the challenge they were
  * minted for, and bounded in number.
  */

@@ -1,7 +1,7 @@
 /**
  * present/presentScreen.ts
  *
- * Presenting on a chosen display (ADR 0014 decision 8): with the Window
+ * Presenting on a chosen display (ADR 0015 decision 8): with the Window
  * Management API (Chrome, Edge and the desktop app) the person picks which
  * of this computer's displays the presentation goes fullscreen on — the
  * projector, say, while the presenter view stays on the laptop. The choice

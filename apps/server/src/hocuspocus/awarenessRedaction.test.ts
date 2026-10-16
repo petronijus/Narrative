@@ -71,7 +71,7 @@ describe('looksLikeEmail', () => {
     expect(looksLikeEmail('petr@example.com')).toBe(true)
     expect(looksLikeEmail('Contact: a.b+c@sub.example.co.uk.')).toBe(true)
     expect(looksLikeEmail('Petr Janda')).toBe(false)
-    expect(looksLikeEmail('Petr @ Woodgrove')).toBe(false)
+    expect(looksLikeEmail('Petr @ Acme')).toBe(false)
     expect(looksLikeEmail('agent:run_1')).toBe(false)
   })
 })
@@ -185,12 +185,14 @@ describe('trackAwarenessRedaction', () => {
       webSocket: {},
       readOnly: true,
       context: { userId: 'share:abcd1234', shareToken: 'tok' },
+      messageAddress: 'deck1',
       send: (m: Uint8Array) => viewerSent.push(m),
     }
     const editor = {
       webSocket: {},
       readOnly: false,
       context: { userId: 'ed' },
+      messageAddress: 'deck1',
       send: (m: Uint8Array) => editorSent.push(m),
     }
     document.addConnection(viewer as unknown as Connection)
@@ -231,8 +233,7 @@ describe('end to end over WebSocket', () => {
     clientId: number,
   ): Record<string, unknown> | undefined {
     return client.provider.awareness!.getStates().get(clientId) as
-      | Record<string, unknown>
-      | undefined
+      Record<string, unknown> | undefined
   }
 
   it('a viewer never receives the sub or email another peer published; an editor does', async () => {

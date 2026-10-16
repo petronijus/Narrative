@@ -6,7 +6,7 @@
 
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { maskCredentials } from '../../../apps/server/src/auth/credentialPatterns.js'
+import { maskCredentials } from '../../../packages/shared/src/credentialPatterns.js'
 import type { Check, Transcript, Usage } from './types.js'
 
 export type Status = 'pass' | 'fail' | 'error' | 'skipped'

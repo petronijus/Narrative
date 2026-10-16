@@ -1,10 +1,10 @@
 {
   "name": "@narrative/desktop",
   "productName": "Narrative",
-  "version": "0.10.26",
+  "version": "0.14.0",
   "private": true,
   "type": "module",
-  "description": "Narrative desktop app: the Electron shell that loads the editor from a Narrative server (ADR 0014)",
+  "description": "Narrative desktop app: the Electron shell that loads the editor from a Narrative server (ADR 0015)",
   "main": "dist/main.cjs",
   "desktopName": "narrative.desktop",
   "scripts": {

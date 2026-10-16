@@ -36,6 +36,7 @@ import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { EXPORT_SWEEP_INTERVAL_MS, sweepExpiredExports } from '../services/exportSweep.js'
 import { RunManager } from '../services/runs.js'
 import { createDbAccess, type AgentAccess } from './access.js'
+import { notifyAgentConfirmation } from '../email/events.js'
 import { createAgentDocuments, type AgentDocuments } from './documents.js'
 import { createAgentPresence, type AgentPresence, type AgentPrincipalKeys } from './presence.js'
 import { createDrizzleRunStore, type RunStore } from './runStore.js'
@@ -44,6 +45,7 @@ import { AgentConfirmations } from './confirmations.js'
 import { ServerHost } from './serverHost.js'
 import { repointMovedMedia } from '../services/localiseMedia.js'
 import { createDbFolderFontsReader, type FolderFontsReader } from './folderFonts.js'
+import { createDbFolderStylePackReader, type FolderStylePackReader } from './folderStylePack.js'
 import { createDbFolderTokensReader, type FolderTokensReader } from './folderTokens.js'
 
 /** Agent runs (and their ops) idle for longer than this are deleted. */
@@ -166,6 +168,8 @@ export interface AgentRuntimeOptions {
   documentLingerMs?: number
   runIdleMs?: number
   maxOpenRunsPerUser?: number
+  /** The kept "before" states of runs together (tests; default BEFORE_STATES_BUDGET_BYTES). */
+  beforeStatesBudgetBytes?: number
   presenceIdleMs?: number
   now?: () => Date
   /**
@@ -191,6 +195,8 @@ export interface AgentRuntimeOptions {
   folderTokens?: FolderTokensReader
   /** Where commands read the target folder's font faces; default: its font assets (agent/folderFonts.ts). */
   folderFonts?: FolderFontsReader
+  /** Where commands read the target folder's style pack; default: the folder document (agent/folderStylePack.ts). */
+  folderStylePack?: FolderStylePackReader
   /** Test seam: confirmation summary lookups (default: the database). */
   confirmationLookups?: ConfirmationLookups
 }
@@ -243,6 +249,9 @@ export async function createAgentRuntime(opts: AgentRuntimeOptions): Promise<Age
     log: opts.log,
     ...(opts.now === undefined ? {} : { now: opts.now }),
     ...(opts.runIdleMs === undefined ? {} : { idleMs: opts.runIdleMs }),
+    ...(opts.beforeStatesBudgetBytes === undefined
+      ? {}
+      : { beforeStatesBudgetBytes: opts.beforeStatesBudgetBytes }),
     ...(opts.maxOpenRunsPerUser === undefined
       ? {}
       : { maxOpenRunsPerUser: opts.maxOpenRunsPerUser }),
@@ -271,7 +280,22 @@ export async function createAgentRuntime(opts: AgentRuntimeOptions): Promise<Age
     ...(opts.apiBaseUrl === undefined ? {} : { apiBaseUrl: opts.apiBaseUrl }),
     ...(opts.uploadSessions === undefined ? {} : { uploadSessions: opts.uploadSessions }),
   })
-  const confirmations = new AgentConfirmations()
+  // A confirmation nobody answers within minutes reaches its person by email
+  // (the email kind can be switched off in the admin screen).
+  const confirmations = new AgentConfirmations({
+    onUnanswered: (r) =>
+      notifyAgentConfirmation(
+        { db: opts.db, log: opts.log },
+        {
+          userSub: r.userId,
+          confirmationId: r.id,
+          agent: r.summary.clientName,
+          action: r.summary.title,
+          target: r.summary.target.label,
+          expiresAt: r.expiresAt,
+        },
+      ),
+  })
   const host = new ServerHost({
     registry,
     access: opts.access ?? createDbAccess(opts.db),
@@ -291,6 +315,13 @@ export async function createAgentRuntime(opts: AgentRuntimeOptions): Promise<Age
         hocuspocus: () => opts.hocuspocus,
       }),
     folderFonts: opts.folderFonts ?? createDbFolderFontsReader(opts.db),
+    folderStylePack:
+      opts.folderStylePack ??
+      createDbFolderStylePackReader({
+        db: opts.db,
+        log: opts.log,
+        hocuspocus: () => opts.hocuspocus,
+      }),
   })
 
   return {

@@ -62,7 +62,7 @@ display and auto-update. Yjs is what makes offline editing feasible at all:
 edits made offline are CRDT updates that merge with everyone else's on
 reconnect, with no conflict dialog.
 
-## Why the shell loads the server's origin (decision to confirm in ADR 0014)
+## Why the shell loads the server's origin (decision to confirm in ADR 0015)
 
 Two ways to put the editor into Electron:
 
@@ -214,7 +214,7 @@ Each phase ships on its own and is useful without the next.
 
 ## Decisions (Petr, 2026-10-11)
 
-Recorded in [ADR 0014](../adr/0014-desktop-shell-loads-server-origin.md).
+Recorded in [ADR 0015](../adr/0015-desktop-shell-loads-server-origin.md).
 
 1. **Code signing.** macOS builds are signed with an Apple Developer ID and
    notarized, and update themselves; Windows builds stay unsigned. Petr
@@ -258,7 +258,7 @@ The D0 implementation spec (versions, layout, sign-in flow, tests, steps)
 is `docs/plans/desktop-d0-spec.md`, revision 2 after security, invariants
 and platform reviews (2026-10-11).
 
-1. ADR 0014 (desktop shell loads the server origin; offline is a web-app
+1. ADR 0015 (desktop shell loads the server origin; offline is a web-app
    feature) and Petr's answers to the open decisions.
 2. D0; security review of the sign-in ticket flow.
 3. D1, then D2 — each with its e2e specs and `e2e-affected.py` areas

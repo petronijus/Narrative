@@ -23,6 +23,8 @@ import { render, act } from '@testing-library/react'
 import React, { useState } from 'react'
 import { SlideDocContext, createMockSlideDocValue } from './slideDocContext.js'
 import type * as SlideModel from '@narrative/slide-model'
+import { addObject, addSlide, createSlideDoc, getSlideObjectsCtx } from '@narrative/slide-model'
+import type { SlideObject } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
 // Hoist mock values so they are available when vi.mock factories are called
@@ -214,73 +216,7 @@ describe('useSlideThumbnails', () => {
 
   // -------------------------------------------------------------------------
 
-  it.skip('calls renderSlide with the latest objects after debounce fires', async () => {
-    mockRenderSlide.mockResolvedValue(STUB_URL_A)
-    const { getThumbnails } = renderWithContext(['slide-1'])
-
-    // Let renderer init resolve
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    // Trigger a change
-    act(() => {
-      slideSubscriptions.get('slide-1')?.({ snapshot: [makeSlideObject('obj-1')] })
-    })
-
-    // Advance past debounce + flush promises
-    await act(async () => {
-      vi.advanceTimersByTime(600)
-      await Promise.resolve()
-    })
-
-    expect(mockRenderSlide).toHaveBeenCalledWith(
-      expect.arrayContaining([expect.objectContaining({ id: 'obj-1' })]),
-    )
-
-    // The state update from renderSlide.then() — flush it
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    expect(getThumbnails()['slide-1']).toBe(STUB_URL_A)
-  })
-
   // -------------------------------------------------------------------------
-
-  it.skip('handles multiple slide IDs — calls renderSlide for each', async () => {
-    const { getThumbnails } = renderWithContext(['slide-1', 'slide-2'])
-
-    // Let renderer init resolve (may trigger initial renderSlide calls for empty snapshots)
-    await act(async () => {
-      vi.advanceTimersByTime(600)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    // Reset so we can assert only the explicit renders below
-    mockRenderSlide.mockClear()
-    mockRenderSlide.mockResolvedValueOnce(STUB_URL_A).mockResolvedValueOnce(STUB_URL_B)
-
-    // Trigger explicit content changes on both slides
-    act(() => {
-      slideSubscriptions.get('slide-1')?.({ snapshot: [makeSlideObject('a')] })
-      slideSubscriptions.get('slide-2')?.({ snapshot: [makeSlideObject('b')] })
-    })
-
-    await act(async () => {
-      vi.advanceTimersByTime(600)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    // Exactly 2 renders — one per slide
-    expect(mockRenderSlide).toHaveBeenCalledTimes(2)
-
-    const t = getThumbnails()
-    expect(t['slide-1']).toBe(STUB_URL_A)
-    expect(t['slide-2']).toBe(STUB_URL_B)
-  })
 
   // -------------------------------------------------------------------------
 
@@ -320,47 +256,6 @@ describe('useSlideThumbnails', () => {
   })
 
   // -------------------------------------------------------------------------
-
-  it.skip('rapid changes are debounced — renderSlide called once per window', async () => {
-    mockRenderSlide.mockResolvedValue(STUB_URL_A)
-    renderWithContext(['slide-1'])
-
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    // Clear any calls made during init (initial empty snapshot → debounce → render)
-    mockRenderSlide.mockClear()
-
-    const cb = slideSubscriptions.get('slide-1')
-
-    // Fire 5 rapid changes within one debounce window
-    act(() => {
-      cb?.({ snapshot: [makeSlideObject('a')] })
-      cb?.({ snapshot: [makeSlideObject('b')] })
-      cb?.({ snapshot: [makeSlideObject('c')] })
-      cb?.({ snapshot: [makeSlideObject('d')] })
-      cb?.({ snapshot: [makeSlideObject('e')] })
-    })
-
-    // Advance only 300ms — debounce not yet elapsed
-    act(() => {
-      vi.advanceTimersByTime(300)
-    })
-
-    // Not called yet
-    expect(mockRenderSlide).not.toHaveBeenCalled()
-
-    // Advance past debounce
-    await act(async () => {
-      vi.advanceTimersByTime(300)
-      await Promise.resolve()
-    })
-
-    // Called exactly once with the latest snapshot
-    expect(mockRenderSlide).toHaveBeenCalledTimes(1)
-    expect(mockRenderSlide).toHaveBeenCalledWith([makeSlideObject('e')])
-  })
 
   // -------------------------------------------------------------------------
   // Retry after a failed render (state/thumbnailRetry.ts)
@@ -464,5 +359,101 @@ describe('useSlideThumbnails', () => {
     })
     expect(error).not.toHaveBeenCalled()
     expect(mockRenderSlide).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Renders from the deck: the hook listens to deck-level slide events and reads
+// a slide's objects from the document, so these run on a real Y.Doc
+// ---------------------------------------------------------------------------
+
+describe('useSlideThumbnails — renders from the deck', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    mockRenderSlide.mockReset()
+    mockRenderSlide.mockResolvedValue(STUB_URL_A)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** A deck of `count` slides, the hook tracking all of them. */
+  function renderDeck(count: number) {
+    const { doc, slides } = createSlideDoc()
+    const deckCtx = { doc, slides }
+    while (slides.length < count) addSlide(deckCtx)
+    const ids = Array.from({ length: count }, (_, i) => slides.get(i).get('id') as string)
+
+    const { unmount } = render(
+      <SlideDocContext value={createMockSlideDocValue({ deckCtx })}>
+        <ThumbnailWrapper initialSlideIds={ids} setterRef={{}} />
+      </SlideDocContext>,
+    )
+    const getThumbnails = (): Record<string, string> =>
+      JSON.parse(
+        document.querySelector('[data-testid="output"]')?.getAttribute('data-thumbnails') ?? '{}',
+      ) as Record<string, string>
+
+    /** Put an object on a slide, as an edit would, and report the slide changed. */
+    const edit = (slideId: string, objectId: string) => {
+      const objects = getSlideObjectsCtx(deckCtx, slideId)!
+      addObject(objects, makeSlideObject(objectId) as unknown as SlideObject)
+      act(() => {
+        deckEvents.emit?.(new Set([slideId]))
+      })
+    }
+    return { ids, edit, getThumbnails, unmount }
+  }
+
+  /** Move the clock by `ms` and let the renders it set off settle. */
+  const advance = (ms: number) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(ms)
+    })
+
+  /** The ids of the objects each renderSlide call drew, in call order. */
+  const drawn = () =>
+    mockRenderSlide.mock.calls.map((call) => (call[0] as { id: string }[]).map((o) => o.id))
+
+  it('renders an edited slide with its latest objects once the debounce ends', async () => {
+    const { ids, edit, getThumbnails } = renderDeck(1)
+    await advance(600) // the renderer starts, the first renders run
+    mockRenderSlide.mockClear()
+
+    edit(ids[0]!, 'obj-1')
+    await advance(499)
+    expect(mockRenderSlide).not.toHaveBeenCalled()
+    await advance(1)
+    expect(drawn()).toEqual([['obj-1']])
+    expect(getThumbnails()[ids[0]!]).toBe(STUB_URL_A)
+  })
+
+  it('renders each edited slide into its own thumbnail', async () => {
+    const { ids, edit, getThumbnails } = renderDeck(2)
+    await advance(600)
+    mockRenderSlide.mockReset()
+    mockRenderSlide.mockResolvedValueOnce(STUB_URL_A).mockResolvedValueOnce(STUB_URL_B)
+
+    edit(ids[0]!, 'a')
+    edit(ids[1]!, 'b')
+    await advance(600)
+
+    expect(drawn()).toEqual([['a'], ['b']])
+    expect(getThumbnails()).toEqual({ [ids[0]!]: STUB_URL_A, [ids[1]!]: STUB_URL_B })
+  })
+
+  it('a burst of edits within the debounce window renders once, with the last state', async () => {
+    const { ids, edit } = renderDeck(1)
+    await advance(600)
+    mockRenderSlide.mockClear()
+
+    for (const id of ['a', 'b', 'c', 'd', 'e']) {
+      edit(ids[0]!, id)
+      await advance(100)
+    }
+    expect(mockRenderSlide).not.toHaveBeenCalled()
+    await advance(500)
+    expect(drawn()).toEqual([['a', 'b', 'c', 'd', 'e']])
   })
 })

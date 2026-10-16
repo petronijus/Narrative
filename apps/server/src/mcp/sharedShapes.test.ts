@@ -110,4 +110,29 @@ describe('shared input shapes', () => {
     const instructions = new Guidance(registry).instructions()
     for (const { note } of SHARED_SHAPES) if (note !== '') expect(instructions).toContain(note)
   })
+
+  it('match a shape written with $refs, and leave a bare $ref to its compacted definition', () => {
+    const colour = SHARED_SHAPES.find((s) => s.name === 'colour or token')!
+    const body = SHARED_SHAPES.find((s) => s.name === 'text body')!
+    // The text body with its run colour hoisted into $defs, as zod writes it
+    // when the colour is used elsewhere in the same input.
+    const hoisted = JSON.parse(
+      JSON.stringify(body.match).replace(
+        JSON.stringify(SHARED_SHAPES.find((s) => s.name === 'colour')!.match),
+        '{"$ref":"#/$defs/c"}',
+      ),
+    )
+    const out = compactSharedShapes({
+      type: 'object',
+      properties: { text: hoisted, fill: { $ref: '#/$defs/t' }, stroke: { $ref: '#/$defs/t' } },
+      $defs: {
+        c: SHARED_SHAPES.find((s) => s.name === 'colour')!.match,
+        t: colour.match,
+      },
+    }) as Record<string, Record<string, unknown>>
+    expect(out['properties']!['text']).toEqual(body.compact)
+    // c is no longer used: dropped. t is compacted in place, still shared.
+    expect(out['properties']!['fill']).toEqual({ $ref: '#/$defs/t' })
+    expect(out['$defs']).toEqual({ t: colour.compact })
+  })
 })

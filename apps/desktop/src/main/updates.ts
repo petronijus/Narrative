@@ -1,7 +1,7 @@
 /**
  * main/updates.ts
  *
- * The app updates itself from the feed on the server (ADR 0014,
+ * The app updates itself from the feed on the server (ADR 0015,
  * docs/plans/desktop-d0-spec.md §3.11): a check 10 s after start, then every
  * 6 hours, and from Check for Updates…. electron-updater downloads; nothing
  * installs until the download passed the signature gate (updateVerify.ts)

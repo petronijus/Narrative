@@ -146,8 +146,12 @@ export function useEditorShow(): EditorShowState {
   //    This effect is the synchronisation point with that snapshot (it
   //    arrives from a Yjs subscription, rAF-batched), hence state updates
   //    from inside it.
+  //    A target a newer `editor.show` replaced is left alone: two shows a
+  //    few ms apart reach this effect only after the second one's apply()
+  //    queued its own target, and resolving the first here would clear it.
   useEffect(() => {
-    if (target === null || activeSlideId !== target.slideId) return
+    if (target === null || target.token !== tokenRef.current) return
+    if (activeSlideId !== target.slideId) return
     const slide = listSlides(deckCtx).find((s) => s.id === target.slideId)
     // The slide vanished mid-switch: nothing to select.
     const wanted =
@@ -159,7 +163,7 @@ export function useEditorShow(): EditorShowState {
     if (wanted.length > 0) selectMany(wanted)
     else if (slide !== undefined) clear()
     // eslint-disable-next-line react-hooks/set-state-in-effect -- see above: resolves against the snapshot
-    setTarget(null)
+    setTarget((current) => (current?.token === target.token ? null : current))
     setHighlight(
       wanted.length > 0 ? { token: target.token, objectIds: wanted, color: target.color } : null,
     )
@@ -171,7 +175,10 @@ export function useEditorShow(): EditorShowState {
   useEffect(() => {
     if (target === null) return
     const remaining = RESOLVE_TIMEOUT_MS - (Date.now() - target.startedAt)
-    const t = setTimeout(() => setTarget(null), Math.max(0, remaining))
+    const t = setTimeout(
+      () => setTarget((current) => (current?.token === target.token ? null : current)),
+      Math.max(0, remaining),
+    )
     return () => clearTimeout(t)
   }, [target])
 

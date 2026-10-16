@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
-import { getSlideNotesFragment, listSlides } from '@narrative/slide-model'
+import {
+  getSlideNotesFragment,
+  listSlides,
+  setDeckMeta,
+  setSlideLayout,
+} from '@narrative/slide-model'
 import { harness } from '../testing/harness.js'
 
 /** A value survives JSON unchanged iff it holds nothing but JSON (no Y types, no undefined, no class instances). */
@@ -32,7 +37,7 @@ describe('query.deck', () => {
           name: 'Numbers',
           title: 'Results',
           transition: 'none',
-          objectCount: 5,
+          objectCount: 8,
           animationCount: 0,
         },
         {
@@ -45,7 +50,35 @@ describe('query.deck', () => {
         },
       ],
       guides: [{ id: 'gd1', orientation: 'vertical', position: 960 }],
+      meta: {},
     })
+  })
+
+  it("reads the deck's meta and each slide's pack layout (A4)", () => {
+    const h = harness()
+    setDeckMeta(h.deck.doc, { variant: { theme: 'dark' }, fields: { client: 'Acme' }, lang: 'de' })
+    const s1 = listSlides(h.deck)[0]!.id
+    setSlideLayout(h.deck, s1, {
+      packId: 'p',
+      layoutId: 'title',
+      surface: 'band',
+      archetype: 'cover',
+    })
+    const deck = h.run<{ meta: unknown; slides: Array<{ layout?: unknown }> }>('query.deck', {})
+    expect(deck.meta).toEqual({
+      variant: { theme: 'dark' },
+      fields: { client: 'Acme' },
+      lang: 'de',
+    })
+    expect(deck.slides[0]!.layout).toEqual({
+      packId: 'p',
+      layoutId: 'title',
+      surface: 'band',
+      archetype: 'cover',
+    })
+    expect(deck.slides[1]?.layout).toBeUndefined()
+    const slide = h.run<{ layout?: unknown }>('query.slide', { slide: { index: 0 } })
+    expect(slide.layout).toMatchObject({ archetype: 'cover' })
   })
 })
 

@@ -33,6 +33,9 @@ export const VALID_OBJECTS: { [T in SlideObjectType]: PlainSlideObjectOf<T> } = 
     aspectLocked: true,
     flipH: false,
     flipV: true,
+    slot: 'card',
+    role: 'body',
+    component: { id: 'cmp1', objectId: 'm1', instance: 'i1', origin: { x: 90, y: 70 } },
     fill: { $token: 'colors.abc1234567' },
     fillAlpha: 1,
     fillStyle: {
@@ -125,6 +128,8 @@ export const VALID_OBJECTS: { [T in SlideObjectType]: PlainSlideObjectOf<T> } = 
     lineHeight: 1.2,
     lineSpacing: 0.9,
     wrap: 'none',
+    autofit: 'shrink',
+    minFontSize: 16,
     letterSpacing: -0.5,
     paragraphSpaceBefore: 0,
     paragraphSpaceAfter: 12,
@@ -138,7 +143,7 @@ export const VALID_OBJECTS: { [T in SlideObjectType]: PlainSlideObjectOf<T> } = 
     strokeAlpha: 0.5,
     strokeWidth: 1,
     isSlideNumber: false,
-    hyperlink: { kind: 'url', href: 'https://woodgrove.com/', target: '_blank' },
+    hyperlink: { kind: 'url', href: 'https://example.com/', target: '_blank' },
   },
   image: {
     ...base,

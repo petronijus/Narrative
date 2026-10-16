@@ -1,6 +1,6 @@
 /**
  * render/sessions.ts — render sessions: one render token per person and
- * deck, reused by their render jobs so the render worker keeps the page it
+ * document (a deck, or a component master for its card), reused by their render jobs so the render worker keeps the page it
  * opened with it (apps/render-worker/src/warmPages.ts) and the next look or
  * export skips loading the app.
  *
@@ -12,7 +12,13 @@
  * (auth/renderTokens.ts); an entry goes when its token ends.
  */
 
-import { extendRenderToken, mintRenderToken, revokeRenderToken } from '../auth/renderTokens.js'
+import {
+  extendRenderToken,
+  mintRenderToken,
+  revokeRenderToken,
+  type RenderDoc,
+  type RenderLane,
+} from '../auth/renderTokens.js'
 
 /** A session's token lives this long after its last job ends. */
 export const SESSION_IDLE_MS = 120_000
@@ -21,13 +27,15 @@ export const SESSION_MAX_MS = 15 * 60_000
 
 interface Session {
   token: string
-  deckId: string
+  target: RenderDoc
   userId: string
   startedAt: number
 }
 
 const sessions = new Map<string, Session>()
-const keyOf = (deckId: string, userId: string): string => `${deckId}\u0000${userId}`
+/** A person's session and the server's background one as them are separate. */
+const keyOf = (target: RenderDoc, userId: string, lane: RenderLane): string =>
+  `${target.kind}:${target.id}\u0000${userId}\u0000${lane}`
 
 /**
  * The session's token for a job that needs it for `jobMs`: the current one,
@@ -35,11 +43,12 @@ const keyOf = (deckId: string, userId: string): string => `${deckId}\u0000${user
  * it past `SESSION_MAX_MS`).
  */
 export function sessionTokenFor(
-  args: { deckId: string; userId: string },
+  args: { target: RenderDoc; userId: string; lane?: RenderLane },
   jobMs: number,
   now: number,
 ): string {
-  const key = keyOf(args.deckId, args.userId)
+  const lane = args.lane ?? 'person'
+  const key = keyOf(args.target, args.userId, lane)
   const current = sessions.get(key)
   if (
     current !== undefined &&
@@ -49,10 +58,17 @@ export function sessionTokenFor(
     return current.token
   }
   // An old token is left to expire, not revoked: a job of it may still run.
-  const session: Session = { token: '', deckId: args.deckId, userId: args.userId, startedAt: now }
-  session.token = mintRenderToken(args.deckId, args.userId, now, jobMs, () => {
-    if (sessions.get(key) === session) sessions.delete(key)
-  })
+  const session: Session = { token: '', target: args.target, userId: args.userId, startedAt: now }
+  session.token = mintRenderToken(
+    args.target,
+    args.userId,
+    now,
+    jobMs,
+    () => {
+      if (sessions.get(key) === session) sessions.delete(key)
+    },
+    lane,
+  )
   sessions.set(key, session)
   return session.token
 }
@@ -71,17 +87,26 @@ export function sessionJobEnded(token: string, now: number): void {
 }
 
 /**
- * End the render sessions of `userId` (on `deckId`, or on every deck): their
+ * End the render sessions of `userId` — on the deck `deckId`, on every
+ * component master (`components: true`: a folder's membership ended, and a
+ * master's card session is as coarse as that), or on everything: their
  * tokens are revoked and the render pages' connections closed. Called
  * wherever the person's access is taken away — a page kept open from an
- * earlier job would otherwise go on reading the deck until the session ran
- * out.
+ * earlier job would otherwise go on reading until the session ran out.
  */
-export function endRenderSessions(args: { userId: string; deckId?: string }): number {
+export function endRenderSessions(args: {
+  userId: string
+  deckId?: string
+  components?: boolean
+}): number {
   let ended = 0
   for (const session of [...sessions.values()]) {
     if (session.userId !== args.userId) continue
-    if (args.deckId !== undefined && session.deckId !== args.deckId) continue
+    const { target } = session
+    if (args.deckId !== undefined && !(target.kind === 'deck' && target.id === args.deckId)) {
+      continue
+    }
+    if (args.components === true && target.kind !== 'component') continue
     revokeRenderToken(session.token)
     ended += 1
   }

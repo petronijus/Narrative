@@ -6,8 +6,8 @@ something's broken — file an issue, don't paper over it.
 
 ## Prerequisites
 
-- **Node.js ≥ 24.4 built with TypeScript support** (`node -v`; `engines` in `package.json`). Node 24 is the Active LTS and the line the Docker images run (`node:24-alpine`); 24.4 added `fs.promises.mkdtempDisposable`, which the server's URL downloads use. `pnpm lint` loads the TypeScript parity table through Node's built-in type stripping, on by default in every Node 24. Was ≥ 22.18 from A2.1 (2026-09-28) until 2026-10-09, ≥ 22 before. The version alone is not enough: check `node -p process.features.typescript` prints `strip` (or `transform`), not `false` — a distro build can leave type stripping out (see "`pnpm lint` fails with `ERR_UNKNOWN_FILE_EXTENSION`" below)
-- **pnpm 9.15.4** (the `packageManager` pin) — via Corepack: `corepack enable && corepack prepare pnpm@9.15.4 --activate`
+- **Node.js ≥ 24.15 built with TypeScript support** (`node -v`; `engines` in `package.json`). Node 24 is the Active LTS and the line the Docker images run (`node:24-alpine`); 24.4 added `fs.promises.mkdtempDisposable`, which the server's URL downloads use, and 24.15 is jsdom 30's floor (the SVG sanitizer, the web tests; since 2026-10-14). `pnpm lint` loads the TypeScript parity table through Node's built-in type stripping, on by default in every Node 24. Was ≥ 22.18 from A2.1 (2026-09-28) until 2026-10-09, ≥ 22 before. The version alone is not enough: check `node -p process.features.typescript` prints `strip` (or `transform`), not `false` — a distro build can leave type stripping out (see "`pnpm lint` fails with `ERR_UNKNOWN_FILE_EXTENSION`" below)
+- **pnpm 12.11.2** (the `packageManager` pin; settings in `pnpm-workspace.yaml`, `.npmrc` is for registry auth only) — via Corepack: `corepack enable && corepack prepare pnpm@12.11.2 --activate`
 - **Docker** with the Compose plugin (`docker compose version`), logged in to GHCR once: `docker login ghcr.io -u petronijus` with a token that has `read:packages`. MinIO's official images are gone, and the dev stack's MinIO is a private mirror there ([docs/storage.md → MinIO image](docs/storage.md#minio-image))
 - **just, lefthook, gitleaks** — the task runner and the git hooks (macOS: `brew install just lefthook gitleaks`; Linux: the distro packages or the projects' release binaries). **xmllint** for the PPTX schema tests (`libxml2`). **python3 ≥ 3.9** for the Claude Code hooks and the docs check (standard library only). For secrets: **sops, age** and the 1Password CLI `op`.
 
@@ -120,16 +120,14 @@ curl http://localhost:3001/health
 
 Open `http://localhost:5173`. With `BYPASS_AUTH=true` you land on the deck list as `dev-user` — no login required.
 
-## 7. Optional: video pipeline
+## 7. Video pipeline
 
-Only needed if you upload videos.
-
-```bash
-cd infra
-docker compose --env-file ../.env up -d media-redis video-worker
-```
-
-`video-worker` is a stub on this branch — see `apps/video-worker/src/processors/transcode.ts`. Running it just verifies the queue connects.
+Uploaded videos are prepared for playback by `apps/video-worker` (ffmpeg, on
+your `PATH`) through the `media-redis` queue. `just dev` already runs the
+worker and `just services` the queue, so there is nothing to start; `just
+dev-lite` leaves both workers out when you do not upload videos. Running the
+worker in a container instead, the pipeline and its env:
+[docs/storage.md → Video pipeline](docs/storage.md#video-pipeline).
 
 ## 8. Optional: real Google OIDC sign-in (skip for normal dev)
 
@@ -138,11 +136,13 @@ JWT validation entirely — that's the recommended dev setup. Only do the steps
 below if you're actively testing the real OIDC flow.
 
 1. https://console.cloud.google.com → APIs & Services → Credentials → Create OAuth 2.0 Client ID → Web app
-2. Authorized redirect URI: `http://localhost:5173/auth/callback`
-3. Copy the Client ID into both `OIDC_CLIENT_ID` and `VITE_OIDC_CLIENT_ID` in `.env`
+2. Authorized redirect URI: `http://localhost:3001/auth/callback` (the server runs the exchange, not the browser)
+3. Copy the client id and secret into `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` in `.env`; set `SESSION_COOKIE_SECRET` (`openssl rand -hex 32`)
 4. Set `OIDC_ALLOWED_EMAILS=your.email@gmail.com` (or `OIDC_ALLOWED_DOMAIN=yourdomain.com`)
 5. Set `BYPASS_AUTH=false` and `VITE_BYPASS_AUTH=false`
-6. Restart `pnpm dev`
+6. Restart `just dev`
+
+How sign-in works and who is let in: [docs/auth.md](docs/auth.md).
 
 ## 9. Optional: drive Narrative from Claude Code (MCP)
 
@@ -237,10 +237,15 @@ lefthook's hooks never run — `just doctor` flags it).
 wires three hooks: files written are formatted (`tools/dev/format.sh
 --edit`, Prettier only — ESLint costs ~5 s a call), writes of secrets,
 lockfiles and generated files are refused, and a turn whose content
-has not passed before runs `just check`. Green content is remembered by
-`tools/dev/check-cache.sh` (content fingerprints in `.git/claude-check-green`,
-one run at a time per clone), so the pre-push hook skips a tree the Stop hook
-already checked. Subagents in
+has not passed before runs the affected lane, `just check-affected`
+(`tools/dev/check-affected.sh`: the packages a change reaches and their
+dependents, against the last tree that passed; the whole `just check` when
+a shared file — the justfile, `tools/`, root config, the lockfile — changed),
+skipped while the session's background agents are still working. What
+passed is remembered by `tools/dev/check-cache.sh` (content fingerprints in
+`.git/claude-check-green` for the whole lane, `.git/claude-check-affected-green`
+for the affected one, one run at a time per clone); the pre-push hook needs
+the whole lane and skips a tree that already passed it. Subagents in
 `.claude/agents/`, path-scoped rules in `.claude/rules/`.
 
 ## Common first-run failures
@@ -256,6 +261,7 @@ already checked. Subagents in
 - **Pre-commit hooks fail with permission errors** — you ran `pnpm install` as root. Re-clone, install as a normal user.
 - **`minio` (or `minio-init`) cannot pull `ghcr.io/petronijus/minio`** — `denied` / `unauthorized`: this machine is not logged in to GHCR, where the MinIO image is a private mirror (MinIO deleted its own images from Docker Hub in 2026-09). `docker login ghcr.io -u petronijus` with a `read:packages` token, then `just services` again. A compose override that swapped in other MinIO images before 2026-10 can go.
 - **`minio` exits with `Unable to write to the backend`** — its data is not owned by user `65532`. `minio-perms` fixes that before every start; if it did not run (a `docker run` by hand, or `--no-deps`), `docker compose --env-file ../.env up minio-perms` in `infra/`.
+- **A second dev stack on the same machine (another clone, a worktree) breaks the first** — the compose services have fixed `container_name`s (`narrative-postgres`, …) and the project is always `narrative`, so `just services` from another checkout _recreates_ the running containers with that checkout's `.env` (other ports, other passwords) and the first stack loses its database mid-run. Run one stack per machine; a second checkout uses the first one's services and only starts its own `just dev` (Vite moves to the next free port by itself; `API_PORT` / `HOCUSPOCUS_PORT` / `VITE_API_URL` / `VITE_HOCUSPOCUS_URL` in the environment move the server). Seen on 2026-10-14.
 - **Two compose projects (`infra-*` and `narrative-*` containers)** — the compose file has been named `narrative` since 2026-08; containers started before that belong to a project called `infra`, with its own volumes, and hold the ports `just services` needs. Back up what you need, then `cd infra && docker compose -p infra --env-file ../.env down -v` (the Linux desktop was moved on 2026-09-30; its old data is in `backups/2026-09-30-infra-project/`, gitignored).
 - **`docs-check` names a path or recipe that is right in context** (another repo's file, a file a plan will create, a file that was moved) — write the reference so it cannot be misread (a moved file: its old place in plain text), or put `<!-- docs-check: ignore -->` on that line (above a code fence: the whole block). Docs that record history (handoffs, finished plans) are listed in `EXCLUDE` in `tools/dev/docs-check.py`; never exclude a living doc to make the check pass.
 - **Git hooks do not run after pulling the lefthook change (2026-09-30)** — husky had set `core.hooksPath=.husky/_`, which still points git at the deleted husky hooks. `just setup` (unsets it and runs `lefthook install`); `just doctor` reports it.
@@ -265,6 +271,11 @@ already checked. Subagents in
   # or: PLAYWRIGHT_CHROME_EXECUTABLE=/usr/bin/google-chrome PLAYWRIGHT_NO_VIDEO=1 …
   ```
   Verified on `petronijus-PC`, Ubuntu 26.04.1 LTS, 2026-09-09.
+- **Many e2e specs fail with `Target crashed` on the Omarchy desktop** — the browser log shows `Invalid message: VALIDATION_ERROR_DESERIALIZATION_FAILED` on `viz.mojom.CopyOutputResultSender`, then `GPU process exited unexpectedly`: a screenshot crashes the browser. `tools/dev/playwright-env.sh` falls back to a system browser whenever Playwright's own Chromium _at the revision its version expects_ is missing — on Arch that was `/usr/bin/chromium` 152 against Playwright 1.60 (which wants revision 1223, Chromium 148), silently, since a Playwright upgrade. Playwright's builds do run on Arch: install them and the fallback stops (`bash tools/dev/playwright-env.sh` then prints nothing):
+  ```bash
+  pnpm --filter web exec playwright install chromium chromium-headless-shell
+  ```
+  Measured on the Omarchy desktop, 2026-10-11: the full suite went from 42 failures (most of them `Target crashed`) to 13 — `canvas-sharpness-final` still crashes when its zoomed DPR-2 canvases run in parallel with other specs and passes with `--workers=1`; the rest passed on rerun. (`playwright install` also deletes revisions no installed Playwright names — another project's browser comes back with its own `playwright install`.)
 - **`pnpm lint` fails with `ERR_UNKNOWN_FILE_EXTENSION` on Ubuntu 26.04's own Node** — `TypeError [ERR_UNKNOWN_FILE_EXTENSION]: Unknown file extension ".ts" for …/packages/commands/src/parity/slideModelExports.ts`, before a single file is linted (`eslint.config.js` imports that file through `apps/web/eslint.one-door.js`). The distro package `nodejs` (`/usr/bin/node`, v22.22.1) is built without TypeScript support: `node -p process.features.typescript` prints `false`, and `node --experimental-strip-types file.ts` throws `ERR_NO_TYPESCRIPT`. That version predates the Node 24 move (2026-10-09), so `engines` and `just doctor` now refuse it outright; the entry stays for any Node build without type stripping, which `just doctor` warns about. Working around it by loading `tsx` as the loader:
   ```bash
   NODE_OPTIONS="--import=tsx" pnpm lint

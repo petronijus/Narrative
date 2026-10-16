@@ -1,7 +1,7 @@
 /**
  * scripts/sign-release.mjs
  *
- * Sign the desktop app's release artefacts (ADR 0014,
+ * Sign the desktop app's release artefacts (ADR 0015,
  * docs/plans/desktop-d0-spec.md §3.11). For every file it writes
  * `<file>.manifest` — name, version, SHA-512 — and `<file>.manifest.sig`, an
  * SSH signature of that manifest (`ssh-keygen -Y sign`, namespace

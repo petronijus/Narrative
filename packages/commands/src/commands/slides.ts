@@ -480,8 +480,8 @@ export const slideSetBackground = defineCommand({
 })
 
 /** The Markdown converter, loaded on first use (keeps the parser out of the editor's main bundle). */
-type NotesMarkdown = typeof notesMarkdownModule
-const loadNotesMarkdown = (): Promise<NotesMarkdown> => import('../notes/markdown.js')
+export type NotesMarkdown = typeof notesMarkdownModule
+export const loadNotesMarkdown = (): Promise<NotesMarkdown> => import('../notes/markdown.js')
 
 /** Upper bound for notes sent as Markdown (a long talk is ~20 000 characters). */
 export const MAX_NOTES_MARKDOWN = 100_000

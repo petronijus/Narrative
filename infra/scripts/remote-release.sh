@@ -5,17 +5,19 @@
 # of the machine `just deploy` was started on — the builder fetches the code
 # from GitHub, pushes the images to GHCR and syncs the VM over the LAN.
 #
-#   remote-release.sh <tag> <tooling-commit>
+#   remote-release.sh <tag> <tooling-commit> <vm>
 #
 # <tag> is what gets built and deployed; <tooling-commit> is the commit whose
 # infra/ scripts do it (the deploying machine's HEAD), so an older tag ships
-# with today's tooling. Expects GH_TOKEN (read access to the repo; used for
+# with today's tooling; <vm> is the production VM's ssh target (the private
+# overlay's NARRATIVE_VM, which the builder's public checkout does not have). Expects GH_TOKEN (read access to the repo; used for
 # the fetch only, never written to disk) and the forwarded SSH agent, which
 # reaches the VM.
 set -euo pipefail
 
 tag="${1:?usage: remote-release.sh <tag> <tooling-commit>}"
-tooling="${2:?usage: remote-release.sh <tag> <tooling-commit>}"
+tooling="${2:?usage: remote-release.sh <tag> <tooling-commit> <vm>}"
+vm="${3:?usage: remote-release.sh <tag> <tooling-commit> <vm>}"
 : "${GH_TOKEN:?GH_TOKEN must be set (ship.sh passes it on stdin)}"
 
 root="${HOME}/narrative-builder"
@@ -66,7 +68,6 @@ checkout "${root}/tooling" "$tooling"
 NARRATIVE_TAG="$tag" "${root}/tooling/infra/scripts/build-push.sh" --src "${root}/src"
 
 setting() { sed -n "s/^$1=//p" "${root}/tooling/infra/release.env" | tail -n 1; }
-vm="${NARRATIVE_VM:-$(setting NARRATIVE_VM)}"
 domain="${DOMAIN:-$(setting DOMAIN)}"
 ssh_vm=(ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
 

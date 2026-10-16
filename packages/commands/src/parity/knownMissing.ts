@@ -36,51 +36,7 @@ export interface KnownMissing {
   note?: string
 }
 
-const POST = (path: string): RouteRef => ({ method: 'POST', path })
-const PUT = (path: string): RouteRef => ({ method: 'PUT', path })
-
-export const KNOWN_MISSING: readonly KnownMissing[] = [
-  // --- A3: render worker ------------------------------------------------------
-  {
-    capability: 'deck.refreshThumbnail',
-    phase: 'A3',
-    source: 'web',
-    where: 'apps/web/src/ui/SlidesPanel.tsx',
-    routes: [PUT('/decks/:id/thumbnail')],
-    note: 'the browser renders the thumbnail and uploads it; the render worker takes over in A3',
-  },
-  {
-    capability: 'component.refreshThumbnail',
-    phase: 'A3',
-    source: 'web',
-    where: 'apps/web/src/pages/ComponentMasterEditor.tsx',
-    routes: [PUT('/components/:id/thumbnail')],
-    note: 'the master editor renders the thumbnail and uploads it; the render worker takes over in A3',
-  },
-
-  // --- A4: style packs compiled into Narrative components (plan §7) ----------
-  {
-    capability: 'component.create',
-    phase: 'A4',
-    source: 'route',
-    routes: [POST('/folders/:folderId/components')],
-    note: 'create a master from a spec (component.promote makes one from objects); the route makes an empty master, which the tests and the eval seed with; the pack compiler uses it only for the few recurring blocks (pagination, headline, subline, copy, a repeated column/grid) — layouts stay pack data',
-  },
-  {
-    capability: 'component.restamp',
-    phase: 'A4',
-    source: 'new',
-    note: 'reapply a changed master to the stamps made from it, keeping their slot content (needs component provenance)',
-  },
-
-  // --- A5: deck builder (and what was moved out of A3) -----------------------
-  {
-    capability: 'deck.exportPdf',
-    phase: 'A5',
-    source: 'new',
-    note: 'moved out of A3 by Petr (2026-10-10): not wanted yet; the render worker (A3) makes it a raster PDF of its PNGs when it is',
-  },
-]
+export const KNOWN_MISSING: readonly KnownMissing[] = []
 
 /** Phases already finished: their entries must be gone. Move the marker as phases close. */
-export const FINISHED_PHASES: readonly Phase[] = ['A0', 'A1', 'A2']
+export const FINISHED_PHASES: readonly Phase[] = ['A0', 'A1', 'A2', 'A3', 'A4', 'A5']

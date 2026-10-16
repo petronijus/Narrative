@@ -65,7 +65,7 @@ You own the **media pipeline** of Narrative.
   scheme and host by construction; the only thing the upstream cannot know is
   the prefix `handle_path /api/*` stripped, restored from `X-Forwarded-Prefix`.
   See `buildPublicUploadUrl()` in `apps/server/src/media/tus.ts` (commits
-  `6ce04d2`, `cd6a52a`). Both rounds of this bug surfaced as
+  `4b85481`, `9cf4491`). Both rounds of this bug surfaced as
   `[object ProgressEvent]` on the first HEAD.
 - **Custom upload metadata goes in the tus JSON body, not in headers.** Browser
   CORS strips custom `X-Narrative-*` headers.

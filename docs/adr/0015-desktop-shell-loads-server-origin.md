@@ -1,4 +1,4 @@
-# ADR 0014 — The desktop app is a shell that loads the server's origin; offline is a web-app feature
+# ADR 0015 — The desktop app is a shell that loads the server's origin; offline is a web-app feature
 
 **Status**: Accepted (2026-10-11). Petr asked for an Electron desktop app
 that also works offline (2026-10-10) and decided the open points on

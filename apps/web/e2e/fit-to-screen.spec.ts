@@ -7,7 +7,7 @@
  * bottom panels). Tolerance: ≤ 2 px on both axes.
  */
 
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 
 const API = 'http://localhost:3001'
 

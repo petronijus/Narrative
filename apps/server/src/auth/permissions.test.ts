@@ -307,11 +307,24 @@ function deckScript(opts: {
   deck?: null
   deckRole?: DeckRole | null
   folderRole?: DeckRole | null
+  isAdmin?: boolean
+  /** The deck's folder is a Drafts folder (null: the deck has no folder). */
+  inDrafts?: boolean | null
   link?: ReturnType<typeof LIVE_LINK> | null
 }): unknown[][] {
   const link = opts.link !== undefined ? [opts.link ? [opts.link] : []] : []
   if (opts.deck === null) return [[], ...link]
-  return [[{ deckRole: opts.deckRole ?? null, folderRole: opts.folderRole ?? null }], ...link]
+  return [
+    [
+      {
+        deckRole: opts.deckRole ?? null,
+        folderRole: opts.folderRole ?? null,
+        isAdmin: opts.isAdmin ?? null,
+        inDrafts: opts.inDrafts ?? null,
+      },
+    ],
+    ...link,
+  ]
 }
 
 describe('resolveDeckAccess', () => {
@@ -462,6 +475,78 @@ describe('resolveFolderAccess', () => {
       alsoAs: ['demo-user'],
     })
     expect(result).toEqual({ role: 'owner', reason: 'direct' })
+  })
+})
+
+describe('resolveFolderAccess — instance admin (ADR 0014)', () => {
+  it('makes an admin owner of a folder they hold no row in', async () => {
+    const { db } = scriptedDb({ selects: [[], [{ isDrafts: false }]], admin: true })
+    expect(await resolveFolderAccess(db, { folderId: 'f', userId: 'admin' })).toEqual({
+      role: 'owner',
+      reason: 'admin',
+    })
+  })
+
+  it('lifts an admin who is only a viewer there to owner', async () => {
+    const { db } = scriptedDb({
+      selects: [[{ role: 'viewer' }], [{ isDrafts: false }]],
+      admin: true,
+    })
+    expect(await resolveFolderAccess(db, { folderId: 'f', userId: 'admin' })).toEqual({
+      role: 'owner',
+      reason: 'admin',
+    })
+  })
+
+  it("keeps someone else's Drafts private from an admin", async () => {
+    const { db } = scriptedDb({ selects: [[], [{ isDrafts: true }]], admin: true })
+    expect(await resolveFolderAccess(db, { folderId: 'f', userId: 'admin' })).toBeNull()
+  })
+
+  it('finds no folder for an admin when it does not exist', async () => {
+    const { db } = scriptedDb({ selects: [[], []], admin: true })
+    expect(await resolveFolderAccess(db, { folderId: 'nope', userId: 'admin' })).toBeNull()
+  })
+
+  it('asks nothing more of a plain owner, and gives a non-admin no lift', async () => {
+    const owner = scriptedDb({ selects: [[{ role: 'owner' }]], admin: true })
+    expect(await resolveFolderAccess(owner.db, { folderId: 'f', userId: 'u' })).toEqual({
+      role: 'owner',
+      reason: 'direct',
+    })
+    const viewer = scriptedDb({ selects: [[{ role: 'viewer' }]] })
+    expect(await resolveFolderAccess(viewer.db, { folderId: 'f', userId: 'u' })).toEqual({
+      role: 'viewer',
+      reason: 'direct',
+    })
+  })
+})
+
+describe('resolveDeckAccess — instance admin (ADR 0014)', () => {
+  it("makes an admin owner of any deck outside other people's Drafts", async () => {
+    const { db } = scriptedDb({ selects: deckScript({ isAdmin: true, inDrafts: false }) })
+    expect(await resolveDeckAccess(db, { deckId: 'deck-1', userId: 'admin' })).toEqual({
+      role: 'owner',
+      reason: 'admin',
+    })
+  })
+
+  it('treats a deck without a folder like one outside Drafts', async () => {
+    const { db } = scriptedDb({ selects: deckScript({ isAdmin: true, inDrafts: null }) })
+    expect(await resolveDeckAccess(db, { deckId: 'deck-1', userId: 'admin' })).toEqual({
+      role: 'owner',
+      reason: 'admin',
+    })
+  })
+
+  it("keeps a deck in someone else's Drafts from an admin", async () => {
+    const { db } = scriptedDb({ selects: deckScript({ isAdmin: true, inDrafts: true }) })
+    expect(await resolveDeckAccess(db, { deckId: 'deck-1', userId: 'admin' })).toBeNull()
+  })
+
+  it('does nothing for a user who is not an admin', async () => {
+    const { db } = scriptedDb({ selects: deckScript({ isAdmin: false, inDrafts: false }) })
+    expect(await resolveDeckAccess(db, { deckId: 'deck-1', userId: 'user-a' })).toBeNull()
   })
 })
 

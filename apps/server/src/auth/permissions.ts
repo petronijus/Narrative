@@ -25,8 +25,17 @@
 
 import { and, eq, inArray } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { components, deckPermissions, decks, folderPermissions } from '../db/schema.js'
+import {
+  components,
+  deckPermissions,
+  decks,
+  folderPermissions,
+  folders,
+  users,
+} from '../db/schema.js'
 import { findShareLink } from './shareLinks.js'
+import { adminProbe } from './admin.js'
+import { isRenderToken, resolveRenderToken } from './renderTokens.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,7 +46,7 @@ export type DeckRole = 'owner' | 'editor' | 'viewer'
 export interface DeckAccessResult {
   role: DeckRole
   /** How access was determined. Useful for audit logging / UI hints. */
-  reason: 'direct' | 'folder' | 'share-link'
+  reason: 'direct' | 'folder' | 'share-link' | 'admin'
 }
 
 /** The higher of two resolved roles, keeping its reason (null counts as no access; a tie keeps `a`). */
@@ -172,7 +181,12 @@ export async function resolveDeckAccess(
 
   if (userId) {
     const [row] = await db
-      .select({ deckRole: deckPermissions.role, folderRole: folderPermissions.role })
+      .select({
+        deckRole: deckPermissions.role,
+        folderRole: folderPermissions.role,
+        isAdmin: users.isAdmin,
+        inDrafts: folders.isDrafts,
+      })
       .from(decks)
       .leftJoin(
         deckPermissions,
@@ -182,12 +196,17 @@ export async function resolveDeckAccess(
         folderPermissions,
         and(eq(folderPermissions.folderId, decks.folderId), eq(folderPermissions.userId, userId)),
       )
+      .leftJoin(users, eq(users.sub, userId))
+      .leftJoin(folders, eq(folders.id, decks.folderId))
       .where(eq(decks.id, deckId))
       .limit(1)
     // Deck doesn't exist
     if (!row) return null
     if (row.deckRole) best = { role: row.deckRole as DeckRole, reason: 'direct' }
     if (row.folderRole) best = higher(best, { role: row.folderRole as DeckRole, reason: 'folder' })
+    // An instance admin owns every deck outside other people's Drafts (ADR 0014).
+    if (row.isAdmin === true && row.inDrafts !== true)
+      best = higher(best, { role: 'owner', reason: 'admin' })
   }
 
   if (shareToken) {
@@ -205,7 +224,8 @@ export async function resolveDeckAccess(
 
 export interface ComponentAccessResult {
   role: DeckRole
-  reason: 'folder'
+  /** `render`: the render worker's page for the master's card, read-only (auth/renderTokens.ts). */
+  reason: 'folder' | 'render'
 }
 
 /**
@@ -216,9 +236,19 @@ export interface ComponentAccessResult {
  */
 export async function resolveComponentAccess(
   db: Database,
-  args: { componentId: string; userId: string | null },
+  args: { componentId: string; userId: string | null; shareToken?: string | null },
 ): Promise<ComponentAccessResult | null> {
-  if (!args.userId) return null
+  if (!args.userId) {
+    // No share link reaches a component — only a render token minted for
+    // this master, while the person it renders for can still read it.
+    const grant = componentRenderGrant(args.shareToken)
+    if (grant === null || grant.componentId !== args.componentId) return null
+    const requester = await resolveComponentAccess(db, {
+      componentId: args.componentId,
+      userId: grant.requestedBy,
+    })
+    return requester === null ? null : { role: 'viewer', reason: 'render' }
+  }
 
   const [row] = await db
     .select({ folderId: components.folderId })
@@ -266,7 +296,7 @@ export async function checkDeckPermission(
 
 export interface FolderAccessResult {
   role: DeckRole
-  reason: 'direct'
+  reason: 'direct' | 'admin'
 }
 
 /**
@@ -293,14 +323,26 @@ export async function resolveFolderAccess(
     )
   let best: FolderAccessResult | null = null
   for (const r of rows) best = higher(best, { role: r.role as DeckRole, reason: 'direct' })
-  return best
+  if (best?.role === 'owner') return best
+  // An instance admin owns every folder but other people's Drafts (ADR 0014).
+  if (!(await adminProbe(db, args.userId))) return best
+  const [folder] = await db
+    .select({ isDrafts: folders.isDrafts })
+    .from(folders)
+    .where(eq(folders.id, args.folderId))
+    .limit(1)
+  return folder !== undefined && !folder.isDrafts ? { role: 'owner', reason: 'admin' } : best
 }
 
 /** How someone may read a folder's shared content (tokens, fonts, component media). */
 export interface FolderContentAccess {
   role: DeckRole
-  /** `folder`: a member, with their folder role; `deck`: a guest of one of its decks, read-only. */
-  via: 'folder' | 'deck'
+  /**
+   * `folder`: a member, with their folder role; `deck`: a guest of one of
+   * its decks, read-only; `render`: the render page of one of its component
+   * masters (its card), read-only.
+   */
+  via: 'folder' | 'deck' | 'render'
 }
 
 /**
@@ -346,6 +388,32 @@ export async function resolveFolderContentAccess(
         .limit(1)
       if (deck?.folderId === args.folderId) return { role: 'viewer', via: 'deck' }
     }
+    // A master's render page reads its folder's tokens, fonts and media.
+    const grant = componentRenderGrant(args.shareToken)
+    if (grant !== null) {
+      const [component] = await db
+        .select({ folderId: components.folderId })
+        .from(components)
+        .where(eq(components.id, grant.componentId))
+        .limit(1)
+      if (component?.folderId === args.folderId) {
+        const requester = await resolveFolderAccess(db, {
+          folderId: args.folderId,
+          userId: grant.requestedBy,
+        })
+        if (requester !== null) return { role: 'viewer', via: 'render' }
+      }
+    }
   }
   return null
+}
+
+/** The component a valid render token was minted for, and for whom; null for anything else. */
+function componentRenderGrant(
+  token: string | null | undefined,
+): { componentId: string; requestedBy: string } | null {
+  if (typeof token !== 'string' || !isRenderToken(token)) return null
+  const grant = resolveRenderToken(token)
+  if (grant === null || grant.target.kind !== 'component') return null
+  return { componentId: grant.target.id, requestedBy: grant.requestedBy }
 }

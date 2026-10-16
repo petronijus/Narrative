@@ -7,6 +7,7 @@
  *   Colors      — grid of color swatches with inline rename + popover picker
  *   Text styles — list of text style rows with an editor panel
  *   Effect styles — shadow + blur presets
+ *   Style pack  — the folder's brand (A4.6, StylePackTab.tsx)
  *
  * Wraps with FolderDocProvider for the folder's tokens. Changes go to the
  * server (useFolderTokenWriter, state/folderTokenWriter.ts), which carries
@@ -38,6 +39,7 @@ import { SYSTEM_FONTS } from '@narrative/commands'
 import { FolderFontLoader } from '../state/FolderFontLoader.js'
 import type { FolderSummary } from '../api/client.js'
 import { FolderShareDialog } from '../ui/FolderShareDialog.js'
+import { StylePackTab } from './StylePackTab.js'
 import { canEditFolder, isOwnDrafts } from '../state/folderAccess.js'
 import {
   MAX_COLORS,
@@ -49,7 +51,7 @@ import {
 // Tab type
 // ---------------------------------------------------------------------------
 
-type SettingsTab = 'colors' | 'textStyles' | 'fonts' | 'components'
+type SettingsTab = 'colors' | 'textStyles' | 'fonts' | 'components' | 'stylePack'
 
 /** Whether the user may change the folder's tokens, fonts and components (editor or owner). */
 const FolderEditableContext = createContext(false)
@@ -72,7 +74,8 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
     tabFromUrl === 'colors' ||
     tabFromUrl === 'textStyles' ||
     tabFromUrl === 'fonts' ||
-    tabFromUrl === 'components'
+    tabFromUrl === 'components' ||
+    tabFromUrl === 'stylePack'
       ? tabFromUrl
       : 'colors'
   const [activeTab, setActiveTabState] = useState<SettingsTab>(initialTab)
@@ -138,6 +141,7 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
     { id: 'fonts', label: 'Fonts' },
     { id: 'textStyles', label: 'Text styles' },
     { id: 'components', label: 'Components' },
+    { id: 'stylePack', label: 'Style pack' },
   ]
 
   return (
@@ -254,6 +258,7 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
             </FolderFontsProvider>
           )}
           {activeTab === 'components' && <ComponentsTab folderId={folderId} />}
+          {activeTab === 'stylePack' && <StylePackTab folderId={folderId} editable={editable} />}
         </FolderEditableContext>
       </main>
 
@@ -1531,6 +1536,27 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
             }}
             className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
             aria-label="Font size"
+          />
+        </SettingsFieldRow>
+
+        {/* The floor of autofit "shrink" (A4.2): boxes of this style that
+            shrink their type to fit stop at this size. Empty = half the size. */}
+        <SettingsFieldRow label="Min size">
+          <input
+            type="number"
+            min={1}
+            value={style.minSize ?? ''}
+            placeholder={String(Math.round((style.size ?? 16) / 2))}
+            onChange={(e) => {
+              if (e.target.value === '') {
+                onUpdate({ minSize: null })
+                return
+              }
+              const n = typedNumber(e.target.value)
+              if (n !== null) onUpdate({ minSize: Math.max(1, n) })
+            }}
+            className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
+            aria-label="Smallest size when shrinking to fit"
           />
         </SettingsFieldRow>
 

@@ -11,9 +11,7 @@ import { createHash } from 'node:crypto'
 import servers from '../../servers.json'
 
 export type ServerTarget =
-  | { kind: 'production' }
-  | { kind: 'development' }
-  | { kind: 'custom'; origin: string }
+  { kind: 'production' } | { kind: 'development' } | { kind: 'custom'; origin: string }
 
 export const PRODUCTION: ServerTarget = { kind: 'production' }
 

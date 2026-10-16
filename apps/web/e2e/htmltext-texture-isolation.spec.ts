@@ -30,7 +30,7 @@
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures/test'
 
 const API = 'http://localhost:3001'
 /** A deck of its own (or E2E_DECK_ID's), made before the tests and deleted after. */

@@ -35,8 +35,11 @@ import {
   hydrateSlideDoc,
   isTokenRef,
   listSlides,
+  parseHexColor,
+  readDeckMeta,
   resolveTokenValue,
   type FolderTokensSnapshot,
+  type TokenResolveContext,
 } from '@narrative/slide-model'
 import type { Slide, SlideObject } from '@narrative/shared'
 import { components, decks, mediaAssets } from '../db/schema.js'
@@ -73,8 +76,11 @@ export async function exportDeckToPptx(
     if (rawSlides.length === 0) return { ok: false, error: 'noSlides' }
 
     const folderTokens = await loadFolderTokens(deps, deck.folderId)
+    const variant = readDeckMeta(doc).variant
     const resolved =
-      folderTokens === null ? rawSlides : rawSlides.map((s) => resolveSlideTokens(s, folderTokens))
+      folderTokens === null
+        ? rawSlides
+        : rawSlides.map((s) => resolveSlideTokens(s, folderTokens, variant))
     const unresolved = { count: 0 }
     const slides = resolved.map((s) => replaceUnresolvedTokens(s, unresolved))
     if (unresolved.count > 0) {
@@ -200,8 +206,17 @@ async function loadFolderTokens(
  * `Object.getPrototypeOf(v) === Object.prototype` guard skips them
  * naturally.
  */
-export function resolveSlideTokens(slide: Slide, tokens: FolderTokensSnapshot): Slide {
-  const objects = slide.objects.map((obj) => resolveTokensDeep(obj, tokens) as SlideObject)
+export function resolveSlideTokens(
+  slide: Slide,
+  tokens: FolderTokensSnapshot,
+  variant?: Readonly<Record<string, string>>,
+): Slide {
+  // Where the slide's colours resolve: the deck's variant, the slide's surface (A4.2d).
+  const ctx: TokenResolveContext = {
+    ...(variant !== undefined ? { variant } : {}),
+    ...(slide.layout?.surface !== undefined ? { surface: slide.layout.surface } : {}),
+  }
+  const objects = slide.objects.map((obj) => resolveTokensDeep(obj, tokens, ctx) as SlideObject)
   return { ...slide, objects }
 }
 
@@ -246,12 +261,23 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return proto === Object.prototype || proto === null
 }
 
-function resolveTokensDeep(value: unknown, tokens: FolderTokensSnapshot): unknown {
+/** The alpha field a colour field's token alpha multiplies into (A4.2d). */
+const ALPHA_OF: Readonly<Record<string, string>> = {
+  color: 'colorAlpha',
+  fill: 'fillAlpha',
+  stroke: 'strokeAlpha',
+}
+
+function resolveTokensDeep(
+  value: unknown,
+  tokens: FolderTokensSnapshot,
+  ctx: TokenResolveContext = {},
+): unknown {
   if (Array.isArray(value)) {
     let touched = false
     const next: unknown[] = new Array(value.length)
     for (let i = 0; i < value.length; i++) {
-      const resolved = resolveTokensDeep(value[i], tokens)
+      const resolved = resolveTokensDeep(value[i], tokens, ctx)
       next[i] = resolved
       if (resolved !== value[i]) touched = true
     }
@@ -261,22 +287,28 @@ function resolveTokensDeep(value: unknown, tokens: FolderTokensSnapshot): unknow
   // TokenRef itself — resolve to a hex number when possible. Leave the ref
   // in place when the token id is unknown (see replaceUnresolvedTokens).
   if (isTokenRef(value)) {
-    const resolved = resolveTokenValue(value, tokens)
-    if (resolved !== null) {
-      const hex = resolved.replace(/^#/, '')
-      if (/^[0-9A-Fa-f]{6}$/.test(hex)) {
-        return parseInt(hex, 16)
-      }
-    }
-    return value
+    const resolved = resolveTokenValue(value, tokens, ctx)
+    const parsed = resolved === null ? null : parseHexColor(resolved)
+    return parsed === null ? value : parsed.color
   }
   let touched = false
   const next: Record<string, unknown> = {}
   for (const key of Object.keys(value)) {
     const orig = value[key]
-    const resolved = resolveTokensDeep(orig, tokens)
+    const resolved = resolveTokensDeep(orig, tokens, ctx)
     next[key] = resolved
     if (resolved !== orig) touched = true
+  }
+  // A token colour with alpha (#rrggbbaa) multiplies its field's own alpha.
+  for (const [key, alphaKey] of Object.entries(ALPHA_OF)) {
+    const orig = value[key]
+    if (!isTokenRef(orig)) continue
+    const hex = resolveTokenValue(orig, tokens, ctx)
+    const alpha = hex === null ? 1 : (parseHexColor(hex)?.alpha ?? 1)
+    if (alpha >= 1) continue
+    const own = typeof value[alphaKey] === 'number' ? (value[alphaKey] as number) : 1
+    next[alphaKey] = Math.round(own * alpha * 1000) / 1000
+    touched = true
   }
   return touched ? next : value
 }
@@ -314,7 +346,9 @@ export function attachmentDisposition(
  */
 export function safeFilename(title: string): string {
   const trimmed = title
-    .replace(/[\u0000-\u001f\u007f"'<>\\/|?*]+/g, ' ')
+    // Control characters, and bidi controls that would make a name read
+    // as another extension ("invoice\u202Eexe"), become spaces.
+    .replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069"'<>\\/|?*]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
   return trimmed.length === 0 ? 'deck' : trimmed.slice(0, 120)

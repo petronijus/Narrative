@@ -9,8 +9,8 @@ import { z } from 'zod'
 import { defineCommand } from '../registry.js'
 import { requireServices } from '../services.js'
 import { SlideRefSchema, type SlideRef } from '../refs.js'
-import type { RenderSlideRef } from '../services/render.js'
-import { GET, serverCommand, targetDeckId } from './serverShared.js'
+import { MAX_PDF_SLIDES, type RenderSlideRef } from '../services/render.js'
+import { GET, PUT, serverCommand, targetDeckId, targetDocument } from './serverShared.js'
 
 /**
  * Slides one call renders at most: a slide with fresh pictures costs up to
@@ -93,6 +93,63 @@ export const deckExportPng = defineCommand({
   },
 })
 
+export const deckExportPdf = defineCommand({
+  ...serverCommand,
+  id: 'deck.exportPdf',
+  domain: 'deck',
+  title: 'Export slides as PDF',
+  description:
+    'The deck as one PDF, a page per slide as the editor shows it now: pictures of the slides, not editable ' +
+    'text (that is deck.exportPptx). Skipped slides are left out unless `includeSkipped`. A download URL for ' +
+    '15 minutes — a bearer link, only for the user who asked — or `delivery: "base64"` (≤ 8 MB). At most ' +
+    `${MAX_PDF_SLIDES} slides a call; about a second a slide. Any reader of the deck.`,
+  input: z.strictObject({
+    slides: z
+      .union([z.literal('all'), z.array(SlideRefSchema).min(1).max(MAX_PDF_SLIDES)])
+      .default('all')
+      .describe('"all" (default), or the slides in page order'),
+    includeSkipped: z.boolean().default(false),
+    delivery: z.enum(['url', 'base64']).default('url'),
+  }),
+  output: z.object({
+    delivery: z.enum(['url', 'base64']),
+    url: z.string().optional(),
+    expiresAt: z.string().optional(),
+    base64: z.string().optional(),
+    pages: z.number(),
+    leftOut: z.number(),
+    sizeBytes: z.number(),
+    failedLoads: z.number(),
+    failedFonts: z.array(z.string()),
+  }),
+  role: 'viewer',
+  scope: 'deck',
+  effects: ['server'],
+  undo: 'n/a',
+  confirm: 'never',
+  routes: [GET('/decks/:id/export.pdf')],
+  examples: [
+    { title: 'The deck as a PDF download link', input: {} },
+    {
+      title: 'Slides 1–3 inline, the skipped ones too',
+      input: {
+        slides: [{ index: 0 }, { index: 1 }, { index: 2 }],
+        includeSkipped: true,
+        delivery: 'base64',
+      },
+    },
+  ],
+  async handler(ctx, input) {
+    return requireServices(ctx).render.exportPdf({
+      userId: ctx.actor.userId,
+      deckId: targetDeckId(ctx),
+      slides: input.slides === 'all' ? 'all' : input.slides.map(toRenderRef),
+      includeSkipped: input.includeSkipped,
+      delivery: input.delivery,
+    })
+  },
+})
+
 const RegionSchema = z
   .strictObject({
     x: z.number().min(0).max(1920),
@@ -112,9 +169,12 @@ export const queryRender = defineCommand({
     'draws them, seconds-old edits included). Look after every visible change before you report it done. ' +
     '`slide`: the whole slide (1430×804). `slide` + `region` (slide px, 1920×1080 space): that part at full ' +
     'resolution, for small type, a table or an alignment. `slides` ("all" or a list, at most 20): one contact ' +
-    'sheet, each slide numbered, for pacing and repetition across the deck. `failedLoads` counts missing ' +
-    'pictures per slide; `failedFonts` names fonts that fell back. A few seconds the first time on a deck, ' +
-    'about a second after. Files for the user are deck.exportPng. Any reader of the deck.',
+    'sheet, each slide numbered, for pacing and repetition across the deck. `slide` + `compare: "before"`: ' +
+    'the slide before your current run first changed it, beside it now (`newSlide`: your run added it). ' +
+    '`overflow`: text boxes whose text runs below the box with the real fonts — fix those you caused. ' +
+    '`failedLoads` counts missing pictures per slide; ' +
+    '`failedFonts` names fonts that fell back. A few seconds the first time on a deck, about a second after. ' +
+    'Files for the user are deck.exportPng. Any reader of the deck.',
   input: z
     .strictObject({
       slide: SlideRefSchema.optional().describe('The slide to look at'),
@@ -123,18 +183,33 @@ export const queryRender = defineCommand({
         .union([z.literal('all'), z.array(SlideRefSchema).min(1).max(MAX_RENDER_SLIDES)])
         .optional()
         .describe('Slides for one contact sheet: "all" (a deck of at most 20) or a list'),
+      compare: z.literal('before').optional(),
     })
     .refine((v) => (v.slide === undefined) !== (v.slides === undefined), {
       message: 'Give either slide or slides',
     })
     .refine((v) => v.region === undefined || v.slide !== undefined, {
       message: 'region needs slide',
+    })
+    .refine((v) => v.compare === undefined || (v.slide !== undefined && v.region === undefined), {
+      message: 'compare needs slide, and no region',
     }),
   output: z.object({
-    mode: z.enum(['slide', 'region', 'sheet']),
+    mode: z.enum(['slide', 'region', 'sheet', 'compare']),
     width: z.number(),
     height: z.number(),
     slides: z.array(z.object({ slideId: z.string(), index: z.number(), failedLoads: z.number() })),
+    overflow: z.array(
+      z.object({
+        slideId: z.string(),
+        index: z.number(),
+        objectId: z.string(),
+        boxHeight: z.number(),
+        textHeight: z.number(),
+      }),
+    ),
+    overflowTruncated: z.boolean().optional(),
+    newSlide: z.boolean().optional(),
     failedFonts: z.array(z.string()),
     image: z.object({ mimeType: z.literal('image/png'), base64: z.string() }),
   }),
@@ -152,6 +227,10 @@ export const queryRender = defineCommand({
       input: { slide: 's2', region: { x: 0, y: 900, width: 1920, height: 180 } },
     },
     { title: 'The whole deck on one sheet', input: { slides: 'all' } },
+    {
+      title: 'Show the title slide before and after your changes',
+      input: { slide: { index: 0 }, compare: 'before' },
+    },
   ],
   async handler(ctx, input) {
     return requireServices(ctx).render.look({
@@ -160,12 +239,49 @@ export const queryRender = defineCommand({
       view:
         input.slides !== undefined
           ? { sheet: input.slides === 'all' ? 'all' : input.slides.map(toRenderRef) }
-          : {
-              slide: toRenderRef(input.slide!),
-              ...(input.region !== undefined ? { region: input.region } : {}),
-            },
+          : input.compare !== undefined
+            ? { compare: toRenderRef(input.slide!), runId: ctx.run?.runId ?? null }
+            : {
+                slide: toRenderRef(input.slide!),
+                ...(input.region !== undefined ? { region: input.region } : {}),
+              },
     })
   },
 })
 
-export const renderCommands = [deckExportPng, queryRender]
+export const deckRefreshThumbnail = defineCommand({
+  ...serverCommand,
+  id: 'deck.refreshThumbnail',
+  domain: 'deck',
+  title: 'Redraw the deck card',
+  description:
+    'Redraw the card picture — what the folder page shows for the deck, or for a component master (componentId) ' +
+    'in its component list — from the first slide, now. The ' +
+    'card follows changes by itself: from the editor while someone has the deck open, else about 15 s after ' +
+    'the last change (once a minute at most); call this only when it must be right at once (before sending ' +
+    'someone to the folder). Returns the new picture’s URL. Takes a few seconds. Editors of the deck (a master: ' +
+    'of its folder).',
+  input: z.strictObject({}),
+  output: z.object({
+    thumbnailUrl: z.string(),
+    updatedAt: z.string().describe('ISO 8601 timestamp'),
+  }),
+  role: 'editor',
+  scope: 'deck',
+  // A master's card too; its folder's editors redraw it.
+  acceptsComponent: true,
+  roleOn: { component: 'editor' },
+  effects: ['server'],
+  undo: 'n/a',
+  confirm: 'never',
+  routes: [PUT('/decks/:id/thumbnail'), PUT('/components/:id/thumbnail')],
+  examples: [{ title: 'Redraw the card after reworking the title slide', input: {} }],
+  async handler(ctx) {
+    return requireServices(ctx).render.refreshThumbnail({
+      userId: ctx.actor.userId,
+      target: targetDocument(ctx),
+    })
+  },
+})
+
+export const renderCommands = [deckExportPng, deckExportPdf, queryRender, deckRefreshThumbnail]

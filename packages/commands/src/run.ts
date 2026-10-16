@@ -149,7 +149,7 @@ function commandReadsFolder(
   registry: CommandRegistry,
   commandId: string,
   rawInput: unknown,
-  flag: 'readsFolderTokens' | 'readsFolderFonts',
+  flag: 'readsFolderTokens' | 'readsFolderFonts' | 'readsStylePack',
 ): boolean {
   const def = registry.get(commandId)
   if (def === undefined) return false
@@ -179,6 +179,15 @@ export function commandReadsFolderFonts(
   rawInput: unknown,
 ): boolean {
   return commandReadsFolder(registry, commandId, rawInput, 'readsFolderFonts')
+}
+
+/** Whether an invocation needs `ctx.stylePack` (`readsStylePack`, also inside `ops.apply`). */
+export function commandReadsStylePack(
+  registry: CommandRegistry,
+  commandId: string,
+  rawInput: unknown,
+): boolean {
+  return commandReadsFolder(registry, commandId, rawInput, 'readsStylePack')
 }
 
 /**

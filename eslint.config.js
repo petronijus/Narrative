@@ -108,6 +108,8 @@ export default [
       'apps/server/src/observability/sentry.ts', // observability init, may log before pino
       'apps/server/src/db/migrate.ts', // migration CLI — stdout progress is the UX
       'apps/server/src/scripts/**/*.ts', // one-shot CLI scripts — console is the output
+      'apps/server/src/stylePacks/bootstrap/cli.ts', // style-pack CLI — console is the output
+      'apps/server/src/stylePacks/bootstrap/importPack.ts', // style-pack import CLI
     ],
     rules: {
       'no-console': 'error',
@@ -124,6 +126,34 @@ export default [
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
       'no-console': 'off',
+    },
+  },
+  // Playwright fixtures hand their value on through a callback named `use`,
+  // which the React hooks rule takes for React's `use()`.
+  {
+    files: ['apps/web/e2e/**/*.ts'],
+    rules: {
+      'react-hooks/rules-of-hooks': 'off',
+    },
+  },
+  // Playwright specs take `test` from e2e/fixtures/test.ts, which deletes the
+  // decks and folders a test created; Playwright's own `test` would leak them.
+  {
+    files: ['apps/web/e2e/**/*.spec.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@playwright/test',
+              importNames: ['test'],
+              message:
+                "Import `test` from './fixtures/test': it deletes the decks and folders a test created.",
+            },
+          ],
+        },
+      ],
     },
   },
 ]

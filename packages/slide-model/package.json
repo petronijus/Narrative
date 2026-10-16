@@ -1,6 +1,6 @@
 {
   "name": "@narrative/slide-model",
-  "version": "0.10.26",
+  "version": "0.14.0",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -12,17 +12,17 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "node ../../node_modules/vitest/vitest.mjs run",
-    "mutate": "stryker run"
+    "mutate": "cd ../.. && stryker run packages/slide-model/stryker.config.json"
   },
   "dependencies": {
     "@narrative/shared": "workspace:*",
-    "nanoid": "^5.0.9",
-    "yjs": "^13.6.30"
+    "nanoid": "^6.0.2",
+    "yjs": "^13.6.33"
   },
   "devDependencies": {
-    "@stryker-mutator/core": "^8.6.0",
-    "@stryker-mutator/vitest-runner": "^8.6.0",
-    "fast-check": "^3.23.0",
-    "vitest": "^4.1.7"
+    "@stryker-mutator/core": "^10.0.0",
+    "@stryker-mutator/vitest-runner": "^10.0.0",
+    "fast-check": "^4.10.2",
+    "vitest": "^5.0.4"
   }
 }

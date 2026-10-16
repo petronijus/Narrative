@@ -204,11 +204,7 @@ export interface CreatePatInput {
 }
 
 export type PatErrorCode =
-  | 'invalid_name'
-  | 'invalid_scopes'
-  | 'invalid_expiry'
-  | 'invalid_body'
-  | 'token_limit_reached'
+  'invalid_name' | 'invalid_scopes' | 'invalid_expiry' | 'invalid_body' | 'token_limit_reached'
 
 export class PatError extends Error {
   constructor(

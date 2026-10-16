@@ -194,6 +194,7 @@ describe('command metadata quality', () => {
       'media.fontUrl',
       'media.status',
       'media.url',
+      'style.pack.get',
       'share.invites.list',
       'share.links.list',
       'share.permissions.list',

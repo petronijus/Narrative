@@ -32,6 +32,11 @@ import type { Application } from 'pixi.js'
 import * as Y from 'yjs'
 import { getRenderer } from './objectRenderers'
 import { setTableCellFaded } from './objectRenderers/tableRenderer.js'
+import {
+  subscribeTextLayout,
+  textBoxLayout,
+  type TextBoxLayout,
+} from './objectRenderers/textRenderer.js'
 import { repaintFilterColours } from './filterEffects.js'
 import {
   getColourResolver,
@@ -39,7 +44,7 @@ import {
   tokenColoursDiffer,
   type ColourResolverFn,
 } from './colourResolver.js'
-import { subscribeFontFamilyChanges } from './fontChanges.js'
+import { createFontLoadFilter, subscribeFontFamilyChanges } from './fontChanges.js'
 import { fontFamilyNames } from '@narrative/slide-model'
 import type { SlideObject, SlideObjectType, ObjectChangeSet } from '@narrative/shared'
 import type { ObjectBounds } from './types'
@@ -145,6 +150,11 @@ export class SceneGraph {
   /** Ends the colour-resolver subscription (destroy). */
   private readonly unsubscribeColourResolver: () => void
   private readonly unsubscribeFontChanges: () => void
+  private readonly unsubscribeTextLayout: () => void
+  /** Ends the webfont-load subscription that re-lays out autofit boxes (destroy). */
+  private readonly unsubscribeFontLoads: () => void
+  /** `onTextLayout` listeners: a text box of this scene drawn at a new height or type scale. */
+  private readonly textLayoutListeners = new Set<(id: string, layout: TextBoxLayout) => void>()
 
   constructor(app: Application) {
     this.app = app
@@ -158,6 +168,81 @@ export class SceneGraph {
     this.unsubscribeFontChanges = subscribeFontFamilyChanges((family) => {
       this.refreshTextNodesUsingFamily(family)
     })
+    // Every text renderer of the page reports here; keep to this scene's boxes.
+    this.unsubscribeTextLayout = subscribeTextLayout((container, layout) => {
+      const id = this.containerToId.get(container)
+      if (id === undefined) return
+      for (const listener of [...this.textLayoutListeners]) listener(id, layout)
+    })
+    // A webfont that finished loading changes how text lays out, but Pixi
+    // keeps a node's measured bounds until its text or style changes: an
+    // autofit box measured against the stand-in face would keep that
+    // height or scale. Lay them out again in the face that is there now —
+    // once per face: HTMLText's own measurements load the faces it embeds
+    // again and again (createFontLoadFilter). (Folder fonts reach their
+    // boxes through refreshTextNodesUsingFamily.)
+    const fonts = typeof document === 'undefined' ? undefined : document.fonts
+    if (fonts !== undefined && typeof fonts.addEventListener === 'function') {
+      const isNews = createFontLoadFilter()
+      const relayout = (event: Event): void => {
+        const faces = (event as Partial<FontFaceSetLoadEvent>).fontfaces ?? []
+        if (isNews(faces)) this.relayoutAutofitText()
+      }
+      fonts.addEventListener('loadingdone', relayout)
+      this.unsubscribeFontLoads = () => fonts.removeEventListener('loadingdone', relayout)
+    } else {
+      this.unsubscribeFontLoads = () => {}
+    }
+  }
+
+  /** Measure every autofit text box of this scene again (its style rebuilt, so Pixi re-measures). */
+  private relayoutAutofitText(): void {
+    const renderer = getRenderer('text')
+    if (renderer?.applyPatch === undefined) return
+    let touched = 0
+    for (const node of this.nodes.values()) {
+      if (node.data.type !== 'text' || node.data.autofit === undefined) continue
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the patch carries the box's own family
+      renderer.applyPatch(node.container, { fontFamily: node.data.fontFamily } as any)
+      touched++
+    }
+    if (touched > 0) this.markDirty()
+  }
+
+  /**
+   * Hear when one of this scene's text boxes is drawn at a new height or
+   * type scale (`autofit`, agentic A4.2): a `grow-down` box gained or lost a
+   * line, a `shrink` box was rescaled. The editor redraws its selection and
+   * follows it (TransformHandles, the overlays).
+   */
+  onTextLayout(listener: (id: string, layout: TextBoxLayout) => void): () => void {
+    this.textLayoutListeners.add(listener)
+    return () => {
+      this.textLayoutListeners.delete(listener)
+    }
+  }
+
+  /**
+   * The size an object is drawn at: its own, except a `grow-down` text box,
+   * which is as tall as its laid-out text whatever its `height` says. Hit
+   * testing and the bounds the editor draws handles on use it.
+   */
+  drawnSize(id: string): { width: number; height: number } | null {
+    const node = this.nodes.get(id)
+    if (node === undefined) return null
+    return { width: node.data.width, height: this.drawnHeightOf(node) }
+  }
+
+  /** How a text box of this scene is drawn — its height and type scale (undefined for other objects). */
+  textLayout(id: string): TextBoxLayout | undefined {
+    const node = this.nodes.get(id)
+    if (node === undefined || node.data.type !== 'text') return undefined
+    return textBoxLayout(node.container)
+  }
+
+  private drawnHeightOf(node: SceneNode): number {
+    if (node.data.type !== 'text') return node.data.height
+    return textBoxLayout(node.container)?.height ?? node.data.height
   }
 
   /**
@@ -576,8 +661,7 @@ export class SceneGraph {
     // (mask) and filter sprites do not.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const textChild = container.children.find((c) => (c as any).anchor !== undefined) as
-      | { alpha: number }
-      | undefined
+      { alpha: number } | undefined
     if (textChild === undefined) return
     textChild.alpha = faded ? 0 : 1
     this.markDirty()
@@ -635,8 +719,7 @@ export class SceneGraph {
     // stand-in. Every style and mask rebuilt below must start from the face
     // that is installed now.
     const textRendererForMetrics = getRenderer('text') as
-      | { forgetFontMetrics?: (f: string) => void }
-      | undefined
+      { forgetFontMetrics?: (f: string) => void } | undefined
     textRendererForMetrics?.forgetFontMetrics?.(family)
 
     let touched = 0
@@ -731,8 +814,7 @@ export class SceneGraph {
    */
   refreshSlideNumberTexts(): void {
     const textRenderer = getRenderer('text') as
-      | { refreshSlideNumberText?: (n: Container) => boolean }
-      | undefined
+      { refreshSlideNumberText?: (n: Container) => boolean } | undefined
     if (textRenderer?.refreshSlideNumberText === undefined) return
     let touched = 0
     const walk = (c: Container): void => {
@@ -890,6 +972,9 @@ export class SceneGraph {
   destroy(): void {
     this.unsubscribeColourResolver()
     this.unsubscribeFontChanges()
+    this.unsubscribeTextLayout()
+    this.unsubscribeFontLoads()
+    this.textLayoutListeners.clear()
     for (const id of [...this.nodes.keys()]) {
       this.removeObject(id)
     }
@@ -952,7 +1037,8 @@ export class SceneGraph {
       if (id === undefined) continue
       const node = this.nodes.get(id)
       if (node === undefined) continue
-      const { width, height } = node.data
+      const { width } = node.data
+      const height = this.drawnHeightOf(node)
 
       node.container.toLocal(worldPoint, undefined, localPoint)
 
@@ -1011,7 +1097,7 @@ export class SceneGraph {
 
     const { container, data } = node
     const w = data.width
-    const h = data.height
+    const h = this.drawnHeightOf(node)
     // container.x/y je střed objektu (pivot = w/2, h/2 nastavuje renderer)
     const cx = container.x
     const cy = container.y
@@ -1153,7 +1239,11 @@ export class SceneGraph {
       return null
     }
     const w = slideObj.width
-    const h = slideObj.height
+    // A growing text leaf is as tall as it is drawn.
+    const h =
+      slideObj.type === 'text'
+        ? (textBoxLayout(container)?.height ?? slideObj.height)
+        : slideObj.height
     const halfW = w / 2
     const halfH = h / 2
 

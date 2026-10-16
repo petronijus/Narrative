@@ -170,7 +170,7 @@ Monorepo (pnpm workspaces). `apps/web` with Vite + React + TS strict + Tailwind.
 **Deliverable**: `pnpm dev` starts; CI green on an empty repo.
 
 > **Superseded 2026-09-07**: GitHub Actions was removed entirely (commit
-> `573ba64`) after both workflows had been red since 2026-06-17 on a pnpm
+> `f55be7b`) after both workflows had been red since 2026-06-17 on a pnpm
 > version conflict. There is no `.github/` directory. The pre-commit hooks
 > remain; the check gate is now local (`pnpm typecheck && pnpm lint && pnpm -r
 test`) and codified in `CLAUDE.md`'s auto-run policy.
@@ -304,7 +304,7 @@ All three goals are now covered there, along with:
 - every capability callable by an agent through one command registry;
 - an MCP server, so Claude Code and claude.ai drive Narrative (an in-app
   agent is deferred);
-- Woodgrove style packs;
+- Wingtip style packs;
 - a parity guard.
 
 The plan runs in phases A0–A5:

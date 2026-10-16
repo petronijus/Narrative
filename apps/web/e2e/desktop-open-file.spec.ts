@@ -1,6 +1,6 @@
 /**
  * A PowerPoint file the operating system opens with the desktop app reaches
- * the import dialog (ADR 0014; apps/desktop/src/main/openFiles.ts,
+ * the import dialog (ADR 0015; apps/desktop/src/main/openFiles.ts,
  * apps/web/src/desktop/openedFiles.ts): on the command line at start, and
  * handed over by a second launch. A file that is no .pptx is refused in the
  * shell and never reaches the page. Needs the dev stack (`just dev`).

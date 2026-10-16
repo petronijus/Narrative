@@ -26,7 +26,7 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto'
-import { expect, test, type APIRequestContext } from '@playwright/test'
+import { expect, test, type APIRequestContext } from './fixtures/test'
 
 const SERVER = 'http://localhost:3001'
 

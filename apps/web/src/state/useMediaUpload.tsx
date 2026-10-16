@@ -115,8 +115,7 @@ const VIDEO_MAX_BYTES = 500 * 1024 * 1024 // 500 MB
 const TRANSCODE_POLL_INTERVAL_MS = 2_000
 
 type MediaUploadProviderProps = (
-  | { deckId: string; componentId?: never }
-  | { componentId: string; deckId?: never }
+  { deckId: string; componentId?: never } | { componentId: string; deckId?: never }
 ) & { children: ReactNode }
 
 export function MediaUploadProvider(props: MediaUploadProviderProps) {

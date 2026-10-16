@@ -779,6 +779,9 @@ export function TableInspector({ obj, isViewer }: TableInspectorProps) {
           listStyle: false,
           stroke: false,
           colorAlpha: false,
+          // A cell grows its row; it has no autofit of its own.
+          autofit: false,
+          fontStretch: false,
         }}
       />
       <Section title="Padding" storageKey="table-padding">

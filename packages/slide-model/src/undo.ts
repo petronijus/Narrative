@@ -18,15 +18,27 @@ import { LOCAL_ORIGIN } from './mutations.js'
 import type { SlideMutationContext } from './slideMutationContext.js'
 
 /**
- * Creates Y.UndoManager tracking the slides Y.Array (and all nested content).
- * Tracks only operations with LOCAL_ORIGIN — local user edits only.
- *
- * P11: also tracks the deck-level `guides` Y.Array so add/move/remove of
- * a ruler-dragged guide takes part in undo/redo.
+ * What undo covers in a deck's document — the editor's undo and an agent
+ * run's revert (server runs.ts) both: the `slides` array (every object,
+ * animation and transition inside), the deck-level `guides` (P11: a
+ * ruler-dragged guide) and the deck's `meta` (A5.1: the variant, footer
+ * fields and language style.deck.apply sets, so reverting it puts them back).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Y.UndoManager's own scope type
+export function undoScope(doc: Y.Doc): Array<Y.AbstractType<any>> {
+  return [
+    doc.getArray<Y.Map<unknown>>('slides'),
+    doc.getArray<Y.Map<unknown>>('guides'),
+    doc.getMap<unknown>('meta'),
+  ]
+}
+
+/**
+ * Creates Y.UndoManager over {@link undoScope}, tracking only operations
+ * with LOCAL_ORIGIN — local user edits only.
  */
 export function createUndoManager(ctx: SlideMutationContext): Y.UndoManager {
-  const guides = ctx.doc.getArray<Y.Map<unknown>>('guides')
-  return new Y.UndoManager([ctx.slides, guides], {
+  return new Y.UndoManager(undoScope(ctx.doc), {
     trackedOrigins: new Set([LOCAL_ORIGIN]),
     captureTimeout: UNDO_CAPTURE_TIMEOUT_MS,
   })

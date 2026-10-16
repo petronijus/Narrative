@@ -254,6 +254,7 @@ vi.mock('../state/FolderDocProvider', () => ({
   useFolderTokens: () => ({ colors: {}, textStyles: {}, effectStyles: {} }),
   useFolderTokensOptional: () => ({ colors: {}, textStyles: {}, effectStyles: {} }),
   useFolderTokensForCommands: () => undefined,
+  useFolderStylePack: () => undefined,
   useFolderTokenWriter: () => null,
   FolderDocProvider: ({ children }: { children: unknown }) => children,
 }))
@@ -448,23 +449,6 @@ describe('Inspector — Animations section', () => {
     ])
   })
 
-  it.skip('zobrazí existující animace patřící objektu', () => {
-    // Přidáme animaci pro rect-1
-    mockAnimations.push({
-      id: 'anim-1',
-      objectId: RECT_OBJ.id,
-      preset: 'fadeIn',
-      trigger: 'onEnter',
-      duration: 0.6,
-      delay: 0,
-      easing: 'power2.out',
-    })
-
-    renderWithSelection(RECT_OBJ)
-    expect(screen.getByText('fadeIn')).toBeInTheDocument()
-    expect(screen.getByText('onEnter')).toBeInTheDocument()
-  })
-
   it('nezobrazí animace jiných objektů', () => {
     // Animace pro jiný objekt
     mockAnimations.push({
@@ -498,44 +482,5 @@ describe('Inspector — Animations section', () => {
     expect(stepsInDoc()).toHaveLength(1)
     fireEvent.click(screen.getByLabelText('Remove fadeIn animation'))
     expect(stepsInDoc()).toEqual([])
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Multi-select placeholder (M7)
-// ---------------------------------------------------------------------------
-
-describe('Inspector — multi-select placeholder', () => {
-  it.skip('zobrazí multi-select placeholder pro >1 selected', () => {
-    mockObjects.length = 0
-    mockObjects.push(RECT_OBJ, ELLIPSE_OBJ)
-
-    const deckCtx = createDeckCtx()
-    const ctxValue = createContextValue(deckCtx)
-
-    function MultiSelectInner() {
-      const { selectMany } = useSelection()
-      useEffect(() => {
-        selectMany([RECT_OBJ.id, ELLIPSE_OBJ.id])
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [])
-      return <Inspector />
-    }
-
-    render(
-      <MemoryRouter>
-        <SlideDocContext value={ctxValue}>
-          <ActiveSlideContext value={createMockActiveSlide()}>
-            <SelectionProvider>
-              <MultiSelectInner />
-            </SelectionProvider>
-          </ActiveSlideContext>
-        </SlideDocContext>
-      </MemoryRouter>,
-    )
-
-    expect(screen.getByText(/Multi-select/)).toBeInTheDocument()
-    expect(screen.getByText(/2 objects selected/)).toBeInTheDocument()
-    expect(screen.queryByText('Position')).not.toBeInTheDocument()
   })
 })

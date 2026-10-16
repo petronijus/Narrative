@@ -94,9 +94,9 @@ function platform(): DesktopInfo['platform'] {
 
 /** The channels every build has; the feature modules register their own. */
 export function registerCoreIpc(registry: IpcRegistry): void {
-  registry.handle(
-    DESKTOP_IPC.info,
-    noPayload,
-    (): DesktopInfo => ({ appVersion: app.getVersion(), platform: platform(), role: 'main' }),
-  )
+  registry.handle(DESKTOP_IPC.info, noPayload, (): DesktopInfo => ({
+    appVersion: app.getVersion(),
+    platform: platform(),
+    role: 'main',
+  }))
 }

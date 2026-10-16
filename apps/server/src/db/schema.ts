@@ -397,6 +397,12 @@ export const mediaAssets = pgTable(
     fontStyle: text('font_style'),
     /** Postscript name — uniquely identifies one face within a family. */
     fontPostscriptName: text('font_postscript_name'),
+    /**
+     * A4.2c: a variable font's axis ranges, `{ wght?: [min, max], wdth?:
+     * [min, max] }`; `{}` for a static font; NULL until read (a font stored
+     * before migration 0035, until the data migration reads it).
+     */
+    fontAxes: jsonb('font_axes').$type<{ wght?: [number, number]; wdth?: [number, number] }>(),
   },
   (t) => [
     index('media_assets_deck_idx').on(t.deckId),
@@ -500,6 +506,12 @@ export const users = pgTable(
     pictureUrl: text('picture_url'),
     firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).defaultNow().notNull(),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).defaultNow().notNull(),
+    /**
+     * Instance admin (docs/adr/0014): owner of every folder and deck except
+     * other people's Drafts, and manages who may use Narrative at all. Set by
+     * `ADMIN_EMAILS` at sign-in or by another admin; never inferred.
+     */
+    isAdmin: boolean('is_admin').notNull().default(false),
   },
   // Case-insensitive email uniqueness — see migration 0013 for the actual
   // `LOWER(email)` unique index (drizzle's plain unique() doesn't support
@@ -558,6 +570,32 @@ export const folderInvites = pgTable(
   },
   (t) => [index('folder_invites_folder_id_idx').on(t.folderId)],
 )
+
+// ---------------------------------------------------------------------------
+// allowed_emails — who may sign in, managed by instance admins (ADR 0014).
+// Joins the env allowlist (OIDC_ALLOWED_EMAILS / OIDC_ALLOWED_DOMAIN) and the
+// implicit invite / share grants in auth/signInPolicy.ts.
+// ---------------------------------------------------------------------------
+
+export const allowedEmails = pgTable('allowed_emails', {
+  /** Stored lower-case. */
+  email: text('email').primaryKey(),
+  addedBySub: text('added_by_sub').notNull(),
+  addedAt: timestamp('added_at', { withTimezone: true }).defaultNow().notNull(),
+})
+
+// ---------------------------------------------------------------------------
+// email_settings — which kinds of email Narrative sends (email/catalog.ts),
+// switched by instance admins. No row = on.
+// ---------------------------------------------------------------------------
+
+export const emailSettings = pgTable('email_settings', {
+  /** An `EmailKind` (email/catalog.ts). */
+  kind: text('kind').primaryKey(),
+  enabled: boolean('enabled').notNull(),
+  updatedBySub: text('updated_by_sub').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+})
 
 // ---------------------------------------------------------------------------
 // sessions — server-side opaque session rows (replaces browser-PKCE flow).

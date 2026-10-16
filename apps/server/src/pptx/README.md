@@ -33,6 +33,16 @@ shows. Where it cannot say it exactly, write the best native approximation
 the native XML next to it is unchanged. `objectExt.ts` is the single table of
 which fields go where; read it before adding a field.
 
+Not carried, on purpose: a slide's style pack layout (`Slide.layout`),
+its brief and the spec slide that built it (`Slide.brief`, `Slide.specKey`,
+A5.3), and the deck's meta (`DeckMeta`: pack variant, footer fields,
+language, and the deck spec it keeps). Both
+point into the folder's style pack, which a PowerPoint file does not hold:
+export resolves every colour on the deck's variant and the slide's surface
+into literal values, so the file looks the same without them, and an
+imported deck is laid out again with `slide.applyLayout` /
+`style.deck.apply` in the folder it lands in.
+
 ## Checking changes
 
 ```bash
@@ -55,13 +65,13 @@ polygon as custom geometry from `regularPolygonVertices`
 2026-09-29 the canvas draws a triangle as PowerPoint does — filling its box
 — so an imported triangle keeps its size on screen (was: drawn inscribed in
 the box's ellipse, smaller than in PowerPoint). The model is unchanged, so
-the round trip is too: the Proseware deck (49 slides) reported 0 differences
+the round trip is too: the reference deck (49 slides) reported 0 differences
 both before and after that change (2026-09-29, MacBook).
 
 Known state (2026-09-26): the real-deck script is **not** at 0 differences.
-It reports 5 at `v0.9.29` (`4e3c503`, clean checkout) — `fillStyle.centerY`,
+It reports 5 at `v0.9.29` (`cc38918`, clean checkout) — `fillStyle.centerY`,
 `text.length`, and `fontSize` 27.99 → 28 — while 0.9.25 recorded 0 on the
-Proseware deck. Not bisected; which real deck produced the 5 was not recorded.
+reference deck. Not bisected; which real deck produced the 5 was not recorded.
 Until it is fixed, "0 differences" means "no differences beyond these 5".
 
 Other real decks are further off, and were already at `v0.9.29` (checked

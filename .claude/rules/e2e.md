@@ -22,6 +22,11 @@ paths:
   machine (it measures CPU or frame timing, or changes user-wide state other
   specs read) is tagged `@serial`: it runs in the `serial` project, alone,
   after the parallel one (run it by itself with `--no-deps`).
+- Import `test` and `expect` from `./fixtures/test`, never from
+  `@playwright/test` (ESLint enforces it): it deletes the decks and folders
+  a worker's specs created — through `request`, `page.request`, the page,
+  `browser.newContext()` or `playwright.request.newContext()` — when the
+  worker is done. Seed through those, never Node's own `fetch`.
 - A test that needs a second person sets the `narrative_dev_as=dev-…`
   cookie on its own browser context (BYPASS_AUTH only;
   `e2e/folder-sharing.spec.ts`).

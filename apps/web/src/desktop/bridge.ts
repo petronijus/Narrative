@@ -1,7 +1,7 @@
 /**
  * desktop/bridge.ts
  *
- * The editor's view of the desktop shell (ADR 0014): `window.narrativeDesktop`
+ * The editor's view of the desktop shell (ADR 0015): `window.narrativeDesktop`
  * exists only when the editor runs inside the Narrative desktop app, which
  * loads it from this same server. The shell installed on a machine and the
  * editor served by the server come in any combination, so everything here

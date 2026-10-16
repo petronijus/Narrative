@@ -31,15 +31,19 @@ import {
   RENDER_HEIGHT,
   RENDER_WIDTH,
   renderFailureMessage,
+  renderPageName,
+  renderPagePath,
   type RenderFailureReason,
   type RenderJobData,
   type RenderJobResult,
-  type RenderLookSpec,
+  type RenderPageLookSpec as PageLookSpec,
   type RenderTarget,
   type RenderedSlide,
+  type GrownText,
+  type TextOverflow,
 } from '@narrative/shared'
 import type { RenderWorkerConfig } from './config.js'
-import { installUpstreamRouting, putToUpstream } from './routing.js'
+import { getFromUpstream, installUpstreamRouting, putToUpstream } from './routing.js'
 import type { WarmPage, WarmPages } from './warmPages.js'
 
 /** The page's own refusals (apps/web/src/pages/DeckRender.tsx, RenderErrorReason). */
@@ -50,6 +54,8 @@ type PageOutcome<T> = { ok: true; value: T } | { ok: false; reason: PageReason; 
 /** What the page's hooks look like from here (the fields used). */
 interface RenderWindow {
   __narrativeRender?: { status: string; reason?: PageReason }
+  /** A frozen page's (`?frozen=1`): the document state it is to show, before anything else. */
+  __narrativeRenderFreeze?: (state: string) => void
   __narrativeRenderSlidePng?: (
     slideId: string,
     opts: { stateVector: string },
@@ -63,7 +69,7 @@ interface RenderWindow {
     }>
   >
   __narrativeRenderLook?: (
-    spec: RenderLookSpec,
+    spec: PageLookSpec,
     opts: { stateVector: string },
   ) => Promise<
     PageOutcome<{
@@ -71,6 +77,9 @@ interface RenderWindow {
       width: number
       height: number
       slides: Array<{ slideId: string; index: number; failedLoads: number }>
+      overflow: TextOverflow[]
+      /** Absent from a page older than A4.5. */
+      grown?: GrownText[]
       failedFonts: string[]
       timings?: unknown
     }>
@@ -101,11 +110,18 @@ export function maskTokens(text: string): string {
 
 export function renderPageUrl(
   appOrigin: string,
-  data: Pick<RenderJobData, 'deckId' | 'token'>,
+  data: Pick<RenderJobData, 'page' | 'token'>,
   firstSlideId: string,
+  opts: { frozen?: boolean } = {},
 ): string {
-  const url = new URL(`/deck/${encodeURIComponent(data.deckId)}/render`, appOrigin)
+  const url = new URL(renderPagePath(data.page), appOrigin)
   url.searchParams.set('slide', firstSlideId)
+  // Nothing is looked at on screen: the jobs capture from the scene, and
+  // on-screen frames would cost as much CPU as the captures (DeckRender.tsx).
+  url.searchParams.set('paint', 'off')
+  // A frozen page shows a state it is handed (a compare's "before"), with no
+  // live document behind it.
+  if (opts.frozen === true) url.searchParams.set('frozen', '1')
   url.searchParams.set('share_token', data.token)
   return url.toString()
 }
@@ -140,6 +156,7 @@ async function openPage(
   deps: { config: RenderWorkerConfig; log: (message: string) => void },
   stopAt: number,
   onContext: (context: WarmPage['context']) => void,
+  opts: { frozen?: boolean } = {},
 ): Promise<WarmPage> {
   const context = await browser.newContext({
     viewport: { width: RENDER_WIDTH, height: RENDER_HEIGHT },
@@ -160,11 +177,11 @@ async function openPage(
     page.on('pageerror', (err) => {
       if (pageErrors.length < 10) pageErrors.push(maskTokens(err.message).slice(0, 300))
     })
-    await page.goto(renderPageUrl(deps.config.appOrigin, data, firstSlideId), {
+    await page.goto(renderPageUrl(deps.config.appOrigin, data, firstSlideId, opts), {
       waitUntil: 'domcontentloaded',
       timeout: left(stopAt),
     })
-    return { deckId: data.deckId, context, page, pageErrors }
+    return { name: renderPageName(data.page), context, page, pageErrors }
   } catch (err) {
     await context.close().catch(() => undefined)
     throw err
@@ -212,9 +229,78 @@ async function upload(
 }
 
 /** Where a page job's time went (pages/renderTimings.ts), one log line. */
-function logTimings(log: (message: string) => void, deckId: string, timings: unknown): void {
+function logTimings(log: (message: string) => void, data: RenderJobData, timings: unknown): void {
   if (timings === undefined) return
-  log(`deck=${deckId} timings ${maskTokens(JSON.stringify(timings))}`)
+  log(`${renderPageName(data.page)} timings ${maskTokens(JSON.stringify(timings))}`)
+}
+
+/**
+ * A compare's "before": the slide drawn on a frozen page — one that holds the
+ * document state the job carries and nothing live — as a PNG; null when the
+ * slide did not exist in that state. The page is closed before the live one
+ * opens, so the two never hold memory at once.
+ */
+async function drawBefore(
+  browser: Browser,
+  data: RenderJobData & { kind: 'look' },
+  look: { slideId: string; before: { url: string } },
+  deps: { config: RenderWorkerConfig; log: (message: string) => void },
+  stopAt: number,
+  signal: AbortSignal,
+  onContext: (context: WarmPage['context'] | null) => void,
+): Promise<string | null> {
+  let state: string
+  try {
+    const bytes = await getFromUpstream(look.before.url, {
+      appOrigin: deps.config.appOrigin,
+      upstream: deps.config.upstream,
+      signal,
+    })
+    state = bytes.toString('base64')
+  } catch (err) {
+    if (signal.aborted) throw new RenderJobError('deadline', 'the job ran past its deadline')
+    throw new RenderJobError(
+      'upload',
+      `the before state: ${maskTokens(err instanceof Error ? err.message : String(err))}`,
+    )
+  }
+  const frozen = await openPage(browser, data, look.slideId, deps, stopAt, onContext, {
+    frozen: true,
+  })
+  try {
+    await frozen.page.waitForFunction(
+      () => typeof (window as unknown as RenderWindow).__narrativeRenderFreeze === 'function',
+      undefined,
+      { timeout: left(stopAt), polling: 50 },
+    )
+    await frozen.page.evaluate(
+      (state) => (window as unknown as RenderWindow).__narrativeRenderFreeze!(state),
+      state,
+    )
+    try {
+      await untilHooks(frozen.page, stopAt)
+    } catch (err) {
+      if (err instanceof RenderJobError && err.reason === 'slide-not-found') return null
+      throw err
+    }
+    const outcome = await frozen.page.evaluate(
+      ([slideId]) =>
+        // An empty state vector: the frozen page holds all it will ever hold.
+        (window as unknown as RenderWindow).__narrativeRenderSlidePng!(slideId, {
+          stateVector: 'AA==',
+        }),
+      [look.slideId] as const,
+    )
+    if (!outcome.ok) {
+      if (outcome.reason === 'slide-not-found') return null
+      throw pageFailure(outcome)
+    }
+    logTimings(deps.log, data, outcome.value.timings)
+    return outcome.value.base64
+  } finally {
+    await frozen.context.close().catch(() => undefined)
+    onContext(null)
+  }
 }
 
 async function runOnPage(
@@ -223,6 +309,7 @@ async function runOnPage(
   config: RenderWorkerConfig,
   signal: AbortSignal,
   log: (message: string) => void,
+  beforePng: string | null | undefined,
 ): Promise<RenderJobResult> {
   if (data.kind === 'export') {
     const slides: RenderedSlide[] = []
@@ -234,7 +321,7 @@ async function runOnPage(
         [target.slideId, data.stateVector] as const,
       )
       if (!outcome.ok) throw pageFailure(outcome)
-      logTimings(log, data.deckId, outcome.value.timings)
+      logTimings(log, data, outcome.value.timings)
       const sizeBytes = await upload(target, outcome.value.base64, config, signal)
       slides.push({
         slideId: target.slideId,
@@ -248,13 +335,17 @@ async function runOnPage(
     }
     return { kind: 'export', slides, failedFonts: [...failedFonts].sort() }
   }
+  const spec: PageLookSpec =
+    data.look.mode === 'compare'
+      ? { mode: 'compare', slideId: data.look.slideId, beforePng: beforePng ?? null }
+      : data.look
   const outcome = await page.evaluate(
     ([spec, stateVector]) =>
       (window as unknown as RenderWindow).__narrativeRenderLook!(spec, { stateVector }),
-    [data.look, data.stateVector] as const,
+    [spec, data.stateVector] as const,
   )
   if (!outcome.ok) throw pageFailure(outcome)
-  logTimings(log, data.deckId, outcome.value.timings)
+  logTimings(log, data, outcome.value.timings)
   const sizeBytes = await upload(data.upload, outcome.value.base64, config, signal)
   return {
     kind: 'look',
@@ -263,6 +354,9 @@ async function runOnPage(
       height: outcome.value.height,
       sizeBytes,
       slides: outcome.value.slides,
+      overflow: outcome.value.overflow,
+      ...(outcome.value.grown !== undefined ? { grown: outcome.value.grown } : {}),
+      ...(spec.mode === 'compare' && spec.beforePng === null ? { newSlide: true } : {}),
     },
     failedFonts: outcome.value.failedFonts,
   }
@@ -277,13 +371,25 @@ export async function renderJob(
   if (firstSlideId === undefined) {
     return data.kind === 'export'
       ? { kind: 'export', slides: [], failedFonts: [] }
-      : { kind: 'look', look: { width: 0, height: 0, sizeBytes: 0, slides: [] }, failedFonts: [] }
+      : {
+          kind: 'look',
+          look: { width: 0, height: 0, sizeBytes: 0, slides: [], overflow: [] },
+          failedFonts: [],
+        }
   }
   refuseLate(data)
   const stopAt = Math.min(data.deadline, Date.now() + data.workBudgetMs)
 
-  let warm: WarmPage | undefined = deps.warm.take(data.token, data.deckId)
+  let warm: WarmPage | undefined = deps.warm.take(data.token, renderPageName(data.page))
+  const compare = data.kind === 'look' && data.look.mode === 'compare' ? data.look : null
+  if (compare !== null && warm !== undefined) {
+    // A compare draws on a frozen page first: the kept page goes, so that
+    // two pages never hold memory at once (one heavy slide nearly fills it).
+    await warm.context.close().catch(() => undefined)
+    warm = undefined
+  }
   let context = warm?.context
+  let frozenContext: WarmPage['context'] | null = null
   // When time is up the context goes, every pending call with it, and the
   // upload in flight.
   let pastDeadline = false
@@ -292,10 +398,26 @@ export async function renderJob(
     pastDeadline = true
     stopUpload.abort()
     if (context !== undefined) void context.close().catch(() => undefined)
+    if (frozenContext !== null) void frozenContext.close().catch(() => undefined)
   }, left(stopAt))
 
   let succeeded = false
   try {
+    let beforePng: string | null | undefined
+    if (compare !== null && data.kind === 'look') {
+      beforePng = await drawBefore(
+        browser,
+        data,
+        compare,
+        deps,
+        stopAt,
+        stopUpload.signal,
+        (opened) => {
+          frozenContext = opened
+          if (opened !== null && pastDeadline) void opened.close().catch(() => undefined)
+        },
+      )
+    }
     if (warm === undefined) {
       warm = await openPage(browser, data, firstSlideId, deps, stopAt, (opened) => {
         context = opened
@@ -303,7 +425,14 @@ export async function renderJob(
       })
     }
     await untilHooks(warm.page, stopAt)
-    const result = await runOnPage(warm.page, data, deps.config, stopUpload.signal, deps.log)
+    const result = await runOnPage(
+      warm.page,
+      data,
+      deps.config,
+      stopUpload.signal,
+      deps.log,
+      beforePng,
+    )
     succeeded = true
     return result
   } catch (err) {
@@ -315,8 +444,9 @@ export async function renderJob(
     throw new RenderJobError('browser', `${message}${extra}`.slice(0, 1_000))
   } finally {
     clearTimeout(deadlineTimer)
-    if (warm !== undefined && succeeded && !pastDeadline) {
-      // Kept for the session's next job only after a clean one.
+    if (warm !== undefined && succeeded && !pastDeadline && data.keepPage !== false) {
+      // Kept for the session's next job only after a clean one, and only
+      // when the job asks for it (background work does not).
       deps.warm.keep(data.token, warm)
     } else if (context !== undefined) {
       await context.close().catch(() => undefined)

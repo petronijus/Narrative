@@ -18,7 +18,7 @@
  * real focused element.
  */
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures/test'
 import { uploadTestPicture } from './fixtures/media'
 
 async function createDeck(page: Page): Promise<string> {
@@ -31,6 +31,9 @@ async function createDeck(page: Page): Promise<string> {
 
 async function openDeckReady(page: Page, deckId: string): Promise<void> {
   await page.goto(`/deck/${deckId}`)
+  // The editor, not only its document (the test API comes with DeckShell;
+  // the artboard with the separately loaded DeckEditor route).
+  await expect(page.locator('.artboard')).toBeVisible({ timeout: 30_000 })
   await expect
     .poll(() => page.evaluate(() => typeof window.__narrative_test_api), { timeout: 15_000 })
     .toBe('object')
@@ -294,7 +297,7 @@ test.describe('Slides panel keyboard navigation', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Present mode keyboard shortcuts', () => {
-  test('ArrowRight, Space, PageDown all advance the slide; Esc returns to editor', async ({
+  test('ArrowRight, Space, PageDown advance; ArrowLeft, PageUp go back; F goes fullscreen; Esc returns to editor', async ({
     page,
   }) => {
     test.setTimeout(60_000)
@@ -352,7 +355,23 @@ test.describe('Present mode keyboard shortcuts', () => {
     await page.keyboard.press('PageDown')
     await expect.poll(getActiveId, { timeout: 3000 }).toBe(slideIds[3]!)
 
-    // Esc → exit present mode (URL drops the /present suffix).
+    // ArrowLeft → previous.
+    await page.keyboard.press('ArrowLeft')
+    await expect.poll(getActiveId, { timeout: 3000 }).toBe(slideIds[2]!)
+
+    // PageUp → previous.
+    await page.keyboard.press('PageUp')
+    await expect.poll(getActiveId, { timeout: 3000 }).toBe(slideIds[1]!)
+
+    // F → fullscreen (the keypress is the user activation it needs).
+    await page.keyboard.press('f')
+    await expect
+      .poll(() => page.evaluate(() => document.fullscreenElement !== null), { timeout: 3000 })
+      .toBe(true)
+
+    // Esc → exit present mode (URL drops the /present suffix). In fullscreen
+    // the browser takes the first Escape to leave fullscreen.
+    await page.evaluate(() => document.exitFullscreen())
     await page.keyboard.press('Escape')
     await expect.poll(() => page.url(), { timeout: 5000 }).not.toMatch(/\/present$/)
   })

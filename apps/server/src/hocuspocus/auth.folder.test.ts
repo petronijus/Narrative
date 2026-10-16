@@ -51,14 +51,19 @@ const componentAccess = vi.mocked(resolveComponentAccess)
 const DB = {} as Database
 const COOKIE = { cookie: 'narrative_session=good-session' }
 
-function payload(over: Partial<WsAuthPayload> & { params?: Record<string, string> } = {}) {
-  const { params, ...rest } = over
+function payload(
+  over: Omit<Partial<WsAuthPayload>, 'requestHeaders'> & {
+    params?: Record<string, string>
+    requestHeaders?: Record<string, string>
+  } = {},
+) {
+  const { params, requestHeaders, ...rest } = over
   return {
     documentName: 'folder:folder-1',
     token: 'cookie',
     requestParameters: new URLSearchParams(params ?? {}),
-    requestHeaders: COOKIE,
-    connection: { readOnly: false },
+    requestHeaders: new Headers(requestHeaders ?? COOKIE),
+    connectionConfig: { readOnly: false },
     context: {} as Record<string, unknown>,
     ...rest,
   } satisfies WsAuthPayload
@@ -83,7 +88,7 @@ describe('onAuthenticate — folder:<id>', () => {
     })
     expect(data.context).toMatchObject({ userId: 'member', folderId: 'folder-1', role: 'editor' })
     expect(data.context).not.toHaveProperty('shareToken')
-    expect(data.connection.readOnly).toBe(true)
+    expect(data.connectionConfig.readOnly).toBe(true)
     expect(deckAccess).not.toHaveBeenCalled()
     expect(componentAccess).not.toHaveBeenCalled()
   })
@@ -93,7 +98,7 @@ describe('onAuthenticate — folder:<id>', () => {
     const data = payload()
     await authenticate()(data)
     expect(data.context).toMatchObject({ role: 'owner' })
-    expect(data.connection.readOnly).toBe(true)
+    expect(data.connectionConfig.readOnly).toBe(true)
   })
 
   it('connects a folder viewer read-only', async () => {
@@ -101,7 +106,7 @@ describe('onAuthenticate — folder:<id>', () => {
     const data = payload()
     await authenticate()(data)
     expect(data.context).toMatchObject({ role: 'viewer' })
-    expect(data.connection.readOnly).toBe(true)
+    expect(data.connectionConfig.readOnly).toBe(true)
   })
 
   it('connects a guest of one of its decks read-only, so the deck renders with its tokens', async () => {
@@ -109,7 +114,7 @@ describe('onAuthenticate — folder:<id>', () => {
     const data = payload()
     await authenticate()(data)
     expect(data.context).toMatchObject({ userId: 'member', folderId: 'folder-1', role: 'viewer' })
-    expect(data.connection.readOnly).toBe(true)
+    expect(data.connectionConfig.readOnly).toBe(true)
   })
 
   it('connects a share link to one of its decks read-only, carrying the token for revocation', async () => {
@@ -128,7 +133,7 @@ describe('onAuthenticate — folder:<id>', () => {
       role: 'viewer',
       shareToken: 'tok-abcdefgh-rest',
     })
-    expect(data.connection.readOnly).toBe(true)
+    expect(data.connectionConfig.readOnly).toBe(true)
   })
 
   it('refuses a user with no access to the folder or any of its decks', async () => {

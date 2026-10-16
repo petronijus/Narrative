@@ -55,6 +55,7 @@ import {
   textStyleFieldsFromObject,
 } from '../text/textStyle.js'
 import { RUN_ATTR_KEYS, overridesAfter, snappedWeightForFamily } from '../text/typography.js'
+import { stretchRangeFor } from '../text/fontWeights.js'
 import { clearCellOverrides } from './tables.js'
 
 const textEditor = {
@@ -88,6 +89,8 @@ export const BOX_TYPOGRAPHY_KEYS = [
   'textTransform',
   'paragraphSpaceBefore',
   'paragraphSpaceAfter',
+  'minFontSize',
+  'fontStretch',
 ] as const
 
 const TypographyPatchSchema = objectPatchInputSchema('text')
@@ -106,7 +109,9 @@ export const textSetBoxTypography = defineCommand({
   title: 'Set box typography',
   description:
     "Set text boxes' own typography — fontFamily, fontWeight, fontSize, italic, underline, color, align, vAlign, " +
-    'lineHeight, letterSpacing, textTransform, paragraph spacing — as the Inspector does: inline formatting of ' +
+    'lineHeight, letterSpacing, textTransform, paragraph spacing, minFontSize (the shrink floor), fontStretch ' +
+    "(width %, within a variable folder font's wdth range) — as the " +
+    'Inspector does: inline formatting of ' +
     'the same attributes is removed so the new value shows in the whole box; a new fontFamily without fontWeight ' +
     'moves the weight to the nearest cut the family has; on a box linked to a folder text style the fields you ' +
     'set stop following the style. `null` clears an optional field. Part of a body: text.format. Tables: ' +
@@ -130,6 +135,14 @@ export const textSetBoxTypography = defineCommand({
     {
       title: 'Centre two boxes and colour them navy',
       input: { slide: 's1', objects: ['t1', 't2'], style: { align: 'center', color: '#1b2a4a' } },
+    },
+    {
+      title: 'Set a title in the extended width of a variable font',
+      input: { slide: 's1', objects: ['t1'], style: { fontFamily: 'Acme Type', fontStretch: 130 } },
+    },
+    {
+      title: 'Let a shrinking box go no smaller than 20 px',
+      input: { slide: 's1', objects: ['t1'], style: { minFontSize: 20 } },
     },
   ],
   handler(ctx, input) {
@@ -158,6 +171,25 @@ export const textSetBoxTypography = defineCommand({
           style['fontFamily'] as string | undefined,
         )
         if (weight !== undefined) patch['fontWeight'] = weight
+      }
+      const stretch = style['fontStretch']
+      if (typeof stretch === 'number' && stretch !== 100) {
+        const family = (style['fontFamily'] ?? map.get('fontFamily')) as string | undefined
+        if (ctx.folderFonts === undefined) {
+          throw new CommandError(
+            'conflict',
+            "the folder's fonts cannot be read here, so their widths are unknown",
+          )
+        }
+        const range = stretchRangeFor(family, ctx.folderFonts ?? [])
+        if (range === null || stretch < range[0] || stretch > range[1]) {
+          throw new CommandError(
+            'invalid_input',
+            range === null
+              ? `'${family ?? 'the default font'}' has no width axis in this folder; only fontStretch 100 is drawn`
+              : `'${family}' is drawn at widths ${range[0]}–${range[1]}; fontStretch ${stretch} is outside it`,
+          )
+        }
       }
       if (typeof map.get('textStyleId') === 'string') {
         const overrides = overridesAfter(map.get('textStyleOverrides'), Object.keys(patch))
@@ -272,14 +304,16 @@ export const textStyleApply = defineCommand({
     const ids = [...new Set(input.objects)]
     const maps = requireObjects(objects, ids, slide.id)
     const resolved = input.style === null ? null : resolveStyle(ctx.folderTokens, input.style)
-    const fields: Record<string, unknown> =
+    const fieldsFor = (target: 'text' | 'table'): Record<string, unknown> =>
       resolved === null
         ? { textStyleId: undefined, textStyleOverrides: undefined }
         : {
-            ...textStyleFields(resolved.style, resolved.tokens),
+            ...textStyleFields(resolved.style, resolved.tokens, [], target),
             textStyleId: resolved.style.id,
             textStyleOverrides: [],
           }
+    const fields = fieldsFor('text')
+    const tableFields = fieldsFor('table')
     const writes = ids.map((id) => {
       const map = maps.get(id)!
       const type = map.get('type')
@@ -309,10 +343,10 @@ export const textStyleApply = defineCommand({
       const table = yMapToPlainObject<TableObject>(w.map)
       if (input.reset === true) {
         const size = { rows: table.rowHeights.length, cols: table.colWidths.length }
-        clearCellOverrides(objects, w.id, size, Object.keys(fields))
+        clearCellOverrides(objects, w.id, size, Object.keys(tableFields))
         clearTableRuns(objects, w.id, table)
       }
-      setTableDefaultsPatch(objects, w.id, fields as Partial<TableDefaults>)
+      setTableDefaultsPatch(objects, w.id, tableFields as Partial<TableDefaults>)
     }
     return {
       style: resolved === null ? null : { id: resolved.style.id, name: resolved.style.name },

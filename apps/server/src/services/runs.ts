@@ -15,8 +15,11 @@
  *   Every write of a run carries `agentOrigin(runId)`. On the run's first
  *   write to a document, a `Y.UndoManager` is attached to THAT live Y.Doc
  *   (the one Hocuspocus holds and every editor is synced to), scoped to the
- *   deck's `slides` + `guides` and tracking only the run's origin — so
+ *   deck's `slides`, `guides` and `meta` (slide-model `undoScope`) and
+ *   tracking only the run's origin — so
  *   undoing it removes the run's changes and nothing people did meanwhile.
+ *   The document as it was just then is kept beside it (`stateBefore`, the
+ *   "before" of query.render's compare), for as long as the history.
  *   `captureTimeout: Infinity` plus `stopCapturing()` after every op makes
  *   each op (a command, or an `ops.apply` batch) exactly one stack item, so
  *   "the last N changes" is the last N stack items. A revert runs all its
@@ -36,6 +39,7 @@
  *   - Single process: runs, history and presence are per server process.
  */
 
+import { createHash } from 'node:crypto'
 import * as Y from 'yjs'
 import { nanoid } from 'nanoid'
 import type { Document } from '@hocuspocus/server'
@@ -51,7 +55,7 @@ import {
   type RevertRunResult,
   type RunDocument,
 } from '@narrative/commands'
-import { agentOrigin, releaseAgentOrigin } from '@narrative/slide-model'
+import { agentOrigin, releaseAgentOrigin, undoScope } from '@narrative/slide-model'
 import type { ServiceDeps } from './deps.js'
 import type { AgentDocuments, DocumentLease } from '../agent/documents.js'
 import type { AgentPresence } from '../agent/presence.js'
@@ -112,12 +116,27 @@ export interface ActiveRun {
   lease: DocumentLease | null
 }
 
+/** A run's "before" state larger than this is not kept (query.render's compare refuses it). */
+export const MAX_BEFORE_STATE_BYTES = 8 * 1024 * 1024
+/**
+ * The "before" states of all runs together, in this process: past it, the
+ * oldest are let go (their compare answers "history gone"); the undo
+ * histories themselves are not touched.
+ */
+export const BEFORE_STATES_BUDGET_BYTES = 128 * 1024 * 1024
+
 interface UndoEntry {
   runId: string
   documentName: string
   document: Document
   manager: Y.UndoManager
   lastActivity: number
+  /**
+   * The document as it was just before the run's first write (query.render's
+   * compare). It goes with the history, or earlier: null when it was over
+   * `MAX_BEFORE_STATE_BYTES`, or let go under `BEFORE_STATES_BUDGET_BYTES`.
+   */
+  before: Uint8Array | null
 }
 
 /** Yjs origin of a revert's transaction: deliberately not tracked by any run's UndoManager. */
@@ -143,6 +162,8 @@ export interface RunManagerOptions {
   maxUndoRunsPerDocument?: number
   maxOpenRunsPerUser?: number
   undoMaxAgeMs?: number
+  /** The kept "before" states together (default `BEFORE_STATES_BUDGET_BYTES`). */
+  beforeStatesBudgetBytes?: number
   /**
    * After a revert of a run on a deck changed its document. A revert can
    * bring back references to media of a folder the deck has left since; the
@@ -161,6 +182,41 @@ export interface OpToRecord {
   error?: { code: string; message: string; issues?: unknown; opIndex?: number }
   /** Hosts the op's downloads contacted (agent_ops.fetched_hosts). */
   fetchedHosts?: string[]
+}
+
+/**
+ * A logged input over this size is kept as its size and digest (A5.3: a
+ * deck spec is up to 256 kB, and the deck keeps it anyway).
+ */
+const MAX_LOGGED_INPUT_BYTES = 64 * 1024
+/** A logged error's message and issues are bounded too: a refusal can list many problems. */
+const MAX_LOGGED_ERROR_BYTES = 8 * 1024
+
+function boundedInput(input: unknown): unknown {
+  const redacted = redactForAudit(input ?? null)
+  let json: string
+  try {
+    json = JSON.stringify(redacted) ?? 'null'
+  } catch {
+    return { unserialisable: true }
+  }
+  const bytes = Buffer.byteLength(json, 'utf8')
+  if (bytes <= MAX_LOGGED_INPUT_BYTES) return redacted
+  return { truncated: true, bytes, sha256: createHash('sha256').update(json).digest('hex') }
+}
+
+function boundedError(error: NonNullable<OpToRecord['error']>): NonNullable<OpToRecord['error']> {
+  const json = JSON.stringify(error.issues ?? null) ?? 'null'
+  return {
+    code: error.code,
+    message: error.message.slice(0, MAX_LOGGED_ERROR_BYTES),
+    ...(error.issues !== undefined
+      ? Buffer.byteLength(json, 'utf8') <= MAX_LOGGED_ERROR_BYTES
+        ? { issues: error.issues }
+        : { issues: { truncated: true } }
+      : {}),
+    ...(error.opIndex !== undefined ? { opIndex: error.opIndex } : {}),
+  }
 }
 
 function boundedResult(result: unknown): unknown {
@@ -189,6 +245,7 @@ export class RunManager implements AgentRunService {
   private readonly maxUndoRunsPerDocument: number
   private readonly maxOpenRunsPerUser: number
   private readonly undoMaxAgeMs: number
+  private readonly beforeStatesBudgetBytes: number
   private readonly afterDeckRevert: ((deckId: string) => Promise<void>) | undefined
 
   /** Open runs of this process, by id. */
@@ -213,6 +270,7 @@ export class RunManager implements AgentRunService {
     this.newRunId = opts.newRunId ?? (() => `run_${nanoid(16)}`)
     this.idleMs = opts.idleMs ?? RUN_IDLE_MS
     this.maxUndoRunsPerDocument = opts.maxUndoRunsPerDocument ?? MAX_UNDO_RUNS_PER_DOCUMENT
+    this.beforeStatesBudgetBytes = opts.beforeStatesBudgetBytes ?? BEFORE_STATES_BUDGET_BYTES
     this.maxOpenRunsPerUser = opts.maxOpenRunsPerUser ?? MAX_OPEN_RUNS_PER_USER
     this.undoMaxAgeMs = opts.undoMaxAgeMs ?? UNDO_MAX_AGE_MS
     this.afterDeckRevert = opts.afterDeckRevert
@@ -269,7 +327,9 @@ export class RunManager implements AgentRunService {
       if (run.targetKey !== targetKey) {
         throw new CommandError(
           'conflict',
-          `run '${args.runId}' works on ${run.targetKey}, not ${targetKey}`,
+          targetKey === 'account'
+            ? `run '${args.runId}' works on ${run.targetKey}; this command changes no deck or master (a folder or account change, not part of that run): call it without runId`
+            : `run '${args.runId}' works on ${run.targetKey}, not ${targetKey}`,
         )
       }
       this.current.set(this.currentKey(args.session, targetKey), run.id)
@@ -389,10 +449,12 @@ export class RunManager implements AgentRunService {
       runId: run.id,
       seq: run.seq,
       command: op.command,
-      input: redactForAudit(op.input ?? null),
+      input: boundedInput(op.input),
       target: op.target,
       createdAt: this.now(),
-      ...(op.error === undefined ? { result: boundedResult(op.result) } : { error: op.error }),
+      ...(op.error === undefined
+        ? { result: boundedResult(op.result) }
+        : { error: boundedError(op.error) }),
       ...(op.fetchedHosts === undefined || op.fetchedHosts.length === 0
         ? {}
         : { fetchedHosts: [...op.fetchedHosts] }),
@@ -418,6 +480,10 @@ export class RunManager implements AgentRunService {
     if (run.idleTimer !== null) clearTimeout(run.idleTimer)
     run.idleTimer = null
     if (run.status === 'open') run.status = 'closed'
+    // Only the current run is compared with (query.render): a closed one's
+    // "before" is let go now, its undo history kept.
+    const entry = this.undo.get(run.id)
+    if (entry !== undefined) entry.before = null
     run.lease?.release()
     run.lease = null
     this.presence.clearRun(run.id)
@@ -469,6 +535,9 @@ export class RunManager implements AgentRunService {
     ) {
       return
     }
+    // A run that already wrote before this history (its document was
+    // reloaded under it): a "before" taken now would hide those writes.
+    const partial = existing !== undefined || this.tombstones.has(run.id)
     if (existing !== undefined) {
       // The document was unloaded and reloaded under the run (only possible
       // if its lease was lost): the old history died with the old instance.
@@ -476,7 +545,7 @@ export class RunManager implements AgentRunService {
     }
     this.sweep()
     const document = lease.document
-    const manager = new Y.UndoManager([document.getArray('slides'), document.getArray('guides')], {
+    const manager = new Y.UndoManager(undoScope(document), {
       trackedOrigins: new Set<unknown>([agentOrigin(run.id)]),
       // One stack item per op: never merge by time, split explicitly with
       // stopCapturing() after each op (afterDocumentWrite).
@@ -488,6 +557,11 @@ export class RunManager implements AgentRunService {
       document,
       manager,
       lastActivity: this.now().getTime(),
+      // A compare is of a deck only, and of the whole run only.
+      before:
+        run.target.kind === 'deck' && !partial
+          ? this.keepBefore(Y.encodeStateAsUpdate(document))
+          : null,
     })
     this.tombstones.delete(run.id)
     this.watchDocument(document)
@@ -773,6 +847,34 @@ export class RunManager implements AgentRunService {
     return this.open.size
   }
 
+  /**
+   * A new "before" state, or null when it is too large to be of use; makes
+   * room within the budget by letting the oldest kept ones go (the Map keeps
+   * insertion order, so the first entries are the oldest runs).
+   */
+  private keepBefore(update: Uint8Array): Uint8Array | null {
+    if (update.byteLength > MAX_BEFORE_STATE_BYTES) return null
+    let total = update.byteLength
+    for (const entry of this.undo.values()) total += entry.before?.byteLength ?? 0
+    for (const entry of this.undo.values()) {
+      if (total <= this.beforeStatesBudgetBytes) break
+      if (entry.before === null) continue
+      total -= entry.before.byteLength
+      entry.before = null
+    }
+    return update
+  }
+
+  stateBefore(runId: string): { document: RunDocument; update: Uint8Array } | null {
+    const entry = this.undo.get(runId)
+    if (entry === undefined || entry.document.isDestroyed || entry.before === null) return null
+    const name = entry.documentName
+    const document: RunDocument = name.startsWith('component:')
+      ? { kind: 'component', componentId: name.slice('component:'.length) }
+      : { kind: 'deck', deckId: name.startsWith('deck:') ? name.slice('deck:'.length) : name }
+    return { document, update: entry.before }
+  }
+
   /** The live UndoManager of a run, if its history is still held. */
   undoManagerOf(runId: string): Y.UndoManager | undefined {
     return this.undo.get(runId)?.manager
@@ -818,5 +920,11 @@ export function createRunsService(deps: ServiceDeps): AgentRunService {
   const unavailable = (): never => {
     throw new CommandError('wrong_host', 'agent runs are not available in this server process')
   }
-  return { startRun: unavailable, listRuns: unavailable, revertRun: unavailable }
+  return {
+    startRun: unavailable,
+    listRuns: unavailable,
+    revertRun: unavailable,
+    // No runs in this process: nothing changed by one.
+    stateBefore: () => null,
+  }
 }

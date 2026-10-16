@@ -81,6 +81,11 @@ export {
   setSlideSkipped,
   setSlideIndent,
   setSlideCollapsed,
+  setSlideLayout,
+  readSlideLayout,
+  setSlideBrief,
+  setSlideSpecKey,
+  readSlideBrief,
   listSlides,
   getSlideObjectsCtx,
   getSlideAnimationsCtx,
@@ -169,6 +174,9 @@ export {
   defaultBulletGlyph,
   buildListedHtml,
   paragraphFontSizePx,
+  paragraphFrameSizePx,
+  effectiveParagraphAttrs,
+  plainListValue,
   blockAttrsToInsertAttrs,
 } from './richText.js'
 export type {
@@ -179,6 +187,8 @@ export type {
   ParagraphDelta,
   ParagraphPatch,
   ListedHtmlOptions,
+  ListLevelDefaults,
+  ListLevelLook,
 } from './richText.js'
 export { CSS_GENERIC_FAMILIES, fontFamilyNames, quoteCssFamilyName } from './cssFontFamily.js'
 
@@ -195,6 +205,7 @@ export {
   createUndoManager,
   endUndoGesture,
   UNDO_CAPTURE_TIMEOUT_MS,
+  undoScope,
 } from './undo.js'
 
 // Component helpers (M16 P5)
@@ -212,8 +223,15 @@ export {
   stampComponent,
   insertObjectsWithRichText,
   writeComponentMaster,
+  readMasterOrigin,
+  replaceMasterObjects,
   COMPONENT_MASTER_SLIDE_ID,
 } from './stampComponent.js'
+
+// Component restamp and provenance (A4.1)
+export { restampComponent, slotNameOf } from './restampComponent.js'
+export type { RestampedStamp, RestampSlideResult } from './restampComponent.js'
+export { freshStampInstances, withStampInstance } from './mutations.js'
 
 // Shape-as-image-mask mutation (moved out of apps/web — mutations live here)
 export {
@@ -224,12 +242,42 @@ export {
 } from './shapeMask.js'
 export type { MaskableShape } from './shapeMask.js'
 
+// Style pack in the folder document (A4.3)
+export {
+  readStylePack,
+  hasStylePack,
+  setStylePack,
+  deleteStylePack,
+  patchStylePack,
+  mergeStylePackPatch,
+} from './folderPack.js'
+
+// Deck meta (A4.2d)
+export {
+  readDeckMeta,
+  readDeckSpec,
+  setDeckMeta,
+  setDeckSpec,
+  subscribeDeckMeta,
+} from './deckMeta.js'
+export type { DeckMetaPatch } from './deckMeta.js'
+
 // Design tokens (M16 P2)
-export { isTokenRef, resolveTokenValue } from './tokens.js'
+export { rewriteTokenRefs, type TokenRefRewrite } from './tokenRefs.js'
+export {
+  isTokenRef,
+  resolveTokenValue,
+  colorTokenValue,
+  isContextualColor,
+  parseHexColor,
+} from './tokens.js'
 export type {
   TokenRef,
+  TokenOrigin,
+  TokenResolveContext,
   ColorTokenSnapshot,
   TextStyleTokenSnapshot,
+  TextStyleLevel,
   EffectStyleTokenSnapshot,
   FolderTokensSnapshot,
 } from './tokens.js'

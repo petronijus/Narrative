@@ -163,9 +163,9 @@ function confirmationLine(def: AnyCommandDef, mode: ConfirmationMode): string | 
     case 'form':
       return `${what} Narrative asks the user in your client first.`
     case 'url':
-      return `${what} Narrative opens a confirmation page and the call waits for the answer.`
+      return `${what} Narrative opens a confirmation page; the call waits.`
     case 'link':
-      return `${what} the call returns confirmation_required with a link for the user.`
+      return `${what} returns confirmation_required with a link for the user.`
   }
 }
 
@@ -298,11 +298,16 @@ export function commandInputJsonSchema(
     )
   }
   const { root, forms } = objectRoot(stripSchemaDialect(raw), def.id)
-  const compact = compactInputSchema(rewriteSchemaDescriptions(root) as JsonSchema)
+  const rewritten = rewriteSchemaDescriptions(root) as JsonSchema
   // The shared descriptions and shapes are said once in the instructions
   // (vocabulary.ts, sharedShapes.ts); `keepShared` shows them in full.
-  if (keepShared) return { root: compact, forms }
-  const stripped = stripSharedDescriptions(compact) as JsonSchema
+  if (keepShared) return { root: compactInputSchema(rewritten), forms }
+  // Stripped before compacting, so a definition that was only large for its
+  // shared description is cheap enough to inline, and after, for the
+  // descriptions compacting writes (a collapsed union's kinds).
+  const stripped = stripSharedDescriptions(
+    compactInputSchema(stripSharedDescriptions(rewritten) as JsonSchema),
+  ) as JsonSchema
   return { root: keepShapes ? stripped : (compactSharedShapes(stripped) as JsonSchema), forms }
 }
 
@@ -371,6 +376,22 @@ function needsExample(root: JsonSchema, hasForms: boolean): boolean {
 }
 
 /**
+ * An example call that shows nothing the schema does not: at most one own
+ * argument, a plain value or a slide by index (`{ "slide": { "index": 0 } }`,
+ * `{ "limit": 5 }`). Ten tools carried one, ≈ 0.4 KB (A5.0).
+ */
+function isTrivialExample(input: unknown): boolean {
+  if (typeof input !== 'object' || input === null) return true
+  const own = Object.entries(input).filter(([k]) => !TRANSPORT_ARGUMENTS.has(k))
+  if (own.length > 1) return false
+  return own.every(([, v]) => {
+    if (v === null || typeof v !== 'object') return true
+    const keys = Object.keys(v)
+    return !Array.isArray(v) && keys.length === 1 && keys[0] === 'index'
+  })
+}
+
+/**
  * The first example as a call, target placeholder first (the argument a
  * model most often forgets). No title: the call says what it does, and the
  * titles were ≈ 3 KB of the list.
@@ -384,7 +405,8 @@ function exampleCall(
   fullRoot: JsonSchema = root,
 ): string | null {
   const example = def.examples[0]
-  if (example === undefined || !needsExample(fullRoot, hasForms)) return null
+  if (example === undefined || !needsExample(fullRoot, hasForms) || isTrivialExample(example.input))
+    return null
   const target =
     scope === 'deck' ? { deckId: '<deckId>' } : scope === 'folder' ? { folderId: '<folderId>' } : {}
   const input =

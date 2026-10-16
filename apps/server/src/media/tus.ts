@@ -12,13 +12,16 @@
  *   - On upload finish: reads S3 object head for size, probes image dimensions, inserts media_assets row.
  *   - Size limit: MAX_UPLOAD_SIZE env var, default 25 MB.
  *
- * Hook signatures (from @tus/server v2 types):
- *   onUploadCreate(req, res, upload) → Promise<{ res, metadata? }>
- *   onUploadFinish(req, res, upload) → Promise<{ res, status_code?, headers?, body? }>
- *   onIncomingRequest(req, res, uploadId) → Promise<void>
+ * Hook signatures (@tus/server 2.x):
+ *   onUploadCreate(req, upload) → Promise<{ metadata? }>
+ *   onUploadFinish(req, upload) → Promise<{ status_code?, headers?, body? }>
+ *   onIncomingRequest(req, uploadId) → Promise<void>
  *   namingFunction(req, metadata) → string | Promise<string>
  *
- * All hooks receive `req: http.IncomingMessage` — use req.headers['key'] syntax.
+ * Hooks receive a web `Request` (tus bridges Node through srvx); each turns
+ * it back into the Node request Fastify handled with `nodeRequest()`, so the
+ * identity resolved for that request is reused and `req.headers['key']`
+ * reads as before.
  *
  * Security:
  *   - storageKey is server-constructed — never user-supplied (no path traversal).
@@ -47,7 +50,7 @@
  *   - Video width/height not available at upload time — filled by worker after ffprobe.
  */
 
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { IncomingMessage } from 'node:http'
 import type { Readable } from 'node:stream'
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { nanoid } from 'nanoid'
@@ -243,6 +246,20 @@ const COMPONENT_KIND_REFUSED =
 const TOKEN_PPTX_REFUSED =
   'Forbidden: a personal access token cannot upload a .pptx through tus; ' +
   'import it with deck.importPptx or add its slides with deck.insertFrom'
+
+/**
+ * The Node request behind the web `Request` a tus 2 hook receives: srvx, the
+ * Node bridge `tusServer.handle()` uses, keeps it as `runtime.node.req` — the
+ * very object Fastify handed over, so the identity resolved for it (by the
+ * rate limiter, or an earlier hook of this request) is reused. Uploads only
+ * arrive through `handle()`, so it is always there; fails closed otherwise.
+ */
+function nodeRequest(req: Request): IncomingMessage {
+  const node = (req as Request & { runtime?: { node?: { req?: IncomingMessage } } }).runtime?.node
+    ?.req
+  if (node === undefined) throw { status_code: 500, body: 'Internal error: not a Node request' }
+  return node
+}
 
 interface Uploader {
   userId: string
@@ -463,11 +480,46 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
   // Build S3Store config — bucket is passed inside s3ClientConfig per @tus/s3-store API
   const s3Config = buildS3Config()
 
+  // CORS of the upload routes. tus writes its own Access-Control-* headers
+  // on every response it answers (`*` and its own exposed list unless told
+  // otherwise — under 1.x as well, so headers set on the reply beforehand
+  // never reached a tus response). It gets the same allowlist and the
+  // headers our finalize flow sets; applyCorsHeaders below covers what tus
+  // does not answer itself.
+  const corsOriginRaw = process.env['CORS_ORIGIN'] ?? 'http://localhost:5173'
+  // Allowlist: comma-separated list of origins. The first is the default
+  // returned when the request lacks an Origin header.
+  const allowedOrigins = corsOriginRaw
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean)
+  const defaultOrigin = allowedOrigins[0] ?? 'http://localhost:5173'
+  const NARRATIVE_EXPOSED_HEADERS = [
+    'X-Narrative-Asset-Id',
+    'X-Narrative-Deck-Id',
+    'X-Narrative-Width',
+    'X-Narrative-Height',
+  ]
+  const exposeHeaders = [
+    'Location',
+    'Upload-Offset',
+    'Upload-Length',
+    'Upload-Metadata',
+    'Tus-Version',
+    'Tus-Resumable',
+    'Tus-Max-Size',
+    'Tus-Extension',
+    ...NARRATIVE_EXPOSED_HEADERS,
+  ].join(', ')
+
   // -------------------------------------------------------------------------
   // Build tus server
   // -------------------------------------------------------------------------
   const tusServer = new TusServer({
     path: '/api/uploads',
+    allowedOrigins: allowedOrigins.length > 0 ? allowedOrigins : [defaultOrigin],
+    allowedCredentials: true,
+    exposedHeaders: NARRATIVE_EXPOSED_HEADERS,
     maxSize: MAX_UPLOAD_SIZE,
     // A finished upload is an asset: terminating it through tus would delete
     // the stored bytes under a live media_assets row. Media is removed with
@@ -498,7 +550,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       buildPublicUploadUrl({
         path,
         id,
-        forwardedPrefix: req.headers['x-forwarded-prefix'],
+        forwardedPrefix: req.headers.get('x-forwarded-prefix') ?? undefined,
       }),
 
     datastore: new S3Store({
@@ -521,7 +573,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
     // yet. A refused create stores nothing, so a key built from an id that
     // then fails the access check never exists.
     // -----------------------------------------------------------------------
-    namingFunction: (_req: IncomingMessage, metadata?: Record<string, string | null>) => {
+    namingFunction: (_req: Request, metadata?: Record<string, string | null>) => {
       const assetId = nanoid(16)
       // `||`, not `??`: an empty id is no id, exactly as onUploadCreate reads it.
       const deckId = metadata?.['deckId'] || 'unknown'
@@ -572,10 +624,10 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
     // onUploadCreate: validate auth + deck access + MIME
     // -----------------------------------------------------------------------
     onUploadCreate: async (
-      req: IncomingMessage,
-      res: ServerResponse,
+      webReq: Request,
       upload: Upload,
-    ): Promise<{ res: ServerResponse; metadata?: Upload['metadata'] }> => {
+    ): Promise<{ metadata?: Upload['metadata'] }> => {
+      const req = nodeRequest(webReq)
       // 1. Auth
       const uploader = await resolveUploader(req, db, appWithAuth, sessions)
       if (!uploader) {
@@ -722,7 +774,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
             body: 'Forbidden: this upload session was already used or has expired',
           }
         }
-        return { res, metadata: persistedMetadata }
+        return { metadata: persistedMetadata }
       }
 
       // ─── PPTX import branch ────────────────────────────────────────────
@@ -762,7 +814,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
               body: 'Forbidden: editor or owner role required to import into this deck',
             }
           }
-          return { res, metadata: persistedMetadata }
+          return { metadata: persistedMetadata }
         }
 
         // ─── Folder-scoped: create a new deck ────────────────────────────
@@ -779,7 +831,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         if (folderAccess === null || !roleAtLeast(folderAccess.role, 'editor')) {
           throw { status_code: 403, body: 'Forbidden: only a folder editor may import' }
         }
-        return { res, metadata: persistedMetadata }
+        return { metadata: persistedMetadata }
       }
 
       // ─── Existing media upload branch ─────────────────────────────────
@@ -838,17 +890,14 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         }
       }
 
-      return { res, metadata: persistedMetadata }
+      return { metadata: persistedMetadata }
     },
 
     // -----------------------------------------------------------------------
     // onIncomingRequest: auth re-check on every PATCH and DELETE
     // -----------------------------------------------------------------------
-    onIncomingRequest: async (
-      req: IncomingMessage,
-      _res: ServerResponse,
-      uploadId: string,
-    ): Promise<void> => {
+    onIncomingRequest: async (webReq: Request, uploadId: string): Promise<void> => {
+      const req = nodeRequest(webReq)
       const method = req.method?.toUpperCase() ?? ''
       // GET would serve the stored bytes of an upload (the original file,
       // bypassing signed media URLs and any later loss of access); the
@@ -878,15 +927,14 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
     // onUploadFinish: probe dimensions, insert media_assets row
     // -----------------------------------------------------------------------
     onUploadFinish: async (
-      req: IncomingMessage,
-      res: ServerResponse,
+      webReq: Request,
       upload: Upload,
     ): Promise<{
-      res: ServerResponse
       status_code?: number
       headers?: Record<string, string | number>
       body?: string
     }> => {
+      const req = nodeRequest(webReq)
       // Decode assetId + deckId from the compound id.
       // The actual S3 object key is `upload.id` itself — @tus/s3-store writes the
       // object at that key. We keep the compound encoding so we can recover
@@ -1018,7 +1066,6 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
           }
 
           return {
-            res,
             status_code: 200,
             headers: {
               'Content-Type': 'application/json',
@@ -1064,7 +1111,6 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         }
 
         return {
-          res,
           status_code: 201,
           headers: {
             'Content-Type': 'application/json',
@@ -1107,7 +1153,6 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
 
       if (finalized.kind === 'font') {
         return {
-          res,
           status_code: 200,
           headers: {
             'Content-Type': 'application/json',
@@ -1129,7 +1174,6 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
 
       if (finalized.kind === 'video') {
         return {
-          res,
           status_code: 200,
           headers: {
             'Content-Type': 'application/json',
@@ -1154,7 +1198,6 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       if (finalized.height !== null) imageHeaders['X-Narrative-Height'] = finalized.height
 
       return {
-        res,
         status_code: 200,
         headers: imageHeaders,
         body: JSON.stringify({
@@ -1192,24 +1235,14 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
   app.addContentTypeParser('application/offset+octet-stream', passthroughParser)
   app.addContentTypeParser('application/x-www-form-urlencoded', passthroughParser)
 
-  const corsOriginRaw = process.env['CORS_ORIGIN'] ?? 'http://localhost:5173'
-  // Allowlist: comma-separated list of origins. The first is the default
-  // returned when the request lacks an Origin header.
-  const allowedOrigins = corsOriginRaw
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean)
-  const defaultOrigin = allowedOrigins[0] ?? 'http://localhost:5173'
-  const exposeHeaders =
-    'Location, Upload-Offset, Upload-Length, Upload-Metadata, Tus-Version, Tus-Resumable, Tus-Max-Size, Tus-Extension, X-Narrative-Asset-Id, X-Narrative-Width, X-Narrative-Height'
-
   const applyCorsHeaders = (req: FastifyRequest, reply: FastifyReply) => {
     const origin = req.headers.origin
     // Only echo Origin back if it's in the allowlist — never reflect arbitrary
     // origins, which would let any cross-origin caller through.
+    // The answer depends on Origin either way: caches must key on it.
+    reply.raw.setHeader('Vary', 'Origin')
     if (origin !== undefined && allowedOrigins.includes(origin)) {
       reply.raw.setHeader('Access-Control-Allow-Origin', origin)
-      reply.raw.setHeader('Vary', 'Origin')
     } else {
       reply.raw.setHeader('Access-Control-Allow-Origin', defaultOrigin)
     }

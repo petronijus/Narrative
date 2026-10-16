@@ -66,8 +66,7 @@ export function alignIds(
     return
   }
   if (Array.isArray(recorded) && Array.isArray(replayed)) {
-    const n = Math.min(recorded.length, replayed.length)
-    for (let i = 0; i < n; i++) alignIds(recorded[i], replayed[i], map)
+    for (const [r, p] of pairElements(recorded, replayed)) alignIds(r, p, map)
     return
   }
   if (
@@ -79,6 +78,41 @@ export function alignIds(
     const r = replayed as Record<string, unknown>
     for (const [k, v] of Object.entries(recorded)) if (k in r) alignIds(v, r[k], map, k)
   }
+}
+
+/** What identifies a listed record apart from its id: its name, type and value. */
+function signature(v: unknown): string | undefined {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return undefined
+  const r = v as Record<string, unknown>
+  if (typeof r['id'] !== 'string') return undefined
+  const parts = ['name', 'type', 'value'].map((k) => (typeof r[k] === 'string' ? r[k] : ''))
+  return parts.every((p) => p === '') ? undefined : parts.join('\u0000')
+}
+
+/**
+ * The elements of two lists that are the same record. A list of records
+ * (each with an `id`) is a set whose order the live server and the memory
+ * world need not share — a folder's colours come back in the order their
+ * document holds them — so records are paired by name, type and value
+ * first; the rest, and every other list, by position.
+ */
+function pairElements(recorded: unknown[], replayed: unknown[]): Array<[unknown, unknown]> {
+  const pairs: Array<[unknown, unknown]> = []
+  const usedR = new Set<number>()
+  const usedP = new Set<number>()
+  recorded.forEach((r, i) => {
+    const sig = signature(r)
+    if (sig === undefined) return
+    const j = replayed.findIndex((p, k) => !usedP.has(k) && signature(p) === sig)
+    if (j === -1) return
+    pairs.push([r, replayed[j]])
+    usedR.add(i)
+    usedP.add(j)
+  })
+  const restR = recorded.filter((_, i) => !usedR.has(i))
+  const restP = replayed.filter((_, k) => !usedP.has(k))
+  for (let i = 0; i < Math.min(restR.length, restP.length); i++) pairs.push([restR[i], restP[i]])
+  return pairs
 }
 
 /** Rewrite every string that is a recorded id into its replay id. */

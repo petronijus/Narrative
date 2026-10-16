@@ -15,12 +15,20 @@
  *      (auth/signInPolicy.ts; their own decks and folders never do) —
  *      because revoking credentials does not remove that access, and the
  *      operator has to act on it (edit OIDC_ALLOWED_EMAILS /
- *      OIDC_ALLOWED_DOMAIN, remove the shares).
+ *      OIDC_ALLOWED_DOMAIN / ADMIN_EMAILS, remove the shares);
+ *   3. drops the admin role and the admin-managed allowlist entry.
  */
 
 import { and, count, eq, gt, isNull } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { mcpOauthGrants, personalAccessTokens, sessions, uploadSessions } from '../db/schema.js'
+import {
+  allowedEmails,
+  mcpOauthGrants,
+  personalAccessTokens,
+  sessions,
+  uploadSessions,
+  users,
+} from '../db/schema.js'
 import type { AllowlistConfig } from './jwt.js'
 import { revokeAllSessionsForUser, type RevokedUserAccess } from './session.js'
 import { signInGrant, type SignInGrant } from './signInPolicy.js'
@@ -100,6 +108,13 @@ export async function revokeUserAccess(
   const revoked = dryRun
     ? await countLiveCredentials(db, user.sub)
     : await revokeAllSessionsForUser(db, user.sub)
+  if (!dryRun) {
+    // Cutting someone off also takes the admin role and the admin-managed
+    // allowlist entry (docs/adr/0014); the env lists are the operator's.
+    await db.update(users).set({ isAdmin: false }).where(eq(users.sub, user.sub))
+    if (user.email !== null)
+      await db.delete(allowedEmails).where(eq(allowedEmails.email, user.email.toLowerCase()))
+  }
   const stillAllowedBy =
     user.email === null
       ? null

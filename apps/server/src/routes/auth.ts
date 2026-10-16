@@ -6,12 +6,12 @@
  *   GET  /auth/start?returnTo=…    → 302 to Google with PKCE
  *   GET  /auth/callback?code=…     → token exchange, verify id_token, mint
  *                                     session row, Set-Cookie, 302 to returnTo
- *   GET  /auth/me                  → { sub, email, name } or 401
+ *   GET  /auth/me                  → { sub, email, name, isAdmin } or 401
  *   POST /auth/logout              → revoke session + clear cookie, 204
  *
  * The desktop app signs in through the same start and callback with
  * `client=desktop`: the callback then mints a one-time ticket instead of a
- * session (routes/desktopAuth.ts, ADR 0014).
+ * session (routes/desktopAuth.ts, ADR 0015).
  *
  * Why server-driven (not the browser-PKCE flow that lived in oidc-client-ts)
  * ------------------------------------------------------------------------
@@ -50,6 +50,8 @@ import {
 } from '../auth/session.js'
 import { clearSessionCookie, isSafeReturnTo, setSessionCookie } from '../auth/sessionCookie.js'
 import { upsertUser } from '../auth/users.js'
+import { bootstrapAdmin, isInstanceAdmin } from '../auth/admin.js'
+import { notifyInvitesAccepted } from '../email/events.js'
 import { consumePendingInvitesForEmail } from '../auth/invites.js'
 import {
   isDesktopStartState,
@@ -327,15 +329,28 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
       emailVerified: userPayload.emailVerified === true,
       name: userPayload.name ?? null,
     })
+    await bootstrapAdmin(
+      db,
+      {
+        sub: userPayload.sub,
+        email: userPayload.email,
+        emailVerified: userPayload.emailVerified === true,
+      },
+      (allowlist.adminEmails ?? []).map((e) => e.toLowerCase()),
+    )
 
     // Convert any pending deck invites for this email into real permissions.
     // Non-fatal — failure here doesn't block login.
     try {
-      await consumePendingInvitesForEmail(db, {
+      const consumed = await consumePendingInvitesForEmail(db, {
         email: userPayload.email,
         sub: userPayload.sub,
         emailVerified: userPayload.emailVerified === true,
       })
+      notifyInvitesAccepted(
+        { db, log: request.log },
+        { whoSub: userPayload.sub, accepted: consumed.accepted },
+      )
     } catch (err) {
       request.log.warn({ err }, '[auth] invite consumption failed')
     }
@@ -389,6 +404,8 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
       sub: session.userSub,
       email: session.userEmail,
       name: session.userName,
+      // The web app shows the admin screen only to an instance admin (ADR 0014).
+      isAdmin: await isInstanceAdmin(db, session.userSub),
     }
   })
 

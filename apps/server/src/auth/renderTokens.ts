@@ -2,22 +2,30 @@
  * auth/renderTokens.ts
  *
  * Short-lived credentials for the render worker (agentic A3,
- * docs/plans/a3-render-worker.md). The worker loads the real web app at
- * `/deck/:id/render` in headless Chromium; the page reads the deck the way a
- * share-link visitor does — the live deck document over the WebSocket, the
- * folder's tokens and fonts, the deck's media — so a render token IS a share
- * link: `findShareLink` (auth/shareLinks.ts) resolves one to
- * `{ deckId, role: 'viewer' }`, and every route and document that admits a
- * share link admits it, read-only (`shareReadPreHandler` on the media and
- * font reads, `GET /decks/:id`, the deck and folder documents), and nothing
- * else does.
+ * docs/plans/a3-render-worker.md). The worker loads the real web app in
+ * headless Chromium on a render page and the page reads one document the
+ * way a share-link visitor reads a deck:
+ *
+ *   - a deck (`/deck/:id/render`): the live deck document over the
+ *     WebSocket, the folder's tokens and fonts, the deck's media — so a deck
+ *     render token IS a share link: `findShareLink` (auth/shareLinks.ts)
+ *     resolves one to `{ deckId, role: 'viewer' }`, and every route and
+ *     document that admits a share link admits it, read-only
+ *     (`shareReadPreHandler` on the media and font reads, `GET /decks/:id`,
+ *     the deck and folder documents), and nothing else does;
+ *   - a component master (`/folder/:f/component/:c/render`, its card):
+ *     the master document, its folder's tokens and fonts and the master's
+ *     media, read-only — `resolveComponentAccess` and
+ *     `resolveFolderContentAccess` (auth/permissions.ts) admit such a token
+ *     for that component and its folder only; no share link ever reaches a
+ *     component.
  *
  * A render token (`nrr_` + 43 base64url chars, 256 bits):
  *   - is minted by the server for one render job, after the job's requester
  *     was authorised for the deck — never by a client;
- *   - names one deck and grants viewer access to it only, for as long as the
- *     person who asked for the render can still read that deck:
- *     `findShareLink` re-checks the requester on every use (every new
+ *   - names one document and grants viewer access to it only, for as long as
+ *     the person who asked for the render can still read it: every use
+ *     re-checks the requester (every new
  *     connection and every media or font read); a connection already open
  *     ends when the token does, so whatever takes a person's access away
  *     also ends their render sessions (render/sessions.ts,
@@ -42,10 +50,22 @@ export const RENDER_TOKEN_TTL_MS = 5 * 60 * 1000
 const SECRET_BYTES = 32
 const RAW_TOKEN_RE = /^nrr_[A-Za-z0-9_-]{43}$/
 
+/**
+ * Whose render a token serves: a person's (their looks and exports), or the
+ * server's own background work done as the deck's owner (its card picture,
+ * services/deckThumbnails.ts) — kept apart so that work shares neither the
+ * owner's render session nor their request budget (http/rateLimit.ts).
+ */
+export type RenderLane = 'person' | 'background'
+
+/** The one document a render token reads. */
+export type RenderDoc = { kind: 'deck'; id: string } | { kind: 'component'; id: string }
+
 interface RenderGrant {
-  deckId: string
+  target: RenderDoc
   /** Who asked for the render; the token reads the deck only while they can. */
   requestedBy: string
+  lane: RenderLane
   expiresAt: number
   expiryTimer: ReturnType<typeof setTimeout> | null
   /** Called once when the token ends (expiry or revocation). */
@@ -53,8 +73,9 @@ interface RenderGrant {
 }
 
 export interface RenderTokenGrant {
-  deckId: string
+  target: RenderDoc
   requestedBy: string
+  lane: RenderLane
 }
 
 const grants = new Map<string, RenderGrant>()
@@ -80,21 +101,23 @@ export function isRenderToken(value: string): boolean {
 }
 
 /**
- * Mint a token that lets the render page read `deckId`. The caller has
- * authorised `requestedBy` for the deck.
+ * Mint a token that lets the render page read `target`. The caller has
+ * authorised `requestedBy` for it.
  */
 export function mintRenderToken(
-  deckId: string,
+  target: RenderDoc,
   requestedBy: string,
   now: number = Date.now(),
   ttlMs: number = RENDER_TOKEN_TTL_MS,
   onEnd?: () => void,
+  lane: RenderLane = 'person',
 ): string {
   const token = RENDER_TOKEN_PREFIX + randomBytes(SECRET_BYTES).toString('base64url')
   const hash = hashToken(token)
   grants.set(hash, {
-    deckId,
+    target: { ...target },
     requestedBy,
+    lane,
     expiresAt: now + ttlMs,
     expiryTimer: null,
     onEnd: onEnd ?? null,
@@ -142,7 +165,7 @@ export function resolveRenderToken(
     drop(hash)
     return null
   }
-  return { deckId: grant.deckId, requestedBy: grant.requestedBy }
+  return { target: { ...grant.target }, requestedBy: grant.requestedBy, lane: grant.lane }
 }
 
 /** End a token before it expires (the job finished), closing the page's connections. */

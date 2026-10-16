@@ -3,7 +3,7 @@
  * FIDELITY_DECK_ID, since the deck only exists after a local import run.
  */
 
-import { test } from '@playwright/test'
+import { test } from './fixtures/test'
 import { mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'

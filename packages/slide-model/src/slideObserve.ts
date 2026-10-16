@@ -115,8 +115,7 @@ export function subscribeToSlides(
     if (rafHandle !== -1) return
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const raf = (globalThis as any).requestAnimationFrame as
-      | ((cb: () => void) => number)
-      | undefined
+      ((cb: () => void) => number) | undefined
     if (raf !== undefined) {
       rafHandle = raf(flush)
     } else {
@@ -452,8 +451,7 @@ export function subscribeToSlideObjectsWithFlush(
     if (rafHandle === -1 && !isBatchEmpty(pending)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const raf = (globalThis as any).requestAnimationFrame as
-        | ((cb: () => void) => number)
-        | undefined
+        ((cb: () => void) => number) | undefined
       if (raf !== undefined) {
         rafHandle = raf(flush)
       } else {
@@ -591,8 +589,7 @@ export function subscribeToDeckSlideEvents(
     if (rafHandle !== -1) return
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const raf = (globalThis as any).requestAnimationFrame as
-      | ((cb: () => void) => number)
-      | undefined
+      ((cb: () => void) => number) | undefined
     if (raf !== undefined) {
       rafHandle = raf(flush)
     } else {

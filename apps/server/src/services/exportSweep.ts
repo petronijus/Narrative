@@ -2,7 +2,8 @@
  * services/exportSweep.ts
  *
  * Periodic cleanup of export packages (`decks/<deckId>/exports/…` in the
- * media bucket). `deck.exportPptx` with `delivery: "url"` stores the .pptx
+ * media bucket, and `components/<componentId>/exports/…`, where a render of a
+ * master's card waits to be read back). `deck.exportPptx` with `delivery: "url"` stores the .pptx
  * there and hands out a presigned link valid for 15 minutes; the object has
  * no use after that. services/pptx.ts already sweeps a deck's old exports
  * when the SAME deck is exported again, which leaves the last export of every
@@ -35,7 +36,7 @@ export const EXPORT_MAX_AGE_MS = 24 * 60 * 60 * 1000
 export const EXPORT_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000
 /** DeleteObjects accepts at most 1000 keys per request. */
 const DELETE_BATCH = 1000
-const DECKS_PREFIX = 'decks/'
+const OWNER_PREFIXES = ['decks/', 'components/'] as const
 
 /** The one S3 client method the sweep uses (an `S3Client` satisfies it). */
 export interface ExportSweepS3 {
@@ -57,15 +58,18 @@ export interface ExportSweepOptions {
 export interface ExportSweepResult {
   /** Deck prefixes whose exports folder was examined. */
   decks: number
+  /** Component prefixes whose exports folder was examined. */
+  components: number
   /** Export objects deleted. */
   deleted: number
   /** Listing or delete requests that failed (logged; retried next run). */
   failures: number
 }
 
-async function* deckPrefixes(
+async function* ownerPrefixes(
   s3: ExportSweepS3,
   bucket: string,
+  root: string,
 ): AsyncGenerator<string, void, undefined> {
   let token: string | undefined
   do {
@@ -73,19 +77,19 @@ async function* deckPrefixes(
       s3,
       new ListObjectsV2Command({
         Bucket: bucket,
-        Prefix: DECKS_PREFIX,
+        Prefix: root,
         Delimiter: '/',
         ContinuationToken: token,
       }),
     )
     for (const p of page.CommonPrefixes ?? []) {
-      if (p.Prefix !== undefined && p.Prefix.startsWith(DECKS_PREFIX)) yield p.Prefix
+      if (p.Prefix !== undefined && p.Prefix.startsWith(root)) yield p.Prefix
     }
     token = page.IsTruncated === true ? page.NextContinuationToken : undefined
   } while (token !== undefined)
 }
 
-/** Delete one deck's export objects older than `cutoffMs`. Returns how many were deleted. */
+/** Delete one deck's or component's export objects older than `cutoffMs`. Returns how many were deleted. */
 async function sweepDeck(
   s3: ExportSweepS3,
   bucket: string,
@@ -118,24 +122,27 @@ async function sweepDeck(
   return deleted
 }
 
-/** One pass over every deck's exports. Never throws. */
+/** One pass over every deck's and component's exports. Never throws. */
 export async function sweepExpiredExports(opts: ExportSweepOptions): Promise<ExportSweepResult> {
   const now = (opts.now ?? (() => new Date()))().getTime()
   const cutoffMs = now - (opts.maxAgeMs ?? EXPORT_MAX_AGE_MS)
-  const result: ExportSweepResult = { decks: 0, deleted: 0, failures: 0 }
-  try {
-    for await (const prefix of deckPrefixes(opts.s3, opts.bucket)) {
-      result.decks++
-      try {
-        result.deleted += await sweepDeck(opts.s3, opts.bucket, prefix, cutoffMs)
-      } catch (err) {
-        result.failures++
-        opts.log.warn({ err, prefix }, 'export sweep: cleaning a deck failed')
+  const result: ExportSweepResult = { decks: 0, components: 0, deleted: 0, failures: 0 }
+  for (const root of OWNER_PREFIXES) {
+    try {
+      for await (const prefix of ownerPrefixes(opts.s3, opts.bucket, root)) {
+        if (root === 'decks/') result.decks++
+        else result.components++
+        try {
+          result.deleted += await sweepDeck(opts.s3, opts.bucket, prefix, cutoffMs)
+        } catch (err) {
+          result.failures++
+          opts.log.warn({ err, prefix }, 'export sweep: cleaning exports failed')
+        }
       }
+    } catch (err) {
+      result.failures++
+      opts.log.warn({ err, root }, 'export sweep: listing failed')
     }
-  } catch (err) {
-    result.failures++
-    opts.log.warn({ err }, 'export sweep: listing decks failed')
   }
   if (result.deleted > 0 || result.failures > 0) {
     opts.log.info({ ...result }, 'export sweep finished')

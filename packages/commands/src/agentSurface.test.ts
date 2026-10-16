@@ -45,16 +45,16 @@ describe('tool names', () => {
 describe('command mentions', () => {
   it('recognise the planned marker after a code span and across a line break', () => {
     const [m] = findCommandMentions(
-      'Use `deck.refreshThumbnail` (planned, not\n  available yet) later.',
+      'Use `component.refreshThumbnail` (planned, not\n  available yet) later.',
     )
-    expect(m).toMatchObject({ id: 'deck.refreshThumbnail', planned: true, wildcard: false })
+    expect(m).toMatchObject({ id: 'component.refreshThumbnail', planned: true, wildcard: false })
     expect(
       danglingCommandMentions(
-        'Use `deck.refreshThumbnail` (planned, not\n  available yet).',
+        'Use `component.refreshThumbnail` (planned, not\n  available yet).',
         registry,
       ),
     ).toEqual([])
-    expect(danglingCommandMentions('Use deck.refreshThumbnail now.', registry)).toHaveLength(1)
+    expect(danglingCommandMentions('Use component.refreshThumbnail now.', registry)).toHaveLength(1)
     expect(
       danglingCommandMentions('Use slide.add (planned, not available yet).', registry),
     ).toEqual(['slide.add is registered but marked planned'])

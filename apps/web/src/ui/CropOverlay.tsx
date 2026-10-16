@@ -639,6 +639,8 @@ export function CropOverlay({ obj, slideId }: CropOverlayProps) {
               height: '100%',
               opacity: 0.3,
               objectFit: obj.fit ?? 'cover',
+              // As the renderer fits it (mediaFit.applyFit): the focus side in view.
+              objectPosition: obj.focus ?? 'center',
               pointerEvents: 'none',
             }}
           />

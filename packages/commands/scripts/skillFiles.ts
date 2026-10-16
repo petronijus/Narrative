@@ -61,15 +61,15 @@ function pluginManifest(): string {
     name: 'narrative',
     version: narrativeVersion(),
     description:
-      "Drive Narrative, Woodgrove's collaborative presentation editor, from Claude Code: the narrative skill " +
+      'Drive Narrative, a collaborative presentation editor, from Claude Code: the narrative skill ' +
       'teaches Claude how to read, edit, restyle, shorten and translate decks through the Narrative MCP server.',
-    author: { name: 'Woodgrove Digital' },
+    author: { name: 'Petr Parkan Janda' },
     keywords: ['narrative', 'presentations', 'decks', 'mcp', 'slides'],
   })
 }
 
 const SKILL_DESCRIPTION =
-  "Build, edit, restyle, shorten and translate presentations in Narrative, Woodgrove's collaborative deck editor, " +
+  'Build, edit, restyle, shorten and translate presentations in Narrative, a collaborative deck editor, ' +
   'through the Narrative MCP server (tools such as deck_list, query_deck, ops_apply). Use whenever the user ' +
   'mentions Narrative, a Narrative deck, slide or folder, narrative.bastla.com, or asks to change slides that ' +
   'live in Narrative — including "this slide" or "the selected text" in their open Narrative editor.'
@@ -124,7 +124,7 @@ function skillFile(playbooks: Playbook[], apiUrl: string): string {
     '',
     '# Narrative',
     '',
-    "Narrative is Woodgrove's collaborative presentation editor. You drive it through the tools of the",
+    'Narrative is a collaborative presentation editor. You drive it through the tools of the',
     '`narrative` MCP server (in Claude Code they are named `mcp__narrative__<tool>`, e.g.',
     '`mcp__narrative__query_deck`). Every tool is a Narrative command acting as the signed-in user.',
     '',

@@ -1,7 +1,7 @@
 /**
  * e2e/fixtures/desktop.ts
  *
- * Playwright fixtures for the desktop shell (apps/desktop, ADR 0014),
+ * Playwright fixtures for the desktop shell (apps/desktop, ADR 0015),
  * driven through Playwright's Electron support. Used by the `electron`
  * project's `desktop-*.spec.ts`; the `desktop-build` project bundles the
  * shell first (desktop.setup.ts).

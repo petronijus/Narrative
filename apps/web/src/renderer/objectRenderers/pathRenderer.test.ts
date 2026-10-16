@@ -10,7 +10,7 @@
  * the resulting `fill` instruction's `GraphicsPath.shapePath` to
  * verify the multi-subpath handling:
  *
- *   1. AFRY-badge case: 5 closed subpaths, all inner subpaths
+ *   1. letterform-badge case: 5 closed subpaths, all inner subpaths
  *      contained in the outer one. Pixi's `addPath` hole detection
  *      must move the 4 inner subpaths into the outer's `holes` array
  *      so they triangulate as cut-outs (not as overdrawn solid
@@ -68,7 +68,7 @@ function basePath(overrides: Partial<PathObject> = {}): PathObject {
 }
 
 describe('pathRenderer subpath handling', () => {
-  it('AFRY-badge: inner subpaths become holes in the outer subpath', () => {
+  it('letterform-badge: inner subpaths become holes in the outer subpath', () => {
     // Outer subpath: full bounding square (0,0)..(100,100).
     // Inner subpath 1: small square (20,20)..(40,40) — contained.
     // Inner subpath 2: small square (60,60)..(80,80) — contained.

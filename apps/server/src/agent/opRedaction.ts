@@ -21,7 +21,7 @@
  *     `user:password@`: presigned links (`X-Amz-Signature=…`, the export
  *     download URL an op returns) and tokens in query parameters are live
  *     credentials, the path is what an auditor needs.
- *   - Every Narrative credential anywhere in a string (auth/credentialPatterns.ts:
+ *   - Every Narrative credential anywhere in a string (shared/src/credentialPatterns.ts:
  *     personal access tokens, MCP OAuth tokens / codes / secrets, upload
  *     sessions — e.g. the `nus_…` `media.uploadSession` returns, also inside
  *     its ready curl command) keeps its prefix and loses the secret.
@@ -37,7 +37,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { maskCredentials } from '../auth/credentialPatterns.js'
+import { maskCredentials } from '@narrative/shared'
 
 /** Strings at least this long that are strictly base64 are treated as file bytes. */
 export const BASE64_HEURISTIC_MIN_CHARS = 1024
@@ -119,7 +119,7 @@ export function stripUrlSecrets(value: string): string {
   return url.toString()
 }
 
-/** A string with every Narrative credential's secret replaced (auth/credentialPatterns.ts). */
+/** A string with every Narrative credential's secret replaced (shared/src/credentialPatterns.ts). */
 export function redactTokens(value: string): string {
   return maskCredentials(value, '[redacted]')
 }

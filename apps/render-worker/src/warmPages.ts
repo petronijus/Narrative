@@ -17,7 +17,8 @@
 import type { BrowserContext, Page } from 'playwright-core'
 
 export interface WarmPage {
-  deckId: string
+  /** The page's document (`renderPageName`): a token's page serves no other. */
+  name: string
   context: BrowserContext
   page: Page
   /** The page's errors since the job that is using it started. */
@@ -37,13 +38,13 @@ export class WarmPages {
     private readonly opts: { max: number; idleMs: number; log: (message: string) => void },
   ) {}
 
-  /** The page kept for `token` (and `deckId`), taken out until it is kept again. */
-  take(token: string, deckId: string): WarmPage | undefined {
+  /** The page kept for `token` (and its document `name`), taken out until it is kept again. */
+  take(token: string, name: string): WarmPage | undefined {
     const entry = this.pages.get(token)
     if (entry === undefined) return undefined
     this.pages.delete(token)
     if (entry.idleTimer !== null) clearTimeout(entry.idleTimer)
-    if (entry.deckId !== deckId || entry.page.isClosed()) {
+    if (entry.name !== name || entry.page.isClosed()) {
       void entry.context.close().catch(() => undefined)
       return undefined
     }
@@ -86,7 +87,7 @@ export class WarmPages {
     this.pages.delete(token)
     if (entry.idleTimer !== null) clearTimeout(entry.idleTimer)
     void entry.context.close().catch(() => undefined)
-    this.opts.log(`page for deck ${entry.deckId} closed (${why})`)
+    this.opts.log(`page for ${entry.name} closed (${why})`)
   }
 
   /** Close every kept page (the browser is going). */

@@ -241,24 +241,27 @@ describe('OverlayCompositor', () => {
       expect(domEl.style.transform).toBe('translate(200px, 300px)')
     })
 
-    it.skip('DPR kompenzace: fyzické px / DPR = CSS logical px', () => {
-      // Nastavíme DPR=2 — container.toGlobal vrací fyzické px
+    it('on a HiDPI screen the position is not divided by devicePixelRatio', () => {
+      // toGlobal() with autoDensity already answers in CSS (logical) px, so the
+      // transform takes it as is. Dividing by the DPR, as the compositor once
+      // did, put every overlay at half its position on a 2x screen.
+      const original = Object.getOwnPropertyDescriptor(window, 'devicePixelRatio')
       Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 2 })
-      const mockApp2 = makeApp()
-      const overlayRoot2 = makeOverlayRoot()
-      const compositor2 = new OverlayCompositor(mockApp2.app, overlayRoot2)
+      try {
+        const mockApp2 = makeApp()
+        const overlayRoot2 = makeOverlayRoot()
+        const compositor2 = new OverlayCompositor(mockApp2.app, overlayRoot2)
+        const domEl = makeDomEl()
 
-      const domEl = makeDomEl()
-      // Container fyzická pozice = 200px
-      const container = makeContainer(200, 400)
+        compositor2.registerOverlay({ pixiContainer: makeContainer(200, 400), domElement: domEl })
 
-      compositor2.registerOverlay({ pixiContainer: container, domElement: domEl })
-
-      // CSS = 200/2 = 100px, 400/2 = 200px
-      expect(domEl.style.transform).toBe('translate(100px, 200px)')
-
-      compositor2.destroy()
-      document.body.removeChild(overlayRoot2)
+        expect(domEl.style.transform).toBe('translate(200px, 400px)')
+        compositor2.destroy()
+        document.body.removeChild(overlayRoot2)
+      } finally {
+        if (original) Object.defineProperty(window, 'devicePixelRatio', original)
+        else delete (window as { devicePixelRatio?: number }).devicePixelRatio
+      }
     })
 
     it('worldOffset je přidán k container souřadnicím', () => {

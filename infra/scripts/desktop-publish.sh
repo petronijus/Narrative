@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # `just desktop-publish <linux|mac|win>`: put one platform's desktop app
-# release into the update feed on the production VM (ADR 0014,
+# release into the update feed on the production VM (ADR 0015,
 # docs/plans/desktop-d0-spec.md §6). The feed is code delivery: every
 # installed app updates from it, so only a released build goes there.
 #

@@ -5,7 +5,8 @@
  * `component:<id>` document — a component master — under folder sharing
  * (docs/plans/folder-sharing.md): the folder's members connect with their
  * folder role, read-only for a viewer; a deck-only guest and a share link
- * never reach a master. resolveComponentAccess and the session lookup are
+ * never reach a master; the render page of the master's card does, with a
+ * render token, read-only (agentic A3.5). resolveComponentAccess and the session lookup are
  * mocked; the hook itself runs unchanged.
  */
 
@@ -48,14 +49,19 @@ const deckAccess = vi.mocked(resolveDeckAccess)
 const DB = {} as Database
 const COOKIE = { cookie: 'narrative_session=good-session' }
 
-function payload(over: Partial<WsAuthPayload> & { params?: Record<string, string> } = {}) {
-  const { params, ...rest } = over
+function payload(
+  over: Omit<Partial<WsAuthPayload>, 'requestHeaders'> & {
+    params?: Record<string, string>
+    requestHeaders?: Record<string, string>
+  } = {},
+) {
+  const { params, requestHeaders, ...rest } = over
   return {
     documentName: 'component:comp-1',
     token: 'cookie',
     requestParameters: new URLSearchParams(params ?? {}),
-    requestHeaders: COOKIE,
-    connection: { readOnly: false },
+    requestHeaders: new Headers(requestHeaders ?? COOKIE),
+    connectionConfig: { readOnly: false },
     context: {} as Record<string, unknown>,
     ...rest,
   } satisfies WsAuthPayload
@@ -73,9 +79,13 @@ describe('onAuthenticate — component:<id>', () => {
     const data = payload()
     await authenticate()(data)
 
-    expect(componentAccess).toHaveBeenCalledWith(DB, { componentId: 'comp-1', userId: 'member' })
+    expect(componentAccess).toHaveBeenCalledWith(DB, {
+      componentId: 'comp-1',
+      userId: 'member',
+      shareToken: null,
+    })
     expect(data.context).toMatchObject({ userId: 'member', componentId: 'comp-1', role: 'editor' })
-    expect(data.connection.readOnly).toBe(false)
+    expect(data.connectionConfig.readOnly).toBe(false)
     expect(folderAccess).not.toHaveBeenCalled()
     expect(deckAccess).not.toHaveBeenCalled()
   })
@@ -84,7 +94,7 @@ describe('onAuthenticate — component:<id>', () => {
     componentAccess.mockResolvedValueOnce({ role: 'owner', reason: 'folder' })
     const data = payload()
     await authenticate()(data)
-    expect(data.connection.readOnly).toBe(false)
+    expect(data.connectionConfig.readOnly).toBe(false)
   })
 
   it('connects a folder viewer to the master read-only', async () => {
@@ -92,7 +102,7 @@ describe('onAuthenticate — component:<id>', () => {
     const data = payload()
     await authenticate()(data)
     expect(data.context).toMatchObject({ role: 'viewer' })
-    expect(data.connection.readOnly).toBe(true)
+    expect(data.connectionConfig.readOnly).toBe(true)
   })
 
   it('refuses a user outside the folder, a deck-only guest included, and a missing component', async () => {
@@ -100,11 +110,26 @@ describe('onAuthenticate — component:<id>', () => {
     await expect(authenticate()(payload())).rejects.toThrow('Forbidden')
   })
 
-  it('refuses a share link without looking the component up', async () => {
+  it('refuses a share link (resolveComponentAccess admits none)', async () => {
+    componentAccess.mockResolvedValueOnce(null)
     await expect(
       authenticate()(payload({ requestHeaders: {}, params: { share_token: 'tok-abc' } })),
     ).rejects.toThrow('Forbidden')
-    expect(componentAccess).not.toHaveBeenCalled()
+    expect(componentAccess).toHaveBeenCalledWith(DB, {
+      componentId: 'comp-1',
+      userId: null,
+      shareToken: 'tok-abc',
+    })
+  })
+
+  it('connects the render page of the master’s card read-only, ending with its token', async () => {
+    componentAccess.mockResolvedValueOnce({ role: 'viewer', reason: 'render' })
+    const token = `nrr_${'r'.repeat(43)}`
+    const data = payload({ requestHeaders: {}, params: { share_token: token } })
+    await authenticate()(data)
+    expect(data.connectionConfig.readOnly).toBe(true)
+    expect(data.context).toMatchObject({ componentId: 'comp-1', role: 'viewer', shareToken: token })
+    expect(data.context['userId']).not.toContain(token)
   })
 
   it('refuses a connection without credentials', async () => {
@@ -118,7 +143,11 @@ describe('onAuthenticate — component:<id>', () => {
     componentAccess.mockResolvedValueOnce({ role: 'owner', reason: 'folder' })
     const data = payload({ requestHeaders: {} })
     await authenticate(true)(data)
-    expect(componentAccess).toHaveBeenCalledWith(DB, { componentId: 'comp-1', userId: 'dev-user' })
+    expect(componentAccess).toHaveBeenCalledWith(DB, {
+      componentId: 'comp-1',
+      userId: 'dev-user',
+      shareToken: null,
+    })
     expect(data.context).toMatchObject({ userId: 'dev-user', componentId: 'comp-1' })
   })
 

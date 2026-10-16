@@ -4,7 +4,7 @@
  *
  *   tokens: Y.Map
  *     ├─ colors:       Y.Map<id → Y.Map { id, name, value: '#rrggbb' }>
- *     ├─ textStyles:   Y.Map<id → Y.Map { id, name, family?, weight?, size?,
+ *     ├─ textStyles:   Y.Map<id → Y.Map { id, name, family?, weight?, size?, minSize?,
  *     │                                   lineHeight?, letterSpacing?,
  *     │                                   paragraphSpaceBefore?, paragraphSpaceAfter?,
  *     │                                   color? ('#rrggbb' | { $token }),
@@ -28,7 +28,9 @@ import type {
   ColorTokenSnapshot,
   EffectStyleTokenSnapshot,
   FolderTokensSnapshot,
+  TextStyleLevel,
   TextStyleTokenSnapshot,
+  TokenOrigin,
 } from './tokens.js'
 
 export type TokenCategory = 'colors' | 'textStyles' | 'effectStyles'
@@ -69,7 +71,39 @@ function readColor(id: string, m: Y.Map<unknown>): ColorTokenSnapshot | null {
   const name = m.get('name')
   const value = m.get('value')
   if (typeof name !== 'string' || typeof value !== 'string') return null
-  return { id, name, value }
+  const out: ColorTokenSnapshot = { id, name, value }
+  const byVariant = m.get('byVariant')
+  if (isRecord(byVariant) && typeof byVariant['axis'] === 'string') {
+    const values = stringRecord(byVariant['values'])
+    if (values !== undefined) out.byVariant = { axis: byVariant['axis'], values }
+  }
+  const bySurface = stringRecord(m.get('bySurface'))
+  if (bySurface !== undefined) out.bySurface = bySurface
+  const origin = readOrigin(m.get('origin'))
+  if (origin !== undefined) out.origin = origin
+  return out
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+/** A plain record of string values (stored as JSON in the folder document); undefined otherwise. */
+function stringRecord(v: unknown): Record<string, string> | undefined {
+  if (!isRecord(v)) return undefined
+  const out: Record<string, string> = {}
+  for (const [k, value] of Object.entries(v)) {
+    if (k === '__proto__') continue
+    if (typeof value === 'string') out[k] = value
+  }
+  return out
+}
+
+/** A token's compile provenance (A4.4). */
+function readOrigin(v: unknown): TokenOrigin | undefined {
+  if (!isRecord(v) || typeof v['pack'] !== 'string' || typeof v['key'] !== 'string')
+    return undefined
+  return { pack: v['pack'], key: v['key'] }
 }
 
 function readTextStyle(id: string, m: Y.Map<unknown>): TextStyleTokenSnapshot | null {
@@ -81,7 +115,10 @@ function readTextStyle(id: string, m: Y.Map<unknown>): TextStyleTokenSnapshot | 
   for (const key of [
     'weight',
     'size',
+    'minSize',
+    'fontStretch',
     'lineHeight',
+    'lineSpacing',
     'letterSpacing',
     'paragraphSpaceBefore',
     'paragraphSpaceAfter',
@@ -90,6 +127,12 @@ function readTextStyle(id: string, m: Y.Map<unknown>): TextStyleTokenSnapshot | 
     if (typeof v === 'number') out[key] = v
   }
   if (m.get('builtin') === true) out.builtin = true
+  const align = m.get('align')
+  if (align === 'left' || align === 'center' || align === 'right') out.align = align
+  const levels = readTextStyleLevels(m.get('levels'))
+  if (levels !== undefined) out.levels = levels
+  const origin = readOrigin(m.get('origin'))
+  if (origin !== undefined) out.origin = origin
   const textTransform = m.get('textTransform')
   if (
     textTransform === 'uppercase' ||
@@ -110,6 +153,62 @@ function readTextStyle(id: string, m: Y.Map<unknown>): TextStyleTokenSnapshot | 
     out.color = { $token: (color as { $token: string }).$token }
   }
   return out
+}
+
+const LEVEL_NUMBERS = [
+  'bulletScale',
+  'indent',
+  'hanging',
+  'spaceBefore',
+  'fontWeight',
+  'fontSize',
+  'lineSpacing',
+] as const
+const LIST_KINDS = new Set(['bullet', 'number', 'none'])
+const NUMBER_FORMATS = new Set([
+  'decimal',
+  'decimalParen',
+  'lowerAlpha',
+  'lowerAlphaParen',
+  'upperAlpha',
+  'upperAlphaParen',
+  'lowerRoman',
+  'upperRoman',
+])
+
+/** A hex string or a colour token reference, as a style stores a colour. */
+function readStyleColor(v: unknown): string | { $token: string } | undefined {
+  if (typeof v === 'string') return v
+  if (typeof v === 'object' && v !== null && typeof (v as { $token?: unknown }).$token === 'string')
+    return { $token: (v as { $token: string }).$token }
+  return undefined
+}
+
+/** A style's `levels` (a plain array in the folder document); malformed entries are empty levels. */
+function readTextStyleLevels(value: unknown): TextStyleLevel[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined
+  return value.slice(0, 9).map((entry) => {
+    const out: TextStyleLevel = {}
+    if (typeof entry !== 'object' || entry === null) return out
+    const e = entry as Record<string, unknown>
+    if (LIST_KINDS.has(e['list'] as string))
+      out.list = e['list'] as NonNullable<TextStyleLevel['list']>
+    if (typeof e['bulletChar'] === 'string' && e['bulletChar'] !== '')
+      out.bulletChar = e['bulletChar']
+    if (NUMBER_FORMATS.has(e['numberFormat'] as string))
+      out.numberFormat = e['numberFormat'] as NonNullable<TextStyleLevel['numberFormat']>
+    if (typeof e['fontFamily'] === 'string' && e['fontFamily'] !== '')
+      out.fontFamily = e['fontFamily']
+    for (const key of LEVEL_NUMBERS) {
+      const n = e[key]
+      if (typeof n === 'number' && Number.isFinite(n)) out[key] = n
+    }
+    const bulletColor = readStyleColor(e['bulletColor'])
+    if (bulletColor !== undefined) out.bulletColor = bulletColor
+    const color = readStyleColor(e['color'])
+    if (color !== undefined) out.color = color
+    return out
+  })
 }
 
 function readEffectStyle(id: string, m: Y.Map<unknown>): EffectStyleTokenSnapshot | null {
@@ -201,10 +300,18 @@ export function updateFolderToken(
   category: TokenCategory,
   id: string,
   patch: Record<string, unknown>,
+  opts: { replace?: boolean } = {},
 ): boolean {
   const m = categoryMap(doc, category)?.get(id)
   if (!(m instanceof Y.Map)) return false
-  doc.transact(() => setFields(m, patch))
+  doc.transact(() => {
+    // `replace`: the token becomes exactly `patch` (a style pack compile:
+    // a field the pack stopped setting must not linger from before).
+    if (opts.replace === true) {
+      for (const key of [...m.keys()]) if (key !== 'id' && !(key in patch)) m.delete(key)
+    }
+    setFields(m, patch)
+  })
   return true
 }
 

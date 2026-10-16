@@ -14,7 +14,7 @@
  * deck, and did, which is exactly the bug this guards.
  */
 
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'

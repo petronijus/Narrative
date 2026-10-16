@@ -5,7 +5,7 @@ editor the server already serves: it loads the chosen server's origin in its
 own window and adds what only an installed app can do — sign-in through the
 system browser, a native menu, opening PowerPoint files from the operating
 system, presenting on a chosen display under Hyprland, and signed
-self-updates. Why it is built this way: [ADR 0014](./adr/0014-desktop-shell-loads-server-origin.md).
+self-updates. Why it is built this way: [ADR 0015](./adr/0015-desktop-shell-loads-server-origin.md).
 The plan (phases D0–D4, offline work from D1 on) is
 [`plans/desktop-app.md`](./plans/desktop-app.md); D0's design and its
 as-built notes are [`plans/desktop-d0-spec.md`](./plans/desktop-d0-spec.md).

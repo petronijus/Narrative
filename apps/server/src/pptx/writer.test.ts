@@ -124,6 +124,26 @@ const BASE: Omit<ParsedPptx, 'slides'> = {
 }
 
 describe('buildDeckUpdate', () => {
+  it('reports the placeholder each object filled by its new id, and stores no hint', () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            textShape({ text: 'Title', placeholderType: 'title' }),
+            textShape({ text: 'Free' }),
+          ],
+        }),
+      ],
+    }
+    const { state, slideIds, placeholders } = buildDeckUpdate(parsed)
+    const objects = applyToFreshDoc(state).slides[0]!.objects
+    expect(placeholders).toEqual([
+      { slide: slideIds[0], objects: [{ object: objects[0]!['id'], type: 'title' }] },
+    ])
+    expect(JSON.stringify(objects)).not.toContain('placeholder')
+  })
+
   it('produces a Y.Doc with one slide per parsed slide, default slide dropped', async () => {
     const parsed: ParsedPptx = {
       ...BASE,
@@ -182,7 +202,7 @@ describe('buildDeckUpdate', () => {
 
   it("stores PPTX degrees as the model's radians, normalised to (−π, π]", async () => {
     // Regression: `rotation` went into the doc in degrees. The renderer reads
-    // radians, so the Proseware deck's "(barely)" (rot 352.97°, a 7° counter-
+    // radians, so the reference deck's "(barely)" (rot 352.97°, a 7° counter-
     // clockwise tilt) rendered at 352.97 rad ≡ +63.6° clockwise.
     const parsed: ParsedPptx = {
       ...BASE,

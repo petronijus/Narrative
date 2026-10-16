@@ -45,6 +45,7 @@ import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { computeSlideNumber } from '@narrative/shared'
 import { setRenderingSlideNumber } from './slideNumberContext.js'
+import { setRenderingSurface } from './colourResolver.js'
 import { applyBackground } from './ArtboardBackground.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import { disposeComponentDocCache } from '../state/componentDocCache.js'
@@ -80,9 +81,27 @@ export interface CanvasProps {
    * blurry. Resolution is capped at 4× to bound GPU memory.
    */
   zoom?: number
+  /**
+   * false: nothing is drawn on screen — the canvas stays 1×1 and every
+   * frame costs next to nothing, while the scene is complete for
+   * `renderer.extract` (captureSlide.ts renders it into a texture of its
+   * own). For the render page when only captures are wanted: under
+   * software WebGL (SwiftShader, the render worker) each frame drawn at
+   * 1920×1080 cost ~0.7 s of CPU on two cores, and a capture waited for
+   * every frame queued before it. Fixed for the canvas's lifetime.
+   */
+  onScreen?: boolean
 }
 
-export function Canvas({ onReady, bleedPx = 0, artboardSize, zoom = 1 }: CanvasProps = {}) {
+export function Canvas({
+  onReady,
+  bleedPx = 0,
+  artboardSize,
+  zoom = 1,
+  onScreen = true,
+}: CanvasProps = {}) {
+  // Read once: the canvas is set up for one way of drawing.
+  const onScreenRef = useRef(onScreen)
   const containerRef = useRef<HTMLDivElement>(null)
   const overlayRootRef = useRef<HTMLDivElement>(null)
 
@@ -143,7 +162,7 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize, zoom = 1 }: CanvasP
       app = new Application()
 
       await app.init({
-        resizeTo: containerEl,
+        ...(onScreenRef.current ? { resizeTo: containerEl } : { width: 1, height: 1 }),
         resolution: window.devicePixelRatio || 1,
         autoDensity: true,
         backgroundAlpha: 0,
@@ -357,6 +376,15 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize, zoom = 1 }: CanvasP
     if (instance === null) return
     instance.sceneGraph.refreshSlideNumberTexts()
   }, [currentSlideNumber, pixiReady])
+  // The active slide's surface (its layout's, A4.2d): its colour tokens
+  // resolve on it; a change repaints what it affects.
+  const surface = slides.find((s) => s.id === activeSlideId)?.layout?.surface
+  useEffect(() => {
+    setRenderingSurface(surface)
+  }, [surface])
+  useEffect(() => {
+    return () => setRenderingSurface(undefined)
+  }, [])
 
   // Reaktivita na Y.Doc přes incremental changes (M3).
   // Initial state přichází synchronně jako první emise (added = current).
@@ -448,7 +476,7 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize, zoom = 1 }: CanvasP
 
     const debounceTimer = setTimeout(() => {
       const inst = instanceRef.current
-      if (inst === null) return
+      if (inst === null || !onScreenRef.current) return
       const renderer = inst.app.renderer
       if (Math.abs(renderer.resolution - effectiveRes) < 0.01) return
       renderer.resolution = effectiveRes
@@ -475,7 +503,7 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize, zoom = 1 }: CanvasP
 
     const observer = new ResizeObserver(() => {
       const instance = instanceRef.current
-      if (instance === null) return
+      if (instance === null || !onScreenRef.current) return
 
       const width = containerEl.clientWidth
       const height = containerEl.clientHeight

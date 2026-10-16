@@ -33,6 +33,9 @@ import { componentCommands } from './commands/components.js'
 import { pptxCommands } from './commands/pptx.js'
 import { renderCommands } from './commands/render.js'
 import { tokenCommands } from './commands/tokens.js'
+import { stylePackCommands } from './commands/stylePacks.js'
+import { layoutCommands } from './commands/layouts.js'
+import { checkCommands } from './commands/check.js'
 import { createOpsApply } from './commands/ops.js'
 
 export function createDefaultRegistry(): CommandRegistry {
@@ -62,6 +65,9 @@ export function createDefaultRegistry(): CommandRegistry {
   registry.registerAll(pptxCommands)
   registry.registerAll(renderCommands)
   registry.registerAll(tokenCommands)
+  registry.registerAll(stylePackCommands)
+  registry.registerAll(layoutCommands)
+  registry.registerAll(checkCommands)
   registry.register(createOpsApply(registry))
   return registry
 }

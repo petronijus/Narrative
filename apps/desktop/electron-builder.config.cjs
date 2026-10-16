@@ -2,7 +2,7 @@
  * electron-builder.config.cjs
  *
  * How the desktop app is packaged (docs/plans/desktop-d0-spec.md §3.12,
- * revision 3; ADR 0014). The app is the bundled dist/ only — no
+ * revision 3; ADR 0015). The app is the bundled dist/ only — no
  * node_modules — so a pnpm workspace never leaks into it.
  *
  *   Linux    deb (Ubuntu: installs the SUID sandbox helper) and AppImage

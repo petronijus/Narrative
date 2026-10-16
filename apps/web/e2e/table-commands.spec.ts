@@ -11,7 +11,7 @@
  * was stored, and a gesture stays one undo step.
  */
 
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { test, expect, type APIRequestContext, type Page } from './fixtures/test'
 import { caret } from './fixtures/keys.js'
 import { PNG } from 'pngjs'
 
@@ -289,8 +289,7 @@ test('Image fill on a table writes nothing until a picture is chosen, then fills
     .poll(
       async () =>
         (await tableOf(page.request, deckId, tableId)).defaults['fillStyle'] as
-          | { kind?: string; assetId?: string }
-          | undefined,
+          { kind?: string; assetId?: string } | undefined,
       { timeout: 20_000 },
     )
     .toMatchObject({ kind: 'image', assetId: expect.stringMatching(/.+/) })

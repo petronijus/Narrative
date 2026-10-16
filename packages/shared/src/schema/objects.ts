@@ -28,7 +28,7 @@
 
 import { z } from 'zod'
 import type { SlideObjectType, TokenRef } from '../slide.js'
-import { MAX_LIST_LEVEL } from '../slide.js'
+import { MAX_LIST_LEVEL, OBJECT_ROLES } from '../slide.js'
 import { sanitizeHref } from '../sanitize.js'
 import {
   ColorInputSchema,
@@ -100,6 +100,26 @@ export const ObjectHyperlinkSchema = z.discriminatedUnion('kind', [
   }),
 ])
 
+/** Longest slot name (a brand's slot names are short: `title`, `bullets2`). */
+export const MAX_SLOT_NAME = 200
+
+/** `BaseSlideObject.slot` — the brand's slot name. */
+export const SlotNameSchema = z
+  .string()
+  .min(1)
+  .max(MAX_SLOT_NAME)
+  .refine((s) => s.trim() === s, 'no leading or trailing spaces')
+
+export const ObjectRoleSchema = z.enum(OBJECT_ROLES)
+
+/** `BaseSlideObject.component` — set by a stamp (see ComponentProvenance in ../slide.ts). */
+export const ComponentProvenanceSchema = z.strictObject({
+  id: IdSchema,
+  objectId: IdSchema,
+  instance: IdSchema,
+  origin: z.strictObject({ x: FiniteNumberSchema, y: FiniteNumberSchema }),
+})
+
 export const CornerRadiusSchema = z.union([
   NonNegativeNumberSchema,
   z.strictObject({
@@ -137,8 +157,9 @@ export const FontWeightSchema = z.literal([
 ])
 
 export const TextVerticalAlignSchema = z.enum(['top', 'middle', 'bottom'])
+export const TextAutofitSchema = z.enum(['grow-down', 'shrink'])
 export const TextListStyleSchema = z.enum(['bullet', 'numbered'])
-export const ListKindSchema = z.enum(['bullet', 'number'])
+export const ListKindSchema = z.enum(['bullet', 'number', 'none'])
 export const ListNumberFormatSchema = z.enum([
   'decimal',
   'decimalParen',
@@ -174,6 +195,11 @@ export const TextStyleOverrideKeySchema = z.enum([
   'paragraphSpaceAfter',
   'color',
   'textTransform',
+  'minFontSize',
+  'listLevels',
+  'fontStretch',
+  'lineSpacing',
+  'align',
 ])
 
 /**
@@ -241,6 +267,23 @@ type ColorSlot = z.ZodType<number | TokenRef>
 type RgbSlot = z.ZodType<number>
 
 function buildObjectSchemas<C extends ColorSlot, R extends RgbSlot>(color: C, rgb: R) {
+  /** One nesting level's paragraph defaults (A4.2b). */
+  const TextListLevelSchema = z.strictObject({
+    list: ListKindSchema.exactOptional(),
+    bulletChar: z.string().min(1).max(4).exactOptional(),
+    bulletColor: color.exactOptional(),
+    bulletScale: PositiveNumberSchema.max(4).exactOptional(),
+    numberFormat: ListNumberFormatSchema.exactOptional(),
+    indent: NonNegativeNumberSchema.max(1920).exactOptional(),
+    hanging: NonNegativeNumberSchema.max(1920).exactOptional(),
+    spaceBefore: NonNegativeNumberSchema.max(1000).exactOptional(),
+    fontFamily: z.string().min(1).exactOptional(),
+    fontWeight: FontWeightSchema.exactOptional(),
+    fontSize: PositiveNumberSchema.max(2000).exactOptional(),
+    color: color.exactOptional(),
+    lineSpacing: PositiveNumberSchema.max(10).exactOptional(),
+  })
+
   const ShadowStyleSchema = z.strictObject({
     color,
     blur: NonNegativeNumberSchema,
@@ -266,6 +309,9 @@ function buildObjectSchemas<C extends ColorSlot, R extends RgbSlot>(color: C, rg
     aspectLocked: z.boolean().exactOptional(),
     flipH: z.boolean().exactOptional(),
     flipV: z.boolean().exactOptional(),
+    slot: SlotNameSchema.exactOptional(),
+    role: ObjectRoleSchema.exactOptional(),
+    component: ComponentProvenanceSchema.exactOptional(),
   }
   const BaseSlideObjectSchema = z.strictObject(baseShape)
 
@@ -388,6 +434,13 @@ function buildObjectSchemas<C extends ColorSlot, R extends RgbSlot>(color: C, rg
     lineHeight: PositiveNumberSchema.exactOptional(),
     lineSpacing: PositiveNumberSchema.exactOptional(),
     wrap: z.literal('none').exactOptional(),
+    autofit: TextAutofitSchema.exactOptional(),
+    minFontSize: PositiveNumberSchema.exactOptional(),
+    fontStretch: z.number().min(50).max(200).exactOptional(),
+    listLevels: z
+      .array(TextListLevelSchema)
+      .max(MAX_LIST_LEVEL + 1)
+      .exactOptional(),
     // Negative tracking is legitimate (tight display type).
     letterSpacing: FiniteNumberSchema.exactOptional(),
     paragraphSpaceBefore: NonNegativeNumberSchema.exactOptional(),
@@ -412,6 +465,7 @@ function buildObjectSchemas<C extends ColorSlot, R extends RgbSlot>(color: C, rg
     assetId: IdSchema,
     variant: z.enum(['thumb', 'display', 'original']).exactOptional(),
     fit: FitSchema.exactOptional(),
+    focus: z.enum(['top', 'bottom', 'left', 'right']).exactOptional(),
     alt: z.string().exactOptional(),
     imageRect: z
       .strictObject({
@@ -573,6 +627,7 @@ function buildObjectSchemas<C extends ColorSlot, R extends RgbSlot>(color: C, rg
 
   return {
     ShadowStyleSchema,
+    TextListLevelSchema,
     BaseSlideObjectSchema,
     StrokeStyleFieldsSchema,
     FillGradientStopSchema,
@@ -709,6 +764,7 @@ const storage = buildObjectSchemas(ColorValueSchema, ColorIntSchema)
 export const inputObjectSchemas = buildObjectSchemas(ColorInputSchema, RgbInputSchema)
 
 export const ShadowStyleSchema = storage.ShadowStyleSchema
+export const TextListLevelSchema = storage.TextListLevelSchema
 export const BaseSlideObjectSchema = storage.BaseSlideObjectSchema
 export const StrokeStyleFieldsSchema = storage.StrokeStyleFieldsSchema
 export const FillGradientStopSchema = storage.FillGradientStopSchema

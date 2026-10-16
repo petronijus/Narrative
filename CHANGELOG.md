@@ -4,11 +4,461 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
-## Unreleased
+## 0.14.0 — Emails for everything that concerns you (2026-10-16)
 
 ### Added
 
-- **The Narrative desktop app** (`apps/desktop`, ADR 0014, `docs/desktop.md`).
+- **New emails**, all in the same look as the sharing email: you were made
+  an admin (or no longer are), you may now sign in, a new access token or
+  app was connected to your account (a security notice), a deck or folder
+  shared with you was deleted, your access was removed, the person you
+  invited joined, and an agent has waited two minutes for your approval.
+- **Administration → Emails**: every kind of email with who gets it, a
+  switch to turn it off for everyone, and a preview. All are on by default.
+
+## 0.13.2 — One tagline (2026-10-16)
+
+### Changed
+
+- "Pro tool for keynote masters", the home screen's subline, is now the
+  tagline everywhere: the sharing email, the page title, the sign-in page
+  and the README.
+
+## 0.13.1 — Sharing emails for everyone (2026-10-16)
+
+### Fixed
+
+- Sharing a deck or folder with someone who already uses Narrative now
+  emails them; before, only people new to Narrative got an email, so a
+  colleague never learnt a deck had been shared. Sent on a new share or a
+  new role, not again for the same role.
+
+### Changed
+
+- The sharing email is redesigned in Narrative's look: the deck's real
+  first-slide thumbnail (a folder shows its three latest decks and how
+  many more it holds), what the role lets you do, and one clear button.
+
+## 0.13.0 — Instance admins (2026-10-16)
+
+### Added
+
+- **Instance admins** ([ADR 0014](docs/adr/0014-instance-admin.md)). An admin
+  is owner of every folder and deck — except other people's private Drafts —
+  and sees new folders at once, with no sharing. The role is a flag on the
+  person, so taking it away takes everything away at once.
+- **Administration screen** (user menu → Administration, admins only): allow
+  an email address to sign in, take it off the list again (the person is
+  signed out when nothing else lets them in), and make or remove admins.
+  Nobody changes their own role, so an admin always remains. No SSH to the
+  server is needed to let a colleague in any more.
+- `ADMIN_EMAILS` (server env) seeds the first admin at sign-in while the
+  instance has none; listed addresses may also sign in.
+
+### Security
+
+- Admin actions are not agent commands: an instruction hidden in a deck
+  cannot let anyone in. The admin routes refuse access tokens, need the
+  app's own origin and log every change.
+- A demoted admin's open editors reconnect with their own role.
+- Production refuses to boot when no allowlist at all is configured
+  (`OIDC_ALLOW_ANY_ACCOUNT=true` opts in): every Google account could sign in.
+
+### Fixed
+
+- `docs/deploy.md`: recreating the server after an env change names the
+  running release (`NARRATIVE_TAG`); without it the server came up on a stale
+  image, older than the web app.
+
+## 0.12.3 — The images build again (2026-10-16)
+
+### Fixed
+
+- The Docker images copy `patches/`: 0.12.2's builds failed on the pnpm
+  patch for the Stryker runner, so 0.12.2 never reached production. This
+  release carries everything 0.12.2 lists.
+
+### Development
+
+- The `layer-reorder` e2e no longer fails one run in four: it selects once
+  the editor knows the objects and waits for each reorder.
+
+## 0.12.2 — Dependency majors (2026-10-16)
+
+The dependency majors of 2026-10-14/15 — the sync server, uploads, error
+reporting, queues and the test runner each a major forward — and the
+editor fixes their test runs turned up.
+
+### Fixed
+
+- The editor no longer starts read-only for a moment: it learnt your role
+  by downloading the list of every deck you can see. It now asks for the
+  one deck it opens (2 ms instead of 107 on a long list); before that
+  answer, fields in the inspector were disabled and a keypress meant for
+  them reached the canvas shortcuts.
+- A file dropped on the canvas lands under the cursor at any zoom (at 50%
+  it landed half way to the slide's corner).
+- `editor.show` twice in quick succession keeps the second one's
+  selection and flash.
+
+### Changed
+
+- **Hocuspocus 4** (sync server and the editor's providers, from 2.15),
+  **tus 2** (uploads; their responses carry Narrative's CORS headers now),
+  **Sentry 11** (still off in production; when on, the editor's reports
+  are scrubbed like the server's and the SDK collects no personal data),
+  **BullMQ 6 / ioredis 6**, **opentype.js 2** (font metadata), plus nanoid
+  6 and the minor and patch sweep.
+
+### Development
+
+- pnpm 12; Vitest 5 (its fs module cache kept per package; Stryker's
+  vitest runner patched for Vitest 5's test names — `just mutate` 49%).
+- e2e specs delete every deck and folder they create (a shared fixture,
+  ESLint-enforced; one full run used to leave ~150 decks behind), and the
+  web package lints `e2e/`. Present mode's e2e now also goes back
+  (ArrowLeft, PageUp) and fullscreen (F).
+- 26 of 27 skipped web tests are back: fixed, rewritten for today's code,
+  or deleted where e2e covers them.
+- `just load` runs again; render-worker tests survive a busy machine.
+- Client brands and private infrastructure moved out of the public tree
+  (the private overlay keeps them).
+
+## 0.12.1 — Old reds green (2026-10-14)
+
+### Fixed
+
+- The editor's vendor chunks split as intended again: Yjs and lib0 had
+  been pulled into the Tiptap chunk (Rolldown's manualChunks takes a
+  group's dependencies along); groups with priorities keep them in
+  vendor-yjs. The Tiptap chunk drops from 132.8 to 120.9 kB gz (its limit
+  is now 122 kB).
+
+### Development
+
+- `just mutate` runs again: Stryker 10 (vitest 4 support), started from
+  the repo root so its sandbox keeps the repo's layout. Baseline 49%.
+- `multi-client-collab` e2e is no longer flaky: it waits for the whole
+  editor, not only its document, and opens its clients one after another.
+- Seven files a stale Prettier cache had let through are formatted.
+
+## 0.12.0 — Deck builder (2026-10-14)
+
+Agentic phase A5, the agentic plan's last: an agent builds a whole deck
+from a brief with the folder's brand, restyles another brand's slides into
+it, and exports PDFs; so does the editor.
+
+### Added
+
+- **Whole decks from a spec.** `style.deck.apply { spec }` builds a deck
+  in one step, reverted in one: each slide by layout or by kind of slide
+  (cover, agenda, content, comparison, statement, closer, …), its slots,
+  what is drawn on the brand's grid, notes, its message and claims, plus
+  the variant, footer fields and language (`"Umsatz{de|en}Revenue"`). The
+  deck keeps the spec, so it builds again in another variant or pack
+  (`query.deck { spec: true }`; `spec: null` forgets it).
+- **The `build-deck` playbook**: scope in one message, the client's voice
+  asked for, three story directions, a slide-by-slide table approved before
+  anything is written, then the build, the brand check and a look at every
+  slide. **`insert-restyle`**: another deck's slides inserted and made to
+  match.
+- **Restyle into the brand.** `style.deck.apply { relayout: "archetype" }`
+  moves slides laid out with another pack onto this one: the same kind of
+  slide, content by slot and role, colours and text styles by purpose.
+  Slides copied from another folder remember their kind; PowerPoint
+  imports report which placeholder each object filled, as a hint.
+- **Laying out a plain slide.** `slide.applyLayout` moves text and
+  pictures in by role on any slide (give objects a role first), in reading
+  order, into regions of their kind; what has no place stays and is listed.
+  `archetype` picks the pack's layout for a kind of slide.
+- **PDF export.** Export → PDF in the editor for every reader (built in
+  the browser, the server when it cannot), and `deck.exportPdf` for agents
+  (up to 40 slides; skipped slides left out unless asked for).
+- **Picture focus**: a picture that covers a frame of another shape keeps
+  its top, bottom, left or right in view (pack regions, PowerPoint export).
+- The brand check warns when one layout is on most of a deck's slides.
+
+### Changed
+
+- Undo and agent revert put back a deck's variant, footer fields and
+  language.
+- Moving decks or slides between folders pairs a style pack's colours and
+  styles by what they are for before their names, and keeps a colour as it
+  was drawn on the deck's variant.
+- Changing a slide's layout keeps text the new layout has no place for,
+  as PowerPoint does, instead of deleting it.
+- The toolbar's Export button is a menu: PowerPoint (owners) and PDF.
+
+---
+
+## 0.11.2 — The logo on the home page (2026-10-14)
+
+### Changed
+
+- The home page shows the Narrative logo: the mark and the name in the
+  header, the logo banner in place of the gradient title.
+- The README is rewritten: logo, screenshots, what Narrative does, how it
+  fits together and a documentation map. Sign-in moves to `docs/auth.md`
+  (server-side sessions, as since 0.6.0) and the video pipeline to
+  `docs/storage.md` (one source-quality MP4, not HLS); prod secrets in
+  `docs/deploy.md` follow the SOPS overlay. `just bump` updates the README's
+  release badge.
+
+---
+
+## 0.11.1 — Style packs, deployable (2026-10-14)
+
+0.11.0 was tagged but never deployed: its server image did not build.
+
+### Fixed
+
+- The server image builds again: the style-pack bootstrap tools, which
+  run on a developer machine and need a browser, are left out of it.
+
+---
+
+## 0.11.0 — Style packs (2026-10-13)
+
+Agentic phase A4 (style packs), steps A4.2b–A4.8, which closes the phase: a
+folder can hold its brand as a style pack, and agents build, restyle and
+check slides with it.
+
+### Added
+
+- **Style packs.** A folder's style pack holds its brand: colour variants
+  (a light and a dark theme, a highlight colour…) and surfaces, fonts, text
+  styles with list levels, the grid, footer, page number and logo, layouts
+  with named slots, components, and the editorial and QA rules. It lives in
+  the folder and syncs like its tokens. **Folder Settings → Style pack**
+  shows it — colours and variants, fonts and text styles, every layout as a
+  small preview, components, rules — and lets editors tune colours, a
+  layout's regions and the rules, compile it, and import or export it as
+  JSON.
+- **Compile** makes a pack the folder's colour and text-style tokens
+  (colours that follow the deck's variant and the slide's surface) and its
+  component masters; a second compile updates what the first made and
+  leaves everything people made alone.
+- **Layouts.** A slide laid out with a pack layout gets a box per slot in
+  the brand's text style and place, the pack's components, its footer,
+  page number and decoration; the slide's text moves into the new layout's
+  slots by name or role when it changes layout. A deck's variant (dark,
+  light, a highlight colour) and its footer fields are set once, and every
+  laid-out slide follows.
+- **The brand check.** `query.check` checks slides against the pack: text
+  that does not fit (measured on the render page, a growing box against
+  what is below it), partial overlaps, the grid, text colours, one variant
+  per deck, missing footer or page number, placeholder text, empty picture
+  regions, capitals, italics, bullet glyphs, title periods and length, the
+  accent budget, typography and emoji — each finding with its slide,
+  object, rule and level.
+- Agents reach all of it: `style.pack.get`, `style.pack.edit` (set, update,
+  delete, compile), `slide.applyLayout`, `style.deck.apply`, `query.check`,
+  the `narrative://folders/{folderId}/pack` MCP resource, the new
+  `build-with-pack` playbook and `restyle-lite` rewritten for packs.
+- **Text styles and boxes** gain list levels (bullet glyph, colour and
+  size, indents, per-level font, size, colour and spacing), a width for
+  variable fonts with a `wdth` axis (Inspector → Width), line spacing and
+  alignment; colour tokens gain alpha and per-variant and per-surface
+  values.
+- Agents read a deck's pack variant, footer fields and language
+  (`query.deck` → `meta`) and the pack layout each slide follows
+  (`query.deck`, `query.slide` → `layout`).
+- Bootstrap of five brand packs (Contoso, Fabrikam, Tailspin, Wingtip, Wingtip Labs)
+  from their sources, `just style-pack`, and their import into a folder
+  through the command API, `just style-pack-import`.
+
+### Changed
+
+- Fonts with variable axes record them on upload (and existing fonts are
+  backfilled), so a variable face covers its whole weight and width range.
+- PowerPoint export draws colours on the deck's variant and each slide's
+  surface; list levels and the new text fields round-trip through
+  Narrative's own extension.
+
+### Fixed
+
+- A slide with a text box that fits its text (0.10.32) never finished
+  drawing on the render page when the box used an embedded face (Inter or
+  a folder font): its picture for agents (`query.render`), the brand check,
+  PNG export and server thumbnails timed out. Each measurement of the text
+  loaded its faces again, and every load laid the box out again; a box is
+  now laid out again only when a face it has not seen arrives.
+- A text box's width (`fontStretch`) is accepted only within the range of
+  its variable folder font's width axis, with a message naming the range.
+- Compiling a pack again takes off its tokens (and the text linked to
+  them) what the pack no longer sets: a removed colour, list levels, width
+  or shrink floor no longer lingers. Undo a compile by putting the pack
+  back and compiling again.
+- A slide on a surface its layout no longer offers is restyled on the
+  layout's default surface, and one laid out with another pack's layout is
+  left alone; `style.deck.apply` lists both.
+- A stored pack that is not valid is refused with its problems named
+  before it is used to lay out, check or compile.
+- PowerPoint export: a bullet under a numbered list level is written with
+  its glyph, so PowerPoint no longer numbers it.
+
+---
+
+## 0.10.32 — Text that fits its box (2026-10-12)
+
+Agentic phase A4 (style packs), step A4.2a.
+
+### Added
+
+- **Text boxes can fit their text.** A box set to grow with its text is as
+  tall as the text in it and grows downwards as you type; one set to shrink
+  its text keeps its size and scales the type down until it fits — never
+  below the minimum the box or its text style sets (half the size without
+  one). The Inspector's Typography section has the Autofit control and the
+  minimum; a folder text style has "Min size". Agents set it with
+  `object.update` (`autofit`) and `text.setBoxTypography` (`minFontSize`),
+  styles with `token.*` (`minSize`).
+- A growing box keeps its stored height current as people edit it, in the
+  same undo step; an agent's edit is drawn at once and its height written
+  the next time a person changes the box.
+- PowerPoint export writes them as "Resize shape to fit text" and "Shrink
+  text on overflow"; a PowerPoint deck's own autofit is still not taken over
+  on import.
+
+### Changed
+
+- The render page's `overflow` no longer lists a box that grows with its
+  text, and lists a shrinking box only when its text does not fit even at
+  its minimum size.
+
+---
+
+## 0.10.31 — Stamps remember their master (2026-10-12)
+
+Agentic phase A4 (style packs), step A4.1.
+
+### Added
+
+- **Objects know where they come from.** Every object can carry a `slot`
+  (the brand's name for it: `title`, `pagenum`, …) and a `role` (`title`,
+  `subtitle`, `body`, `picture`, `chart`, `table`, `caption`, `footnote`,
+  `furniture`), written with `object.update`. A component's slots are its
+  objects' `slot`, or their name as before.
+- **A stamp remembers its master.** `component.stamp` records on every
+  object it places which master and master object it copies, one id per
+  stamp and where the master object stood. Duplicating, copying and pasting
+  a stamp keep the link as a new stamp; promoting objects to a master drops
+  it. PPTX import and export ignore all three properties.
+- **`component.restamp`** brings the stamps of a component on a slide, or in
+  the whole deck, back to the current master when asked: master objects
+  come back where the stamp was moved to, local edits are reset, and only
+  slot content stays — a text slot's text, a picture's or video's media and
+  crop, a table's cells with its grid. Object ids are kept, so animations
+  keep their targets; one undo step. Changing a master never touches a deck
+  by itself.
+- **`component.create`** makes an empty master in a folder, to be filled
+  with the object commands.
+- Agent eval: `component-restamp`, `component-create-pagination`.
+
+### Fixed
+
+- `just pptx-roundtrip` accepts an absolute path to the deck.
+
+---
+
+## 0.10.30 — A3 done: master cards, before/after, text that fits (2026-10-11)
+
+Agentic phase A3 (the render worker) is complete: A3.5b, A3.6 and A3.7,
+built together and tested as one.
+
+### Added
+
+- **Component masters get their card from the render worker too**, as decks
+  do: a master changed while nobody has it open (an agent, a stamp's
+  promotion) shows its current first slide in the folder's component list.
+  `deck.refreshThumbnail` redraws a master's card on request
+  (`componentId`). The master's render page is
+  `/folder/:folderId/component/:componentId/render`; its render token reads
+  that master and its folder, read-only, and nothing else.
+- **Before and after.** `query.render` with `compare: "before"` shows a
+  slide as it was before the agent's current run first changed it, beside
+  how it is now ("New in this run" for a slide the run added). The run
+  keeps the document as it was at its first write while the run is open.
+- **Text that does not fit.** Every look now reports the text boxes whose
+  text, laid out with the real fonts, runs below the box (`overflow`, at
+  most 50). The playbooks tell the agent to fix what it caused — shorter
+  wording first, never smaller type than the role uses — and to look after
+  each batch of visible changes.
+- Agent eval: `compare-before-after`, `fix-text-overflow` (the grader
+  measures again), `deck-card-before-handoff`; two edit scenarios check the
+  card is not redrawn after ordinary edits.
+
+### Changed
+
+- The "before" state of a compare travels to the worker through storage (a
+  presigned download), never in the render queue; the run keeps at most
+  8 MB of it, 128 MB for all runs together, and lets a closed run's go.
+- A compare draws on a frozen page first and closes the kept page before,
+  so the worker never holds two pages at once; both sides use preview-size
+  pictures.
+- The export sweep also removes renders left under `components/<id>/exports/`.
+
+---
+
+## 0.10.29 — Deck cards follow agent changes (2026-10-11)
+
+### Added
+
+- **A deck nobody has open keeps a current card on the folder page.** An
+  agent's, an import's or any server-side change used to leave the card
+  stale (or missing) until someone opened the deck. Now, once such a deck
+  has been quiet for 10 s, the render worker draws its first slide as the
+  card (400×225, the size the folder page shows), unless a signed-in editor
+  has it open (their browser keeps it current, as before) or the first slide
+  is as it was drawn last. It runs as the deck's owner in a lane of its own
+  (its own render session and request budget, a page it does not keep
+  warm), behind every person's job; a deck is drawn at most once a minute,
+  owners take turns, and only a busy renderer is tried again.
+- **`deck.refreshThumbnail`** (agentic A3.5): an editor's agent redraws the
+  card at once, e.g. before sending someone to the folder.
+
+### Changed
+
+- **Each card picture is stored under a key of its own** and the row is
+  swapped under a lock, so two writers at once can no longer leave the card
+  pointing at a deleted picture; a replaced picture is kept for pages that
+  were just given its URL and removed later, so an old card URL stops
+  showing the deck. Only a real PNG or JPEG is accepted as a card.
+- Pictures the server reads back to hand over inline (looks, base64
+  exports) are deleted from storage right away instead of after a day.
+
+---
+
+## 0.10.28 — The render worker draws only what it captures (2026-10-11)
+
+### Fixed
+
+- **Looks and PNG exports of photo-heavy slides are several times faster**,
+  and contact sheets of such decks finish within their deadline. The
+  render page drew every frame on screen too — under the worker's software
+  WebGL each 1920×1080 frame cost ~0.7 s of CPU on its two cores, and a
+  capture waited for all of them (production timings: 9–12 s per slide in
+  the capture, after 0.8 s of loads). With `?paint=off` it draws nothing on
+  screen and the capture renders the slide once, the same picture to the
+  pixel; a slide went from 7.4 s to 1.1 s on two cores. The render worker
+  and the editor's in-browser export open it so.
+
+---
+
+## 0.10.27 — Render timings break down the settle (2026-10-11)
+
+### Changed
+
+- **The render worker's timings say where a slide's settle goes**: waiting
+  for loads and fonts, waiting for text rasters (and how many), drawing
+  frames, waiting for animation frames — and the capture separately. On
+  production a slide of the reference deck spent 9–12 s settling and capturing
+  after its pictures had loaded in under a second (0.10.26 timings); this
+  names the part to make faster.
+
+### Added
+
+- **The Narrative desktop app** (`apps/desktop`, ADR 0015, `docs/desktop.md`).
   An Electron shell around the editor the server serves: sign-in through the
   system browser with a one-time ticket, a native menu that runs the
   editor's own shortcuts, PowerPoint files opened from the operating system,
@@ -39,7 +489,7 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 - **A contact sheet draws its slides with preview-size pictures** (600 px)
   instead of the 2560-px display ones: a tile is at most ~700 px wide, and
   loading, decoding and holding full pictures for it was what made a sheet
-  of a photo-heavy deck slow on the render worker (a slide of the Proseware
+  of a photo-heavy deck slow on the render worker (a slide of the reference
   deck took 9–15 s on production, so a sheet of two ran past its deadline).
   Single slides and regions keep the full pictures.
 - **The render worker logs where each job's time went**: the page's steps
@@ -55,7 +505,7 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 - **A contact sheet of a photo-heavy deck came back blank.** The render
   worker's browser ran out of its 900 MB on production (one slide of the
-  Proseware deck peaked right at the limit) and the kernel killed it; the
+  reference deck peaked right at the limit) and the kernel killed it; the
   picture was then empty, with no error. Now the render page frees the
   previous slide's pictures as soon as it moves on, composes looks on CPU
   canvases, and a lost WebGL context fails the job (the browser restarts)
@@ -116,7 +566,7 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
   installed.** Two causes: text drawn before its folder font finished
   loading was never redrawn (the font loader never reached the canvas), and
   a font set on part of a text — as imported PowerPoint decks have it —
-  was never embedded when its name has a space ("Proseware Pro"). Seen in the
+  was never embedded when its name has a space ("Brand Sans"). Seen in the
   PNG export (the server has no fonts installed), in shared links and for
   anyone without the deck's fonts on their machine. Table cells and the
   text inside components are redrawn too, and a font no longer falls back
@@ -229,7 +679,7 @@ rollback.
   TypeScript targets ES2025. URL downloads hold their temporary directory,
   file handle and per-user download slot with `using` / `await using`, so
   the slot is freed even when removing the directory fails. Every dev
-  machine needs Node 24 (HANDOVER.md).
+  machine needs Node 24 (private/HANDOVER.md).
 - **MinIO runs from a GHCR mirror of Chainguard's build**
   (`ghcr.io/petronijus/minio:RELEASE.2026-09-22T19-25-18Z`, pinned by
   digest), for `minio` and the `minio-init` job alike: MinIO deleted
@@ -240,7 +690,7 @@ rollback.
   every start. Every machine needs `docker login ghcr.io` once (`just doctor`
   checks it), and `just services` no longer falls back to a cached
   `minio/mc`. Production switches with the next deploy (`docs/deploy.md`,
-  "Releasing the MinIO image switch"; HANDOVER.md).
+  "Releasing the MinIO image switch"; private/HANDOVER.md).
 - **Every folder command says who may run it**, in one of three sentences
   ("Any member of the folder." / "Needs the editor role in the folder." /
   "Only the folder's owners.") — a test over every folder-scoped command pins
@@ -1372,9 +1822,9 @@ writing the document directly and dispatches the same commands agents use.
 ## 0.10.0 — Agents over MCP (2026-09-27)
 
 Phases A0 and A1 of the agentic layer ([`docs/plans/agentic-layer.md`](./docs/plans/agentic-layer.md)).
-A0 (`9e0e853`): the foundations — the command registry, runtime schemas,
+A0 (`c4f8a5f`): the foundations — the command registry, runtime schemas,
 parity guards — plus the editor bugs the capability survey turned up. A1
-(`624a3bd`, `e27e9bc`): Claude Code and claude.ai can now drive Narrative
+(`4acf6c1`, `083312a`): Claude Code and claude.ai can now drive Narrative
 over MCP. Handoffs:
 [`docs/handoff/A0-agentic-foundations.md`](./docs/handoff/A0-agentic-foundations.md),
 [`docs/handoff/A1-mcp-and-server-host.md`](./docs/handoff/A1-mcp-and-server-host.md).
@@ -1616,7 +2066,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
   not set its own. The importer took the style's line whenever the shape had
   no colour for it — including when the shape said explicitly that it has no
   line (`<a:ln><a:noFill/>`), and it took an `idx="0"` reference ("none") as
-  the theme's first line. The Proseware deck's slide 7 wireframe drew 33 grey
+  the theme's first line. The reference deck's slide 7 wireframe drew 33 grey
   boxes with a 1 px red accent outline PowerPoint never shows. A declared
   fill of either kind now wins over the style, and index 0 means none. The
   deck has to be imported again to pick it up.
@@ -1632,7 +2082,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
 ### Fixed
 
 - **Text is spaced for the size it is set in.** A line's height — single
-  spacing, or a multiple such as the Proseware titles' 68 % — was always
+  spacing, or a multiple such as the reference deck's titles' 68 % — was always
   computed from the frame's default size. Text set smaller than that default
   came out with its lines far apart: slide 3's title (60 pt text in a frame
   whose default is 88 pt) ran ~45 % too loose against PowerPoint. Each
@@ -1657,7 +2107,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
   cannot (a radius per corner, numeric font weights, video playback
   settings, …) is written as close as PowerPoint can draw it and kept
   exactly in Narrative's own extension inside the file, which applies only
-  while the shape is unedited in PowerPoint. On the Proseware deck,
+  while the shape is unedited in PowerPoint. On the reference deck,
   import → export → import changed 6 173 values before and changes none now;
   LibreOffice renders the export about five times closer to the original.
 - **Exported pictures are cropped as Narrative shows them.** A picture was
@@ -1683,14 +2133,14 @@ gains the OAuth discovery and client-IP blocks. Checklist:
   by default, or the layout's) were ignored, so imported text sat at the very
   edge of its box. The frame is now the area the text is laid out in.
 - **Ellipses, triangles, polygons and paths with text keep their shape.**
-  Only rectangles kept their geometry under their text; the Proseware deck's red
+  Only rectangles kept their geometry under their text; the reference deck's red
   "Wireframe" circle came in as white text on nothing.
 - **Character references in the XML are decoded.** `&#233;`, `&#x2014;` and
   line breaks written as references came in as literal `&#…;` text.
 - **Table cells after a horizontal merge land in their own column** instead
   of one further right (the last one fell off the table). Cell borders keep
   their dash and transparency; picture fills in cells are imported.
-- **Letter spacing and caps from the slide master apply.** The Proseware title
+- **Letter spacing and caps from the slide master apply.** The reference deck's title
   style's −8 pt tracking was ignored, so titles ran wider than in
   PowerPoint.
 - **Slides without a transition have none.** `<p:transition>` carrying only
@@ -1716,7 +2166,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
   the marker is an inline-block with a first line of its own, so the
   paragraph's hanging −1.6 em outdent moved the glyph a second time — out of
   its gutter and off the left edge. The gutter was there, the marker was
-  not; imported PowerPoint lists (the Proseware deck's slide 8) and lists made
+  not; imported PowerPoint lists (the reference deck's slide 8) and lists made
   in the editor alike. The marker now resets `text-indent`. The list smoke
   test used to pass on "the frame has more ink than before", which the
   indent alone satisfied; it now counts ink in the marker gutter itself and
@@ -1724,7 +2174,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
 
 ---
 
-## 0.9.23 — The Proseware header, complete (2026-09-23)
+## 0.9.23 — The reference deck header, complete (2026-09-23)
 
 ### Fixed
 
@@ -1739,12 +2189,12 @@ gains the OAuth discovery and client-IP blocks. Checklist:
 - **Slide numbers import as live slide numbers.** A frame holding only
   `<a:fld type="slidenum">` becomes a text object with `isSlideNumber`, which
   the renderer fills with the slide's number and the exporter writes back as
-  a field. Keynote writes the field with no cached text, so the Proseware
+  a field. Keynote writes the field with no cached text, so the reference
   header's "2" used to come in as an empty rectangle. A number inside other
   text keeps its cached digits.
 - **Placeholders inherit their layout's fill.** A slide shape bound to a
   placeholder that declares no fill of its own now takes the layout/master
-  placeholder's fill, as PowerPoint does; the Proseware deck's black corner mark
+  placeholder's fill, as PowerPoint does; the reference deck's black corner mark
   carries only its path on the slide and came in invisible.
 
 ### Added
@@ -1767,7 +2217,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
   import dialog used to open on a folder picker with the current folder
   preselected and wait for Import — a question the page had already
   answered. Inside a folder it now opens already uploading into it
-  ("Importing into Proseware"), with no folder list and no confirm click; it
+  ("Importing into Acme"), with no folder list and no confirm click; it
   still shows the upload progress, the result and the missing-font uploads,
   and offers Retry if the import fails. A drop on the folders home keeps
   the picker, since there it is a real choice.
@@ -1782,7 +2232,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
   box is usually taller than the glyphs it holds. PowerPoint puts all of the
   spare height above the glyphs — the baseline sits the font's descent above
   the bottom of the line box — while CSS splits it half above and half below.
-  With generous spacing the difference is large: the Proseware deck's
+  With generous spacing the difference is large: the reference deck's
   "We made it to our first Camp!" (72 px on exactly 65 pt lines) sat 32 px
   higher here than in PowerPoint. Because the difference is the same for
   every line of a frame, it is one translation of the laid-out text,
@@ -1798,7 +2248,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
 
 - **A plain paragraph at a deeper outline level is no longer indented.** In
   PowerPoint `lvl` only selects the level whose `marL` applies; on the
-  Proseware headline (`lvl="1"`, level-2 `marL` 0, `indent` 0) that is no
+  reference-deck headline (`lvl="1"`, level-2 `marL` 0, `indent` 0) that is no
   indent at all, but the importer kept the level and the renderer drew it as
   a 1.5 em indent — 108 px to the right. The level's margin is now resolved
   down PowerPoint's chain (paragraph, shape, layout/master placeholder,
@@ -1854,7 +2304,7 @@ gains the OAuth discovery and client-IP blocks. Checklist:
   degrees; re-import them to correct rotated objects.
 - **Placeholder text keeps its template line spacing.** A slide that restyled
   a title's size in its own `lstStyle` stopped the search there, so the
-  layout's `lnSpc` (68% on the Proseware deck's title layout) was never read and
+  layout's `lnSpc` (68% on the reference deck's title layout) was never read and
   the text laid out at the font's full normal line height — 47% taller than
   PowerPoint and off the bottom of the slide. Line spacing is now inherited
   down the whole chain — paragraph, the shape's `lstStyle`, the layout and
@@ -2034,7 +2484,7 @@ for linux/amd64` — having already overwritten `:latest` with them. The
   Inspector.
 - **The font's normal line height comes from the font file.** For a font
   that sets USE_TYPO_METRICS the browser's `line-height: normal` uses the
-  typo metrics (0.977 em for Proseware Pro) while PowerPoint uses hhea (1.162),
+  typo metrics (0.977 em for Brand Sans) while PowerPoint uses hhea (1.162),
   so the browser is the wrong source for exactly the fonts that need it. The
   folder-font loader reads `hhea` from the bytes it installs and registers
   it ahead of measurement; measurement remains for system fonts. On the
@@ -2223,7 +2673,7 @@ for linux/amd64` — having already overwritten `:latest` with them. The
   with `spAutoFit` carries the height PowerPoint computed for its own line
   spacing; we then lay the text out taller and mask the overflow. Three
   independent causes, measured on one reported slide: the importer maps "100%
-  line spacing" to a fixed 1.2 rather than reading the font (Proseware Pro's own
+  line spacing" to a fixed 1.2 rather than reading the font (Brand Sans's own
   metrics give 1.162), paragraph space-before is applied to the first
   paragraph where PowerPoint omits it, and the renderer hard-clips the
   overflow where PowerPoint never clips at all. 597.8 units of content in
@@ -2232,7 +2682,7 @@ for linux/amd64` — having already overwritten `:latest` with them. The
 ## 0.9.4 — Four things that were quietly broken (2026-09-18)
 
 The CSP and Caddy-mount fixes below reached production by rsync on 2026-09-09
-without a version bump, so `/version.json` went on reading `v0.9.3+00454ec`
+without a version bump, so `/version.json` went on reading `v0.9.3+c4305b8`
 while they were already live. They are folded into this release because the
 0.9.4 image is the first artifact that actually carries them. Everything else
 here has never been deployed.
@@ -2255,19 +2705,19 @@ here has never been deployed.
   moving a text box could be undone but writing the sentence inside it could
   not, and neither could the Enter / Tab structural edits. Also corrects
   `yjsMetrics.onUpdate`, which counted local edits as received-from-remote.
-  (`8169b9d`.)
+  (`7e5bbf3`.)
 - **Clicking an object selected nothing when the click beat the sync.**
   `subscribeToSlideObjectsWithFlush` returned a no-op subscription for a slide
   that had not arrived yet, which never recovered: the object list stayed
   empty, the stale-selection sanitiser dropped every selection, and the canvas
   had nothing to hit-test. It waits for the slide now. Two more races went with
   it — the deck provider tearing down its Y.Doc on a StrictMode remount, and
-  the dev test API binding itself to an already-destroyed doc. (`523c82c`.)
+  the dev test API binding itself to an already-destroyed doc. (`34f4f49`.)
 - **A quick Linear → Solid switch left the gradient in the document** while the
   dropdown read "Solid". The fill picker compared the requested mode against
   the mode derived from `obj.fillStyle`, which comes back from Y.Doc a frame
   later, so the second change decided nothing had changed. It compares against
-  the mode it last asked for instead. (`dd5f4d3`.)
+  the mode it last asked for instead. (`c46e603`.)
 - **Canvas text ignored the deck's fonts, and every texture load threw** — the
   SPA CSP was two directives too tight for PixiJS. `font-src 'self'` blocked
   HTMLText's font embedding (Pixi builds an SVG whose `@font-face` embeds the
@@ -2277,7 +2727,7 @@ here has never been deployed.
   and independent of it. `connect-src 'self'` blocked Pixi's ImageBitmap probe,
   which fetches a 1×1 `data:` PNG inside the texture worker, so
   `checkImageBitmap` threw on every texture load. Both now allow `data:`.
-  (PR #72, `931e648`.) Rationale:
+  (PR #72, `b0d1823`.) Rationale:
   [ADR 0007](./docs/adr/0007-csp-as-a-renderer-constraint.md).
 - **A config change could not reach the Caddy container.** Compose mounted
   `./caddy/Caddyfile` as a single file, and a single-file bind mount is pinned
@@ -2286,7 +2736,7 @@ here has never been deployed.
   unlinked inode while the host file, `caddy validate` and `caddy reload` all
   reported success — which is exactly how the CSP fix above appeared not to
   land, and cost a debugging round the same day. The **directory** is mounted
-  now (`./caddy:/etc/caddy:ro`). (PR #73, `e6b4042`.)
+  now (`./caddy:/etc/caddy:ro`). (PR #73, `8933119`.)
 
 ---
 
@@ -2705,7 +3155,7 @@ server, so the SPA bundle stays clean.
 ### Infrastructure
 
 - **VM 103 `narrative`** on Proxmox `pve` — Ubuntu 24.04 cloud image provisioned via `qm create` + cloud-init from this machine over SSH (Proxmox MCP can inspect but not create). 4 vCPU / 4 GB RAM / 40 GB disk on the `data` lvmthin pool. `petr` user, ed25519 key auth, NOPASSWD sudo, Docker 29.4.3 + Compose v5.1.3, qemu-guest-agent reporting IP to Proxmox.
-- **OPNsense dnsmasq static reservation** — `BC:24:11:18:A0:ED → 192.0.2.147` so the LAN IP stays put and the Cloudflare Tunnel public-hostname mapping (`narrative.example.com → 192.0.2.147:80`) doesn't break on lease renewal.
+- **OPNsense dnsmasq static reservation** — the VM's MAC → `192.0.2.147` so the LAN IP stays put and the Cloudflare Tunnel public-hostname mapping (`narrative.example.com → 192.0.2.147:80`) doesn't break on lease renewal.
 
 ### Removed
 

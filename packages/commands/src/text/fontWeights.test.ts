@@ -15,6 +15,8 @@ import {
   effectiveFontWeight,
   matchFontWeight,
   pickPrimaryFamily,
+  stretchRangeFor,
+  type FontFaceWeight,
 } from './fontWeights.js'
 
 describe('matchFontWeight (CSS Fonts 4 §5.2)', () => {
@@ -95,5 +97,27 @@ describe('pickPrimaryFamily', () => {
   it('unquotes the first family of a stack', () => {
     expect(pickPrimaryFamily("'Helvetica Neue', Helvetica, Arial")).toBe('Helvetica Neue')
     expect(pickPrimaryFamily('  ')).toBeNull()
+  })
+})
+
+describe('variable faces (A4.2c)', () => {
+  const acmeType = [
+    { family: 'Acme Type', weight: 400, axes: { wght: [300, 700], wdth: [100, 130] } },
+  ] as Array<FontFaceWeight>
+
+  it('a variable face covers every standard weight in its range', () => {
+    expect(allowedWeightsFor('Acme Type', acmeType)).toEqual([300, 400, 500, 600, 700])
+  })
+
+  it('the widths a family can be drawn at are its faces’ wdth ranges', () => {
+    expect(stretchRangeFor('Acme Type', acmeType)).toEqual([100, 130])
+    expect(
+      stretchRangeFor('Acme Type', [
+        ...acmeType,
+        { family: 'Acme Type', weight: 400, axes: { wdth: [75, 100] } },
+      ]),
+    ).toEqual([75, 130])
+    expect(stretchRangeFor('Inter', acmeType)).toBeNull()
+    expect(stretchRangeFor('Acme Type', [{ family: 'Acme Type', weight: 400 }])).toBeNull()
   })
 })

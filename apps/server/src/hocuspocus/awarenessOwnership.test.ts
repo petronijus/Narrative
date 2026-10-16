@@ -37,6 +37,8 @@ function awarenessUpdate(
 interface FakeConnection {
   webSocket: object
   context: Record<string, unknown>
+  /** Hocuspocus 4: the name a broadcast addresses this connection's messages to. */
+  messageAddress: string
   send: () => void
 }
 
@@ -48,7 +50,12 @@ function setup() {
   const log = { warn: vi.fn() }
   trackAwarenessOwnership(document, log)
   const connect = (userId: string): FakeConnection => {
-    const connection: FakeConnection = { webSocket: {}, context: { userId }, send: () => undefined }
+    const connection: FakeConnection = {
+      webSocket: {},
+      context: { userId },
+      messageAddress: document.name,
+      send: () => undefined,
+    }
     document.addConnection(connection as unknown as Connection)
     return connection
   }
@@ -152,7 +159,12 @@ describe('awareness client-id ownership', () => {
   it('trusts nothing on a document it does not track', () => {
     const document = new Document('untracked')
     documents.push(document)
-    const connection = { webSocket: {}, context: { userId: 'alice' }, send: () => undefined }
+    const connection = {
+      webSocket: {},
+      context: { userId: 'alice' },
+      messageAddress: document.name,
+      send: () => undefined,
+    }
     document.addConnection(connection as unknown as Connection)
     document.applyAwarenessUpdate(
       connection as unknown as Connection,

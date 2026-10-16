@@ -1,7 +1,7 @@
 /**
  * routes/desktopAuth.ts
  *
- * The desktop app's sign-in (ADR 0014, docs/plans/desktop-d0-spec.md §4).
+ * The desktop app's sign-in (ADR 0015, docs/plans/desktop-d0-spec.md §4).
  * Google refuses OAuth inside an Electron window, so the shell signs in
  * through the system browser and gets the result back as a one-time ticket:
  *
@@ -95,9 +95,7 @@ export interface DesktopStartState {
 }
 
 export type DesktopStart =
-  | { kind: 'web' }
-  | { kind: 'desktop'; desktop: DesktopStartState }
-  | { kind: 'invalid' }
+  { kind: 'web' } | { kind: 'desktop'; desktop: DesktopStartState } | { kind: 'invalid' }
 
 function isDesktopScheme(value: unknown): value is DesktopScheme {
   return typeof value === 'string' && Object.hasOwn(DESKTOP_COMPLETE_URLS, value)

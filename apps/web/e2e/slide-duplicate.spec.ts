@@ -14,7 +14,7 @@
  */
 
 import { Buffer } from 'node:buffer'
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures/test'
 import { PNG } from 'pngjs'
 
 const API = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'

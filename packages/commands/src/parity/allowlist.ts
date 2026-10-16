@@ -21,6 +21,23 @@ export interface AllowlistEntry {
 
 export const AGENT_ALLOWLIST: readonly AllowlistEntry[] = [
   {
+    capability: 'Instance administration (admins, who may sign in, which emails are sent)',
+    reason:
+      'Deliberately human-only (ADR 0014): text inside a deck is data written by other people, and an ' +
+      'instruction hidden there must not be able to let a stranger into Narrative or promote one to ' +
+      'owner of every folder. Admins act in the admin screen.',
+    routes: [
+      { method: 'GET', path: '/admin/users' },
+      { method: 'PATCH', path: '/admin/users/:userId' },
+      { method: 'GET', path: '/admin/allowed-emails' },
+      { method: 'POST', path: '/admin/allowed-emails' },
+      { method: 'DELETE', path: '/admin/allowed-emails/:email' },
+      { method: 'GET', path: '/admin/emails' },
+      { method: 'PATCH', path: '/admin/emails/:kind' },
+      { method: 'GET', path: '/admin/emails/:kind/preview' },
+    ],
+  },
+  {
     capability: 'Zoom and pan',
     reason: 'Per-tab view state of one editor window; nothing in the document changes.',
   },
@@ -66,7 +83,7 @@ export const AGENT_ALLOWLIST: readonly AllowlistEntry[] = [
     reason:
       'The interactive browser login that mints the session cookie. Agents never sign in this way: they authenticate ' +
       'with a personal access token (or MCP OAuth) and every MCP session is already bound to one user. The desktop ' +
-      "app's sign-in redeems a one-time ticket from the system browser into its own window session (ADR 0014).",
+      "app's sign-in redeems a one-time ticket from the system browser into its own window session (ADR 0015).",
     routes: [
       { method: 'GET', path: '/auth/start' },
       { method: 'GET', path: '/auth/callback' },
@@ -79,7 +96,7 @@ export const AGENT_ALLOWLIST: readonly AllowlistEntry[] = [
     capability:
       'Desktop app shell: native menu, opening .pptx files from the OS, server choice, app updates',
     reason:
-      'Device-local behaviour of one installed app with no document effect (ADR 0014); an agent has no device. The ' +
+      'Device-local behaviour of one installed app with no document effect (ADR 0015); an agent has no device. The ' +
       'import an opened file starts runs deck.importPptx, and the menu items run existing catalog actions.',
   },
   {

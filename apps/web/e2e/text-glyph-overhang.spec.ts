@@ -20,7 +20,7 @@
  * above the text node's origin there, and inside it at the generous height.
  */
 
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 
 const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'
 

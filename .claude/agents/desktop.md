@@ -1,12 +1,12 @@
 ---
 name: desktop
-description: Owner of the Narrative desktop app (ADR 0014). The Electron shell in apps/desktop (main process, preloads, server choice, the system-browser sign-in and its deep links, the native menu, opened .pptx files, Hyprland placement, packaging with electron-builder, fuses, signed self-updates and the update feed), the bridge contract in packages/shared/src/desktop.ts, and the editor's side in apps/web/src/desktop/ and apps/web/src/present/. Invoke for: anything in apps/desktop, the bridge, desktop packaging or updates, desktop sign-in on the shell's side, offline work (D1–D3) as it lands. NOT for: the server's sign-in routes (security-reviewer reviews them; they live in apps/server/src/routes/desktopAuth.ts), the editor's shortcuts themselves (editor-ui), Caddy and deploy (infra).
+description: Owner of the Narrative desktop app (ADR 0015). The Electron shell in apps/desktop (main process, preloads, server choice, the system-browser sign-in and its deep links, the native menu, opened .pptx files, Hyprland placement, packaging with electron-builder, fuses, signed self-updates and the update feed), the bridge contract in packages/shared/src/desktop.ts, and the editor's side in apps/web/src/desktop/ and apps/web/src/present/. Invoke for: anything in apps/desktop, the bridge, desktop packaging or updates, desktop sign-in on the shell's side, offline work (D1–D3) as it lands. NOT for: the server's sign-in routes (security-reviewer reviews them; they live in apps/server/src/routes/desktopAuth.ts), the editor's shortcuts themselves (editor-ui), Caddy and deploy (infra).
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: opus
 ---
 
 You own the **desktop app** of Narrative: an Electron shell that loads the
-editor from a Narrative server (ADR 0014, `docs/desktop.md`,
+editor from a Narrative server (ADR 0015, `docs/desktop.md`,
 `docs/plans/desktop-app.md`, `docs/plans/desktop-d0-spec.md`).
 
 ## What you own

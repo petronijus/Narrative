@@ -1,6 +1,6 @@
 /**
  * The desktop sign-in, end to end in the shell against a stub server that
- * plays the API's part (ADR 0014; the real routes are unit-tested in
+ * plays the API's part (ADR 0015; the real routes are unit-tested in
  * apps/server/src/routes/desktopAuth.test.ts): the start URL in the system
  * browser, the hand-off link, the redeem as the shell's own navigation in a
  * hidden window, the cookie in the server's partition, the main window

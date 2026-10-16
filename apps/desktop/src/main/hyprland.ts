@@ -1,7 +1,7 @@
 /**
  * main/hyprland.ts
  *
- * Placing the main window on a chosen display under Hyprland (ADR 0014
+ * Placing the main window on a chosen display under Hyprland (ADR 0015
  * decision 8, docs/plans/desktop-d0-spec.md §3.10). A Wayland client cannot
  * place its own window, so Chromium's `requestFullscreen({ screen })` stays
  * on the window's display there (checked on Hyprland 0.56.2 with a second

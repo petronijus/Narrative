@@ -3,7 +3,7 @@
  *
  * The `narrative_session` cookie and the post-sign-in target, shared by the
  * browser sign-in (routes/auth.ts) and the desktop app's ticket redeem
- * (routes/desktopAuth.ts, ADR 0014) — both must set exactly the same cookie.
+ * (routes/desktopAuth.ts, ADR 0015) — both must set exactly the same cookie.
  */
 
 import type { FastifyReply } from 'fastify'

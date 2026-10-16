@@ -5,7 +5,7 @@
  * revision 3): only the server's own pages, and only what the editor uses —
  * writing to the clipboard (copying a share link or a token), fullscreen
  * (presenting) and window management (choosing the presentation display,
- * ADR 0014 decision 8). Everything else — the camera, the microphone,
+ * ADR 0015 decision 8). Everything else — the camera, the microphone,
  * notifications, location, screen capture, reading the clipboard — is denied.
  */
 

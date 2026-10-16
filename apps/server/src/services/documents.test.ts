@@ -12,7 +12,8 @@
  *     the moved decks and the source folder's token document, and rebinds
  *     the moved deck's token references;
  *   - decks.delete closes the deleted deck's connections and its folder's;
- *   - components.readMaster enforces the folder rules;
+ *   - components.readMaster enforces the folder rules, and a restamp of
+ *     another folder's component is refused as such;
  *   - pptx export reads the live document, not the stored snapshot.
  */
 
@@ -36,9 +37,10 @@ import { ServiceError } from './errors.js'
 import { readDocState, writeLiveDoc } from './liveDocs.js'
 import { localiseLinkedMedia } from './localiseMedia.js'
 import { createDecksService } from './decks.js'
-import { createComponentsService } from './components.js'
+import { createComponentsService, RESTAMP_ELSEWHERE } from './components.js'
 import { createPptxService } from './pptx.js'
 import { closeConnectionsForDocument, closeDeckConnections } from '../hocuspocus/connections.js'
+import { releaseHocuspocus } from '../test-support/hocuspocus.js'
 
 // Moving a deck copies the media it links from its old folder
 // (services/localiseMedia.ts, its own tests against Postgres); here that the
@@ -84,7 +86,6 @@ beforeEach(() => {
   persistence = new MemoryPersistence()
   hp = new Hocuspocus({
     quiet: true,
-    stopOnSignals: false,
     unloadImmediately: false,
     debounce: 10,
     maxDebounce: 50,
@@ -93,7 +94,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
-  await hp.destroy?.()
+  await releaseHocuspocus(hp)
 })
 
 function deps(db: ServiceDeps['db']): ServiceDeps {
@@ -692,6 +693,39 @@ describe('components.readMaster', () => {
         userId: 'u1',
         componentId: 'cmp1',
         deckId: 'd1',
+      }),
+    )
+    expect(err.status).toBe(404)
+  })
+
+  it('says why a restamp of another folder’s component is refused, to one who can see it', async () => {
+    const script = scriptedDb({
+      selects: [
+        [{ folderId: 'f2' }], // the deck's folder
+        [componentRow], // the component, in f1
+        [{ role: 'viewer' }], // which the caller can see
+      ],
+    })
+    const err = await serviceErrorOf(
+      createComponentsService(deps(script.db)).prepareStamp({
+        userId: 'u1',
+        componentId: 'cmp1',
+        deckId: 'd1',
+        purpose: 'restamp',
+      }),
+    )
+    expect(err.status).toBe(409)
+    expect(err.message).toBe(RESTAMP_ELSEWHERE)
+  })
+
+  it('answers a restamp of a component the caller cannot see as not found', async () => {
+    const script = scriptedDb({ selects: [[{ folderId: 'f2' }], [componentRow], []] })
+    const err = await serviceErrorOf(
+      createComponentsService(deps(script.db)).prepareStamp({
+        userId: 'u1',
+        componentId: 'cmp1',
+        deckId: 'd1',
+        purpose: 'restamp',
       }),
     )
     expect(err.status).toBe(404)

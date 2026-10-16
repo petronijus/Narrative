@@ -70,6 +70,9 @@ import {
   RotateCcw,
   Rows3,
   Save,
+  Shrink,
+  Square,
+  ChevronsDown,
   Type,
   type LucideIcon,
 } from 'lucide-react'
@@ -110,9 +113,11 @@ import {
   BOX_TYPOGRAPHY_KEYS,
   PAGE_NUMBER_TEXT_STYLE_NAME,
   findTextStyleByName,
+  stretchRangeFor,
   textStyleFieldsFromObject,
 } from '@narrative/commands'
 import { forCommand } from './commandPatch.js'
+import { useFolderFontsOptional } from '../state/useFolderFonts.js'
 import { isMaskableShape, listSlides } from '@narrative/slide-model'
 import type { AlignAxis, DistributeAxis, LayerMove, RichAttrs } from '@narrative/slide-model'
 import type {
@@ -2263,7 +2268,8 @@ export function PositionSection({ obj, patch, disabled }: PositionSectionProps) 
           glyph="H"
           ariaLabel="Height"
           value={obj.height}
-          disabled={disabled}
+          // A box that grows with its text takes its height from the text.
+          disabled={disabled || (obj.type === 'text' && obj.autofit === 'grow-down')}
           onChange={(v) => resizeSide('height', v)}
         />
         <IconToggleButton
@@ -2324,11 +2330,7 @@ export function PositionSection({ obj, patch, disabled }: PositionSectionProps) 
 // ---------------------------------------------------------------------------
 
 export type FilledShape =
-  | RectangleObject
-  | EllipseObject
-  | TriangleObject
-  | PolygonObject
-  | PathObject
+  RectangleObject | EllipseObject | TriangleObject | PolygonObject | PathObject
 
 interface AppearanceSectionProps {
   obj: FilledShape
@@ -3858,6 +3860,10 @@ export interface TypographyFeatures {
   stroke?: boolean
   /** Text-color alpha popover (TextObject has colorAlpha; TableDefaults does not). */
   colorAlpha?: boolean
+  /** Autofit (fixed / grow with text / shrink text) and the shrink minimum — a box's, not a cell's. */
+  autofit?: boolean
+  /** Width of a variable face (`fontStretch`) — a box's; the table renderer sets none. */
+  fontStretch?: boolean
 }
 
 const FEATURES_TEXT: Required<TypographyFeatures> = {
@@ -3866,6 +3872,8 @@ const FEATURES_TEXT: Required<TypographyFeatures> = {
   listStyle: true,
   stroke: true,
   colorAlpha: true,
+  autofit: true,
+  fontStretch: true,
 }
 
 interface TypographySectionProps {
@@ -4021,6 +4029,11 @@ function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
 
 export function TypographySection({ obj, patch, features: featuresIn }: TypographySectionProps) {
   const features: Required<TypographyFeatures> = { ...FEATURES_TEXT, ...featuresIn }
+  const folderFontsForWidth = useFolderFontsOptional()?.fonts
+  const stretchRange = useMemo(
+    () => stretchRangeFor(obj.fontFamily, folderFontsForWidth ?? []),
+    [obj.fontFamily, folderFontsForWidth],
+  )
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
   const command = useCommand()
@@ -4285,6 +4298,32 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
 
         <FontWeightSelect obj={obj} patch={patch} />
 
+        {/* Width (A4.2c): offered where the family has a variable width
+            axis, or the box already sets one. Clamped to the axis range. */}
+        {features.fontStretch && (stretchRange !== null || obj.fontStretch !== undefined) && (
+          <div className="flex items-center gap-2">
+            <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Width</span>
+            <CompactNumberField
+              id={`inspector-fontstretch-${obj.id}`}
+              glyph={
+                <span className="text-[9px] font-semibold leading-none" aria-hidden>
+                  ↔%
+                </span>
+              }
+              ariaLabel="Width, % of normal"
+              value={obj.fontStretch ?? 100}
+              step={5}
+              onChange={(v) => {
+                const [lo, hi] = stretchRange ?? [50, 200]
+                const next = Math.round(Math.min(hi, Math.max(lo, v)))
+                patch({
+                  fontStretch: next === 100 ? undefined : next,
+                } as unknown as SlideObjectPatch<TextObject>)
+              }}
+            />
+          </div>
+        )}
+
         {/* Bold + Italic + Underline as a single 3-segment toggle bar.
             Each toggle first attempts an inline format on the active
             text-edit selection (so a highlighted word is bolded /
@@ -4385,6 +4424,8 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
             value={obj.vAlign ?? 'top'}
             onChange={(v) => patch({ vAlign: v } as SlideObjectPatch<TextObject>)}
             ariaLabel="Vertical alignment"
+            // A box that grows with its text has no room to align it in.
+            disabled={obj.autofit === 'grow-down'}
             options={[
               { value: 'top', label: 'Top', Icon: AlignVerticalJustifyStart },
               { value: 'middle', label: 'Middle', Icon: AlignVerticalJustifyCenter },
@@ -4392,6 +4433,44 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
             ]}
           />
         </div>
+
+        {/* Autofit (A4.2): what the box does with text taller than it. */}
+        {features.autofit && (
+          <div className="flex items-center gap-2">
+            <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Autofit</span>
+            <AlignButtonGroup
+              value={obj.autofit ?? 'fixed'}
+              onChange={(v) =>
+                patch({
+                  autofit: v === 'fixed' ? undefined : v,
+                } as unknown as SlideObjectPatch<TextObject>)
+              }
+              ariaLabel="Autofit"
+              options={[
+                { value: 'fixed', label: 'Fixed height', Icon: Square },
+                { value: 'grow-down', label: 'Grow with the text', Icon: ChevronsDown },
+                { value: 'shrink', label: 'Shrink the text to fit', Icon: Shrink },
+              ]}
+            />
+          </div>
+        )}
+        {features.autofit && obj.autofit === 'shrink' && (
+          <div className="flex items-center gap-1">
+            <CompactNumberField
+              id={`inspector-minfontsize-${obj.id}`}
+              glyph={<Shrink className="h-3 w-3" aria-hidden />}
+              ariaLabel="Smallest font size when shrinking"
+              // Unset, the renderer stops at half the size.
+              value={obj.minFontSize ?? Math.round((obj.fontSize / 2) * 10) / 10}
+              step={1}
+              onChange={(v) =>
+                patch({
+                  minFontSize: Math.min(obj.fontSize, Math.max(1, v)),
+                } as SlideObjectPatch<TextObject>)
+              }
+            />
+          </div>
+        )}
 
         {/* Case transform — visual only, underlying text stays in
             original casing. Click the active option again to reset. */}
@@ -4535,7 +4614,9 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
             <div className="flex items-center gap-2">
               <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">List</span>
               <select
-                value={paraAttrs.list ?? ''}
+                value={
+                  paraAttrs.list === undefined || paraAttrs.list === 'none' ? '' : paraAttrs.list
+                }
                 onChange={(e) => {
                   const v = e.target.value
                   if (listTarget !== null)

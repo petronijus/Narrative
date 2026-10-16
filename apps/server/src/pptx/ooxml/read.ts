@@ -6,19 +6,8 @@
  * by the round-trip tests that read what the exporter wrote.
  */
 
-import { XMLParser, type X2jOptions } from 'fast-xml-parser'
-import * as nodableEntities from '@nodable/entities'
-import type { EntityDecoderOptions } from '@nodable/entities'
-
-/**
- * `@nodable/entities` 2.1 exports its decoder by name, with every method
- * fast-xml-parser calls on it (`decode`, `reset`, `setXmlVersion`, …); its
- * published typings declare it as a default export and leave
- * `setXmlVersion` out. This is the module's runtime shape.
- */
-const { EntityDecoder } = nodableEntities as unknown as {
-  EntityDecoder: new (options: EntityDecoderOptions) => NonNullable<X2jOptions['entityDecoder']>
-}
+import { XMLParser } from 'fast-xml-parser'
+import { EntityDecoder } from '@nodable/entities'
 
 /**
  * fast-xml-parser preserveOrder layout:
@@ -49,7 +38,7 @@ export type XmlNode = Record<string, unknown>
  * document, every entity counted). One decoder per parser: it keeps
  * per-document counters.
  */
-function xmlEntityDecoder(): NonNullable<X2jOptions['entityDecoder']> {
+function xmlEntityDecoder(): EntityDecoder {
   return new EntityDecoder({
     numericAllowed: true,
     limit: { maxTotalExpansions: 0, maxExpandedLength: 100_000, applyLimitsTo: 'all' },

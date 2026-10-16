@@ -29,7 +29,7 @@
  * e2e specs (apps/server + Vite dev), no extra setup.
  */
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './fixtures/test'
 import { uploadTestPicture } from './fixtures/media'
 
 // ---------------------------------------------------------------------------

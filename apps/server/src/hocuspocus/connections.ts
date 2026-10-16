@@ -12,12 +12,23 @@
  * connections so the client is forced to reconnect and re-run `onAuthenticate`
  * (which will now reject them, or downgrade them to read-only).
  *
- * How we enumerate connections (@hocuspocus/server 2.15):
+ * How we enumerate and close connections (@hocuspocus/server 4.x):
  *   server.documents : Map<string, Document>
  *   document.getConnections() : Connection[]
  *   connection.context : the object we populated in onAuthenticate
  *                        ({ userId, deckId, deckIdResolved, role, shareToken })
- *   connection.close(event) : graceful close wrapper around webSocket.close.
+ *   connection.close(event) : takes the connection off the document (no more
+ *                             broadcasts) and sends a CLOSE message — since
+ *                             4.x a socket can carry several documents, so it
+ *                             no longer closes the socket, and the provider
+ *                             turns that message into an ordinary close (1000)
+ *                             without authenticating again;
+ *   connection.webSocket.close(code, reason) : the socket itself. Each of our
+ *                             providers owns its socket (one document each),
+ *                             so closing it ends exactly the revoked
+ *                             connection, drops frames it still had queued, and
+ *                             the client sees 4403 — a terminal auth failure —
+ *                             as it did under 2.x.
  *
  * We deliberately do NOT use the built-in `server.closeConnections(docName)`
  * because it closes EVERY connection on a document — it cannot target a single
@@ -86,7 +97,10 @@ export function closeConnectionsWhere(
 
   let closed = 0
   // Snapshot the connection list first — closing mutates document.connections.
-  const toClose: Array<{ close: (event: typeof REVOKED_CLOSE_EVENT) => void }> = []
+  const toClose: Array<{
+    close: (event: typeof REVOKED_CLOSE_EVENT) => void
+    webSocket: { close: (code?: number, reason?: string) => void }
+  }> = []
   for (const [documentName, doc] of server.documents) {
     for (const conn of doc.getConnections()) {
       const ctx = (conn.context ?? {}) as ConnContext
@@ -98,6 +112,7 @@ export function closeConnectionsWhere(
   for (const conn of toClose) {
     try {
       conn.close(REVOKED_CLOSE_EVENT)
+      conn.webSocket.close(REVOKED_CLOSE_EVENT.code, REVOKED_CLOSE_EVENT.reason)
       closed++
     } catch (err) {
       log.error(
@@ -107,6 +122,31 @@ export function closeConnectionsWhere(
     }
   }
   return closed
+}
+
+/**
+ * Has a signed-in editor (or owner) the deck — or the component master —
+ * open? Such an editor's browser keeps the card picture current itself
+ * (SlidesPanel, the master editor upload it); viewers, share-link visitors
+ * and render pages do not. Read-only.
+ */
+export function hasSignedInEditor(card: { kind: 'deck' | 'component'; id: string }): boolean {
+  const server = getHocuspocusInstance()
+  if (server === null) return false
+  for (const [documentName, doc] of server.documents) {
+    const matches =
+      card.kind === 'deck'
+        ? deckIdOf(documentName) === card.id
+        : documentName === `component:${card.id}`
+    if (!matches) continue
+    for (const conn of doc.getConnections()) {
+      const ctx = (conn.context ?? {}) as ConnContext
+      if ((ctx.role === 'editor' || ctx.role === 'owner') && ctx.shareToken === undefined) {
+        return true
+      }
+    }
+  }
+  return false
 }
 
 /**

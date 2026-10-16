@@ -119,7 +119,7 @@ Revoke the token afterwards if it was only for the test.
 ## Releasing A2.12b (component-owned media) — 0.10.15
 
 Written 2026-09-30, while the work was uncommitted; production ran
-`v0.10.14+61260f2` (`/version.json`, re-checked the same day after A2.13).
+`v0.10.14+d2773e5` (`/version.json`, re-checked the same day after A2.13).
 0.10.15 also carries A2.13 (the close of A2: the action catalog guard, the
 e2e test hook through commands, `object.create`'s optional `id`), which
 adds no migration, env var or deploy step. The release brings three schema
@@ -290,7 +290,7 @@ back in about a second.
 
 ## The desktop app's update feed
 
-Since the desktop app (ADR 0014), Caddy serves `/opt/narrative/desktop-feed`
+Since the desktop app (ADR 0015), Caddy serves `/opt/narrative/desktop-feed`
 on the VM at `https://<domain>/desktop/` (`infra/caddy/Caddyfile`, mounted
 read-only). `deploy.sh` creates the directory as the deploy user, and the
 release sync (`remote-release.sh`) leaves it alone. Only `just
@@ -353,6 +353,34 @@ image: stay on the mirror (any later Chainguard build is a `crane copy` away).
 On production that is the state since 2026-10-10: the cached copy was
 removed after 0.10.19 ran healthy for 17 hours.
 
+## Releasing style packs — 0.11.1 (0.11.0 never deployed)
+
+Agentic A4 ([plan](./plans/a4-style-packs.md),
+[handoff](./handoff/A4-style-packs.md)). No new image, service, env var or
+secret. One schema migration and one data migration:
+
+- **0035** adds `media_assets.font_axes` (jsonb, nullable): the weight and
+  width axis ranges of a variable font, read on upload. Additive, no
+  constraint: it cannot fail on existing rows.
+- **Data migration `2026-10-12-font-axes`** runs in the background after
+  start. It reads every stored font from MinIO once and records its axes
+  (`{}` for a static font). Watch for `data migration: completed` with a
+  report of `fonts`, `variable` and `failed`. A font in `failed` keeps
+  working: it is drawn at its own weight, only without a width range.
+
+The style packs themselves are not part of the deploy. The five brand
+packs live in the private overlay (`just style-pack`). Each goes into a
+production folder only at Petr's go, brand by brand (`just
+style-pack-import private/packs/<brand>.json <folderId>
+https://<domain>`, with a personal access token in `NARRATIVE_TOKEN`). The
+brand fonts and logos are uploaded on the MacBook (private/HANDOVER.md).
+
+**After deploying:** `/version.json` names 0.11.1; the server log shows the
+data migration completed; Folder Settings of a folder shows the **Style
+pack** tab ("This folder has no style pack" until one is imported); a slide with a text
+box set to grow with its text, in Inter, renders: right-click → **Export as
+PNG** downloads within seconds (before 0.11.0 it timed out).
+
 ## Access
 
 The VM is reachable only through the Proxmox host (`pve`), which is the jump
@@ -375,15 +403,17 @@ Host narrative  # the VM: user petr (sudo + docker), ProxyJump pve
 
 From the project root of any of Petr's machines, with the release tagged and
 pushed (AGENTS.md → Conventions: `just bump`, CHANGELOG, commit → tag →
-push):
+push), and its GitHub release made from that CHANGELOG section:
 
 ```bash
+just gh-release v0.10.18
 just deploy v0.10.18
 ```
 
 `just deploy` (`infra/scripts/ship.sh`) does not build on the machine it runs
-on. The **build host** — `NARRATIVE_BUILDER` in `infra/release.env`, the
-always-on x86_64 homelab VM 105 on the LAN, logged in to GHCR — does the work,
+on. The **build host** — `NARRATIVE_BUILDER` in the private overlay's
+`private/release.env` (with `NARRATIVE_VM`, the production VM; the public
+`infra/release.env` holds only the domain), the always-on x86_64 homelab VM 105 on the LAN, logged in to GHCR — does the work,
 so a slow uplink, an Apple Silicon CPU, a missing Docker or a stale
 `infra/.env.prod` on the deploying machine no longer matter (each of them
 stopped the 0.10.18 deploy from a MacBook on 2026-10-07/09).
@@ -497,7 +527,7 @@ curl -sI https://narrative.example.com | head -5
 
 # WHICH VERSION is actually live (the single most useful check)
 curl -s https://narrative.example.com/version.json
-# {"version":"v0.9.3+00454ec"}
+# {"version":"v0.9.3+c4305b8"}
 
 # The document must not be cacheable, or deploys look like no-ops
 curl -sI https://narrative.example.com | grep -i cache-control
@@ -545,7 +575,7 @@ to the file's **inode**, and rsync _replaces_ files rather than rewriting them
 in place, so the container went on reading the old, unlinked inode while the
 host file, `caddy validate` and `caddy reload` all reported success. That is
 how the CSP fix of 2026-09-09 appeared not to land. The **directory** is
-mounted now (`./caddy:/etc/caddy:ro`, commit `e6b4042`) — do not "simplify" it
+mounted now (`./caddy:/etc/caddy:ro`, commit `8933119`) — do not "simplify" it
 back to a file mount.
 
 `deploy.sh` validates and reloads the Caddyfile after `compose up` (since
@@ -608,13 +638,35 @@ that on its own.
 
 ## Environment secrets
 
-`infra/.env.prod` lives only on the VM at `/opt/narrative/infra/.env.prod`
-(chmod 600, gitignored). It is **never rsynced** (excluded in the rsync
-command). If you need to edit it:
+The **source of truth** is the SOPS-encrypted `private/config/env.prod.sops`
+in the private overlay (cloned into `./private`); the dev `.env` comes from
+`private/config/env.sops` the same way. The age private key is fetched from
+1Password at runtime, never written to disk; the public recipient is in the
+overlay's `.sops.yaml`. Prereqs: `sops`, `age`, the 1Password CLI.
+
+| Target | Encrypted (overlay)            | Materializes to     |
+| ------ | ------------------------------ | ------------------- |
+| `dev`  | `private/config/env.sops`      | `./.env`            |
+| `prod` | `private/config/env.prod.sops` | `./infra/.env.prod` |
 
 ```bash
-ssh petr@192.0.2.147 'nano /opt/narrative/infra/.env.prod'
+./scripts/secrets-decrypt.sh [dev|prod]   # materialize the env file (default dev)
+./scripts/secrets-edit.sh    [dev|prod]   # decrypt → $EDITOR → re-encrypt in place
 ```
+
+On the VM the file is `/opt/narrative/infra/.env.prod` (chmod 600,
+gitignored) and is **never rsynced** (excluded in the rsync command), so a
+changed prod secret has to be carried there:
+
+```bash
+./scripts/secrets-edit.sh prod      # edit + re-encrypt; commit the .sops in ./private
+./scripts/secrets-decrypt.sh prod   # infra/.env.prod locally (build-push.sh reads it too)
+scp infra/.env.prod narrative:/opt/narrative/infra/.env.prod
+ssh narrative 'cd /opt/narrative && ./infra/scripts/deploy.sh prod'
+```
+
+An ad-hoc edit made on the VM (e.g. `USE_SHARED_TUNNEL=1`) goes back into
+`env.prod.sops` with `secrets-edit.sh prod`, or the next rebuild loses it.
 
 Key secrets and where they come from:
 
@@ -730,13 +782,27 @@ ssh petr@192.0.2.147 "sudo sed -i \
   's/OIDC_ALLOWED_EMAILS=.*/OIDC_ALLOWED_EMAILS=petr@example.com,friend@gmail.com/' \
   /opt/narrative/infra/.env.prod"
 
-# Recreate server container (no rebuild needed)
-ssh petr@192.0.2.147 'cd /opt/narrative/infra && \
+# Recreate server container (no rebuild needed). Pass the running release:
+# without NARRATIVE_TAG compose falls back to the stale `latest` image and the
+# server ends up older than the web app (folders lose `sharedBy`, the home
+# page crashes). The tag is in `/version.json`.
+ssh petr@192.0.2.147 'cd /opt/narrative/infra && NARRATIVE_TAG=vX.Y.Z \
   docker compose -f docker-compose.yml \
     -f docker-compose.prod.yml \
     -f docker-compose.prod.shared-tunnel.yml \
     --env-file .env.prod up -d --force-recreate server'
 ```
+
+### Admins add people themselves
+
+Once someone is an instance admin ([ADR 0014](./adr/0014-instance-admin.md)),
+nobody needs SSH to let a colleague in: the admin screen (user menu →
+Administration) allows an address to sign in and makes other admins. The first
+admin comes from `ADMIN_EMAILS` in `infra/.env.prod` (a comma-separated list of
+verified emails), set the same way as the allowlist above (including
+`NARRATIVE_TAG`); the flag is set at sign-in while the instance has no admin —
+the first listed person to sign in becomes it, and promotes the others. Admins own every folder and
+deck but other people's Drafts. Their changes need no restart.
 
 ## Revoking a user (kill switch)
 
@@ -823,7 +889,7 @@ ssh petr@192.0.2.147 '/opt/narrative/infra/scripts/backup.sh \
 
 ## Troubleshooting
 
-### Deploy fails at "Stahuji prebuilt images z GHCR…"
+### Deploy fails at "Pulling prebuilt app images from GHCR…"
 
 Either the host is not logged in to GHCR (the packages are private) or the tag
 does not exist because `build-push.sh` was never run for it:
@@ -833,11 +899,16 @@ ssh petr@192.0.2.147 'docker login ghcr.io -u petronijus'   # one-time, needs a 
 NARRATIVE_TAG=v0.9.3 infra/scripts/build-push.sh            # on the build machine
 ```
 
-If the pull itself fails on space, clean up:
+If the pull itself fails on space, drop old release images (keeps the
+current tag, `latest`, two more and whatever a container runs):
 
 ```bash
-ssh petr@192.0.2.147 'docker system prune -af --volumes'
+ssh petr@192.0.2.147 'cd /opt/narrative && ./infra/scripts/prune-images.sh --current <live tag> --builder-cache'
 ```
+
+Never `docker system prune --volumes` here: with the stack stopped it
+deletes every named volume — Postgres, MinIO and Redis data included,
+wherever a `*_DATA_PATH` is not set to a host path.
 
 ### `build-push.sh` fails to resolve a workspace package
 

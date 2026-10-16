@@ -33,7 +33,8 @@
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { authPreHandler, resolveFastifyIdentity } from '../../auth/fastifyAuth.js'
+import { authPreHandler, getAuthOpts, resolveFastifyIdentity } from '../../auth/fastifyAuth.js'
+import { notifyAppConnected } from '../../email/events.js'
 import { clientIpFromHeaders } from '../../http/clientIp.js'
 import { parseStrictForm } from '../../http/formBody.js'
 import { htmlHeaders, noStore } from '../../http/htmlHeaders.js'
@@ -331,13 +332,26 @@ export async function registerMcpOAuthRoutes(
           return htmlHeaders(reply, []).status(400).send(errorPage('Choose Allow or Deny.'))
         }
         try {
-          const { redirectTo } = await service().decide(
+          const { redirectTo, connected } = await service().decide(
             typeof form['request'] === 'string' ? form['request'] : '',
             identity.identity.user.sub,
             typeof form['csrf'] === 'string' ? form['csrf'] : '',
             decision === 'approve',
           )
           req.log.info({ user: identity.identity.user.sub, decision }, 'MCP OAuth consent decided')
+          // Security notice: an app now acts as this person.
+          if (connected !== null) {
+            const db = getAuthOpts(app).db
+            if (db !== undefined)
+              notifyAppConnected(
+                { db, log: req.log },
+                {
+                  userSub: identity.identity.user.sub,
+                  appName: connected.clientName,
+                  redirectUri: connected.redirectUri,
+                },
+              )
+          }
           return noStore(reply).redirect(redirectTo, 303)
         } catch (e) {
           if (e instanceof OAuthError)

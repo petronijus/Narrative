@@ -22,7 +22,7 @@ import {
   type Browser,
   type Page,
   type TestInfo,
-} from '@playwright/test'
+} from './fixtures/test'
 
 const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'
 const WEB_ORIGIN = process.env['NARRATIVE_WEB_URL'] ?? 'http://localhost:5173'

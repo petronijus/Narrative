@@ -13,7 +13,7 @@
  * change alone (renderer/colourResolver.ts). That one is read off the pixels.
  */
 
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { test, expect, type APIRequestContext, type Page } from './fixtures/test'
 import { PNG } from 'pngjs'
 
 const API_BASE = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'

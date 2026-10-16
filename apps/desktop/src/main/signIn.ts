@@ -1,7 +1,7 @@
 /**
  * main/signIn.ts
  *
- * The shell's half of the desktop sign-in (ADR 0014,
+ * The shell's half of the desktop sign-in (ADR 0015,
  * docs/plans/desktop-d0-spec.md §3.4 and §4.4). Google refuses OAuth inside
  * the app, so:
  *
@@ -32,8 +32,7 @@ export const START_COOLDOWN_MS = 5_000
 export const REDEEM_TIMEOUT_MS = 15_000
 
 export type RedeemOutcome =
-  | { kind: 'signed-in'; target: string }
-  | { kind: 'failed'; reason: string }
+  { kind: 'signed-in'; target: string } | { kind: 'failed'; reason: string }
 
 export interface RedeemRequest {
   /** `<api>/auth/desktop/redeem` */

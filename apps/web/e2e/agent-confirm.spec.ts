@@ -15,7 +15,7 @@
  * spec needs no MCP SDK. The link it creates is revoked at the end.
  */
 
-import { expect, test, type APIRequestContext } from '@playwright/test'
+import { expect, test, type APIRequestContext } from './fixtures/test'
 
 const SERVER = process.env['NARRATIVE_API_URL'] ?? 'http://localhost:3001'
 

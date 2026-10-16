@@ -7,7 +7,9 @@
  * a one-shot stamp: deep-clone every object in the master with fresh
  * ids, translate the cluster so its bbox top-left lands at `dropPoint`,
  * push into the slide's objects Y.Array, and walk away. After the stamp,
- * edits to the master have zero effect on the stamped output.
+ * edits to the master have no effect on the stamped output until
+ * `restampComponent` (./restampComponent.ts) re-applies the master: every
+ * stamped object records where it came from (`component`, A4.1).
  *
  * Schema of a component master Y.Doc (mirrors extractComponentSnapshot):
  *   doc.getArray('slides') — Y.Array<Y.Map>, exactly one entry
@@ -45,7 +47,7 @@ interface BBox {
  * cell's body) is read as its string PLUS a `_richTextOps` delta on the
  * same record, so no formatting is lost.
  */
-function readMasterObjects(componentDoc: Y.Doc): SlideObject[] {
+export function readMasterObjects(componentDoc: Y.Doc): SlideObject[] {
   const slides = componentDoc.getArray<Y.Map<unknown>>('slides')
   if (slides.length === 0) return []
   const slide = slides.get(0)
@@ -94,7 +96,7 @@ function walkYValue(value: unknown): unknown {
   return out
 }
 
-function computeBBox(objects: ReadonlyArray<SlideObject>): BBox {
+export function computeBBox(objects: ReadonlyArray<SlideObject>): BBox {
   if (objects.length === 0) return { x: 0, y: 0, width: 0, height: 0 }
   let minX = Infinity
   let minY = Infinity
@@ -119,10 +121,14 @@ function computeBBox(objects: ReadonlyArray<SlideObject>): BBox {
  *
  * Reads the master Y.Doc, deep-clones every object with a fresh id,
  * translates the cloned cluster so its bbox top-left lands at
- * `dropPoint`, then pushes the new objects into the slide's `objects`
- * Y.Array. Returns the new ids in insertion order. The result has no
- * link to the component — editing the master afterwards never affects
- * already-stamped output.
+ * `dropPoint` (a crop, `imageRect`, moves with its frame), then pushes the
+ * new objects into the slide's `objects` Y.Array. Returns the new ids in
+ * insertion order. Editing the master afterwards never affects
+ * already-stamped output by itself; every copy records its provenance —
+ * `component: { id: componentId, objectId, instance, origin }`, one fresh
+ * `instance` per stamp and `origin` where the master object stood — so
+ * `restampComponent` can re-apply the master later. A master object's own
+ * `component` (a master links to nothing) is never copied.
  *
  * Group-id remap — group cohesion survives the stamp without leaking into
  * the master's id-space, and two stamps of one component never share a
@@ -144,6 +150,7 @@ export function stampComponent(
   ctx: ObjectsMutationContext,
   componentDoc: Y.Doc,
   dropPoint: { x: number; y: number },
+  componentId: string,
 ): string[] {
   const masterObjects = readMasterObjects(componentDoc)
   if (masterObjects.length === 0) return []
@@ -172,6 +179,7 @@ export function stampComponent(
     if (count >= 2 && !idMap.has(g)) tokenMap.set(g, nanoid())
   }
 
+  const instance = nanoid()
   const stamped: SlideObject[] = masterObjects.map((obj) => {
     const oldId = obj.id
     const newId = (typeof oldId === 'string' ? idMap.get(oldId) : undefined) ?? nanoid()
@@ -182,6 +190,17 @@ export function stampComponent(
     clone['id'] = newId
     clone['x'] = x
     clone['y'] = y
+    const crop = shiftedCrop(clone['imageRect'], dx, dy)
+    if (crop !== undefined) clone['imageRect'] = crop
+    clone['component'] = {
+      id: componentId,
+      objectId: oldId,
+      instance,
+      origin: {
+        x: typeof obj.x === 'number' ? obj.x : 0,
+        y: typeof obj.y === 'number' ? obj.y : 0,
+      },
+    }
 
     // Remap groupId (rules in the doc comment above).
     const groupId = clone['groupId']
@@ -199,6 +218,23 @@ export function stampComponent(
 
   insertObjectsWithRichText(ctx.objects, stamped, LOCAL_ORIGIN)
   return stamped.map((o) => o.id)
+}
+
+/**
+ * `imageRect` (a crop's source rect) is in absolute slide coordinates: a
+ * frame moved by (dx, dy) takes its crop along. Undefined when there is no
+ * crop to move.
+ */
+export function shiftedCrop(
+  rect: unknown,
+  dx: number,
+  dy: number,
+): { x: number; y: number; width: number; height: number } | undefined {
+  if (typeof rect !== 'object' || rect === null) return undefined
+  const r = rect as { x?: unknown; y?: unknown; width?: unknown; height?: unknown }
+  if (typeof r.x !== 'number' || typeof r.y !== 'number') return undefined
+  if (typeof r.width !== 'number' || typeof r.height !== 'number') return undefined
+  return { x: r.x + dx, y: r.y + dy, width: r.width, height: r.height }
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +345,11 @@ function replayBodies(p: PreparedObject): void {
  * one `doc.transact(…, origin)` — joined into the caller's transaction
  * when called inside one.
  *
- * Used by `stampComponent` and by `writeComponentMaster`.
+ * Appended on top of the stacking order, or inserted at `index` when given
+ * (clamped to the array) — how `restampComponent` puts a replaced or added
+ * object where it belongs.
+ *
+ * Used by `stampComponent`, `restampComponent` and `writeComponentMaster`.
  *
  * @throws when `objects` is not integrated into a Y.Doc.
  */
@@ -317,6 +357,7 @@ export function insertObjectsWithRichText(
   objects: Y.Array<Y.Map<unknown>>,
   plainObjects: ReadonlyArray<SlideObject>,
   origin?: unknown,
+  index?: number,
 ): void {
   if (plainObjects.length === 0) return
   const doc = objects.doc
@@ -325,7 +366,9 @@ export function insertObjectsWithRichText(
   }
   const prepared = plainObjects.map(prepareObject)
   doc.transact(() => {
-    objects.push(prepared.map((p) => p.yMap))
+    const maps = prepared.map((p) => p.yMap)
+    if (index === undefined) objects.push(maps)
+    else objects.insert(Math.max(0, Math.min(index, objects.length)), maps)
     for (const p of prepared) replayBodies(p)
   }, origin)
 }
@@ -367,4 +410,48 @@ export function writeComponentMaster(
     if (masterAnimations.length > 0) animations.push(masterAnimations.map(animationStepToYMap))
   }, origin)
   return true
+}
+
+// ---------------------------------------------------------------------------
+// Masters a style pack made (A4.4)
+// ---------------------------------------------------------------------------
+
+/** What made a master: a style pack's compile (`meta.origin` of its document). */
+export function readMasterOrigin(doc: Y.Doc): { pack: string; key: string } | undefined {
+  const o = doc.getMap<unknown>('meta').get('origin')
+  if (typeof o !== 'object' || o === null) return undefined
+  const r = o as Record<string, unknown>
+  return typeof r['pack'] === 'string' && typeof r['key'] === 'string'
+    ? { pack: r['pack'], key: r['key'] }
+    : undefined
+}
+
+/**
+ * Make the master's one slide hold exactly `objects` (rich-text bodies
+ * included) and record `origin` — a style pack's compile writing the
+ * master it made. Creates the slide when the master has none. One
+ * transaction (nested in the caller's).
+ */
+export function replaceMasterObjects(
+  doc: Y.Doc,
+  objects: ReadonlyArray<SlideObject>,
+  origin: { pack: string; key: string },
+): void {
+  doc.transact(() => {
+    const slides = doc.getArray<Y.Map<unknown>>('slides')
+    if (slides.length === 0) {
+      writeComponentMaster(doc, objects, [])
+    } else {
+      const slide = slides.get(0)
+      let arr = slide.get('objects')
+      if (!(arr instanceof Y.Array)) {
+        arr = new Y.Array<Y.Map<unknown>>()
+        slide.set('objects', arr)
+      }
+      const list = arr as Y.Array<Y.Map<unknown>>
+      if (list.length > 0) list.delete(0, list.length)
+      insertObjectsWithRichText(list, objects)
+    }
+    doc.getMap<unknown>('meta').set('origin', { pack: origin.pack, key: origin.key })
+  })
 }

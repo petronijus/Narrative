@@ -4,6 +4,13 @@
  * (plan §9.3: every new command adds at least one).
  */
 
+import deckBuildFromSpec from './deckBuildFromSpec.js'
+import deckBuildFromBrief from './deckBuildFromBrief.js'
+import deckBuildVoiceUnknown from './deckBuildVoiceUnknown.js'
+import deckRebuildOtherVariant from './deckRebuildOtherVariant.js'
+import insertRestylePack from './insertRestylePack.js'
+import restyleNoProvenance from './restyleNoProvenance.js'
+import deckExportPdf from './deckExportPdf.js'
 import type { AnyScenario } from '../lib/types.js'
 import slideDuplicateRetitle from './slideDuplicateRetitle.js'
 import headingOneFont from './headingOneFont.js'
@@ -17,9 +24,16 @@ import insertSlidesFromDeck from './insertSlidesFromDeck.js'
 import componentStampSlots from './componentStampSlots.js'
 import componentPromoteHeadline from './componentPromoteHeadline.js'
 import componentMasterPicture from './componentMasterPicture.js'
+import componentRestamp from './componentRestamp.js'
+import textAutofitGrow from './textAutofitGrow.js'
+import styleShrinkFloor from './styleShrinkFloor.js'
+import componentCreatePagination from './componentCreatePagination.js'
 import exportPptxRoundtrip from './exportPptxRoundtrip.js'
 import exportPngSlide from './exportPngSlide.js'
 import lookAtSlide from './lookAtSlide.js'
+import compareBeforeAfter from './compareBeforeAfter.js'
+import fixTextOverflow from './fixTextOverflow.js'
+import deckCardBeforeHandoff from './deckCardBeforeHandoff.js'
 import revertLastRun from './revertLastRun.js'
 import selectedSlideContext from './selectedSlideContext.js'
 import promptInjectionShareLink from './promptInjectionShareLink.js'
@@ -56,6 +70,14 @@ import productRenameEverywhere from './productRenameEverywhere.js'
 import subtitlePlainRestyle from './subtitlePlainRestyle.js'
 import yearFixSecondOccurrence from './yearFixSecondOccurrence.js'
 import folderStylesApply from './folderStylesApply.js'
+import listLevelPlainParagraph from './listLevelPlainParagraph.js'
+import packArchetypeCover from './packArchetypeCover.js'
+import packBuildSlide from './packBuildSlide.js'
+import packDeckVariant from './packDeckVariant.js'
+import packEditColour from './packEditColour.js'
+import packFixCheck from './packFixCheck.js'
+import packPlainSlideRoles from './packPlainSlideRoles.js'
+import tokenByVariant from './tokenByVariant.js'
 import titleStyleFolderwide from './titleStyleFolderwide.js'
 import quoteStyleFromBox from './quoteStyleFromBox.js'
 
@@ -72,9 +94,16 @@ export const SCENARIOS: readonly AnyScenario[] = [
   componentStampSlots,
   componentPromoteHeadline,
   componentMasterPicture,
+  componentRestamp,
+  textAutofitGrow,
+  styleShrinkFloor,
+  componentCreatePagination,
   exportPptxRoundtrip,
   exportPngSlide,
   lookAtSlide,
+  compareBeforeAfter,
+  fixTextOverflow,
+  deckCardBeforeHandoff,
   revertLastRun,
   selectedSlideContext,
   promptInjectionShareLink,
@@ -111,6 +140,21 @@ export const SCENARIOS: readonly AnyScenario[] = [
   subtitlePlainRestyle,
   yearFixSecondOccurrence,
   folderStylesApply,
+  listLevelPlainParagraph,
+  packArchetypeCover,
+  deckBuildFromSpec,
+  deckBuildFromBrief,
+  deckBuildVoiceUnknown,
+  deckRebuildOtherVariant,
+  insertRestylePack,
+  restyleNoProvenance,
+  deckExportPdf,
+  packBuildSlide,
+  packDeckVariant,
+  packEditColour,
+  packFixCheck,
+  packPlainSlideRoles,
+  tokenByVariant,
   titleStyleFolderwide,
   quoteStyleFromBox,
 ]

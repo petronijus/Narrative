@@ -108,7 +108,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { isRenderToken, resolveRenderToken } from '../auth/renderTokens.js'
+import { isRenderToken, resolveRenderToken, type RenderTokenGrant } from '../auth/renderTokens.js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import rateLimit, { normalizeIP, type RateLimitOptions } from '@fastify/rate-limit'
 import { getAuthOpts, getIdentityDeps } from '../auth/fastifyAuth.js'
@@ -268,7 +268,11 @@ export async function rateLimitKey(
     // fall through to the IP bucket
   }
   const render = renderTokenOf(req)
-  if (render !== null) return `render:${render.grant.requestedBy}`
+  if (render !== null) {
+    // The server's background renders as an owner have a budget of their own.
+    const lane = render.grant.lane === 'background' ? 'bg:' : ''
+    return `render:${lane}${render.grant.requestedBy}`
+  }
   return `ip:${normalizeIP(clientIp(req, settings.clientIpHeader))}`
 }
 
@@ -277,9 +281,10 @@ export async function rateLimitKey(
  * lookup, no database: the render worker's page, whose every request arrives
  * from the worker's one address. Null for anything else.
  */
-export function renderTokenOf(
-  req: FastifyRequest,
-): { hash: string; grant: { deckId: string; requestedBy: string } } | null {
+export function renderTokenOf(req: FastifyRequest): {
+  hash: string
+  grant: RenderTokenGrant
+} | null {
   const token = (req.query as Record<string, unknown> | undefined)?.['share_token']
   if (typeof token !== 'string' || !isRenderToken(token)) return null
   const grant = resolveRenderToken(token)

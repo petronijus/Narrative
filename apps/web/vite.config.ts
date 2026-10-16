@@ -126,48 +126,50 @@ export default defineConfig(({ mode }) => ({
         // Vendor splitting: Pixi, GSAP, Tiptap+ProseMirror, Yjs, Radix,
         // Sentry, React all into their own chunks so the initial download is
         // smaller and a change to any one of them doesn't bust the app cache
-        // for the others. Rollup will still hoist common deps out into a
-        // shared chunk where appropriate.
-        manualChunks(id) {
-          if (!id.includes('node_modules')) return undefined
-
-          // Pixi core + filters — large WebGL renderer
-          if (/[\\/]node_modules[\\/](pixi\.js|pixi-filters|@pixi)[\\/]/.test(id)) {
-            return 'vendor-pixi'
-          }
-          // GSAP animation engine
-          if (/[\\/]node_modules[\\/]gsap[\\/]/.test(id)) {
-            return 'vendor-gsap'
-          }
-          // Tiptap + the ProseMirror packages it pulls in transitively
-          if (/[\\/]node_modules[\\/](@tiptap|prosemirror-)/.test(id)) {
-            return 'vendor-tiptap'
-          }
-          // Yjs + Hocuspocus provider + y-prosemirror binding — CRDT layer
-          if (
-            /[\\/]node_modules[\\/](yjs|y-prosemirror|@hocuspocus|y-protocols|lib0)[\\/]/.test(id)
-          ) {
-            return 'vendor-yjs'
-          }
-          // Radix primitives — many small packages, group as one
-          if (/[\\/]node_modules[\\/]@radix-ui[\\/]/.test(id)) {
-            return 'vendor-radix'
-          }
-          // Sentry browser SDK
-          if (/[\\/]node_modules[\\/]@sentry[\\/]/.test(id)) {
-            return 'vendor-sentry'
-          }
-          // React + router — kept together so React's many internal chunks
-          // don't fragment into N tiny files.
-          if (
-            /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(
-              id,
-            )
-          ) {
-            return 'vendor-react'
-          }
-          // Everything else from node_modules → shared "vendor" chunk.
-          return 'vendor'
+        // for the others.
+        //
+        // A group also takes the dependencies of what it captures (Rolldown's
+        // includeDependenciesRecursively), so the order is the priority:
+        // libraries other vendors build on (Yjs, React) are captured first,
+        // or the group of whoever imports them swallows them — under the
+        // old manualChunks function `@tiptap/y-tiptap` pulled yjs and lib0
+        // into vendor-tiptap (~86 kB raw), 12.8 kB gz over its budget.
+        codeSplitting: {
+          groups: [
+            // Yjs + Hocuspocus provider + y-prosemirror binding — CRDT layer
+            {
+              name: 'vendor-yjs',
+              test: /[\\/]node_modules[\\/](yjs|y-prosemirror|@hocuspocus|y-protocols|lib0)[\\/]/,
+              priority: 70,
+            },
+            // React + router — kept together so React's many internal chunks
+            // don't fragment into N tiny files.
+            {
+              name: 'vendor-react',
+              test: /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/,
+              priority: 60,
+            },
+            // Pixi core + filters — large WebGL renderer
+            {
+              name: 'vendor-pixi',
+              test: /[\\/]node_modules[\\/](pixi\.js|pixi-filters|@pixi)[\\/]/,
+              priority: 50,
+            },
+            // GSAP animation engine
+            { name: 'vendor-gsap', test: /[\\/]node_modules[\\/]gsap[\\/]/, priority: 40 },
+            // Tiptap + the ProseMirror packages it pulls in transitively
+            {
+              name: 'vendor-tiptap',
+              test: /[\\/]node_modules[\\/](@tiptap|prosemirror-)/,
+              priority: 30,
+            },
+            // Radix primitives — many small packages, group as one
+            { name: 'vendor-radix', test: /[\\/]node_modules[\\/]@radix-ui[\\/]/, priority: 20 },
+            // Sentry browser SDK
+            { name: 'vendor-sentry', test: /[\\/]node_modules[\\/]@sentry[\\/]/, priority: 10 },
+            // Everything else from node_modules → shared "vendor" chunk.
+            { name: 'vendor', test: /[\\/]node_modules[\\/]/, priority: 0 },
+          ],
         },
       },
     },

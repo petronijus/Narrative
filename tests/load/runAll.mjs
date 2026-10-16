@@ -1,11 +1,11 @@
 /**
  * tests/load/runAll.mjs
  *
- * Spouští všechny load scénáře sekvenčně.
- * Výstup: souhrnný JSON s pass/fail per scénář.
+ * Runs every load scenario, one after another.
+ * Output: a summary JSON with pass/fail per scenario.
  *
- * Použití: node tests/load/runAll.mjs
- * nebo přes root: pnpm load:all
+ * Usage: `just load` (the dev stack must be up: `just dev`), or
+ * `node tests/load/runAll.mjs`.
  *
  * Baseline regression tracking
  *   If `tests/load/baselines.json` exists, each scenario's headline metrics
@@ -53,16 +53,20 @@ function loadBaselines() {
 function checkRegressions(scenario, parsed, baselineForScenario) {
   const drifts = []
   if (parsed === null || baselineForScenario === undefined) return drifts
-  // Walk well-known headline metrics — keep this list short. Anything
-  // not listed here is not a regression-tracked metric (yet).
+  // The headline metrics, each baseline key read from where the scenarios
+  // print it — keep this list short. Anything not listed here is not a
+  // regression-tracked metric (yet).
   const candidates = [
     ['latency_avg_ms', parsed.latency?.avg_ms],
     ['latency_p95_ms', parsed.latency?.p95_ms],
     ['ops_per_sec', parsed.ops_per_sec],
+    // hotEdit: the document after the edits.
     ['doc_size_bytes_after_run', parsed.doc_size_bytes],
-    ['events_per_sec', parsed.events_per_sec],
-    ['initial_sync_ms', parsed.initial_sync_ms ?? parsed.avg_sync_ms],
-    ['doc_size_bytes', parsed.doc_size_bytes],
+    // awarenessFlood: the states actually sent per second.
+    ['events_per_sec', parsed.rate_per_sec],
+    // docGrowth: the sync clients' average, and the built document.
+    ['initial_sync_ms', parsed.sync?.avg_ms],
+    ['doc_size_bytes', parsed.encoded_size_bytes],
   ]
   for (const [key, current] of candidates) {
     const baseline = baselineForScenario[key]

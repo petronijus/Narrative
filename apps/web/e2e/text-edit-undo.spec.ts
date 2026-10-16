@@ -13,7 +13,7 @@
  * Reported 2026-09-09 as "undo suddenly doesn't work".
  */
 
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures/test'
 import { caret } from './fixtures/keys.js'
 
 const OBJ_ID = 'undo-text-1'
@@ -81,7 +81,20 @@ test('typed text can be undone', async ({ page }) => {
   // before asking for the undo.
   await page.keyboard.press('Escape')
   await page.waitForTimeout(800)
-  await page.keyboard.press('ControlOrMeta+z')
 
-  await expect.poll(() => bodyText(page, OBJ_ID), { timeout: 5_000 }).toBe(INITIAL)
+  // One undo is usually the whole word, but the capture window is a time
+  // window: a stalled keystroke (a busy machine, 2026-10-14) splits the typing
+  // into two stack items. What this guards is that typing is on the stack at
+  // all — the first undo takes typed text back — and that undoing walks back
+  // to exactly the text before it, never past it (the box itself stays).
+  const typed = `${INITIAL} world`
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect.poll(() => bodyText(page, OBJ_ID), { timeout: 5_000 }).not.toBe(typed)
+  for (let i = 0; i < 5 && (await bodyText(page, OBJ_ID)) !== INITIAL; i++) {
+    const before = await bodyText(page, OBJ_ID)
+    expect(typed.startsWith(before), `undo walked off the typed text: "${before}"`).toBe(true)
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect.poll(() => bodyText(page, OBJ_ID), { timeout: 5_000 }).not.toBe(before)
+  }
+  expect(await bodyText(page, OBJ_ID)).toBe(INITIAL)
 })

@@ -91,8 +91,7 @@ export function confirmationMessage(requirement: ConfirmationRequirement): strin
 }
 
 export type ConfirmationOutcome =
-  | { ok: true; confirmation: HostConfirmation }
-  | { ok: false; error: ToolErrorBody }
+  { ok: true; confirmation: HostConfirmation } | { ok: false; error: ToolErrorBody }
 
 export interface ConfirmRequest {
   server: Server

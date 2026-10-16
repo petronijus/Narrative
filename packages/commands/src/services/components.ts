@@ -66,6 +66,12 @@ export interface PreparedStamp {
 
 export interface ComponentService {
   list(args: { userId: string; folderId: string }): Promise<ComponentRecord[]>
+  /**
+   * A new, empty component of the folder (its master: one empty slide). The
+   * user must be an editor in the folder; the name is trimmed, at most 200
+   * characters, and a blank one becomes "Untitled component".
+   */
+  create(args: { userId: string; folderId: string; name: string }): Promise<ComponentRecord>
   rename(args: {
     userId: string
     componentId: string
@@ -117,6 +123,13 @@ export interface ComponentService {
     userId: string
     componentId: string
     deckId: string
+    /**
+     * `restamp`: re-applying the component to stamps already on the deck.
+     * Stamps of a component of another folder (the deck moved, or they were
+     * copied from elsewhere) are refused with `conflict` saying so, to a user
+     * who can see that component; default `stamp`.
+     */
+    purpose?: 'stamp' | 'restamp' | undefined
   }): Promise<PreparedStamp>
   /**
    * Authorise opening `component:<id>` as a document (how an agent edits a
