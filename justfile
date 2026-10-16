@@ -208,7 +208,19 @@ bump version:
     # The README's release badge (perl: the same in-place edit on GNU and BSD).
     perl -pi -e 's#(img\.shields\.io/badge/release-)\d+\.\d+\.\d+#${1}{{ version }}#' README.md
     grep -q "badge/release-{{ version }}-" README.md || { echo "bump: the README release badge was not updated" >&2; exit 1; }
-    echo "Versions set to {{ version }}. Next: CHANGELOG section, commit, tag v{{ version }}, push, just deploy v{{ version }} (docs/deploy.md)."
+    echo "Versions set to {{ version }}. Next: CHANGELOG section, commit, tag v{{ version }}, push, just gh-release v{{ version }}, just deploy v{{ version }} (docs/deploy.md)."
+
+# GitHub release for a pushed tag, titled and described by its CHANGELOG.md section (edits it if it exists)
+gh-release tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    title="$(tools/dev/release-notes.py {{ tag }} --title)"
+    notes="$(tools/dev/release-notes.py {{ tag }})"
+    if gh release view {{ tag }} >/dev/null 2>&1; then
+      gh release edit {{ tag }} --title "$title" --notes "$notes"
+    else
+      gh release create {{ tag }} --verify-tag --title "$title" --notes "$notes"
+    fi
 
 # The build host (infra/release.env) fetches the tag, builds, pushes and deploys; this machine only checks
 # and orders, so its uplink, CPU and env files do not matter. Claude Code asks before running it.

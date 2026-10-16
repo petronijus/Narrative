@@ -170,7 +170,8 @@ tools/dev/          formatter, docs check, git hook scripts, toolchain doctor
 - **Versions**: git tag = every package version = GHCR image tag =
   `/version.json` = the plugin's version. A release: `just bump X.Y.Z`, the
   CHANGELOG section, commit → verify the subject → tag → push in one chain,
-  then `just deploy vX.Y.Z`. Production is VM 103 (`docs/deploy.md`: layout,
+  then `just gh-release vX.Y.Z` (the GitHub release, from that CHANGELOG
+  section) and `just deploy vX.Y.Z`. Production is VM 103 (`docs/deploy.md`: layout,
   access, rollback, the agentic layer's prod config); connecting to a prod
   host needs Petr's consent per host.
 

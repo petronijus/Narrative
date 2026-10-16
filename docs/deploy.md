@@ -392,9 +392,10 @@ Host narrative  # the VM: user petr (sudo + docker), ProxyJump pve
 
 From the project root of any of Petr's machines, with the release tagged and
 pushed (AGENTS.md → Conventions: `just bump`, CHANGELOG, commit → tag →
-push):
+push), and its GitHub release made from that CHANGELOG section:
 
 ```bash
+just gh-release v0.10.18
 just deploy v0.10.18
 ```
 
