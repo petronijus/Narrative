@@ -127,13 +127,13 @@ e2e-webkit *args: _stack
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ "$(uname)" == Darwin ]]; then
-      PW_WEBKIT=1 exec pnpm --filter web test:e2e --project webkit "$@"
+      PW_WEBKIT=1 exec pnpm --filter web test:e2e --project=webkit "$@"
     fi
     version="$(node -p "require('./node_modules/@playwright/test/package.json').version")"
     exec docker run --rm --network host --ipc host --user "$(id -u):$(id -g)" \
       -e HOME=/tmp -e PW_WEBKIT=1 -e CI= -v "$PWD:$PWD" -w "$PWD/apps/web" \
       "mcr.microsoft.com/playwright:v$version-noble" \
-      node ../../node_modules/@playwright/test/cli.js test --project webkit "$@"
+      node ../../node_modules/@playwright/test/cli.js test --project=webkit "$@"
 
 # The smoke set: does the app boot, paint and present at all (~10 s; tools/dev/e2e-affected.py SMOKE)
 e2e-smoke *args:
@@ -215,6 +215,18 @@ desktop-dist target="linux":
 # Put a released desktop build into the production update feed (signs through 1Password; linux|mac|win)
 desktop-publish target:
     infra/scripts/desktop-publish.sh "{{ target }}"
+
+# The Tauri prototype (apps/desktop-tauri) against a server: dev (default), prod or an https origin; needs Rust
+desktop-tauri server="dev":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo >/dev/null || { echo "desktop-tauri: needs Rust (rustup.rs)" >&2; exit 1; }
+    cd apps/desktop-tauri/src-tauri
+    exec cargo run -- "--server={{ server }}"
+
+# Package the Tauri prototype for this OS (deb/rpm/AppImage, or an unsigned .app + .dmg; loads production)
+desktop-tauri-dist:
+    pnpm --filter @narrative/desktop-tauri build
 
 # Ubuntu 26.04 only: the AppArmor profile that lets this checkout's Electron use its sandbox (asks for sudo)
 desktop-apparmor:

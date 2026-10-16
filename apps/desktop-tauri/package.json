@@ -1,0 +1,14 @@
+{
+  "name": "@narrative/desktop-tauri",
+  "version": "0.14.0",
+  "private": true,
+  "description": "Narrative desktop app — Tauri prototype beside the Electron shell (README.md)",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev --no-watch -- -- --server=dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.3"
+  }
+}

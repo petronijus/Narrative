@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "What the Narrative server's pages in the main window may call: the bridge's info and sign-in, nothing else.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://localhost:5173/*", "https://narrative.bastla.com/*"]
+  },
+  "permissions": ["allow-info", "allow-sign-in"]
+}

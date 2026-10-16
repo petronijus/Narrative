@@ -1,0 +1,27 @@
+[package]
+name = "narrative-desktop-tauri"
+version = "0.14.0"
+description = "Narrative desktop app — Tauri prototype beside the Electron shell"
+edition = "2021"
+publish = false
+
+[lib]
+name = "narrative_desktop_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "cookies"] }
+tokio = { version = "1", features = ["sync"] }
