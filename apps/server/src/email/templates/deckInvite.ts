@@ -253,7 +253,7 @@ function render(input: CommonInput, kind: Kind): RenderedEmail {
       : `It is already in your Narrative, under ${input.recipientEmail}.`,
     '',
     `—`,
-    `Narrative · presentations, made together`,
+    `Narrative · Pro tool for keynote masters`,
   ].join('\n')
 
   // -------------------------------------------------------------------------
@@ -352,7 +352,7 @@ function render(input: CommonInput, kind: Kind): RenderedEmail {
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
         <tr><td align="center" style="padding:22px 8px 0 8px;font-family:${FONT};font-size:11px;line-height:1.6;color:${MUTED};">
           You get this email because ${inviter} shared a ${noun} with ${recipient}.<br>
-          <strong style="color:${INK_SOFT};font-weight:600;">Narrative</strong> &middot; presentations, made together
+          <strong style="color:${INK_SOFT};font-weight:600;">Narrative</strong> &middot; Pro tool for keynote masters
         </td></tr>
       </table>
 

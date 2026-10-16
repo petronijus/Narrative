@@ -93,7 +93,10 @@ export function Landing() {
       {/* Header */}
       <header className="panel border-b border-border px-8 py-4">
         <div className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold tracking-tight">Narrative</h1>
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight">Narrative</h1>
+            <p className="text-xs text-muted-foreground">Pro tool for keynote masters</p>
+          </div>
           <div className="flex items-center gap-3">
             {user !== null && (
               <div className="flex items-center gap-2">

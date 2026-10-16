@@ -20,8 +20,8 @@ export function AuthLogin() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-gray-950 text-gray-100">
       <div className="w-full max-w-sm rounded-lg border border-gray-800 bg-gray-900 p-8">
-        <h1 className="mb-2 text-xl font-semibold tracking-tight">Narrative</h1>
-        <p className="mb-6 text-sm text-gray-400">Sign in to continue.</p>
+        <h1 className="text-xl font-semibold tracking-tight">Narrative</h1>
+        <p className="mb-6 text-sm text-gray-400">Pro tool for keynote masters</p>
 
         <button
           onClick={() => login(returnTo)}

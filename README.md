@@ -2,7 +2,7 @@
 
 <img src="docs/brand/narrative-logo.jpeg" alt="NARRATIVE, set in paper cards" width="640">
 
-### Presentations your team and your agents build together.
+### Pro tool for keynote masters.
 
 [![release](https://img.shields.io/badge/release-0.13.1-c2410c)](CHANGELOG.md)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](tsconfig.base.json)
