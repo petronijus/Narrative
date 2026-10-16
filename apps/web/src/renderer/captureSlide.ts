@@ -15,13 +15,17 @@ import { SLIDE_HEIGHT, SLIDE_WIDTH } from './constants.js'
 import type { SceneGraph } from './SceneGraph.js'
 
 /**
- * The slide as a canvas of the slide's own size (1920×1080), at resolution 1.
+ * The slide as a canvas of the slide's own size (1920×1080) at resolution 1,
+ * or scaled by `resolution` (a thumbnail: 200 / 1920).
  * Throws — never returns an empty picture — when the WebGL context is gone:
  * the GPU process died (on the render worker: out of memory), and every
  * pixel read from it is empty. Chrome may report the loss late, so the
  * canvas's `webglcontextlost` event is watched too (`watchContextLoss`).
  */
-export function captureSlideCanvas(sceneGraph: SceneGraph): HTMLCanvasElement | OffscreenCanvas {
+export function captureSlideCanvas(
+  sceneGraph: SceneGraph,
+  resolution = 1,
+): HTMLCanvasElement | OffscreenCanvas {
   const renderer = sceneGraph.getApp().renderer
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi's WebGL renderer exposes `gl` untyped on the base type
   const gl = (renderer as any).gl as WebGLRenderingContext | undefined
@@ -30,10 +34,14 @@ export function captureSlideCanvas(sceneGraph: SceneGraph): HTMLCanvasElement | 
   }
   // The slide root's own space is slide space: its background and objects
   // from (0, 0) to the slide's size, whatever origin the canvas gave it.
+  // A scaled capture is cut to whole pixel rows: 1080 × 200/1920 = 112.5 rows
+  // would leave the last one half covered, drawn as a faint grey line.
+  const height =
+    resolution === 1 ? SLIDE_HEIGHT : Math.floor(SLIDE_HEIGHT * resolution) / resolution
   const canvas = renderer.extract.canvas({
     target: sceneGraph.getRoot(),
-    frame: new Rectangle(0, 0, SLIDE_WIDTH, SLIDE_HEIGHT),
-    resolution: 1,
+    frame: new Rectangle(0, 0, SLIDE_WIDTH, height),
+    resolution,
   }) as HTMLCanvasElement | OffscreenCanvas
   if (gl?.isContextLost() === true || lostCanvases.has(renderer.canvas)) {
     throw new Error('the slide came back empty (the WebGL context was lost)')

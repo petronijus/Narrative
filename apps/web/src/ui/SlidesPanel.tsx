@@ -525,7 +525,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   const tokensFinal = !roleLoading && (folderId === null || folderTokensSettled)
 
   const allSlideIds = slides.map((s) => s.id)
-  const thumbnailMap = useSlideThumbnails(allSlideIds)
+  const thumbnailMap = useSlideThumbnails(allSlideIds, { liveActiveSlide: true })
 
   // P13: persist the first-slide thumbnail to localStorage so the home
   // page can show a deck preview without re-opening every deck. The

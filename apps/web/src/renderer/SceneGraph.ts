@@ -98,6 +98,8 @@ export class SceneGraph {
    * Plněna při addObject/applyChanges.added, mazána při removeObject/applyChanges.removed.
    */
   private readonly nodeTypes = new Map<string, SlideObjectType>()
+  /** Text being edited inline, drawn faded under the editing overlay (setTextNodeFaded). */
+  private readonly fadedText = new Set<string>()
   /**
    * Reverse lookup Container → objectId, kept in sync with `nodes`.
    * Used by hitTest to walk root.children (visual z-order is the source
@@ -635,7 +637,14 @@ export class SceneGraph {
    *
    * No-op when the id is unknown or its container has no text child.
    */
-  setTextNodeFaded(id: string, faded: boolean): void {
+  setTextNodeFaded(id: string, faded: boolean, silent = false): void {
+    if (!silent) {
+      if (faded) this.fadedText.add(id)
+      else this.fadedText.delete(id)
+    }
+    const dirty = (): void => {
+      if (!silent) this.markDirty()
+    }
     // M29 — table cell ids are encoded as `${tableId}#${r},${c}`. The
     // cell isn't a slide-object so we look up the table's container
     // and let `setTableCellFaded` resolve which HTMLText to fade by
@@ -649,7 +658,7 @@ export class SceneGraph {
         const yText = this._cellYTextForId(tableId, id.slice(hashIdx + 1))
         if (yText !== null) {
           setTableCellFaded(tableContainer, yText, faded)
-          this.markDirty()
+          dirty()
           return
         }
       }
@@ -664,7 +673,23 @@ export class SceneGraph {
       { alpha: number } | undefined
     if (textChild === undefined) return
     textChild.alpha = faded ? 0 : 1
-    this.markDirty()
+    dirty()
+  }
+
+  /**
+   * Run `fn` (synchronously) with every text that is being edited drawn: the
+   * contenteditable overlay is what the user sees meanwhile, the Pixi node is
+   * faded, and a picture of the slide taken then would miss that text.
+   */
+  withTextUnfaded<T>(fn: () => T): T {
+    if (this.fadedText.size === 0) return fn()
+    const ids = [...this.fadedText]
+    for (const id of ids) this.setTextNodeFaded(id, false, true)
+    try {
+      return fn()
+    } finally {
+      for (const id of ids) this.setTextNodeFaded(id, true, true)
+    }
   }
 
   /** Resolve a table cell's Y.Text from the current snapshot. Used

@@ -32,10 +32,12 @@
  *   // thumbnails.get(slideId) === 'data:image/png;base64,...' | undefined
  */
 
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback, useContext } from 'react'
 import { subscribeToDeckSlideEvents } from '@narrative/slide-model'
 import { yMapToPlainObject } from '@narrative/slide-model'
 import { createThumbnailRenderer } from '../renderer/thumbnails.js'
+import { captureLiveThumbnail } from '../renderer/liveThumbnail.js'
+import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { subscribeColourResolver, tokenColoursDiffer } from '../renderer/colourResolver.js'
 import type { ThumbnailRenderer } from '../renderer/thumbnails.js'
 import type { SlideMutationContext } from '@narrative/slide-model'
@@ -44,6 +46,7 @@ import { computeSlideNumber } from '@narrative/shared'
 import { useDeckCtx } from './useDeckCtx.js'
 import { decideThumbnailRetry, THUMBNAIL_RETRY_POLICY } from './thumbnailRetry.js'
 import { useSlides } from './useSlides.js'
+import { ActiveSlideContext } from './ActiveSlideContext.js'
 import type * as Y from 'yjs'
 
 // ---------------------------------------------------------------------------
@@ -160,6 +163,14 @@ const DEBOUNCE_MS = 500
 /** See the render queue in useSlideThumbnails. */
 type RenderPriority = 'urgent' | 'background'
 
+export interface UseSlideThumbnailsOptions {
+  /** Draw the active slide from the editor's canvas (the editor's slide panel). */
+  liveActiveSlide?: boolean
+}
+
+/** Thumbnail width in px — the renderer's and the live capture's. */
+const THUMBNAIL_WIDTH = 200
+
 /**
  * For a set of slide IDs, returns a Map<slideId, dataUrl> of current thumbnails.
  * Re-renders the thumbnail for a slide when that slide's objects change (debounced 500 ms).
@@ -167,8 +178,21 @@ type RenderPriority = 'urgent' | 'background'
  * @param slideIds Ordered list of slide IDs to track.
  * @returns Map<string, string> — entries for slides that have been rendered at least once.
  */
-export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string> {
+export function useSlideThumbnails(
+  slideIdsInput: string[],
+  options: UseSlideThumbnailsOptions = {},
+): Map<string, string> {
   const deckCtx = useDeckCtx()
+  // The slide on the editor's canvas is drawn from that canvas (renderer/liveThumbnail.ts)
+  // rather than built again in the thumbnail renderer — editor only: a presenting
+  // canvas shows animation states, not the slide.
+  const liveScene = useCanvasInstance()?.sceneGraph ?? null
+  // Not useActiveSlide(): the presenter overlay and the tests have no provider.
+  const activeSlideId = useContext(ActiveSlideContext)?.activeSlideId ?? null
+  const liveSceneRef = useRef(options.liveActiveSlide === true ? liveScene : null)
+  liveSceneRef.current = options.liveActiveSlide === true ? liveScene : null
+  const activeSlideIdRef = useRef(activeSlideId)
+  activeSlideIdRef.current = activeSlideId
   const allSlides = useSlides()
   const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map())
 
@@ -341,8 +365,24 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
     const id = slideId
     inFlightRef.current = id
 
-    renderer
-      .renderSlide(objects, background, slideNumber, surface)
+    const renderInRenderer = (): Promise<string> =>
+      renderer.renderSlide(objects, background, slideNumber, surface)
+    const live = liveSceneRef.current
+    // The slide on the editor's canvas costs a read-back of that canvas; any slide
+    // else (or a canvas that is not showing exactly this slide yet) the renderer's way.
+    const rendered: Promise<string> =
+      live !== null && id === activeSlideIdRef.current
+        ? captureLiveThumbnail(
+            live,
+            objects.map((o) => o.id),
+            THUMBNAIL_WIDTH,
+          ).then(
+            (url) => url ?? renderInRenderer(),
+            () => renderInRenderer(),
+          )
+        : renderInRenderer()
+
+    rendered
       .then((dataUrl) => {
         // The renderer works: whatever was parked while it did not gets
         // another go, with a fresh budget.
@@ -518,7 +558,7 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
     let startTimer = 0
     const start = (): void => {
       if (cancelled) return
-      createThumbnailRenderer({ width: 200, resolution: 1 })
+      createThumbnailRenderer({ width: THUMBNAIL_WIDTH, resolution: 1 })
         .then((renderer) => {
           if (cancelled) {
             renderer.destroy()

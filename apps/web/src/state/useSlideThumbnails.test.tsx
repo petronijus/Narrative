@@ -31,12 +31,14 @@ import type { SlideObject } from '@narrative/shared'
 // ---------------------------------------------------------------------------
 
 const {
+  mockCaptureLive,
   mockRenderSlide,
   mockRendererDestroy,
   mockThumbnailRenderer,
   slideSubscriptions,
   deckEvents,
 } = vi.hoisted(() => {
+  const mockCaptureLive = vi.fn()
   const mockRenderSlide = vi.fn()
   const mockRendererDestroy = vi.fn()
   const mockThumbnailRenderer = {
@@ -51,6 +53,7 @@ const {
   const deckEvents: { emit: ((ids: Set<string>) => void) | null } = { emit: null }
 
   return {
+    mockCaptureLive,
     mockRenderSlide,
     mockRendererDestroy,
     mockThumbnailRenderer,
@@ -65,6 +68,10 @@ const {
 
 vi.mock('../renderer/thumbnails.js', () => ({
   createThumbnailRenderer: vi.fn().mockResolvedValue(mockThumbnailRenderer),
+}))
+
+vi.mock('../renderer/liveThumbnail.js', () => ({
+  captureLiveThumbnail: mockCaptureLive,
 }))
 
 // ---------------------------------------------------------------------------
@@ -103,7 +110,10 @@ vi.mock('@narrative/slide-model', async (importOriginal) => {
 // Import hook under test (after mocks)
 // ---------------------------------------------------------------------------
 
-import { useSlideThumbnails } from './useSlideThumbnails.js'
+import { useSlideThumbnails, type UseSlideThumbnailsOptions } from './useSlideThumbnails.js'
+import { ActiveSlideContext } from './ActiveSlideContext.js'
+import { CanvasInstanceContext } from '../renderer/CanvasInstanceContext.js'
+import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -136,14 +146,16 @@ type SetterRef = { setSlides?: (ids: string[]) => void }
 function ThumbnailWrapper({
   initialSlideIds,
   setterRef,
+  options,
 }: {
   initialSlideIds: string[]
   setterRef: SetterRef
+  options?: UseSlideThumbnailsOptions | undefined
 }) {
   const [slideIds, setSlideIds] = useState(initialSlideIds)
   setterRef.setSlides = setSlideIds
 
-  const thumbnails = useSlideThumbnails(slideIds)
+  const thumbnails = useSlideThumbnails(slideIds, options)
   const asObj = Object.fromEntries(thumbnails)
 
   return <div data-testid="output" data-thumbnails={JSON.stringify(asObj)} />
@@ -455,5 +467,86 @@ describe('useSlideThumbnails — renders from the deck', () => {
     expect(mockRenderSlide).not.toHaveBeenCalled()
     await advance(500)
     expect(drawn()).toEqual([['a', 'b', 'c', 'd', 'e']])
+  })
+})
+
+describe("useSlideThumbnails — the slide on the editor's canvas", () => {
+  const scene = { id: 'scene' }
+  const LIVE_URL = 'data:image/png;base64,LIVE'
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    mockRenderSlide.mockReset()
+    mockRenderSlide.mockResolvedValue(STUB_URL_A)
+    mockCaptureLive.mockReset()
+    mockCaptureLive.mockResolvedValue(LIVE_URL)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function renderEditor(count: number, options: UseSlideThumbnailsOptions | undefined) {
+    const { doc, slides } = createSlideDoc()
+    const deckCtx = { doc, slides }
+    while (slides.length < count) addSlide(deckCtx)
+    const ids = Array.from({ length: count }, (_, i) => slides.get(i).get('id') as string)
+    const canvas = { sceneGraph: scene, compositor: {} } as unknown as CanvasInstance
+
+    render(
+      <SlideDocContext value={createMockSlideDocValue({ deckCtx })}>
+        <ActiveSlideContext value={{ activeSlideId: ids[0]!, setActiveSlideId: () => {} }}>
+          <CanvasInstanceContext value={canvas}>
+            <ThumbnailWrapper initialSlideIds={ids} setterRef={{}} options={options} />
+          </CanvasInstanceContext>
+        </ActiveSlideContext>
+      </SlideDocContext>,
+    )
+    const thumbnails = (): Record<string, string> =>
+      JSON.parse(
+        document.querySelector('[data-testid="output"]')?.getAttribute('data-thumbnails') ?? '{}',
+      ) as Record<string, string>
+    return { ids, thumbnails }
+  }
+
+  const advance = (ms: number) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(ms)
+    })
+
+  it('draws the active slide from the canvas and every other slide in the renderer', async () => {
+    const { ids, thumbnails } = renderEditor(2, { liveActiveSlide: true })
+    await advance(600)
+
+    expect(thumbnails()).toEqual({ [ids[0]!]: LIVE_URL, [ids[1]!]: STUB_URL_A })
+    expect(mockCaptureLive).toHaveBeenCalledTimes(1)
+    expect(mockCaptureLive).toHaveBeenCalledWith(scene, [], 200)
+    // Only the other slide went through the renderer.
+    expect(mockRenderSlide).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to the renderer when the canvas is not showing the slide yet', async () => {
+    mockCaptureLive.mockResolvedValue(null)
+    const { ids, thumbnails } = renderEditor(1, { liveActiveSlide: true })
+    await advance(600)
+
+    expect(thumbnails()).toEqual({ [ids[0]!]: STUB_URL_A })
+    expect(mockRenderSlide).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to the renderer when reading the canvas fails', async () => {
+    mockCaptureLive.mockRejectedValue(new Error('the WebGL context was lost'))
+    const { ids, thumbnails } = renderEditor(1, { liveActiveSlide: true })
+    await advance(600)
+
+    expect(thumbnails()).toEqual({ [ids[0]!]: STUB_URL_A })
+  })
+
+  it('never reads the canvas unless asked to (the presenter and the component editor)', async () => {
+    const { ids, thumbnails } = renderEditor(1, undefined)
+    await advance(600)
+
+    expect(mockCaptureLive).not.toHaveBeenCalled()
+    expect(thumbnails()).toEqual({ [ids[0]!]: STUB_URL_A })
   })
 })
