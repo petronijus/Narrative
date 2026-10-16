@@ -4,6 +4,18 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.14.0 — Emails for everything that concerns you (2026-10-16)
+
+### Added
+
+- **New emails**, all in the same look as the sharing email: you were made
+  an admin (or no longer are), you may now sign in, a new access token or
+  app was connected to your account (a security notice), a deck or folder
+  shared with you was deleted, your access was removed, the person you
+  invited joined, and an agent has waited two minutes for your approval.
+- **Administration → Emails**: every kind of email with who gets it, a
+  switch to turn it off for everyone, and a preview. All are on by default.
+
 ## 0.13.2 — One tagline (2026-10-16)
 
 ### Changed

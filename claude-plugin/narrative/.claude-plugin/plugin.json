@@ -1,6 +1,6 @@
 {
   "name": "narrative",
-  "version": "0.13.2",
+  "version": "0.14.0",
   "description": "Drive Narrative, a collaborative presentation editor, from Claude Code: the narrative skill teaches Claude how to read, edit, restyle, shorten and translate decks through the Narrative MCP server.",
   "author": { "name": "Petr Parkan Janda" },
   "keywords": ["narrative", "presentations", "decks", "mcp", "slides"]
