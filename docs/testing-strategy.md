@@ -427,7 +427,7 @@ All six items landed:
 2. ✅ **Destructive-flow e2e** — `apps/web/e2e/destructive-flows.spec.ts`. Five tests covering deck delete + share-link cascade, share-link revoke happy-path + IDOR-guard regression (Tier 1 fix), folder delete cascade, Drafts-folder protection.
 3. ✅ **Mutation-testing pilot** — Stryker config at `packages/slide-model/stryker.config.json`. Run via `just mutate` (from the repo root, see the config's `root_comment`). Targets `mutations.ts` + `slides.ts` (highest-stakes files). HTML report → `reports/mutation/`. Threshold guidance: high=80%, low=60%, no break-build (informational; surface dead tests rather than gate).
 4. ✅ **Multi-client e2e harness** — `apps/web/e2e/multi-client-collab.spec.ts`. Two scenarios: three browser contexts each adding slides + objects in parallel converge through real Hocuspocus sync; one context goes offline via `setOffline(true)`, peer makes changes, reconnect triggers Hocuspocus initial-sync handshake. Asserts deep-equal `listSlides()` snapshots across all contexts. The e2e analog to the unit-level CRDT property test from Tier B.1.
-5. ✅ **Lighthouse CI** — `.lighthouserc.json` + `pnpm lighthouse` script. Audits the editor route on a built preview server. Budgets: performance ≥ 0.7, FCP < 2.5s, LCP < 4s, TBT < 600ms, CLS < 0.1, TTI < 5s. Currently `warn`-level (not `error`) so it's informational; promote after one or two PR cycles confirm CI stability.
+5. ✅ **Lighthouse** — `just lighthouse` (`packages/perf/src/cli/lighthouse.ts`, 2026-10-18; it replaced `.lighthouserc.json`, which built without NODE_ENV=production, audited the login page of a backend-less preview and uploaded to public storage). A production build served by `vite preview` in front of the dev backend, Lighthouse's desktop preset on a seeded ten-slide deck's `/deck/:id`, five runs as the bench `deck.open.lighthouse`, compared with this machine's baseline: a regression beyond 10 % fails. Nothing is uploaded.
 
 ## Environment traps
 
@@ -487,10 +487,13 @@ in a container with a supported base image.
 
 A spec written to _measure_ production behaviour — not to assert a contract —
 stays out of the committed suite until it becomes an assertion.
-`apps/web/e2e/perf-heavy-slide.spec.ts` (opt-in, `PERF_PROBE=1`) is the
-current example. The zoom-text probe (`zoom-text-probe.spec.ts`: font faces,
-model-vs-measured text geometry and artboard screenshots across a
-renderer-resolution change, for the text-jump defect in
+The perf scenarios (`apps/web/e2e/perf/`, the old crowded-slide and
+zoom-drag probes) are the current example: benches of the performance
+harness that skip unless `just perf` runs them (`PERF_RUN=1`), in Playwright
+projects of their own ([`docs/plans/perf-harness.md`](./plans/perf-harness.md)).
+The zoom-text probe (`zoom-text-probe.spec.ts`: font faces, model-vs-measured
+text geometry and artboard screenshots across a renderer-resolution change,
+for the text-jump defect in
 [`docs/handoff/0.9.x-production-hardening.md`](./handoff/0.9.x-production-hardening.md))
 was deleted on 2026-10-18 with the `SceneGraph.forceTextResolutionRefresh`
 it drove, when a zoom's re-rasterisation became staged

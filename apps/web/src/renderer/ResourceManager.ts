@@ -17,6 +17,7 @@
  */
 
 import { trackRenderWork } from './renderWork.js'
+import { perfCount } from '@narrative/shared'
 import { Assets, Texture, type TextureSourceOptions } from 'pixi.js'
 
 interface TextureEntry {
@@ -279,6 +280,7 @@ export class ResourceManager {
   acquireProcedural(key: string, factory: () => Texture): Texture {
     const existing = this.procedural.get(key)
     if (existing !== undefined) {
+      perfCount('procedural.hit')
       existing.refCount += 1
       // LRU bump: re-insert at the end of iteration order.
       this.procedural.delete(key)
@@ -286,6 +288,7 @@ export class ResourceManager {
       return existing.texture
     }
 
+    perfCount('procedural.created')
     const texture = factory()
     this.procedural.set(key, { texture, refCount: 1 })
     this.evictProceduralIfNeeded()

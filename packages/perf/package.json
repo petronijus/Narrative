@@ -1,0 +1,26 @@
+{
+  "name": "@narrative/perf",
+  "version": "0.15.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./stats": "./src/stats.ts",
+    "./node": "./src/node/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc/tsbuildinfo",
+    "lint": "eslint --cache --cache-strategy content --cache-location node_modules/.cache/eslint/ src",
+    "test": "node ../../node_modules/vitest/vitest.mjs run",
+    "perf": "tsx src/cli/main.ts"
+  },
+  "dependencies": {
+    "@narrative/commands": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15",
+    "vitest": "^5.0.4"
+  }
+}

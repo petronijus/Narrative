@@ -26,8 +26,10 @@ import { SceneGraph } from './SceneGraph'
 import { ResourceManager, setDefaultResourceManager } from './ResourceManager'
 import { OverlayCompositor } from './overlay/OverlayCompositor'
 import { RenderScheduler, setDefaultRenderScheduler } from './RenderScheduler'
+import { pendingRenderWork } from './renderWork.js'
 import { installPixiBindGroupPatch } from './pixiBindGroupPatch.js'
 import { patchHTMLTextRace } from './patchHTMLTextRace.js'
+import { registerPerfCanvas, whenPerfHarnessReady } from '../perf/activation.js'
 import { destroyPixiApplication } from './pixiApplication.js'
 
 // Install the BindGroup crash workaround once at module load. See the
@@ -188,6 +190,10 @@ export function Canvas({
     setDefaultResourceManager(resourceManager)
 
     const initPixi = async () => {
+      // With `?perf=1` the harness chunk installs its GL counters before the
+      // context exists (perf/activation.ts); otherwise this resolves at once.
+      await whenPerfHarnessReady()
+      if (cancelled) return
       app = new Application()
 
       await app.init({
@@ -229,7 +235,7 @@ export function Canvas({
       // other's content (or a totally unrelated text node's content)
       // for a frame after any rasterise event. Must run AFTER
       // `app.init()` so `app.renderer.htmlText` exists.
-      patchHTMLTextRace(app.renderer, { wakeRenderScheduler: true })
+      patchHTMLTextRace(app.renderer, { wakeRenderScheduler: true, counters: 'text' })
 
       containerEl.appendChild(app.canvas)
 
@@ -269,6 +275,7 @@ export function Canvas({
       compositor.setRenderScheduler(scheduler)
 
       instanceRef.current = { app, sceneGraph, resourceManager, compositor, scheduler }
+      registerPerfCanvas({ app, sceneGraph, scheduler, pendingLoads: pendingRenderWork })
       markPixiReady()
       setPixiReady(true)
 
@@ -336,6 +343,7 @@ export function Canvas({
         // (e.g. VideoOverlay holds sceneGraph/compositor and would leak DOM
         // elements against a torn-down Pixi app otherwise).
         onReady?.(null)
+        registerPerfCanvas(null)
 
         // Stop the Pixi ticker FIRST so a rAF callback that's already
         // been scheduled for the next frame can't fire against our

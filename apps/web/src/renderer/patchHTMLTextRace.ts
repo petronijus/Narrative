@@ -45,6 +45,7 @@
  */
 
 import type { Renderer } from 'pixi.js'
+import { perfCount } from '@narrative/shared'
 import { markRenderDirty } from './RenderScheduler.js'
 
 const PATCHED = Symbol('narrativeHtmlTextPatched')
@@ -65,8 +66,16 @@ interface TextureLike {
 
 export function patchHTMLTextRace(
   renderer: Renderer,
-  opts: { wakeRenderScheduler: boolean } = { wakeRenderScheduler: false },
+  opts: {
+    wakeRenderScheduler: boolean
+    /** Prefix of the perf counters (docs/plans/perf-harness.md): `text` on the editor canvas, `thumb.text` offscreen. */
+    counters?: 'text' | 'thumb.text'
+  } = { wakeRenderScheduler: false },
 ): void {
+  const counters = opts.counters ?? 'thumb.text'
+  const started = `${counters}.raster.started`
+  const finished = `${counters}.raster.finished`
+  const kpx = `${counters}.raster.kpx`
   // TEMP: regression-test bypass — set window.__disableHtmlTextRacePatch
   // before app init to skip this patch and confirm the test catches
   // the underlying Pixi race. Production never sets this.
@@ -85,7 +94,9 @@ export function patchHTMLTextRace(
 
   const original = system._buildTexturePromise.bind(system)
   system._buildTexturePromise = async function (options: unknown): Promise<unknown> {
+    perfCount(started)
     const texture = (await original(options)) as TextureLike | undefined
+    perfCount(finished)
     if (texture === undefined || texture === null) return texture
     const src = texture.source
     if (src === undefined || src === null) return texture
@@ -96,6 +107,7 @@ export function patchHTMLTextRace(
     const w = resource.naturalWidth
     const h = resource.naturalHeight
     if (w === 0 || h === 0) return texture
+    perfCount(kpx, Math.round((w * h) / 1000))
 
     // Detach: copy the pooled <img>'s pixels to an independent
     // <canvas> and rebind the texture to it. The canvas is held only

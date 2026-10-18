@@ -53,7 +53,8 @@ blocker with the fix it printed; never report a suite green that did not run.
   Poll the condition (`expect.poll`, `toPass`) instead of `waitForTimeout`.
 - A spec that measures rather than asserts is a diagnostic probe: label it
   `TEMPORARY diagnostic probe` with a date in its header, and delete it once it
-  has answered its question.
+  has answered its question. Recurring measurements belong in the performance
+  harness instead (`packages/perf`, `docs/plans/perf-harness.md`).
 - Name tests as sentences about behaviour; one behaviour per test. What not
   to test is in AGENTS.md → "What not to test".
 

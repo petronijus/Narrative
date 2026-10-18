@@ -1,0 +1,14 @@
+{
+  "format": 1,
+  "id": "editor.idle.crowded",
+  "counters": {
+    "gl.texUpload": 0,
+    "net.requests": 0,
+    "sg.mount": 0,
+    "sg.update": 0,
+    "text.raster.started": 0,
+    "thumb.render": 0,
+    "y.listSlides": 0,
+    "y.tx.local": 0
+  }
+}

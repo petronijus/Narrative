@@ -16,7 +16,7 @@
  */
 
 import * as Y from 'yjs'
-import type { SlideObject, AnimationStep } from '@narrative/shared'
+import { perfCount, type SlideObject, type AnimationStep } from '@narrative/shared'
 import { yMapToPlainObject } from './bindings.js'
 import { yMapToAnimationStep } from './animationBindings.js'
 import type { SlideMutationContext } from './slides.js'
@@ -127,6 +127,7 @@ export function subscribeToSlides(
   // observeDeep catches slide array changes AND nested transition map changes.
   // The observer no longer emits directly — it just schedules a coalesced flush.
   const observer = (): void => {
+    perfCount('y.observeDeep.slides')
     if (unsubscribed) return
     scheduleFlush()
   }
@@ -309,6 +310,7 @@ export function subscribeToSlideObjectsWithFlush(
       return
     }
     if (dispatching) return
+    perfCount('y.slideObjects.flush')
     dispatching = true
 
     const batchToProcess = pending
@@ -433,6 +435,7 @@ export function subscribeToSlideObjectsWithFlush(
   }
 
   const observer = (events: Y.YEvent<Y.AbstractType<unknown>>[]): void => {
+    perfCount('y.observeDeep.slideObjects')
     if (unsubscribed) return
     for (const event of events) {
       if (event.target === objectsArr) {
@@ -630,6 +633,7 @@ export function subscribeToDeckSlideEvents(
   }
 
   const observer = (events: Y.YEvent<Y.AbstractType<unknown>>[]): void => {
+    perfCount('y.observeDeep.deckSlideEvents')
     if (unsubscribed) return
 
     let arrayChanged = false
@@ -715,6 +719,7 @@ export function subscribeToSlideAnimations(
   }
 
   const observer = (): void => {
+    perfCount('y.observeDeep.animations')
     if (unsubscribed) return
     callback(getSnapshot())
   }

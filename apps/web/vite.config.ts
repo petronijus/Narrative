@@ -67,6 +67,15 @@ function emitVersionJson(version: string): PluginOption {
  */
 const BUILD_VERSION = process.env['VITE_BUILD_VERSION'] ?? resolveBuildVersion()
 
+/**
+ * `vite build --mode profiling` (docs/plans/perf-harness.md → Decisions): a
+ * production build whose React records render timings (`react-dom/profiling`)
+ * and whose functions keep their names, so the perf harness's per-component
+ * render counts and a CPU profile read like the source. `just perf --mode
+ * profiling` builds it with NODE_ENV=production into its own outDir.
+ */
+const PROFILING_MODE = 'profiling'
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   // Load .env from the monorepo root so one .env feeds both apps/server
@@ -87,6 +96,7 @@ export default defineConfig(({ mode }) => ({
       '@narrative/commands': path.resolve(__dirname, '../../packages/commands/src/index.ts'),
       '@narrative/shared': path.resolve(__dirname, '../../packages/shared/src/index.ts'),
       '@narrative/slide-model': path.resolve(__dirname, '../../packages/slide-model/src/index.ts'),
+      ...(mode === PROFILING_MODE ? { 'react-dom/client': 'react-dom/profiling' } : {}),
       // P1 visual foundation — shadcn/ui convention (components import via `@/lib/utils` etc.)
       '@': path.resolve(__dirname, './src'),
     },
@@ -113,6 +123,37 @@ export default defineConfig(({ mode }) => ({
       },
     },
   },
+  // `vite preview` of a production build (`just perf --mode prod|profiling`,
+  // `just lighthouse`): the routes of production's Caddyfile in front of the
+  // dev backend — the build is made with VITE_API_URL=/api and
+  // VITE_HOCUSPOCUS_URL=/ws, as production's is, so the page talks to its own
+  // origin on any port and needs no CORS entry.
+  preview: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api/, ''),
+        headers: { 'X-Forwarded-Prefix': '/api' },
+      },
+      '/ws': {
+        target: 'ws://localhost:3002',
+        ws: true,
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/ws/, ''),
+      },
+      '/imgproxy': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/imgproxy/, ''),
+      },
+      '/storage': {
+        target: `http://localhost:${process.env['MINIO_API_PORT'] ?? '9100'}`,
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/storage/, ''),
+      },
+    },
+  },
   // top-level await vyžaduje esnext target (Spike A nález: Pixi v8 app.init() je async)
   build: {
     target: 'esnext',
@@ -123,6 +164,7 @@ export default defineConfig(({ mode }) => ({
     chunkSizeWarningLimit: 800,
     rolldownOptions: {
       output: {
+        ...(mode === PROFILING_MODE ? { keepNames: true } : {}),
         // Vendor splitting: Pixi, GSAP, Tiptap+ProseMirror, Yjs, Radix,
         // Sentry, React all into their own chunks so the initial download is
         // smaller and a change to any one of them doesn't bust the app cache

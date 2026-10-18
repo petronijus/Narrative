@@ -1,0 +1,15 @@
+{
+  "format": 1,
+  "id": "slide.switch.100",
+  "counters": {
+    "net.requests": 0,
+    "sg.destroy": 24,
+    "sg.mount": 24,
+    "text.measure.bounds": 12,
+    "text.raster.kpx": 936,
+    "text.raster.started": 12,
+    "thumb.render": 0,
+    "y.listSlides": 0,
+    "y.tx.local": 0
+  }
+}

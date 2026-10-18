@@ -43,7 +43,7 @@ import { applyBackground } from './ArtboardBackground.js'
 import { getDefaultImageUrlResolver } from './imageUrl.js'
 import { patchHTMLTextRace } from './patchHTMLTextRace.js'
 import { destroyPixiApplication } from './pixiApplication.js'
-import { DEFAULT_BACKGROUND } from '@narrative/shared'
+import { DEFAULT_BACKGROUND, perfCount } from '@narrative/shared'
 import type { SlideBackground, SlideObject } from '@narrative/shared'
 import { setRenderingSlideNumber } from './slideNumberContext.js'
 import { withRenderingSurface } from './colourResolver.js'
@@ -406,6 +406,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
             return
           }
           try {
+            perfCount('thumb.render')
             return renderSlideInternal(objects, background, slideNumber, surface).then(
               resolveRender,
               rejectRender,

@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "id": "transform.move.multi",
+  "counters": {
+    "gl.texUpload": 0,
+    "procedural.created": 0,
+    "sg.destroy": 0,
+    "sg.mount": 0,
+    "sg.update": 1800,
+    "text.autofit.measure": 0,
+    "text.raster.kpx": 0,
+    "text.raster.started": 0,
+    "y.listSlides": 450,
+    "y.listSlides.objects": 100350,
+    "y.observeDeep.slideObjects": 1080,
+    "y.slideObjects.flush": 1080,
+    "y.tx.local": 90
+  }
+}

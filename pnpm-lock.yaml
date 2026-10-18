@@ -263,6 +263,9 @@ importers:
         specifier: ^8.22.0
         version: 8.22.0
     devDependencies:
+      '@narrative/perf':
+        specifier: workspace:*
+        version: link:../../packages/perf
       '@types/node':
         specifier: ^24.19.2
         version: 24.19.2
@@ -381,6 +384,9 @@ importers:
       '@hocuspocus/provider':
         specifier: ^4.7.1
         version: 4.7.1(y-protocols@1.0.7(yjs@13.6.33))(yjs@13.6.33)
+      '@narrative/perf':
+        specifier: workspace:*
+        version: link:../../packages/perf
       '@types/jsdom':
         specifier: ^28.0.3
         version: 28.0.3
@@ -433,6 +439,9 @@ importers:
         specifier: ^10.4.0
         version: 10.4.0
     devDependencies:
+      '@narrative/perf':
+        specifier: workspace:*
+        version: link:../../packages/perf
       '@types/node':
         specifier: ^24.19.2
         version: 24.19.2
@@ -560,6 +569,9 @@ importers:
         specifier: ^13.6.33
         version: 13.6.33
     devDependencies:
+      '@narrative/perf':
+        specifier: workspace:*
+        version: link:../../packages/perf
       '@playwright/test':
         specifier: ^1.64.0
         version: 1.64.0
@@ -667,6 +679,19 @@ importers:
       prettier:
         specifier: ^3.9.10
         version: 3.9.10
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
+      vitest:
+        specifier: ^5.0.4
+        version: 5.0.4(@opentelemetry/api@1.9.1)(@types/node@24.19.2)(jsdom@30.1.2(@noble/hashes@1.8.0))(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/perf:
+    dependencies:
+      '@narrative/commands':
+        specifier: workspace:*
+        version: link:../commands
+    devDependencies:
       tsx:
         specifier: ^4.23.15
         version: 4.23.15

@@ -6,7 +6,8 @@ text boxes, pictures and shapes (and slowest on the MacBook).
 
 ## What was measured
 
-`apps/web/e2e/perf-heavy-slide.spec.ts` (opt-in, `PERF_PROBE=1`): a slide of
+The crowded-slide probe (then `perf-heavy-slide.spec.ts`, since
+2026-10-18 the benches of `apps/web/e2e/perf/crowded-slide.spec.ts`): a slide of
 120 texts, 40 pictures (6 photos of 3200×2133) and 60 rectangles, driven by
 real pointer and key events. It records frame times, WebGL work (draw calls,
 texture uploads), main-thread time by CDP, the self time of the hottest
@@ -14,9 +15,8 @@ functions, React commits and renders per component, and the long tasks that
 follow a gesture. Run it with the machine's GPU:
 
 ```
-PERF_PROBE=1 PERF_GPU=1 [PERF_REACT=1] [PERF_ONLY=drag-rect,zoom-wheel] \
-  [PERF_TEXTS=120 PERF_IMAGES=40 PERF_RECTS=60] \
-  just e2e --project=serial --no-deps e2e/perf-heavy-slide.spec.ts
+just perf transform.move.rect viewport.zoom.wheel --mode dev
+# PERF_TEXTS=120 PERF_IMAGES=40 PERF_RECTS=60 change the scene (printed, not stored)
 ```
 
 Measured 2026-10-16 on the Linux desktop (RTX 5090, 1× DPR), against the Vite

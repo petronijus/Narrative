@@ -16,7 +16,7 @@
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
     "size": "pnpm --filter web build && pnpm --filter web size",
-    "lighthouse": "pnpm --filter web build && lhci autorun --config=.lighthouserc.json",
+    "lighthouse": "pnpm --silent --filter @narrative/perf run perf lighthouse",
     "format": "tools/dev/format.sh --all",
     "capabilities": "pnpm --filter @narrative/commands capabilities",
     "load:all": "node tests/load/runAll.mjs",

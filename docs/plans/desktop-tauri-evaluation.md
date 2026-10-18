@@ -104,7 +104,9 @@ The prototype signs in against production (0.15.0) — the whole system-browser
 flow works on macOS. But the editor is **very slow** there: zoom is not
 smooth at all, dragging stutters. Petr's first impression; not measured yet.
 
-On Linux, `e2e/perf-zoom-drag.spec.ts` (opt-in, `PERF_PROBE=1`) measured
+On Linux, the zoom-drag probe (since 2026-10-18 the benches
+`viewport.zoom.wheel.light` / `transform.move.rect.light` of
+`e2e/perf/light-slide.spec.ts`) measured
 the zoom gesture: frames over 50 ms 25 of 66 in WebKit, 6 of 139 in
 Chromium (p90 130 ms vs 50 ms). The drag numbers there say little (both
 engines draw in software in that setup, and Playwright paces the moves).
@@ -114,8 +116,8 @@ Open, on the Mac:
 1. The same deck in **Safari**: as slow? Then it is the editor in WebKit,
    not Tauri — fixable in the editor, and it would help Safari users too.
    As smooth as Chrome? Then it is Tauri's WKWebView setup.
-2. `PERF_PROBE=1 just e2e-webkit e2e/perf-zoom-drag.spec.ts` (native WebKit
-   on macOS) against `PERF_PROBE=1 just e2e e2e/perf-zoom-drag.spec.ts`.
+2. `just perf viewport.zoom.wheel.light --browser webkit` (native WebKit on
+   macOS, Low Power Mode off) against the same without `--browser`.
 3. Safari Web Inspector → Timelines while zooming and dragging: whether the
    time goes to JavaScript (React re-renders, text rasterisation — Pixi's
    HTMLText rasterises through SVG, which is slow in Safari), layout or

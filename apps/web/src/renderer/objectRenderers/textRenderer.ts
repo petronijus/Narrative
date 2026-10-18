@@ -31,6 +31,7 @@
 // Must run before any HTMLText is measured: scopes the CSS Pixi injects into
 // document.body during measurement so it cannot restyle the rest of the page.
 import '../pixiHtmlTextStyleScope.js'
+import '../htmlTextMeasureCounter.js'
 import { CanvasTextMetrics, Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
 import type { TextStyle } from 'pixi.js'
 import {

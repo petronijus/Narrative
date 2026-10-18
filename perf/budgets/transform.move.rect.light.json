@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "id": "transform.move.rect.light",
+  "counters": {
+    "gl.texUpload": 0,
+    "procedural.created": 0,
+    "sg.destroy": 0,
+    "sg.mount": 0,
+    "sg.update": 60,
+    "text.autofit.measure": 0,
+    "text.raster.kpx": 0,
+    "text.raster.started": 0,
+    "y.listSlides": 360,
+    "y.listSlides.objects": 4680,
+    "y.observeDeep.slideObjects": 660,
+    "y.slideObjects.flush": 660,
+    "y.tx.local": 60
+  }
+}

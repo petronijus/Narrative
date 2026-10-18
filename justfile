@@ -105,9 +105,9 @@ capabilities-check:
 
 # ── full gate ────────────────────────────────────────────────────────────
 
-# Everything that needs no paid service: fast lane, stores against Postgres, e2e (needs `just dev`).
+# Everything that needs no paid service: fast lane, stores against Postgres, e2e, the perf counter gate (needs `just dev`).
 # `size`, `eval`, `load`, `lighthouse` run when a change calls for them (AGENTS.md → When to run what).
-ci: check integration e2e
+ci: check integration e2e perf-gate
 
 # Drizzle stores and migrations against the dev Postgres (writes rows there)
 integration: _services
@@ -131,7 +131,7 @@ e2e-webkit *args: _stack
     fi
     version="$(node -p "require('./node_modules/@playwright/test/package.json').version")"
     exec docker run --rm --network host --ipc host --user "$(id -u):$(id -g)" \
-      -e HOME=/tmp -e PW_WEBKIT=1 -e CI= -e PERF_PROBE -v "$PWD:$PWD" -w "$PWD/apps/web" \
+      -e HOME=/tmp -e PW_WEBKIT=1 -e CI= -e PERF_RUN -e PERF_IDS -e PERF_MODE -e PERF_SIDES -e PERF_RUNS -e PERF_WARMUP -v "$PWD:$PWD" -w "$PWD/apps/web" \
       "mcr.microsoft.com/playwright:v$version-noble" \
       node ../../node_modules/@playwright/test/cli.js test --project=webkit "$@"
 
@@ -160,9 +160,56 @@ eval *args: _stack
 load:
     pnpm load:all
 
-# Core Web Vitals of the built preview
-lighthouse:
-    pnpm lighthouse
+# Lighthouse (desktop) on a seeded deck's /deck/:id of a production build in front of the dev backend, 5 runs,
+# compared with this machine's baseline: a regression fails (bench deck.open.lighthouse; nothing is uploaded)
+lighthouse *args: _stack
+    pnpm --silent --filter @narrative/perf run perf lighthouse "$@"
+
+# Performance harness, layer C (packages/perf, docs/plans/perf-harness.md): the coverage guard, the committed budgets
+# against the benches, and each budget against this machine's latest measured counters
+perf-counters:
+    pnpm --silent --filter @narrative/perf run perf counters
+
+# Benches against this machine's baselines (packages/perf, docs/plans/perf-harness.md): `just perf [ids…] [--mode
+# prod (default)|dev|profiling] [--layer I|C] [--runs N] [--browser webkit] [--swiftshader]`; prod and profiling build into
+# apps/web/dist-perf-<mode> and serve it with `vite preview` in front of the dev backend
+perf *args: _stack
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(tools/dev/playwright-env.sh)"
+    exec pnpm --silent --filter @narrative/perf run perf run "$@"
+
+# Two revisions (`.` = the working tree) built in worktrees, run interleaved ABAB, verdicts with CIs and counter diffs
+perf-compare revA revB *ids: _stack
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(tools/dev/playwright-env.sh)"
+    exec pnpm --silent --filter @narrative/perf run perf compare "$@"
+
+# The first commit in good..bad whose bench regresses against good (perf-compare as the predicate; no git bisect here)
+perf-bisect id good bad: _stack
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(tools/dev/playwright-env.sh)"
+    exec pnpm --silent --filter @narrative/perf run perf bisect "$@"
+
+# One run of a bench with a CPU profile (CDP), profiling build by default; the .cpuprofile goes next to the results
+perf-profile id *args: _stack
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(tools/dev/playwright-env.sh)"
+    exec pnpm --silent --filter @narrative/perf run perf profile "$@"
+
+# The counter gate of `just ci` (layer C): every bench with work counters, twice, in dev, then the budgets. Not in
+# `just check`: the scenarios need the dev stack and take minutes (docs/plans/perf-harness.md → Log)
+perf-gate: _stack
+    just perf --layer C
+    just perf-counters
+
+# The latest result of each named bench on this machine becomes its counter budget (perf/budgets/, committed: the diff
+# is the review) and its baseline (~/.cache/narrative-perf/<machine>/baselines.json)
+perf-accept +ids:
+    pnpm --silent --filter @narrative/perf run perf accept "$@"
 
 # Stryker mutation run on slide-model (slow; AGENTS.md has its state)
 mutate:

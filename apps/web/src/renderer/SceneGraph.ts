@@ -28,6 +28,7 @@
  */
 
 import { Container, Point } from 'pixi.js'
+import { perfCount, perfCountFor } from '@narrative/shared'
 import type { Application } from 'pixi.js'
 import * as Y from 'yjs'
 import { getRenderer } from './objectRenderers'
@@ -391,6 +392,7 @@ export class SceneGraph {
       return
     }
 
+    perfCountFor('sg.mount', data.type)
     const container = renderer.mount(data)
     this.root.addChild(container)
     const node = { container, data }
@@ -417,6 +419,7 @@ export class SceneGraph {
       return
     }
 
+    perfCountFor('sg.update', next.type)
     renderer.update(node.container, node.data, next)
     node.data = next
     this.applyOutsideFade(node)
@@ -431,6 +434,7 @@ export class SceneGraph {
     if (node === undefined) return
 
     const renderer = getRenderer(node.data.type)
+    perfCountFor('sg.destroy', node.data.type)
     renderer?.destroy(node.container)
 
     if (!node.container.destroyed) {
@@ -534,6 +538,7 @@ export class SceneGraph {
         continue
       }
 
+      perfCountFor('sg.update', type)
       if (renderer.applyPatch !== undefined) {
         // Chirurgický patch — renderer ví co se přesně změnilo
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- patch je Partial<SlideObject>, renderer akceptuje Partial<T extends SlideObject>
@@ -965,6 +970,8 @@ export class SceneGraph {
     this.forEachText((text, ownerId) => {
       if (!text._autoResolution && text._resolution !== resolution) texts.push({ text, ownerId })
     })
+    perfCount('text.restage')
+    perfCount('text.restage.texts', texts.length)
     // The canvas was just resized (its backbuffer is empty): draw it again
     // even when no text needs a new raster.
     this.markDirty()

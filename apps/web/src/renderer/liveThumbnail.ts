@@ -15,6 +15,7 @@
  * `null`, and the caller renders the slide the slow way.
  */
 
+import { perfCount } from '@narrative/shared'
 import { SLIDE_WIDTH } from './constants.js'
 import { captureSlideCanvas } from './captureSlide.js'
 import { getDefaultRenderScheduler } from './RenderScheduler.js'
@@ -39,7 +40,10 @@ export async function captureLiveThumbnail(
     renderNow: () => getDefaultRenderScheduler()?.renderNow(),
     timeoutMs: SETTLE_TIMEOUT_MS,
   })
-  if (!settled.settled) return null
+  if (!settled.settled) {
+    perfCount('thumb.live.unsettled')
+    return null
+  }
 
   // The canvas may still hold the previous slide's extra objects (settle only
   // asks for the expected ones to be present).
@@ -48,6 +52,7 @@ export async function captureLiveThumbnail(
   const have = new Set(mounted)
   if (!expectedIds.every((id) => have.has(id))) return null
 
+  perfCount('thumb.live')
   const canvas = scene.withTextUnfaded(() => captureSlideCanvas(scene, width / SLIDE_WIDTH))
   return 'toDataURL' in canvas ? canvas.toDataURL('image/png') : null
 }

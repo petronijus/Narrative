@@ -55,7 +55,12 @@ while IFS= read -r f; do
       fi
       add_dir "$dir"
       [[ "$dir" == packages/* ]] && manifest=1
+      # The perf coverage guard reads the action catalog by path (an app is
+      # not a dependency of a package, so pnpm's dependents miss it).
+      [[ "$f" == apps/web/src/actions/catalog.ts ]] && add_dir packages/perf
       ;;
+    # The committed counter budgets are checked by the perf package's tests.
+    perf/budgets/*) add_dir packages/perf ;;
     # The eval recordings are replayed by the commands package's tests.
     tests/agent-eval/*)
       add_dir packages/commands

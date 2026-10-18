@@ -182,3 +182,13 @@ export {
   scrubString,
   scrubTelemetryPayload,
 } from './telemetryScrub.js'
+export {
+  PERF_COUNTS_KEY,
+  perfCount,
+  perfCountFor,
+  perfCountersOn,
+  readPerfCounters,
+  resetPerfCounters,
+  startPerfCounters,
+  stopPerfCounters,
+} from './perfCounters.js'

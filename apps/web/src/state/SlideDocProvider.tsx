@@ -56,7 +56,7 @@ import { HocuspocusProvider } from '@hocuspocus/provider'
 import { Awareness } from 'y-protocols/awareness'
 import { createUndoManager, generatePeerId, hydrateSlideDoc } from '@narrative/slide-model'
 import type { SlideMutationContext } from '@narrative/slide-model'
-import { parseAgentPrincipalMessage } from '@narrative/shared'
+import { parseAgentPrincipalMessage, perfCount, perfCountersOn } from '@narrative/shared'
 import type { PeerAwarenessState, PeerUser } from '@narrative/shared'
 import { localPeerUser, restoredLocalState } from './localAwarenessState.js'
 import { AgentPrincipalStoreContext, createAgentPrincipalStore } from './agentPrincipal.js'
@@ -259,6 +259,13 @@ function HocuspocusSlideProvider({
     }
 
     const doc = new Y.Doc()
+    // Perf harness (docs/plans/perf-harness.md): the deck's transactions, ours
+    // and the server's. Attached only when counting is on (dev, `?perf=1`).
+    if (perfCountersOn()) {
+      doc.on('afterTransaction', (tr: Y.Transaction) =>
+        perfCount(tr.local ? 'y.tx.local' : 'y.tx.remote'),
+      )
+    }
     // A new document has not heard from the server yet.
     setSynced(false)
     setRefused(false)

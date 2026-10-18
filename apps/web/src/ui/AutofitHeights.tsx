@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useLayoutEffect, useRef } from 'react'
+import { perfCount } from '@narrative/shared'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useCommand } from '../state/useCommand.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
@@ -26,7 +27,10 @@ export function AutofitHeights(): null {
   useEffect(() => {
     if (role === 'viewer') return
     return watchAutofitHeights(deckCtx.doc, {
-      measure: (data) => measureTextBoxLayout(data).height,
+      measure: (data) => {
+        perfCount('text.autofit.measure')
+        return measureTextBoxLayout(data).height
+      },
       write: (slide, object, height) => {
         commandRef.current.tryRun('object.update', { slide, object, patch: { height } })
       },

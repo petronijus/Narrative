@@ -62,20 +62,22 @@ the desktop app (Electron, offline work) in `docs/plans/desktop-app.md`
 wrap the pnpm scripts and add what the machine needs (the tsx loader for
 ESLint on Ubuntu's Node, the system Chrome for Playwright on Ubuntu 26.04).
 
-| Command                                  | What it does                                                                                                                      |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `just setup`                             | install dependencies and git hooks, check the toolchain                                                                           |
-| `just check`                             | fast lane (~40 s): formatting, types, lint, docs check, every unit test (contract, parity, eval replays), the capability manifest |
-| `just ci`                                | full gate: `check` + `integration` + `e2e` (needs `just dev`)                                                                     |
-| `just fmt`                               | format everything (`tools/dev/format.sh`: ESLint --fix + Prettier)                                                                |
-| `just test [pkg…]`                       | unit tests, all or some workspace packages (`just test server web`)                                                               |
-| `just services` / `just dev`             | docker services / web :5173 + server :3001 (WebSocket :3002) + video worker                                                       |
-| `just e2e [args]`                        | Playwright against the dev stack (`just e2e -g "folder-tokens"`)                                                                  |
-| `just e2e-affected [--list]`             | the e2e specs the current change needs (the table below, as `tools/dev/e2e-affected.py`)                                          |
-| `just e2e-smoke`                         | five specs (~10 s): the app boots, paints, presents and opens a share link                                                        |
-| `just eval [args]`                       | agent eval, headless Claude Code — costs subscription usage                                                                       |
-| `just capabilities`                      | regenerate the capability manifest and the Claude Code plugin                                                                     |
-| `just bump X.Y.Z` / `just deploy vX.Y.Z` | release versions / images, the tagged tree to the VM, deploy, verify (`docs/deploy.md`)                                           |
+| Command                                          | What it does                                                                                                                                                                              |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `just setup`                                     | install dependencies and git hooks, check the toolchain                                                                                                                                   |
+| `just check`                                     | fast lane (~40 s): formatting, types, lint, docs check, every unit test (contract, parity, eval replays), the capability manifest                                                         |
+| `just ci`                                        | full gate: `check` + `integration` + `e2e` + `perf-gate` (the counter budgets; needs `just dev`)                                                                                          |
+| `just fmt`                                       | format everything (`tools/dev/format.sh`: ESLint --fix + Prettier)                                                                                                                        |
+| `just test [pkg…]`                               | unit tests, all or some workspace packages (`just test server web`)                                                                                                                       |
+| `just services` / `just dev`                     | docker services / web :5173 + server :3001 (WebSocket :3002) + video worker                                                                                                               |
+| `just e2e [args]`                                | Playwright against the dev stack (`just e2e -g "folder-tokens"`)                                                                                                                          |
+| `just e2e-affected [--list]`                     | the e2e specs the current change needs (the table below, as `tools/dev/e2e-affected.py`)                                                                                                  |
+| `just e2e-smoke`                                 | five specs (~10 s): the app boots, paints, presents and opens a share link                                                                                                                |
+| `just perf-counters` / `just perf-accept <id…>`  | perf harness: coverage guard and counter budgets / accept a bench's latest result as its budget and baseline (`docs/plans/perf-harness.md`)                                               |
+| `just perf [ids…] [--mode prod\|dev\|profiling]` | perf benches (`apps/web/e2e/perf`) vs this machine's baseline; `just perf-compare A B` interleaves two revisions, `just perf-profile <id>` adds a CPU profile (`packages/perf/README.md`) |
+| `just eval [args]`                               | agent eval, headless Claude Code — costs subscription usage                                                                                                                               |
+| `just capabilities`                              | regenerate the capability manifest and the Claude Code plugin                                                                                                                             |
+| `just bump X.Y.Z` / `just deploy vX.Y.Z`         | release versions / images, the tagged tree to the VM, deploy, verify (`docs/deploy.md`)                                                                                                   |
 
 There is no hosted CI. `just ci` is the CI, run on the Linux desktop, the
 MacBook or the Omarchy desktop; nothing gates a push but the pre-push hook
@@ -98,7 +100,7 @@ below that match it.
 | `apps/desktop/**`, `apps/web/src/desktop/**`, `packages/shared/src/desktop.ts`                                                        | `just test desktop web`; packaging, protocol, update or fuse changes: `just desktop-dist` and the per-OS checks in `docs/desktop.md`                                          |
 | Bundle entry points, dynamic imports, vendor chunks                                                                                   | `just size` (Tiptap chunk 135.43 of 137 kB gz on 2026-10-14 — Tiptap 3.32 and its y-tiptap binding 3.0.10 grew it; first paint fell 737 → 615 kB the same day; grow no chunk) |
 | Hot edit / awareness / doc-growth paths                                                                                               | `just load` (warns on > 20% drift from a local `baselines.json`, copied from `tests/load/baselines.example.json` after a clean run)                                           |
-| Editor render path (FCP / LCP / TTI)                                                                                                  | `just lighthouse`                                                                                                                                                             |
+| Editor render path (FCP / LCP / TTI), drag/zoom/typing cost                                                                           | `just lighthouse`, `just perf <ids>` (prod), `just perf-compare main .`                                                                                                       |
 | `packages/slide-model/src/{mutations,slides}.ts` deep changes                                                                         | `just mutate` (~2 min; 49% on 2026-10-14: `mutations.ts` 65%, `slides.ts` 26%) — informational, never gating                                                                  |
 
 Run as few e2e specs as the change needs: `just e2e-affected` while
@@ -150,6 +152,8 @@ packages/shared     object types and zod schemas
 packages/slide-model  Yjs document model and writers
 packages/commands   command registry, parity guards, playbooks, capability manifest
 packages/animation  animation DSL and GSAP compiler
+packages/perf       performance harness: benches, stats, fingerprints, result store, coverage guard
+perf/budgets/       committed counter budgets of the perf harness (layer C)
 claude-plugin/      the generated `narrative` Claude Code plugin
 tests/              agent eval (agent-eval/), load tests, fixtures
 infra/              docker compose, deploy and build scripts

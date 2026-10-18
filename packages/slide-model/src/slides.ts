@@ -17,6 +17,8 @@ import {
   type Archetype,
   type SlideBrief,
   type SlideClaim,
+  perfCount,
+  perfCountersOn,
 } from '@narrative/shared'
 import type {
   Slide,
@@ -614,6 +616,14 @@ export function listSlides(ctx: SlideMutationContext): Slide[] {
   const result: Slide[] = []
   for (let i = 0; i < ctx.slides.length; i++) {
     result.push(yMapToSlide(ctx.slides.get(i)))
+  }
+  // Perf harness (docs/plans/perf-harness.md): every call deep-copies the
+  // deck — how often, and how many objects it converts, is the E1 number.
+  if (perfCountersOn()) {
+    perfCount('y.listSlides')
+    let objects = 0
+    for (const slide of result) objects += slide.objects.length
+    perfCount('y.listSlides.objects', objects)
   }
   return result
 }

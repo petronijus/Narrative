@@ -46,6 +46,40 @@ const chrome = {
       : {}),
 }
 
+/**
+ * The origin the specs open. The Vite dev server by default; `just perf
+ * --mode prod|profiling` points it at a `vite preview` of a production build
+ * on a free port (the preview reuses the dev server's proxies, so the build
+ * talks to the same dev backend), and `just perf-compare` at each side's.
+ */
+const BASE_URL = process.env['PW_BASE_URL'] || 'http://localhost:5173'
+
+const DESKTOP = [/desktop-.*\.spec\.ts$/, /desktop\.setup\.ts$/]
+
+/**
+ * The layer I perf scenarios (e2e/perf/, docs/plans/perf-harness.md) run in
+ * projects of their own, one at a time, and only when `just perf` asks
+ * (PERF_RUN=1; they skip otherwise).
+ */
+const PERF = /[\\/]e2e[\\/]perf[\\/]/
+const PERF_SPECS = /[\\/]e2e[\\/]perf[\\/][^\\/]+\.spec\.ts$/
+
+const webkit = {
+  ...devices['Desktop Safari'],
+  // The Chromium run is at 1×; compare the engines, not the
+  // screens (Safari's profile emulates a 2× Retina display).
+  deviceScaleFactor: 1,
+  // Safari's user agent names a Mac, so the editor would take ⌘
+  // as Mod while Playwright's ControlOrMeta sends Ctrl on a
+  // Linux host. Off a Mac, WebKit says where it really runs.
+  ...(os.platform() === 'darwin'
+    ? {}
+    : {
+        userAgent:
+          'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Safari/605.1.15',
+      }),
+}
+
 export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
@@ -54,7 +88,7 @@ export default defineConfig({
   workers: WORKERS,
   reporter: [['list']],
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: BASE_URL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     // Video recording requires Playwright's bundled ffmpeg. On unsupported OS
@@ -65,13 +99,13 @@ export default defineConfig({
     {
       name: 'chromium',
       grepInvert: /@serial/,
-      testIgnore: [/desktop-.*\.spec\.ts$/, /desktop\.setup\.ts$/],
+      testIgnore: [...DESKTOP, PERF],
       use: chrome,
     },
     {
       name: 'serial',
       grep: /@serial/,
-      testIgnore: [/desktop-.*\.spec\.ts$/, /desktop\.setup\.ts$/],
+      testIgnore: [...DESKTOP, PERF],
       dependencies: ['chromium'],
       workers: 1,
       fullyParallel: false,
@@ -86,6 +120,15 @@ export default defineConfig({
       testMatch: /desktop-.*\.spec\.ts$/,
       dependencies: ['desktop-build'],
     },
+    // Perf scenarios: alone on the machine (they time frames), no tracing or
+    // video (Playwright's per-action DOM snapshots are a forced layout each).
+    {
+      name: 'perf',
+      testMatch: PERF_SPECS,
+      workers: 1,
+      fullyParallel: false,
+      use: { ...chrome, trace: 'off', video: 'off', screenshot: 'off' },
+    },
     // The editor in WebKit — the engine of Safari and of a macOS WKWebView,
     // which a Tauri shell would use. Opt-in (`just e2e-webkit`): the editor is
     // built for Chromium, and this measures how far WebKit is from it.
@@ -95,21 +138,19 @@ export default defineConfig({
             name: 'webkit',
             grepInvert: /@serial/,
             // The desktop shell's own specs drive Electron, not a browser engine.
-            testIgnore: [/desktop-.*\.spec\.ts$/, /desktop\.setup\.ts$/],
+            testIgnore: [...DESKTOP, PERF],
+            use: webkit,
+          },
+          {
+            name: 'perf-webkit',
+            testMatch: PERF_SPECS,
+            workers: 1,
+            fullyParallel: false,
             use: {
-              ...devices['Desktop Safari'],
-              // The Chromium run is at 1×; compare the engines, not the
-              // screens (Safari's profile emulates a 2× Retina display).
-              deviceScaleFactor: 1,
-              // Safari's user agent names a Mac, so the editor would take ⌘
-              // as Mod while Playwright's ControlOrMeta sends Ctrl on a
-              // Linux host. Off a Mac, WebKit says where it really runs.
-              ...(os.platform() === 'darwin'
-                ? {}
-                : {
-                    userAgent:
-                      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Safari/605.1.15',
-                  }),
+              ...webkit,
+              trace: 'off' as const,
+              video: 'off' as const,
+              screenshot: 'off' as const,
             },
           },
         ]

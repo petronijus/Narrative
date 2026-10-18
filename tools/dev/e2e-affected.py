@@ -127,6 +127,10 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/public/*", SMOKE),
     ("apps/web/src/index.css", SMOKE),
     ("apps/web/src/styles/*", SMOKE),
+    # The dev server, the build and `vite preview` (just perf --mode prod).
+    ("apps/web/vite.config.ts", SMOKE),
+    # Selection state, and the selection hooks the specs and perf scenarios use.
+    ("apps/web/src/state/SelectionContext.tsx", ["keyboard-shortcuts", "inspector-flows", "layers-panel"]),
     # ── web: renderer and canvas ──────────────────────────────────────────
     ("apps/web/src/renderer/playTransition*", PRESENT),
     ("apps/web/src/renderer/*", RENDER),
@@ -365,6 +369,16 @@ AREAS: list[tuple[str, list[str]]] = [
     # The service interfaces are types only; their server implementations
     # are mapped above and typecheck covers the rest.
     ("packages/commands/src/services/*", []),
+    # The perf harness core (docs/plans/perf-harness.md): its own unit tests,
+    # and the layer I driver in apps/web/e2e/perf, which `just perf` runs
+    # (PERF_RUN=1) — the e2e suite skips those specs.
+    ("packages/perf/src/*", []),
+    # The in-page harness: activation runs on every page at boot (counters in
+    # dev, the chunk only with ?perf=1); the rest is the harness chunk, which
+    # only `just perf` loads.
+    ("apps/web/src/perf/activation.ts", SMOKE),
+    ("apps/web/src/perf/*", []),
+    ("apps/web/src/renderer/perfProbes.ts", []),
     # Everything reaches these: the whole suite, on purpose.
     ("packages/commands/src/*", ["*"]),
     ("packages/slide-model/src/*", ["*"]),
@@ -425,6 +439,9 @@ def affected(files: list[str]) -> tuple[set[str], list[str], list[str]]:
     whole: list[str] = []
     unclaimed: list[str] = []
     for f in files:
+        # The perf scenarios run through `just perf`, not the e2e suite.
+        if f.startswith("apps/web/e2e/perf/"):
+            continue
         if f.startswith("apps/web/e2e/"):
             if f.endswith(".spec.ts"):
                 specs.add(Path(f).name.removesuffix(".spec.ts"))

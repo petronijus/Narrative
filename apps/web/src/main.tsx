@@ -19,6 +19,12 @@ import { App } from './App'
 import { registerBundledFonts } from './state/bundledFonts.js'
 import { trackRenderWork } from './renderer/renderWork.js'
 import { installHocuspocusWarningFilter } from './state/installHocuspocusWarningFilter.js'
+import { bootPerf } from './perf/activation.js'
+
+// Performance harness (docs/plans/perf-harness.md): counters on in dev and
+// with `?perf=1`, the harness chunk loaded only with `?perf=1`. Before
+// anything renders, so a deck open is counted from its start.
+bootPerf()
 
 // Drop a single cosmetic warning fired by @hocuspocus/provider when the
 // server's WS idle-connect timeout (4401) races a shared-WS attach. See
