@@ -101,7 +101,9 @@ Postgres:
 - Chromium **starts with the first job and quits after 60 s idle** — zero
   cost between agent sessions, warm during one;
 - `chromium-headless-shell` (no full browser UI), one page at a time
-  (worker concurrency 1), Chromium's renderer-process limit 1;
+  (worker concurrency 1), Chromium's renderer-process limit 1 — since
+  performance R1 (docs/plans/performance.md) two jobs at once, the second
+  only while 450 MB of the container are free (`memory.ts`);
 - a compose **memory limit** (`mem_limit` / `memswap_limit`: 900m, 1200m
   since 0.10.25 — see "After 0.10.24"),
   so the worst case is a failed render, not an OOM-killed server.
@@ -157,7 +159,8 @@ reach (security review, 2026-10-10):
   on.
 - **Container**: non-root, `cap_drop: ALL`, `no-new-privileges`, read-only
   root with a 512 MB tmpfs `/tmp`, `pids_limit: 512`, `cpus: 2`.
-- **Fair share** (the worker runs one job at a time, for everyone): two
+- **Fair share** (the worker ran one job at a time for everyone until R1;
+  two since, memory permitting): two
   renders in flight per person (eight for BYPASS_AUTH's dev identity, which
   the e2e suite shares), twenty jobs waiting at most; a job's BullMQ
   priority is the number of slides its caller has in flight with it, so

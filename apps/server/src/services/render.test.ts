@@ -895,20 +895,50 @@ describe('RenderService.buildPdf / exportPdf (A5.6)', () => {
     return doc
   }
 
-  /** The worker's PNG for every page: a real one, of this size. */
-  async function storedPngs(width: number, height: number): Promise<void> {
-    const png = new Uint8Array(
-      await sharp({ create: { width, height, channels: 3, background: '#e53935' } })
-        .png()
-        .toBuffer(),
-    )
+  /** What the worker stored for every page: these bytes. */
+  function stored(bytes: Uint8Array): void {
     vi.mocked(buildS3Client).mockReturnValue({
       send: vi.fn(async () => ({
-        ContentLength: png.byteLength,
-        Body: { transformToByteArray: async () => png },
+        ContentLength: bytes.byteLength,
+        Body: { transformToByteArray: async () => bytes },
       })),
     } as unknown as ReturnType<typeof buildS3Client>)
   }
+
+  const picture = async (format: 'png' | 'jpeg', width: number, height: number) => {
+    const image = sharp({ create: { width, height, channels: 3, background: '#e53935' } })
+    return new Uint8Array(await (format === 'png' ? image.png() : image.jpeg()).toBuffer())
+  }
+
+  /** The worker's PNG for every page (a render page older than `format`): a real one. */
+  async function storedPngs(width: number, height: number): Promise<void> {
+    stored(await picture('png', width, height))
+  }
+
+  it("asks the page for JPEG pages and embeds the page's JPEG as it is", async () => {
+    const jpeg = await picture('jpeg', 32, 18)
+    stored(jpeg)
+    vi.mocked(readDocCopy).mockImplementation(async () => deckDoc(['s1', 's2']))
+    const { queue, service } = setup(async (data) => rendered(data))
+    const out = await pdf(service)
+    expect(out.pages).toBe(2)
+    const [job] = queue.run.mock.calls[0]!
+    expect(job.kind === 'export' && job.format).toBe('jpeg')
+    expect(job.kind === 'export' && job.uploads[0]!.headers['content-type']).toBe('image/jpeg')
+    // The very bytes the page encoded, not a re-encode.
+    expect(Buffer.from(out.bytes).includes(Buffer.from(jpeg))).toBe(true)
+  })
+
+  it('refuses a stored page that is neither a PNG nor a JPEG, or a JPEG of the wrong size', async () => {
+    vi.mocked(readDocCopy).mockImplementation(async () => deckDoc(['s1']))
+    const { service } = setup(async (data) => rendered(data))
+    stored(new TextEncoder().encode('<html>not a picture</html>'))
+    expect(await status(pdf(service))).toBe(503)
+    stored(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x02, 0xff, 0xd9]))
+    expect(await status(pdf(service))).toBe(503)
+    stored(await picture('jpeg', 4000, 3000))
+    expect(await status(pdf(service))).toBe(503)
+  })
 
   const pdf = (
     service: ReturnType<typeof setup>['service'],

@@ -18,10 +18,14 @@
  *          with libx264 + aac and faststart.
  *      (H.265/hevc copies fine into MP4 for storage but Chrome playback is
  *      unreliable, so hevc is deliberately re-encoded.)
- *   5. ffmpeg: extract poster.jpg at the 1 s mark (-q:v 2)
- *   6. ffmpeg: extract thumb.jpg (400 px wide) at the 1 s mark (-q:v 3)
- *   7. Upload playback.mp4 + poster.jpg + thumb.jpg to MinIO under
- *      <owner>/videos/<assetId>/, the owner being decks/<deckId> or
+ *   5. ffmpeg, beside step 4 (started with it, right after the probe): one run
+ *      extracts poster.jpg (-q:v 2) and thumb.jpg (400 px wide, -q:v 3) at the
+ *      1 s mark; both are uploaded and written to the asset at once
+ *      (updateVideoStills, the status still 'processing') — a re-encode takes
+ *      minutes, the stills a second
+ *   6. Wait for both; a failure of either fails the job (after both ended)
+ *   7. Upload playback.mp4 to MinIO under <owner>/videos/<assetId>/ (the
+ *      stills went there in step 5), the owner being decks/<deckId> or
  *      components/<componentId> as the upload's storage key says
  *      (videoOutputPrefix, @narrative/shared)
  *   8. updateVideoAssetOutputs → sets transcode_status='done'
@@ -58,7 +62,7 @@ import {
 // We import the DB helpers directly so the worker stays stateless per job.
 
 import { createDb } from '../db.js'
-import { updateTranscodeStatus, updateVideoAssetOutputs } from '../assets.js'
+import { updateTranscodeStatus, updateVideoAssetOutputs, updateVideoStills } from '../assets.js'
 
 // ---------------------------------------------------------------------------
 // S3 client
@@ -235,6 +239,76 @@ async function uploadFile(
   )
 }
 
+/**
+ * playback.mp4 at the source's resolution: a lossless stream copy when the
+ * codec is web-playable, else a libx264 + aac re-encode.
+ */
+function buildPlayback(
+  inputPath: string,
+  codecName: string,
+  playbackPath: string,
+  workDir: string,
+): Promise<string> {
+  if (COPY_ELIGIBLE_CODECS.has(codecName)) {
+    console.log(`[transcode] codec=${codecName} is web-playable → lossless stream copy`)
+    return run(
+      'ffmpeg',
+      ['-i', inputPath, '-c', 'copy', '-movflags', '+faststart', '-y', playbackPath],
+      { cwd: workDir },
+    )
+  }
+  console.log(`[transcode] codec=${codecName} not web-safe → re-encode (libx264, source res)`)
+  return run(
+    'ffmpeg',
+    [
+      '-threads',
+      String(FFMPEG_THREADS),
+      '-i',
+      inputPath,
+      '-c:v',
+      'libx264',
+      '-preset',
+      'fast',
+      '-crf',
+      '20',
+      '-pix_fmt',
+      'yuv420p',
+      '-movflags',
+      '+faststart',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '192k',
+      '-ar',
+      '48000',
+      '-ac',
+      '2',
+      '-y',
+      playbackPath,
+    ],
+    { cwd: workDir },
+  )
+}
+
+/**
+ * The poster (full size, -q:v 2) and the thumbnail (400 px wide, -q:v 3) at
+ * the 1 s mark (0 s for a shorter video), from one ffmpeg run: the frame is
+ * sought and decoded once for both outputs.
+ */
+function extractStills(
+  inputPath: string,
+  durationSec: number,
+  posterPath: string,
+  thumbPath: string,
+): Promise<string> {
+  const seekTime = durationSec >= 1 ? '1' : '0'
+  return run('ffmpeg', [
+    ...['-ss', seekTime, '-i', inputPath],
+    ...['-map', '0:v:0', '-frames:v', '1', '-q:v', '2', '-y', posterPath],
+    ...['-map', '0:v:0', '-frames:v', '1', '-vf', 'scale=400:-2', '-q:v', '3', '-y', thumbPath],
+  ])
+}
+
 // ---------------------------------------------------------------------------
 // Main processor
 // ---------------------------------------------------------------------------
@@ -278,96 +352,39 @@ export async function transcodeProcessor(
     const outputDir = path.join(workDir, 'output')
     await fs.mkdir(outputDir, { recursive: true })
 
-    // 4. Build playback.mp4 — keep full source resolution. Stream-copy when the
-    //    source codec is web-playable, otherwise re-encode with libx264.
-    const playbackPath = path.join(outputDir, 'playback.mp4')
-    const canCopy = COPY_ELIGIBLE_CODECS.has(codecName)
-
-    if (canCopy) {
-      console.log(`[transcode] codec=${codecName} is web-playable → lossless stream copy`)
-      await run(
-        'ffmpeg',
-        ['-i', inputPath, '-c', 'copy', '-movflags', '+faststart', '-y', playbackPath],
-        { cwd: workDir },
-      )
-    } else {
-      console.log(`[transcode] codec=${codecName} not web-safe → re-encode (libx264, source res)`)
-      await run(
-        'ffmpeg',
-        [
-          '-threads',
-          String(FFMPEG_THREADS),
-          '-i',
-          inputPath,
-          '-c:v',
-          'libx264',
-          '-preset',
-          'fast',
-          '-crf',
-          '20',
-          '-pix_fmt',
-          'yuv420p',
-          '-movflags',
-          '+faststart',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '192k',
-          '-ar',
-          '48000',
-          '-ac',
-          '2',
-          '-y',
-          playbackPath,
-        ],
-        { cwd: workDir },
-      )
-    }
-    console.log(`[transcode] playback.mp4 ready`)
-
-    // 5 & 6. Poster frame + thumbnail
-    const seekTime = durationSec >= 1 ? '1' : '0'
-
-    const posterPath = path.join(outputDir, 'poster.jpg')
-    await run('ffmpeg', [
-      '-ss',
-      seekTime,
-      '-i',
-      inputPath,
-      '-vframes',
-      '1',
-      '-q:v',
-      '2',
-      '-y',
-      posterPath,
-    ])
-
-    const thumbPath = path.join(outputDir, 'thumb.jpg')
-    await run('ffmpeg', [
-      '-ss',
-      seekTime,
-      '-i',
-      inputPath,
-      '-vframes',
-      '1',
-      '-vf',
-      'scale=400:-2',
-      '-q:v',
-      '3',
-      '-y',
-      thumbPath,
-    ])
-
-    // 7. Upload all outputs to MinIO
     const playbackKey = `${s3VideoPrefix}/playback.mp4`
     const posterKey = `${s3VideoPrefix}/poster.jpg`
     const thumbnailKey = `${s3VideoPrefix}/thumb.jpg`
 
-    await Promise.all([
-      uploadFile(playbackPath, playbackKey, 'video/mp4'),
-      uploadFile(posterPath, posterKey, 'image/jpeg'),
-      uploadFile(thumbPath, thumbnailKey, 'image/jpeg'),
-    ])
+    // 5 & 6 first, beside 4: the poster and the thumbnail come from one
+    // decoded frame, uploaded and on the asset as soon as they exist — a
+    // re-encode takes minutes, the stills a second.
+    const stills = (async () => {
+      const posterPath = path.join(outputDir, 'poster.jpg')
+      const thumbPath = path.join(outputDir, 'thumb.jpg')
+      await extractStills(inputPath, durationSec, posterPath, thumbPath)
+      await Promise.all([
+        uploadFile(posterPath, posterKey, 'image/jpeg'),
+        uploadFile(thumbPath, thumbnailKey, 'image/jpeg'),
+      ])
+      await updateVideoStills(db, assetId, { posterKey, thumbnailKey, durationSec, width, height })
+      console.log(`[transcode] poster + thumbnail ready, assetId=${assetId}`)
+    })()
+
+    // 4. Build playback.mp4 — keep full source resolution. Stream-copy when the
+    //    source codec is web-playable, otherwise re-encode with libx264.
+    const playbackPath = path.join(outputDir, 'playback.mp4')
+    const playback = buildPlayback(inputPath, codecName, playbackPath, workDir)
+
+    // Both run to their end before anything fails the job: a failed one
+    // must not leave the other's ffmpeg writing into a work dir being removed.
+    const [stillsDone, playbackDone] = await Promise.allSettled([stills, playback])
+    if (stillsDone.status === 'rejected') throw stillsDone.reason
+    if (playbackDone.status === 'rejected') throw playbackDone.reason
+    console.log(`[transcode] playback.mp4 ready`)
+
+    // 7. Upload the playback (the stills are up already)
+    await uploadFile(playbackPath, playbackKey, 'video/mp4')
 
     console.log(`[transcode] uploads complete, assetId=${assetId}`)
 

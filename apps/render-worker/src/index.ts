@@ -3,10 +3,12 @@
  * app, in headless Chromium (agentic A3, docs/plans/a3-render-worker.md).
  *
  * Consumes the BullMQ queue `render` (RENDER_QUEUE, @narrative/shared) on the
- * media Redis, one job at a time: the VM has little memory to spare, and a
- * job renders its slides one after another in one page anyway. The server
- * enqueues a job with a fresh render token and waits for its result
- * (apps/server/src/services/render.ts).
+ * media Redis, RENDER_CONCURRENCY jobs at a time (default 2): one person's
+ * single slide no longer waits behind another's 20-slide export. The VM has
+ * little memory to spare, so a second job opens its page only while the
+ * container has room for it (memory.ts); a job renders its slides one after
+ * another in one page. The server enqueues a job with its render session's
+ * token and waits for its result (apps/server/src/services/render.ts).
  */
 
 // bullmq and ioredis are CJS without an exports map; see apps/video-worker/src/index.ts.
@@ -21,6 +23,7 @@ import {
 import { readConfig } from './config.js'
 import { BrowserHolder } from './browser.js'
 import { WarmPages } from './warmPages.js'
+import { cgroupAvailableBytes, MemoryGate } from './memory.js'
 import { left, maskTokens, refuseLate, renderJob, RenderJobError } from './render.js'
 
 const { Worker } = bullmq
@@ -36,23 +39,31 @@ const holder = new BrowserHolder({
   requireSandbox: config.requireSandbox,
   log,
 })
-/** Pages kept for render sessions (they go with the browser). */
+/** Pages kept between jobs (they go with the browser). */
 const warm = new WarmPages({ max: config.warmPages, idleMs: config.idleMs, log })
+/** A job beside another opens its page only with memory for it. */
+const gate = new MemoryGate({
+  reserveBytes: config.pageReserveBytes,
+  available: () => cgroupAvailableBytes(),
+  evictIdle: () => warm.evictOldest('memory for a job'),
+  log,
+})
 
 /**
- * Run one job; after a browser-side fault the next job gets a fresh Chromium.
- * A job nobody waits for is dropped before it can start (or wait for) one.
+ * Run one job; after a browser-side fault the next job gets a fresh Chromium
+ * (the faulty one closes once the other jobs in it are done). A job nobody
+ * waits for is dropped before it can start (or wait for) one.
  */
 async function processJob(data: RenderJobData): Promise<RenderJobResult> {
   refuseLate(data)
   try {
-    return await holder.use((browser) => renderJob(browser, data, { config, log, warm }), {
+    return await holder.use((browser) => renderJob(browser, data, { config, log, warm, gate }), {
       launchTimeoutMs: left(data.deadline),
     })
   } catch (err) {
     if (!(err instanceof RenderJobError) || err.browserSuspect) {
       warm.closeAll('failed job')
-      await holder.close('failed job')
+      holder.retire('failed job')
     }
     throw err
   }
@@ -66,7 +77,7 @@ const worker = new Worker<RenderJobData, RenderJobResult>(
   (job) => processJob(job.data),
   {
     connection,
-    concurrency: 1,
+    concurrency: config.concurrency,
     // A job whose worker died (OOM, restart) is not run again: its caller has
     // stopped waiting, and its token and upload URLs are expiring.
     maxStalledCount: 0,
@@ -80,7 +91,11 @@ const worker = new Worker<RenderJobData, RenderJobResult>(
 worker.on('ready', () => {
   const via = config.upstream !== null ? ` via ${config.upstream}` : ''
   const sandbox = config.requireSandbox ? ' sandbox=required' : ''
-  log(`ready — queue="${RENDER_QUEUE}" app=${config.appOrigin}${via}${sandbox}`)
+  const memory = cgroupAvailableBytes()
+  const limits =
+    ` concurrency=${config.concurrency} warm=${config.warmPages}` +
+    (memory !== null ? ` free=${Math.round(memory / 1048576)}MB` : ' (no memory limit seen)')
+  log(`ready — queue="${RENDER_QUEUE}" app=${config.appOrigin}${via}${sandbox}${limits}`)
 })
 worker.on('active', (job) => {
   const what =

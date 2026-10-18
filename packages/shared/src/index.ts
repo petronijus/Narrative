@@ -147,6 +147,7 @@ export {
   THUMBNAIL_HEIGHT,
   THUMBNAIL_WIDTH,
   LOOK_MAX_PIXELS,
+  RENDER_JPEG_QUALITY,
 } from './render-queue.js'
 
 export {

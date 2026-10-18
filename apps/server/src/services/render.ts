@@ -53,6 +53,8 @@ import {
   type RenderPage,
   type RenderedSlide,
   buildImagePdf,
+  jpegInfo,
+  RENDER_JPEG_QUALITY,
 } from '@narrative/shared'
 import { MAX_MEASURE_SLIDES, MAX_PDF_SLIDES, MAX_RENDER_SLIDES } from '@narrative/commands'
 import type {
@@ -97,14 +99,44 @@ import { EXPORT_URL_TTL_SEC, MAX_INLINE_EXPORT_BYTES } from './pptx.js'
 
 /** The largest slide PNG a PDF page is made from (a photo-heavy 1920×1080 slide, with slack). */
 const MAX_PDF_PAGE_PNG_BYTES = 16_000_000
-/** JPEG quality of a PDF page: slides of text and pictures, at about a fifth of the PNG's size. */
-const PDF_JPEG_QUALITY = 85
+/**
+ * JPEG quality of a PDF page made here from a PNG (a render page older than
+ * the export's `format`): the page's own encoder uses RENDER_JPEG_QUALITY,
+ * the same 85 on the canvas API's 0–1 scale.
+ */
+const PDF_JPEG_QUALITY = Math.round(RENDER_JPEG_QUALITY * 100)
 /** The largest picture a page is decoded from: the render's 1920×1080, up to twice that. */
 const MAX_PDF_PAGE_PIXELS = 3840 * 2160
 /** A further PDF job is started only with this much of the caller's time left. */
 const MIN_PDF_JOB_MS = 30_000
 /** A PDF over this many bytes is refused (40 photo-heavy slides stay far below). */
 const MAX_PDF_BYTES = 64 * 1024 * 1024
+
+/**
+ * A stored slide picture as a PDF page. The worker's bytes are not taken on
+ * its word: a page is the render's size, checked from its header before
+ * anything decodes it. A JPEG — what the render page encodes for a PDF
+ * (`format: 'jpeg'`, flattened on white) — must also be one `buildImagePdf`
+ * can embed, and goes in as it is; a PNG (a page older than `format`) is
+ * flattened on white and encoded here, as every PDF page was before.
+ */
+async function pdfPageOf(stored: { type: 'png' | 'jpeg'; bytes: Uint8Array }): Promise<Uint8Array> {
+  let size: { width: number; height: number }
+  if (stored.type === 'jpeg') {
+    try {
+      size = jpegInfo(stored.bytes)
+    } catch {
+      throw failed('The renderer returned a page that is not a usable JPEG', 503)
+    }
+  } else size = pngSize(stored.bytes)
+  if (size.width * size.height > MAX_PDF_PAGE_PIXELS || size.width === 0 || size.height === 0)
+    throw failed('The renderer returned a picture of an unexpected size', 503)
+  if (stored.type === 'jpeg') return stored.bytes
+  return sharp(stored.bytes, { limitInputPixels: MAX_PDF_PAGE_PIXELS, sequentialRead: true })
+    .flatten({ background: '#ffffff' })
+    .jpeg({ quality: PDF_JPEG_QUALITY })
+    .toBuffer()
+}
 
 /** A PNG's size from its header (IHDR), before anything decodes it. */
 function pngSize(png: Uint8Array): { width: number; height: number } {
@@ -205,6 +237,20 @@ const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0
  * before passing it on as an image.
  */
 async function readStoredPng(key: string, maxBytes: number): Promise<Uint8Array> {
+  const stored = await readStoredPicture(key, maxBytes)
+  if (stored.type !== 'png') throw failed('The renderer returned something that is not a PNG', 503)
+  return stored.bytes
+}
+
+/**
+ * A slide picture the worker stored, read back and deleted: a PNG, or a JPEG
+ * (a PDF page the render page encoded) — refused when it is larger than
+ * `maxBytes` or neither, by its bytes, not by the type the upload signed.
+ */
+async function readStoredPicture(
+  key: string,
+  maxBytes: number,
+): Promise<{ type: 'png' | 'jpeg'; bytes: Uint8Array }> {
   const s3 = buildS3Client()
   const object = await s3.send(new GetObjectCommand({ Bucket: MEDIA_BUCKET, Key: key }))
   let bytes: Uint8Array
@@ -218,10 +264,12 @@ async function readStoredPng(key: string, maxBytes: number): Promise<Uint8Array>
     // the export sweep (best effort — the sweep still gets a stray one).
     void s3.send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: key })).catch(() => undefined)
   }
-  if (bytes.byteLength > maxBytes || !PNG_SIGNATURE.equals(Buffer.from(bytes.subarray(0, 8)))) {
-    throw failed('The renderer returned something that is not a PNG', 503)
+  if (bytes.byteLength > maxBytes) {
+    throw failed('The renderer returned an image that is too large', 503)
   }
-  return bytes
+  if (PNG_SIGNATURE.equals(Buffer.from(bytes.subarray(0, 8)))) return { type: 'png', bytes }
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return { type: 'jpeg', bytes }
+  throw failed('The renderer returned something that is not a PNG', 503)
 }
 
 /** A job before its render session's token is added (distributed over the job kinds). */
@@ -229,7 +277,12 @@ type JobWithoutToken<T> = T extends unknown ? Omit<T, 'token'> : never
 
 /** What one job asks of the worker, before the slot, the session and the clocks are added. */
 type JobRequest =
-  | { kind: 'export'; uploads: Array<{ slideId: string; key: string }> }
+  | {
+      kind: 'export'
+      uploads: Array<{ slideId: string; key: string }>
+      /** `jpeg`: a PDF's pages, encoded in the render page (absent: PNGs). */
+      format?: 'jpeg'
+    }
   | { kind: 'look'; look: RenderLookSpec; key: string }
 
 /** What a background card picture came to. */
@@ -387,7 +440,9 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
       const deadline = Math.min(now() + RENDER_WAIT_MS, opts.deadline ?? Number.POSITIVE_INFINITY)
       const workBudgetMs = RENDER_WORK_BASE_MS + RENDER_WORK_PER_SLIDE_MS * slides
       const uploadTtlSec = Math.ceil((RENDER_WAIT_MS + TOKEN_MARGIN_MS) / 1000)
-      const target = (key: string) => presignPutUrl(key, 'image/png', uploadTtlSec)
+      const jpeg = request.kind === 'export' && request.format === 'jpeg'
+      const target = (key: string) =>
+        presignPutUrl(key, jpeg ? 'image/jpeg' : 'image/png', uploadTtlSec)
       const base = {
         page: doc.page,
         stateVector: doc.stateVector,
@@ -401,6 +456,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
           ? {
               ...base,
               kind: 'export',
+              ...(jpeg ? { format: 'jpeg' as const } : {}),
               uploads: await Promise.all(
                 request.uploads.map(async (u) => ({
                   slideId: u.slideId,
@@ -827,8 +883,9 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
   }
 
   /**
-   * The slides as a PDF (A5.6): rendered in jobs of MAX_RENDER_SLIDES, each
-   * PNG read back and turned into a JPEG one at a time (only the JPEGs are
+   * The slides as a PDF (A5.6): rendered in jobs of MAX_RENDER_SLIDES as
+   * JPEG pages encoded in the render page, each read back and checked one at
+   * a time (`pdfPageOf`; a PNG from an older page is turned into one; only the JPEGs are
    * held), a page each (shared `buildImagePdf`).
    */
   async function buildPdf(args: {
@@ -884,12 +941,16 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
           503,
         )
       const part = chosen.slice(i, i + MAX_RENDER_SLIDES)
-      const keys = new Map(part.map((s) => [s.id, `${prefix}slide-${s.index + 1}.png`]))
+      const keys = new Map(part.map((s) => [s.id, `${prefix}slide-${s.index + 1}.jpg`]))
       const result = await runJob(
         args.userId,
         deck,
         part.length,
-        { kind: 'export', uploads: part.map((s) => ({ slideId: s.id, key: keys.get(s.id)! })) },
+        {
+          kind: 'export',
+          format: 'jpeg',
+          uploads: part.map((s) => ({ slideId: s.id, key: keys.get(s.id)! })),
+        },
         { deadline },
       )
       if (result.kind !== 'export') throw failed('The renderer answered another job', 503)
@@ -898,20 +959,9 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
         const r = rendered.get(s.id)
         if (r === undefined) throw failed('The renderer left out a slide', 503)
         failedLoads += r.failedLoads
-        const png = await readStoredPng(keys.get(s.id)!, MAX_PDF_PAGE_PNG_BYTES)
+        const stored = await readStoredPicture(keys.get(s.id)!, MAX_PDF_PAGE_PNG_BYTES)
         gone()
-        // The worker's bytes are not taken on its word: a page is the
-        // render's size, checked before anything decodes it.
-        const size = pngSize(png)
-        if (size.width * size.height > MAX_PDF_PAGE_PIXELS || size.width === 0 || size.height === 0)
-          throw failed('The renderer returned a picture of an unexpected size', 503)
-        const jpeg = await sharp(png, {
-          limitInputPixels: MAX_PDF_PAGE_PIXELS,
-          sequentialRead: true,
-        })
-          .flatten({ background: '#ffffff' })
-          .jpeg({ quality: PDF_JPEG_QUALITY })
-          .toBuffer()
+        const jpeg = await pdfPageOf(stored)
         pageBytes += jpeg.byteLength
         if (pageBytes > maxBytes)
           throw tooLarge(

@@ -22,47 +22,59 @@ import { videoOutputPrefix } from '../queue.js'
 // Hoisted mock factories
 // ---------------------------------------------------------------------------
 
-const { mockS3Send, mockUpdateTranscodeStatus, mockUpdateVideoAssetOutputs, createMockSpawn } =
-  vi.hoisted(() => {
-    const mockS3Send = vi.fn().mockResolvedValue({ Body: {} })
-    const mockUpdateTranscodeStatus = vi.fn().mockResolvedValue(undefined)
-    const mockUpdateVideoAssetOutputs = vi.fn().mockResolvedValue(undefined)
+const {
+  mockS3Send,
+  mockUpdateTranscodeStatus,
+  mockUpdateVideoAssetOutputs,
+  mockUpdateVideoStills,
+  createMockSpawn,
+} = vi.hoisted(() => {
+  const mockS3Send = vi.fn().mockResolvedValue({ Body: {} })
+  const mockUpdateTranscodeStatus = vi.fn().mockResolvedValue(undefined)
+  const mockUpdateVideoAssetOutputs = vi.fn().mockResolvedValue(undefined)
+  const mockUpdateVideoStills = vi.fn().mockResolvedValue(undefined)
 
-    /**
-     * Factory that returns a mock spawn result.
-     * exitCode=0  → emits 'close' with 0.
-     * exitCode!=0 → emits 'close' with that code.
-     * probeJson   → emitted as stdout 'data' before close (for ffprobe calls).
-     */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    function createMockSpawn(exitCode = 0, probeJson?: string): (...args: any[]) => any {
-      return vi.fn().mockImplementation(() => {
-        const events: Record<string, Array<(...a: unknown[]) => void>> = {}
+  /**
+   * Factory that returns a mock spawn result.
+   * exitCode=0  → emits 'close' with 0.
+   * exitCode!=0 → emits 'close' with that code.
+   * probeJson   → emitted as stdout 'data' before close (for ffprobe calls).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function createMockSpawn(exitCode = 0, probeJson?: string): (...args: any[]) => any {
+    return vi.fn().mockImplementation(() => {
+      const events: Record<string, Array<(...a: unknown[]) => void>> = {}
 
-        const child = {
-          stdout: {
-            on: vi.fn((event: string, cb: (...a: unknown[]) => void) => {
-              if (event === 'data' && probeJson) {
-                setTimeout(() => cb(Buffer.from(probeJson)), 0)
-              }
-            }),
-          },
-          stderr: { on: vi.fn() },
+      const child = {
+        stdout: {
           on: vi.fn((event: string, cb: (...a: unknown[]) => void) => {
-            if (!events[event]) events[event] = []
-            events[event]!.push(cb)
-            if (event === 'close') {
-              // Schedule the close event on next tick
-              setTimeout(() => cb(exitCode), 0)
+            if (event === 'data' && probeJson) {
+              setTimeout(() => cb(Buffer.from(probeJson)), 0)
             }
           }),
-        }
-        return child
-      })
-    }
+        },
+        stderr: { on: vi.fn() },
+        on: vi.fn((event: string, cb: (...a: unknown[]) => void) => {
+          if (!events[event]) events[event] = []
+          events[event]!.push(cb)
+          if (event === 'close') {
+            // Schedule the close event on next tick
+            setTimeout(() => cb(exitCode), 0)
+          }
+        }),
+      }
+      return child
+    })
+  }
 
-    return { mockS3Send, mockUpdateTranscodeStatus, mockUpdateVideoAssetOutputs, createMockSpawn }
-  })
+  return {
+    mockS3Send,
+    mockUpdateTranscodeStatus,
+    mockUpdateVideoAssetOutputs,
+    mockUpdateVideoStills,
+    createMockSpawn,
+  }
+})
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -123,6 +135,7 @@ vi.mock('../db.js', () => ({
 vi.mock('../assets.js', () => ({
   updateTranscodeStatus: mockUpdateTranscodeStatus,
   updateVideoAssetOutputs: mockUpdateVideoAssetOutputs,
+  updateVideoStills: mockUpdateVideoStills,
 }))
 
 // Import module under test AFTER mocks
@@ -254,16 +267,56 @@ describe('transcodeProcessor', () => {
     expect(PutObjectCommand).toHaveBeenCalled()
   })
 
-  it('runs exactly 3 ffmpeg invocations (remux + poster + thumb)', async () => {
+  it('runs exactly 2 ffmpeg invocations (remux + one for poster and thumb)', async () => {
     const spawnSpy = vi.fn().mockImplementation(createMockSpawn(0, PROBE_JSON))
     mockSpawnImpl = spawnSpy
 
     const job = makeJob()
     await transcodeProcessor(job)
 
-    // 1 ffprobe + 3 ffmpeg = 4 total spawns. Filter to ffmpeg only.
+    // 1 ffprobe + 2 ffmpeg = 3 total spawns. Filter to ffmpeg only.
     const ffmpegCalls = spawnSpy.mock.calls.filter((c) => c[0] === 'ffmpeg')
-    expect(ffmpegCalls).toHaveLength(3)
+    expect(ffmpegCalls).toHaveLength(2)
+    // The stills: both outputs of one decoded frame.
+    const stills = ffmpegCalls.map((c) => c[1] as string[]).find((a) => a.includes('-ss'))!
+    expect(stills.filter((a) => a.endsWith('.jpg'))).toEqual([
+      expect.stringContaining('poster.jpg'),
+      expect.stringContaining('thumb.jpg'),
+    ])
+  })
+
+  it('starts the stills beside the playback and puts them on the asset before it is done', async () => {
+    const spawnSpy = vi.fn().mockImplementation(createMockSpawn(0, PROBE_JSON))
+    mockSpawnImpl = spawnSpy
+    await transcodeProcessor(makeJob())
+
+    // Both ffmpeg runs were spawned before either could finish (same tick).
+    const ffmpegOrder = spawnSpy.mock.invocationCallOrder.filter(
+      (_, i) => spawnSpy.mock.calls[i]![0] === 'ffmpeg',
+    )
+    expect(ffmpegOrder).toHaveLength(2)
+    expect(mockUpdateVideoStills).toHaveBeenCalledWith(expect.anything(), 'asset-01', {
+      posterKey: 'decks/deck-01/videos/asset-01/poster.jpg',
+      thumbnailKey: 'decks/deck-01/videos/asset-01/thumb.jpg',
+      durationSec: 10.5,
+      width: 1280,
+      height: 720,
+    })
+    expect(mockUpdateVideoStills.mock.invocationCallOrder[0]!).toBeLessThan(
+      mockUpdateVideoAssetOutputs.mock.invocationCallOrder[0]!,
+    )
+  })
+
+  it('fails the job when the stills fail, after the playback run ended, and marks nothing done', async () => {
+    let callCount = 0
+    mockSpawnImpl = vi.fn().mockImplementation((cmd: string, args: string[]) => {
+      callCount++
+      const isStills = cmd === 'ffmpeg' && args.includes('-ss')
+      return createMockSpawn(isStills ? 1 : 0, callCount === 1 ? PROBE_JSON : undefined)()
+    })
+    await expect(transcodeProcessor(makeJob())).rejects.toThrow(/ffmpeg exited with code 1/)
+    expect(mockUpdateVideoStills).not.toHaveBeenCalled()
+    expect(mockUpdateVideoAssetOutputs).not.toHaveBeenCalled()
   })
 
   it('h264 source uses lossless stream copy (-c copy)', async () => {

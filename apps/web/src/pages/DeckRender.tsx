@@ -38,7 +38,7 @@
  *     (state/browserSlideExport.ts) and asks it, instead of the server;
  *   - `__narrativeRenderSlidePng` and `__narrativeRenderLook` are the render
  *     worker's jobs (apps/render-worker/src/render.ts): a slide's PNG for the
- *     export, and a picture for an agent (`query.render`: a slide, a region
+ *     export (or a JPEG page for a PDF), and a picture for an agent (`query.render`: a slide, a region
  *     or a numbered sheet, composed in pages/renderLook.ts). The worker keeps
  *     this page open between the jobs of a render session.
  * Each first waits until this page's copy of the deck holds the asking
@@ -58,9 +58,15 @@ import { failedRenderFonts, failedRenderWork } from '../renderer/renderWork.js'
 import { canvasToPng, captureSlideCanvas, watchContextLoss } from '../renderer/captureSlide.js'
 import { getDefaultResourceManager } from '../renderer/ResourceManager.js'
 import { setImageVariantCap } from '../renderer/imageUrl.js'
-import type { RenderPageLookSpec, GrownText, TextOverflow } from '@narrative/shared'
+import {
+  RENDER_JPEG_QUALITY,
+  type RenderPageLookSpec,
+  type GrownText,
+  type TextOverflow,
+} from '@narrative/shared'
 import {
   blobToBase64,
+  canvasToJpeg,
   composeLook,
   decodePng,
   shrinkForCompare,
@@ -135,15 +141,18 @@ declare global {
     __narrativeRenderCapture?: (opts?: { stateVector?: string }) => Promise<Blob>
     /**
      * The render worker's export: once the page holds the edits
-     * `stateVector` names, show `slideId`, settle it and return its PNG
-     * (1920×1080, base64) — or the reason it cannot.
+     * `stateVector` names, show `slideId`, settle it and return its picture
+     * (1920×1080, base64): a PNG, or with `format: 'jpeg'` a PDF page —
+     * flattened on white, `RENDER_JPEG_QUALITY` — or the reason it cannot.
      */
     __narrativeRenderSlidePng?: (
       slideId: string,
-      opts: { stateVector: string },
+      opts: { stateVector: string; format?: 'png' | 'jpeg' },
     ) => Promise<
       PageJobOutcome<{
         base64: string
+        /** What `base64` holds. */
+        mimeType: 'image/png' | 'image/jpeg'
         slideIndex: number
         failedLoads: number
         failedFonts: string[]
@@ -514,10 +523,16 @@ export function DeckRender() {
         const { index } = await showAndWait(slideId)
         timer.mark('ready')
         const shot = await settleAndCapture(timer)
-        const base64 = await blobToBase64(await canvasToPng(shot.canvas))
+        const jpeg = opts.format === 'jpeg'
+        const base64 = await blobToBase64(
+          jpeg
+            ? await canvasToJpeg(shot.canvas, RENDER_JPEG_QUALITY)
+            : await canvasToPng(shot.canvas),
+        )
         timer.mark('encode')
         return {
           base64,
+          mimeType: jpeg ? 'image/jpeg' : 'image/png',
           slideIndex: index,
           failedLoads: shot.failedLoads,
           failedFonts: failedRenderFonts(),
