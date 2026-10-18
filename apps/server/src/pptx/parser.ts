@@ -15,6 +15,8 @@
  */
 
 import JSZip from 'jszip'
+import { endPhase } from './phases.js'
+import { entrySize, readEntryBytes, readEntryHead, readEntryText } from './zipEntry.js'
 import type {
   AnimationPreset,
   AnimationTrigger,
@@ -575,8 +577,16 @@ export interface ParsedAnimationStep {
 export interface ParsedEmbeddedImage {
   /** Zip-internal path, e.g. `ppt/media/image1.png`. Doubles as the lookup key. */
   zipPath: string
-  /** Raw bytes pulled out of the .pptx archive. */
-  bytes: Buffer
+  /**
+   * The raw bytes, inflated out of the .pptx archive on each call. Lazy so
+   * that an import holds one picture at a time per upload in flight rather
+   * than every picture of the deck at once (the archive itself is in memory
+   * anyway). Callers read, never write, the buffer: a stored entry comes back
+   * as a view into the archive (pptx/zipEntry.ts).
+   */
+  read: () => Promise<Buffer>
+  /** What `read` will return, in bytes, as the archive declares it (0 when unknown). */
+  size: number
   /** MIME type sniffed from the file's magic header (falls back to extension). */
   mimeType: string
   /** Filename extension WITHOUT the dot (`png` / `jpeg` / `gif` / …). */
@@ -1706,7 +1716,7 @@ async function loadHyperlinkRels(zip: JSZip, xmlPath: string): Promise<Hyperlink
   if (relsEntry === null) return rels
 
   const xmlParser = ooxmlParser()
-  const tree = xmlParser.parse(await relsEntry.async('string')) as XmlNode[]
+  const tree = xmlParser.parse(await readEntryText(relsEntry)) as XmlNode[]
   for (const node of walk(tree)) {
     if (getTag(node) !== 'Relationship') continue
     const a = getAttrs(node)
@@ -1739,7 +1749,7 @@ async function loadImageRels(zip: JSZip, xmlPath: string): Promise<ImageRelMap> 
   if (relsEntry === null) return rels
 
   const xmlParser = ooxmlParser()
-  const tree = xmlParser.parse(await relsEntry.async('string')) as XmlNode[]
+  const tree = xmlParser.parse(await readEntryText(relsEntry)) as XmlNode[]
   for (const node of walk(tree)) {
     if (getTag(node) !== 'Relationship') continue
     const a = getAttrs(node)
@@ -1829,7 +1839,7 @@ async function buildSlideContexts(
       cache.set(xmlPath, empty)
       return empty
     }
-    const xml = await entry.async('string')
+    const xml = await readEntryText(entry)
     const imageRels = await loadImageRels(zip, xmlPath)
 
     // Parse the layout/master XML into a root tree once and reuse for
@@ -1871,7 +1881,7 @@ async function buildSlideContexts(
     const relsPath = `${dir}/_rels/${file}.rels`
     const relsEntry = zip.file(relsPath)
     if (relsEntry === null) return {}
-    const relsXml = await relsEntry.async('string')
+    const relsXml = await readEntryText(relsEntry)
     const tree = xmlParser.parse(relsXml) as XmlNode[]
     let layoutPath: string | undefined
     for (const node of walk(tree)) {
@@ -1892,7 +1902,7 @@ async function buildSlideContexts(
     const layoutRelsEntry = zip.file(layoutRelsPath)
     let masterPath: string | undefined
     if (layoutRelsEntry !== null) {
-      const lXml = await layoutRelsEntry.async('string')
+      const lXml = await readEntryText(layoutRelsEntry)
       const lTree = xmlParser.parse(lXml) as XmlNode[]
       for (const node of walk(lTree)) {
         if (getTag(node) !== 'Relationship') continue
@@ -3264,7 +3274,7 @@ async function parseSlideNotes(zip: JSZip, slidePath: string): Promise<NotesDoc 
 
   const xmlParser = ooxmlParser({ trimValues: false })
   let notesPath: string | undefined
-  const relsTree = xmlParser.parse(await relsEntry.async('string')) as XmlNode[]
+  const relsTree = xmlParser.parse(await readEntryText(relsEntry)) as XmlNode[]
   for (const node of walk(relsTree)) {
     if (getTag(node) !== 'Relationship') continue
     const a = getAttrs(node)
@@ -3278,7 +3288,7 @@ async function parseSlideNotes(zip: JSZip, slidePath: string): Promise<NotesDoc 
   if (notesPath === undefined) return undefined
   const notesEntry = zip.file(notesPath)
   if (notesEntry === null) return undefined
-  const notesTree = xmlParser.parse(await notesEntry.async('string')) as XmlNode[]
+  const notesTree = xmlParser.parse(await readEntryText(notesEntry)) as XmlNode[]
   const notes = findFirst(notesTree, 'p:notes')
   if (notes === undefined) return undefined
   const links = await loadHyperlinkRels(zip, notesPath)
@@ -4427,7 +4437,7 @@ function parseSlide(
 async function parseThemeColours(zip: JSZip): Promise<ThemeColourMap> {
   const themeEntry = zip.file('ppt/theme/theme1.xml')
   if (themeEntry === null) return {}
-  return themeFromXml(await themeEntry.async('string'))
+  return themeFromXml(await readEntryText(themeEntry))
 }
 
 /**
@@ -4506,7 +4516,7 @@ export function themeFromXml(xml: string): ThemeColourMap {
 async function parseThemeTxDef(zip: JSZip, theme: ThemeColourMap): Promise<ThemeTxDef | undefined> {
   const themeEntry = zip.file('ppt/theme/theme1.xml')
   if (themeEntry === null) return undefined
-  const xml = await themeEntry.async('string')
+  const xml = await readEntryText(themeEntry)
   const xmlParser = ooxmlParser()
   const tree = xmlParser.parse(xml) as XmlNode[]
   let txDef: XmlNode | undefined
@@ -4574,7 +4584,7 @@ async function parseDefaultTextStyleMargins(
   const entry = zip.file('ppt/presentation.xml')
   if (entry === null) return undefined
   const xmlParser = ooxmlParser()
-  const tree = xmlParser.parse(await entry.async('string')) as XmlNode[]
+  const tree = xmlParser.parse(await readEntryText(entry)) as XmlNode[]
   for (const node of walk(tree)) {
     if (getTag(node) !== 'p:defaultTextStyle') continue
     const margins = readLevelMargins(getChildren(node, 'p:defaultTextStyle'))
@@ -4605,7 +4615,7 @@ async function parsePresentationXml(zip: JSZip): Promise<{
   const xmlParser = ooxmlParser()
 
   // ─── Dimensions ─────────────────────────────────────────────────────────
-  const presXml = await presEntry.async('string')
+  const presXml = await readEntryText(presEntry)
   const presTree = xmlParser.parse(presXml) as XmlNode[]
   let slideWidth = 1280,
     slideHeight = 720
@@ -4623,7 +4633,7 @@ async function parsePresentationXml(zip: JSZip): Promise<{
   // ─── Slide order via rels ───────────────────────────────────────────────
   // <Relationship Id="rId1" Type=".../slide" Target="slides/slide1.xml"/>
   // Order: presentation.xml's <p:sldIdLst>/<p:sldId r:id="rId1" .../>
-  const relsXml = await relsEntry.async('string')
+  const relsXml = await readEntryText(relsEntry)
   const relsTree = xmlParser.parse(relsXml) as XmlNode[]
   const relMap = new Map<string, string>()
   for (const node of walk(relsTree)) {
@@ -4697,12 +4707,12 @@ async function parseEmbeddedFonts(zip: JSZip, ignored: Set<string>): Promise<Par
   const presEntry = zip.file('ppt/presentation.xml')
   const relsEntry = zip.file('ppt/_rels/presentation.xml.rels')
   if (presEntry === null || relsEntry === null) return []
-  const presXml = await presEntry.async('string')
+  const presXml = await readEntryText(presEntry)
   if (!presXml.includes('<p:embeddedFontLst')) return []
 
   const xmlParser = ooxmlParser()
   const presTree = xmlParser.parse(presXml) as XmlNode[]
-  const relsXml = await relsEntry.async('string')
+  const relsXml = await readEntryText(relsEntry)
   const relsTree = xmlParser.parse(relsXml) as XmlNode[]
 
   // rId → zip path lookup. The `Target` is relative to ppt/, so we
@@ -4751,7 +4761,8 @@ async function parseEmbeddedFonts(zip: JSZip, ignored: Set<string>): Promise<Par
         ignored.add(`embeddedFont:missing:${path}`)
         continue
       }
-      const raw = Buffer.from(await entry.async('nodebuffer'))
+      // decodeFontBytes copies before it de-obfuscates, so the view is safe.
+      const raw = await readEntryBytes(entry)
       const decoded = decodeFontBytes(raw, path)
       if (decoded === null) {
         ignored.add(`embeddedFont:unrecognised:${path}`)
@@ -4900,6 +4911,7 @@ export async function parsePptx(buffer: Buffer): Promise<ParsedPptx> {
   const zip = await JSZip.loadAsync(buffer)
   // DoS: reject decompression bombs before touching any entry contents.
   assertNotZipBomb(zip)
+  endPhase('import', 'unzip')
   if (
     zip.file('ppt/presentation.xml') === null &&
     Object.keys(zip.files).every((n) => !/^ppt\//.test(n))
@@ -4923,6 +4935,7 @@ export async function parsePptx(buffer: Buffer): Promise<ParsedPptx> {
   const referencedImagePaths = new Set<string>()
   const slideContexts = await buildSlideContexts(zip, slidePaths, theme, referencedImagePaths)
   const slideImageRels = await buildSlideImageRels(zip, slidePaths)
+  endPhase('import', 'layouts')
 
   const ignored = new Set<string>()
   const slides: ParsedSlide[] = []
@@ -4930,7 +4943,7 @@ export async function parsePptx(buffer: Buffer): Promise<ParsedPptx> {
   for (const path of slidePaths) {
     const entry = zip.file(path)
     if (entry === null) continue
-    const xml = await entry.async('string')
+    const xml = await readEntryText(entry)
     const ctx: SlideContext = slideContexts.get(path) ?? {
       placeholders: new Map(),
       masterShapes: [],
@@ -4977,17 +4990,27 @@ export async function parsePptx(buffer: Buffer): Promise<ParsedPptx> {
     }
   }
 
+  endPhase('import', 'slides')
+
   // Extract every referenced image's bytes from the zip. We do this AFTER
   // all slides are parsed so we know exactly which images are reachable
   // (the .pptx may contain unused media — we skip them).
+  // Only each entry's type is read here, from its first bytes; the bytes
+  // themselves are inflated when the importer uploads them
+  // (ParsedEmbeddedImage.read). The map keeps the order of first reference.
   const embeddedImages = new Map<string, ParsedEmbeddedImage>()
   for (const zipPath of referencedImagePaths) {
     const entry = zip.file(zipPath)
     if (entry === null) continue
-    const bytes = Buffer.from(await entry.async('nodebuffer'))
-    const { mimeType, ext } = sniffImageType(bytes, zipPath)
-    embeddedImages.set(zipPath, { zipPath, bytes, mimeType, ext })
+    const head = await readEntryHead(entry, SNIFF_BYTES)
+    embeddedImages.set(zipPath, {
+      zipPath,
+      read: () => readEntryBytes(entry),
+      size: entrySize(entry),
+      ...sniffImageType(head, zipPath),
+    })
   }
+  endPhase('import', 'media')
 
   // Embedded TrueType / OpenType faces from `<p:embeddedFontLst>`.
   // Independent of the image extraction — fonts live in their own
@@ -4996,6 +5019,7 @@ export async function parsePptx(buffer: Buffer): Promise<ParsedPptx> {
   // `kind='font'`, and the deck's font registry (FolderFontLoader)
   // picks them up on next render.
   const embeddedFonts = await parseEmbeddedFonts(zip, ignored)
+  endPhase('import', 'fontBytes')
 
   return {
     slideWidth,
@@ -5029,7 +5053,7 @@ async function buildSlideImageRels(
     const relsEntry = zip.file(relsPath)
     const rels: ImageRelMap = new Map()
     if (relsEntry !== null) {
-      const relsXml = await relsEntry.async('string')
+      const relsXml = await readEntryText(relsEntry)
       const tree = xmlParser.parse(relsXml) as XmlNode[]
       for (const node of walk(tree)) {
         if (getTag(node) !== 'Relationship') continue
@@ -5059,6 +5083,9 @@ async function buildSlideImageRels(
  * are unsupported and pass through with the extension-based MIME so the
  * importer can decide whether to drop them.
  */
+/** What `sniffImageType` reads of a file: its magic header. */
+const SNIFF_BYTES = 12
+
 function sniffImageType(bytes: Buffer, zipPath: string): { mimeType: string; ext: string } {
   if (bytes.length >= 12) {
     // PNG: 89 50 4E 47 0D 0A 1A 0A

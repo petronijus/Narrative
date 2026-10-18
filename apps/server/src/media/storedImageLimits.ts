@@ -125,7 +125,11 @@ async function encode(
       break
     case 'image/jpeg':
     case 'image/jpg':
-      out = out.jpeg({ quality: 90, mozjpeg: true, chromaSubsampling: '4:4:4' })
+      // libjpeg-turbo with optimised Huffman tables, not mozjpeg: on a 54 MP
+      // photo mozjpeg took 15.7 s against 2.5 s for a file only 4.6 % smaller
+      // (2026-10-18, docs/plans/performance.md → Log, X1), and this runs on
+      // every oversized upload and PPTX import.
+      out = out.jpeg({ quality: 90, optimiseCoding: true, chromaSubsampling: '4:4:4' })
       break
     case 'image/webp':
       out = out.webp({ quality: 90 })

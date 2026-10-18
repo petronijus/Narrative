@@ -49,6 +49,7 @@ import { writeDeck, type AssetLoader } from './ooxml/writeDeck.js'
 import { getSlideNotesDoc, readFolderTokens, type NotesDoc } from '@narrative/slide-model'
 import type { ServiceDeps } from '../services/deps.js'
 import { readDocCopy } from '../services/liveDocs.js'
+import { endPhase } from './phases.js'
 
 export const PPTX_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.presentationml.presentation'
@@ -74,6 +75,7 @@ export async function exportDeckToPptx(
     const handles = hydrateSlideDoc(doc)
     const rawSlides = listSlides(handles)
     if (rawSlides.length === 0) return { ok: false, error: 'noSlides' }
+    endPhase('export', 'read')
 
     const folderTokens = await loadFolderTokens(deps, deck.folderId)
     const variant = readDeckMeta(doc).variant
@@ -89,6 +91,8 @@ export async function exportDeckToPptx(
         'pptx-export: unresolved colour tokens written as grey',
       )
     }
+
+    endPhase('export', 'tokens')
 
     const assetLoader = createDeckAssetLoader({ db, log, s3: buildS3Client() }, deck)
 

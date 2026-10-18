@@ -327,6 +327,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/media/opentype.d.ts", ["folder-font-preview"]),
     ("apps/server/src/services/media*", MEDIA),
     ("apps/server/src/pptx/*", PPTX),
+    # The bounded-parallelism helper; the PowerPoint import and export are its users.
+    ("apps/server/src/lib/concurrency.ts", PPTX),
     ("apps/server/src/services/pptx.ts", PPTX),
     ("apps/server/src/routes/pptx*", PPTX),
     ("apps/server/src/mcp/*", AGENT),
@@ -410,6 +412,8 @@ NO_E2E = [
     "apps/server/drizzle/*",
     # Ops scripts run by hand on the server, never in a browser.
     "apps/server/src/scripts/*",
+    # Performance drivers (`just perf-pptx`), run by hand against the services.
+    "apps/server/perf/*",
 ]
 
 SOURCE = ["apps/*/src/*", "packages/*/src/*", "apps/web/index.html", "apps/web/vite.config.ts"]

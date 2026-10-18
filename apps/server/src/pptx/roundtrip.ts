@@ -62,7 +62,7 @@ export async function importInMemory(buffer: Buffer): Promise<ImportedDeck> {
   for (const [zipPath, media] of parsed.embeddedImages) {
     const id = `asset-${n++}`
     byPath.set(zipPath, id)
-    assets.set(id, { bytes: media.bytes, mimeType: media.mimeType })
+    assets.set(id, { bytes: await media.read(), mimeType: media.mimeType })
   }
   patchParsedAssetIds(parsed, byPath)
   const { state } = buildDeckUpdate(parsed)

@@ -208,7 +208,7 @@ desktop-apparmor` once first. Packaging, sign-in and updates:
 | `just ci`         | `check` + `integration` + `e2e`                                                                                                                                                                                 |
 
 AGENTS.md → "When to run what" says which further lanes a change needs
-(`size`, `load`, `lighthouse`, `eval`, `pptx-roundtrip`, `mutate`).
+(`size`, `load`, `lighthouse`, `eval`, `pptx-roundtrip`, `perf-pptx`, `mutate`).
 
 ### Machines and lanes
 

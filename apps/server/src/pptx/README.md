@@ -56,6 +56,33 @@ npx tsx src/scripts/pptxRoundtrip.ts deck.pptx [--out exported.pptx] [--detail]
 npx tsx src/scripts/pptxRoundtrip.ts --matrix --out matrix.pptx
 ```
 
+## Speed and memory
+
+`just perf-pptx` (`apps/server/perf/pptx.ts`) imports and exports a deck
+through the real pipeline (dev Postgres and MinIO) and prints p50/p95 wall
+time and RSS per phase over several runs, each in its own process, plus
+fingerprints of the imported model and the exported package — two revisions
+that print the same fingerprints produced the same deck. The default input is
+a generated 100-slide, 200-picture deck (`apps/server/perf/syntheticDeck.ts`, cached in
+`node_modules/.cache/perf-pptx/`); `--deck x.pptx` takes a real one,
+`--cpu-prof` writes a profile per run. The phases are the marks `phases.ts`
+publishes on a diagnostics channel (free when nothing listens).
+
+What keeps import and export fast (docs/plans/performance.md, X1/X2):
+
+- media is inflated with Node's zlib (`zipEntry.ts`), not JSZip's pako, and
+  only when it is uploaded (`ParsedEmbeddedImage.read`): the archive is in
+  memory, every picture of the deck at once is not;
+- pictures and fonts are downscaled and uploaded six at a time
+  (`lib/concurrency.ts`), largest first, with oversize pictures under a pixel
+  budget (`OVERSIZE_PIXEL_BUDGET`) so their decodes cannot stack up;
+- the exporter fetches every asset (and reads each picture's size) six at a
+  time before it writes the slides, and stores already-compressed media
+  (JPEG, PNG, GIF, WebP, video) instead of deflating them again.
+
+None of it changes what is imported or exported: parts are numbered and rows
+collected in the deck's order, whichever task finished first.
+
 Adding a model field: put it in `roundtripMatrix.ts` in a non-default state;
 the round-trip test fails until both directions carry it.
 

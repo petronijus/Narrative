@@ -224,6 +224,10 @@ mutate:
 pptx-roundtrip deck:
     cd apps/server && npx tsx src/scripts/pptxRoundtrip.ts "{{ absolute_path(join(invocation_directory(), deck)) }}"
 
+# PowerPoint import + export time and peak RSS per phase, p50/p95 over runs (`--runs N`, `--deck x.pptx`, `--json f`, `--cpu-prof`; needs the docker services)
+perf-pptx *args: _services
+    cd apps/server && node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs perf/pptx.ts {{ args }}
+
 # A brand's style pack (or all), built from its sources by the brands the private overlay defines (private/bootstrap), written to private/packs (A4.7)
 style-pack brand="all" sources="":
     cd apps/server && npx tsx src/stylePacks/bootstrap/cli.ts {{ brand }} "{{ sources }}"

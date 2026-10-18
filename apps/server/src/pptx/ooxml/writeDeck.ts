@@ -47,6 +47,8 @@ import { writeTable } from './table.js'
 import { writeSlideExt } from './narrativeExt.js'
 import type { NotesDoc } from '@narrative/slide-model'
 import { writeNotesBody, writeNotesExt } from './notes.js'
+import { endPhase } from '../phases.js'
+import { mapConcurrent } from '../../lib/concurrency.js'
 import type { PixelSize } from './shapes.js'
 import { writeTransition } from './transition.js'
 import { writeTiming, type AnimatedTarget } from './timing.js'
@@ -106,25 +108,62 @@ const CONTENT_TYPE_BY_EXT: Record<string, string> = {
   bin: 'application/octet-stream',
 }
 
+/**
+ * Media formats that are compressed already: written STORE, since DEFLATE
+ * gains a percent or two on them at the price of running JSZip's JavaScript
+ * deflate over every byte (seconds per 100 MB; docs/plans/performance.md, X2).
+ * PowerPoint reads stored entries like any other.
+ */
+const STORED_EXTS = new Set(['png', 'jpeg', 'gif', 'webp', 'mp4', 'mov', 'webm', 'avi', 'wmv'])
+
+/** Assets fetched (and measured) at once before the slides are written. */
+const EXPORT_MEDIA_CONCURRENCY = 6
+
 interface MediaPart {
   path: string
   ext: string
   mimeType: string
 }
 
+type LoadedAsset = Awaited<ReturnType<AssetLoader>>
+
 class MediaStore {
   private readonly byAsset = new Map<string, MediaPart | null>()
-  private readonly sizes = new Map<string, PixelSize | null>()
-  private readonly bytesByAsset = new Map<string, Buffer>()
+  private readonly sizes = new Map<string, Promise<PixelSize | null>>()
+  private readonly loads = new Map<string, Promise<LoadedAsset>>()
   readonly parts = new Map<string, Buffer>()
   readonly defaults = new Map<string, string>()
   private n = 0
 
   constructor(private readonly loader: AssetLoader | undefined) {}
 
+  /** The loader's answer for `assetId`, asked once. */
+  private load(assetId: string): Promise<LoadedAsset> {
+    let p = this.loads.get(assetId)
+    if (p === undefined) {
+      p = this.loader !== undefined ? this.loader(assetId) : Promise.resolve(null)
+      this.loads.set(assetId, p)
+    }
+    return p
+  }
+
+  /**
+   * Fetch every asset the slides name, and read the pictures' sizes, a few at
+   * a time — the object store's round trips and sharp overlap instead of
+   * running one after the other as the slides are written. Only a warm-up:
+   * parts are still numbered by `part()`, in the order the slides reach them,
+   * so the package does not depend on which fetch finished first.
+   */
+  async prefetch(assetIds: readonly string[]): Promise<void> {
+    await mapConcurrent(assetIds, EXPORT_MEDIA_CONCURRENCY, async (assetId) => {
+      const asset = await this.load(assetId)
+      if (asset !== null && !asset.mimeType.startsWith('video/')) await this.pixelSize(assetId)
+    })
+  }
+
   async part(assetId: string): Promise<MediaPart | null> {
     if (this.byAsset.has(assetId)) return this.byAsset.get(assetId) ?? null
-    const asset = this.loader !== undefined ? await this.loader(assetId) : null
+    const asset = await this.load(assetId)
     if (asset === null) {
       this.byAsset.set(assetId, null)
       return null
@@ -134,7 +173,6 @@ class MediaStore {
     const path = `ppt/media/${kind}${++this.n}.${ext}`
     const part = { path, ext, mimeType: asset.mimeType }
     this.parts.set(path, asset.bytes)
-    this.bytesByAsset.set(assetId, asset.bytes)
     this.defaults.set(ext, CONTENT_TYPE_BY_EXT[ext] ?? 'application/octet-stream')
     this.byAsset.set(assetId, part)
     return part
@@ -146,28 +184,58 @@ class MediaStore {
    * its box, which is the best PowerPoint can be told.
    */
   async pixelSize(assetId: string): Promise<PixelSize | undefined> {
-    if (this.sizes.has(assetId)) return this.sizes.get(assetId) ?? undefined
-    await this.part(assetId)
-    const bytes = this.bytesByAsset.get(assetId)
-    let size: PixelSize | null = null
-    if (bytes !== undefined) {
-      try {
-        const m = await sharp(bytes).metadata()
-        // EXIF orientations 5–8 turn the picture a quarter: the renderer
-        // (like the browser) shows it upright, width and height swapped.
-        const quarter = m.orientation !== undefined && m.orientation >= 5
-        if (m.width !== undefined && m.height !== undefined && m.width > 0 && m.height > 0) {
-          size = quarter
-            ? { width: m.height, height: m.width }
-            : { width: m.width, height: m.height }
-        }
-      } catch {
-        size = null
-      }
+    let size = this.sizes.get(assetId)
+    if (size === undefined) {
+      size = this.load(assetId).then((asset) =>
+        asset === null ? null : readPixelSize(asset.bytes),
+      )
+      this.sizes.set(assetId, size)
     }
-    this.sizes.set(assetId, size)
-    return size ?? undefined
+    return (await size) ?? undefined
   }
+}
+
+async function readPixelSize(bytes: Buffer): Promise<PixelSize | null> {
+  try {
+    const m = await sharp(bytes).metadata()
+    // EXIF orientations 5–8 turn the picture a quarter: the renderer
+    // (like the browser) shows it upright, width and height swapped.
+    const quarter = m.orientation !== undefined && m.orientation >= 5
+    if (m.width !== undefined && m.height !== undefined && m.width > 0 && m.height > 0) {
+      return quarter ? { width: m.height, height: m.width } : { width: m.width, height: m.height }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Every asset id the slides name, in the order they name them: any
+ * `assetId` / `posterAssetId` field, at any depth (objects, fills, table
+ * cells, backgrounds). Feeds `MediaStore.prefetch`; one it missed is simply
+ * fetched when the slide that names it is written.
+ */
+function assetIdsOf(slides: readonly Slide[]): string[] {
+  const ids = new Set<string>()
+  const walk = (v: unknown): void => {
+    if (Array.isArray(v)) {
+      for (const x of v) walk(x)
+      return
+    }
+    if (v === null || typeof v !== 'object') return
+    const proto = Object.getPrototypeOf(v) as unknown
+    if (proto !== Object.prototype && proto !== null) return
+    for (const [k, x] of Object.entries(v)) {
+      if ((k === 'assetId' || k === 'posterAssetId') && typeof x === 'string') ids.add(x)
+      else walk(x)
+    }
+  }
+  for (const s of slides) {
+    walk(s.background)
+    walk(s.objects)
+  }
+  return [...ids]
 }
 
 // ---------------------------------------------------------------------------
@@ -376,8 +444,17 @@ export async function writeDeck(
    * the clock made two exports of one deck differ whenever they straddled
    * a tick of the zip's two-second time.
    */
-  const put = (path: string, content: string | Buffer, contentType?: string): void => {
-    zip.file(path, content, { date: now, createFolders: false })
+  const put = (
+    path: string,
+    content: string | Buffer,
+    contentType?: string,
+    compression?: 'STORE',
+  ): void => {
+    zip.file(path, content, {
+      date: now,
+      createFolders: false,
+      ...(compression !== undefined ? { compression } : {}),
+    })
     if (contentType !== undefined) overrides.push({ partName: `/${path}`, contentType })
   }
 
@@ -395,6 +472,9 @@ export async function writeDeck(
   presRels.add(REL.viewProps, 'viewProps.xml')
   presRels.add(REL.theme, 'theme/theme1.xml')
   presRels.add(REL.tableStyles, 'tableStyles.xml')
+
+  await media.prefetch(assetIdsOf(slides))
+  endPhase('export', 'assets')
 
   for (let i = 0; i < slides.length; i++) {
     const slide = slides[i]!
@@ -521,6 +601,8 @@ export async function writeDeck(
     put(`ppt/slides/_rels/slide${i + 1}.xml.rels`, relationshipsPart(rels.all))
   }
 
+  endPhase('export', 'slides')
+
   // Package parts.
   put(
     'ppt/presentation.xml',
@@ -559,7 +641,10 @@ export async function writeDeck(
   put('ppt/presProps.xml', presPropsPart(), CT.presProps)
   put('ppt/viewProps.xml', viewPropsPart(), CT.viewProps)
   put('ppt/tableStyles.xml', tableStylesPart(), CT.tableStyles)
-  for (const [path, bytes] of media.parts) put(path, bytes)
+  for (const [path, bytes] of media.parts) {
+    const ext = path.slice(path.lastIndexOf('.') + 1)
+    put(path, bytes, undefined, STORED_EXTS.has(ext) ? 'STORE' : undefined)
+  }
 
   const title = options.title ?? 'Narrative deck'
   const author = options.author ?? 'Narrative'
@@ -581,11 +666,12 @@ export async function writeDeck(
     ),
   )
 
-  return Buffer.from(
-    await zip.generateAsync({
-      type: 'nodebuffer',
-      compression: 'DEFLATE',
-      compressionOptions: { level: 6 },
-    }),
-  )
+  // `nodebuffer` is a Buffer already; copying it held the package twice.
+  const out = await zip.generateAsync({
+    type: 'nodebuffer',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  })
+  endPhase('export', 'zip')
+  return out
 }
