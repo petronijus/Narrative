@@ -16,6 +16,9 @@
  *   - `invalidate()` re-fetches and re-broadcasts to all subscribers; the
  *     drawer calls this on open so freshly-promoted components show up
  *     without a page reload.
+ *   - `invalidateFolderComponentsCache()` (promote, its thumbnail upload,
+ *     a delete) re-fetches for mounted views; a response the invalidation
+ *     overtook is fetched again, never stored.
  *   - Caches are keyed by folderId; they live for the lifetime of the
  *     module (one per editor session).
  *
@@ -34,6 +37,14 @@ interface CacheEntry {
   subscribers: Set<() => void>
   /** Tracks an in-flight fetch so concurrent callers share one request. */
   inflight: Promise<ComponentSummary[]> | null
+  /**
+   * Bumped by every invalidation. A response to a request sent under an
+   * older generation may predate the change that invalidated it, so the
+   * fetch asks again instead of storing it.
+   */
+  generation: number
+  /** How a mounted hook lists this folder; lets an invalidation re-fetch. */
+  load: (() => Promise<ComponentSummary[]>) | null
 }
 
 const cache = new Map<string, CacheEntry>()
@@ -41,7 +52,15 @@ const cache = new Map<string, CacheEntry>()
 function getEntry(folderId: string): CacheEntry {
   let entry = cache.get(folderId)
   if (entry === undefined) {
-    entry = { list: null, loading: false, error: null, subscribers: new Set(), inflight: null }
+    entry = {
+      list: null,
+      loading: false,
+      error: null,
+      subscribers: new Set(),
+      inflight: null,
+      generation: 0,
+      load: null,
+    }
     cache.set(folderId, entry)
   }
   return entry
@@ -55,6 +74,46 @@ function notifySubscribers(entry: CacheEntry): void {
       // Swallow — one buggy subscriber must not stop the rest from learning.
     }
   }
+}
+
+/**
+ * Fetches the list, sharing one request between concurrent callers. The
+ * previous list stays visible while it runs. A request overtaken by an
+ * invalidation is sent again, so what lands is never older than the last
+ * invalidation.
+ */
+function fetchEntry(
+  entry: CacheEntry,
+  load: () => Promise<ComponentSummary[]>,
+): Promise<ComponentSummary[]> {
+  if (entry.inflight !== null) return entry.inflight
+  entry.loading = true
+  entry.error = null
+  notifySubscribers(entry)
+  const promise = (async () => {
+    try {
+      for (;;) {
+        const generation = entry.generation
+        try {
+          const list = await load()
+          if (generation !== entry.generation) continue
+          entry.list = list
+          entry.error = null
+          return list
+        } catch (err) {
+          if (generation !== entry.generation) continue
+          entry.error = err instanceof Error ? err : new Error(String(err))
+          return entry.list ?? []
+        }
+      }
+    } finally {
+      entry.loading = false
+      entry.inflight = null
+      notifySubscribers(entry)
+    }
+  })()
+  entry.inflight = promise
+  return promise
 }
 
 export interface UseFolderComponentsResult {
@@ -82,65 +141,64 @@ export function useFolderComponents(
 
   const entry = folderId !== null ? getEntry(folderId) : null
 
+  const load = useCallback(
+    () => (folderId === null ? Promise.resolve([]) : api.listComponents(folderId)),
+    [api, folderId],
+  )
+
   // Subscribe to cache changes for this folderId. Re-render on every flip.
+  // The subscription also lends the entry its loader, so an out-of-band
+  // invalidation (a promote, a delete) re-fetches for the mounted views.
   useEffect(() => {
     if (entry === null) return
     const sub = () => forceRender((n) => n + 1)
     entry.subscribers.add(sub)
+    entry.load = load
     return () => {
       entry.subscribers.delete(sub)
+      if (entry.subscribers.size === 0) entry.load = null
     }
-  }, [entry])
+  }, [entry, load])
 
-  const fetchList = useCallback(async (): Promise<ComponentSummary[]> => {
-    if (folderId === null || entry === null) return []
-    if (entry.inflight !== null) return entry.inflight
-    entry.loading = true
-    entry.error = null
-    notifySubscribers(entry)
-    const promise = (async () => {
-      try {
-        const list = await api.listComponents(folderId)
-        entry.list = list
-        return list
-      } catch (err) {
-        entry.error = err instanceof Error ? err : new Error(String(err))
-        return entry.list ?? []
-      } finally {
-        entry.loading = false
-        entry.inflight = null
-        notifySubscribers(entry)
-      }
-    })()
-    entry.inflight = promise
-    return promise
-  }, [api, folderId, entry])
+  const invalidate = useCallback(async (): Promise<ComponentSummary[]> => {
+    if (entry === null) return []
+    entry.generation += 1
+    return fetchEntry(entry, load)
+  }, [entry, load])
 
   // Eager initial fetch on first hook call for a folderId we haven't seen.
   useEffect(() => {
     if (!eager || entry === null) return
     if (entry.list === null && entry.inflight === null) {
-      void fetchList()
+      void fetchEntry(entry, load)
     }
-  }, [eager, entry, fetchList])
+  }, [eager, entry, load])
 
   return {
     components: entry?.list ?? null,
     loading: entry?.loading ?? false,
     error: entry?.error ?? null,
-    invalidate: fetchList,
+    invalidate,
   }
 }
 
 /**
  * Invalidates the cache for a folder without subscribing — used by promote /
- * delete flows that mutate the component list out-of-band.
+ * delete flows that mutate the component list out-of-band. Mounted views
+ * (the toolbar's picker, the folder page) re-fetch at once and keep showing
+ * the previous list until the new one lands; with nothing mounted the list
+ * is dropped and the next eager mount fetches it.
  */
 export function invalidateFolderComponentsCache(folderId: string): void {
   const entry = cache.get(folderId)
   if (entry === undefined) return
-  entry.list = null
+  entry.generation += 1
   entry.error = null
+  if (entry.load !== null && entry.subscribers.size > 0) {
+    void fetchEntry(entry, entry.load)
+    return
+  }
+  entry.list = null
   notifySubscribers(entry)
 }
 
