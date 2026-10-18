@@ -88,6 +88,35 @@ describe('watchAutofitHeights', () => {
     expect(w.writes).toEqual([])
   })
 
+  it('measures nothing for a change that cannot move the laid-out height', async () => {
+    const d = deck()
+    let measured = 0
+    watchAutofitHeights(d.doc, {
+      measure: (data) => {
+        measured += 1
+        return measure(data)
+      },
+      write: () => {},
+    })
+    // A drag, a rotation, an opacity slider: position and compositing only.
+    d.doc.transact(() => {
+      d.box.set('x', 40)
+      d.box.set('y', 60)
+    }, LOCAL_ORIGIN)
+    d.doc.transact(() => d.box.set('rotation', 0.3), LOCAL_ORIGIN)
+    d.doc.transact(() => d.box.set('opacity', 0.5), LOCAL_ORIGIN)
+    await flush()
+    expect(measured).toBe(0)
+
+    // A width change in the same transaction as a move is measured.
+    d.doc.transact(() => {
+      d.box.set('x', 41)
+      d.box.set('width', 120)
+    }, LOCAL_ORIGIN)
+    await flush()
+    expect(measured).toBe(1)
+  })
+
   it('ignores a box that does not grow, and stops when stopped', async () => {
     const fixed = deck(false)
     const w = watch(fixed)

@@ -34,15 +34,53 @@ export interface AutofitHeightsOptions {
   write: (slideId: string, objectId: string, height: number) => void
 }
 
-/** The text-box maps a transaction changed: each changed type's nearest enclosing text object. */
-function changedTextBoxes(transaction: Y.Transaction): Set<Y.Map<unknown>> {
+/**
+ * A text box's own keys that cannot change how tall its text lays out: where
+ * the box sits, how it is composited, and what the editor alone reads. A
+ * transaction that changed only these on a box (a drag, a nudge, a rotation,
+ * an opacity slider) needs no measurement (performance.md → E4: a crowded
+ * drag measured every grown box on every pointer move). Anything not listed
+ * — the text, width, typography, padding, `height` itself — is measured, so
+ * a key added later errs on the side of measuring.
+ */
+const NON_LAYOUT_KEYS: ReadonlySet<string> = new Set([
+  'x',
+  'y',
+  'rotation',
+  'opacity',
+  'name',
+  'locked',
+  'shadow',
+  'blur',
+  'groupId',
+  'hyperlink',
+  'aspectLocked',
+])
+
+function isTextBox(t: unknown): t is Y.Map<unknown> {
+  return t instanceof Y.Map && t.get('type') === 'text' && typeof t.get('id') === 'string'
+}
+
+/**
+ * The text-box maps a transaction changed in a way that can move their laid-out
+ * height: each changed type's nearest enclosing text object, unless the type is
+ * the box itself and only its non-layout keys changed.
+ */
+export function changedTextBoxes(transaction: Y.Transaction): Set<Y.Map<unknown>> {
   const maps = new Set<Y.Map<unknown>>()
-  for (const type of transaction.changed.keys()) {
+  for (const [type, keys] of transaction.changed) {
+    if (isTextBox(type)) {
+      // `keys` holds the box's changed map keys (no null: a Y.Map has no content of its own).
+      if ([...keys].every((k) => k !== null && NON_LAYOUT_KEYS.has(k))) continue
+      maps.add(type)
+      continue
+    }
+    // A nested type (the text's runs): its nearest enclosing text box.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Yjs types its event parameter as any
-    let t: Y.AbstractType<Y.YEvent<any>> | null = type
+    let t: Y.AbstractType<Y.YEvent<any>> | null = type.parent
     while (t !== null) {
-      if (t instanceof Y.Map && t.get('type') === 'text' && typeof t.get('id') === 'string') {
-        maps.add(t as Y.Map<unknown>)
+      if (isTextBox(t)) {
+        maps.add(t)
         break
       }
       t = t.parent

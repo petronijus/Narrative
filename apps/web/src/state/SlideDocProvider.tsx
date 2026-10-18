@@ -262,9 +262,14 @@ function HocuspocusSlideProvider({
     // Perf harness (docs/plans/perf-harness.md): the deck's transactions, ours
     // and the server's. Attached only when counting is on (dev, `?perf=1`).
     if (perfCountersOn()) {
-      doc.on('afterTransaction', (tr: Y.Transaction) =>
-        perfCount(tr.local ? 'y.tx.local' : 'y.tx.remote'),
-      )
+      doc.on('afterTransaction', (tr: Y.Transaction) => {
+        perfCount(tr.local ? 'y.tx.local' : 'y.tx.remote')
+        // A transaction that changed nothing (a binding's no-op, the server's
+        // echo of our own update): counted apart so a write can be told from one.
+        if (tr.changed.size === 0 && tr.deleteSet.clients.size === 0) {
+          perfCount(tr.local ? 'y.tx.local.empty' : 'y.tx.remote.empty')
+        }
+      })
     }
     // A new document has not heard from the server yet.
     setSynced(false)

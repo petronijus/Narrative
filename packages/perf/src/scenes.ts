@@ -60,7 +60,10 @@ export function rectOp(slide: unknown, o: Box & { fill: number }): Op {
   }
 }
 
-export function textOp(slide: unknown, o: Box & { text: string; fontSize: number }): Op {
+export function textOp(
+  slide: unknown,
+  o: Box & { text: string; fontSize: number; autofit?: 'grow-down' },
+): Op {
   return {
     command: 'object.create',
     input: {
@@ -79,6 +82,7 @@ export function textOp(slide: unknown, o: Box & { text: string; fontSize: number
         align: 'left',
         rotation: 0,
         opacity: 1,
+        ...(o.autofit === undefined ? {} : { autofit: o.autofit }),
       },
     },
   }
@@ -162,9 +166,17 @@ export function crowdedSlideOps(
   }
   const probeRect = { id: 'probe-rect', x: 1300, y: 420, width: 220, height: 160 }
   add(rectOp(slide, { ...probeRect, fill: 0xcc3366 }), probeRect)
+  // A growing box (`autofit: 'grow-down'`, what agents and imports write):
+  // typing into it and dragging it go through the editor's height write-back
+  // (state/autofitHeights.ts, performance.md → E4).
   const probeText = { id: 'probe-text', x: 300, y: 420, width: 520, height: 120 }
   add(
-    textOp(slide, { ...probeText, text: 'Probe text box for typing and dragging', fontSize: 40 }),
+    textOp(slide, {
+      ...probeText,
+      text: 'Probe text box for typing and dragging',
+      fontSize: 40,
+      autofit: 'grow-down',
+    }),
     probeText,
   )
   const probeImg = { id: 'probe-img', x: 860, y: 420, width: 360, height: 240 }

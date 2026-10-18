@@ -77,6 +77,7 @@ export const WORK_COUNTERS = [
   'y.listSlides',
   'y.listSlides.objects',
   'y.tx.local',
+  'y.tx.local.empty',
   'y.observeDeep.slideObjects',
   'y.slideObjects.flush',
   'net.requests',
@@ -98,6 +99,7 @@ export const TIMED_COUNTERS = [
   'thumb.live.kept',
   'text.restage.texts',
   'y.tx.remote',
+  'y.tx.remote.empty',
   'y.observeDeep.slides',
   // The shared deck store (slide-model deckStore.ts, performance.md → E1):
   // its observer calls, the rebuilds a read after a change triggers, the

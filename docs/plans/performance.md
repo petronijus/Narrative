@@ -96,9 +96,10 @@ L = a month or more.
   revisit the delay, pre-decode, an LRU raster cache across slide switches.
 - **E3 (M)** Slide switch re-mounts and re-rasterises everything: raster cache
   (E2) + idle pre-mount of neighbours.
-- **E4 (S)** Autofit re-measures grow-down texts on every change, positions
-  included (`autofitHeights.ts`): filter by layout keys, reuse the on-canvas
-  layout.
+- **E4 (S) — done 2026-10-18** (Log): autofit re-measured grow-down texts on
+  every change, positions included (`autofitHeights.ts`); a change of
+  non-layout keys only (position, rotation, compositing, editor-only keys) is
+  no longer measured. Open: reuse the on-canvas layout for typing.
 - **E5 (M)** Tables: one HTMLText per cell.
 - **E6 (M) — done 2026-10-18** (Log): inspector, timeline, overlays, layers and
   slides panels select by id on E1's store; EditorLayout reads objects only
@@ -700,3 +701,21 @@ slide.reorder.100 slide.add.100 --mode dev`, `just perf-accept`.
     of the zoom benches are unchanged (all 0); the time baselines are this
     machine's and shared with the main tree, so accept
     `viewport.zoom.wheel viewport.zoom.commit` after the merge.
+
+- 2026-10-18, **E4 done; an open writes nothing** (MacBook M3 Pro, dev, on
+  battery, load ~15; work counters, deterministic):
+  - The crowded scene's probe text is now a growing box (`autofit:
+'grow-down'`, `packages/perf/src/scenes.ts`), so the drag and typing
+    benches go through the height write-back. Dragging it, before → after:
+    `text.autofit.measure` 90 → 0 and `text.measure.bounds` 90 → 0 per
+    90-move drag (`state/autofitHeights.ts` skips a transaction that changed
+    only `x`, `y`, `rotation`, `opacity`, `name`, `locked`, `shadow`, `blur`,
+    `groupId`, `hyperlink` or `aspectLocked` on the box; any other key,
+    unknown ones included, is still measured). Typing into it measures once
+    per key (63 per run) and writes the height three times as the text wraps
+    (`y.tx.local` 60 → 63): the budget of `text.type.inter` now says so.
+  - **The four local transactions of every deck open are empty**: a new
+    counter `y.tx.local.empty` (and `y.tx.remote.empty`) counts transactions
+    that changed nothing; on `deck.open.cold.10` it equals `y.tx.local` (4 =
+    4). An open writes nothing to the document; the four are bindings'
+    no-op transactions, a decode and an empty `afterTransaction` each.
