@@ -407,6 +407,10 @@ All six items landed in commits on `main`:
    - GSAP: ≤ 32 KB (currently 28)
    - hls.js: ≤ 170 KB (currently 161)
    - **Total first-paint: ≤ 800 KB** (currently 747)
+   - 2026-10-18 (L1, `docs/plans/performance.md`): the total, a glob over every
+     vendor chunk, is replaced by each route's first paint against its own
+     budget (`apps/web/scripts/routeSizes.mjs`, run by `just size` after
+     size-limit; numbers in AGENTS.md → When to run what).
 
 ### Tier B — completed ✅
 

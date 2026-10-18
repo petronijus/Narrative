@@ -54,7 +54,9 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import * as tus from 'tus-js-client'
+import type * as tus from 'tus-js-client'
+import { loadTus, preloadTus } from '../lib/tusClient.js'
+import { whenEditorSettled } from '../ui/editorReady.js'
 import { nanoid } from 'nanoid'
 import { buildUploadMetadata, type MediaUploadOwner } from './uploadMetadata.js'
 
@@ -148,6 +150,9 @@ export function MediaUploadProvider(props: MediaUploadProviderProps) {
   // then re-runs the effect on the same instance, and refs persist across
   // that double-invoke, so we must clear the flag in the effect body.
   const disposedRef = useRef(false)
+  // Uploads cancelled before their tus.Upload existed (still probing the
+  // image, or waiting for tus-js-client's chunk): they must not start.
+  const cancelledBeforeStartRef = useRef<Set<string>>(new Set())
 
   // Keep the synchronous mirror in sync with committed state (runs once per
   // commit, not per Strict Mode double-invocation of the updater).
@@ -167,7 +172,12 @@ export function MediaUploadProvider(props: MediaUploadProviderProps) {
   const transPollTimers = transPollTimersRef.current
   useEffect(() => {
     disposedRef.current = false
+    // tus-js-client is its own chunk (lib/tusClient.ts, performance.md → L1):
+    // off the editor's first paint, warmed once the editor settled
+    // (ui/editorReady.ts) so the first upload does not wait for it.
+    const cancelWarm = whenEditorSettled([{ preload: async () => preloadTus() }])
     return () => {
+      cancelWarm()
       disposedRef.current = true
       for (const upload of tusUploads.values()) {
         upload.abort().catch(() => undefined)
@@ -278,11 +288,24 @@ export function MediaUploadProvider(props: MediaUploadProviderProps) {
    * Create and start a tus.Upload instance for the given file + entry id.
    * Shared between initial startUpload and retryUpload.
    */
-  function createAndStartTusUpload(
+  async function createAndStartTusUpload(
     id: string,
     file: File,
     dims: { width?: number; height?: number } = {},
-  ) {
+  ): Promise<void> {
+    let Upload: typeof tus.Upload
+    try {
+      ;({ Upload } = await loadTus())
+    } catch (error) {
+      if (disposedRef.current || cancelledBeforeStartRef.current.has(id)) return
+      upsertEntry(id, {
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Upload could not start',
+      })
+      return
+    }
+    // Cancelled (or the editor closed) while the chunk or the probe ran.
+    if (disposedRef.current || cancelledBeforeStartRef.current.has(id)) return
     const metadata = buildUploadMetadata(owner, file, dims)
 
     const isVideo = file.type.startsWith('video/')
@@ -299,7 +322,7 @@ export function MediaUploadProvider(props: MediaUploadProviderProps) {
     let capturedFontStyle: 'normal' | 'italic' | undefined
     let capturedFontPostscriptName: string | undefined
 
-    const upload = new tus.Upload(file, {
+    const upload = new Upload(file, {
       endpoint: UPLOAD_ENDPOINT,
       retryDelays: [0, 1000, 3000, 5000],
       chunkSize: 5 * 1024 * 1024, // 5 MB chunks,
@@ -526,14 +549,14 @@ export function MediaUploadProvider(props: MediaUploadProviderProps) {
         // Probe dimensions then start upload
         probeImageDimensions(file)
           .then((dims) => {
-            createAndStartTusUpload(id, file, dims ?? {})
+            void createAndStartTusUpload(id, file, dims ?? {})
           })
           .catch(() => {
-            createAndStartTusUpload(id, file, {})
+            void createAndStartTusUpload(id, file, {})
           })
       } else {
         // Video: no client-side dimension probe (codec-dependent, not readable via ImageBitmap)
-        createAndStartTusUpload(id, file, {})
+        void createAndStartTusUpload(id, file, {})
       }
 
       return id
@@ -548,6 +571,8 @@ export function MediaUploadProvider(props: MediaUploadProviderProps) {
     if (upload !== undefined) {
       upload.abort(true).catch(() => undefined)
       tusUploadsRef.current.delete(id)
+    } else {
+      cancelledBeforeStartRef.current.add(id)
     }
     // Clear any transcode poll timer
     // Note: server-side transcode job cannot be cancelled in M12 — it runs to completion.
@@ -563,6 +588,7 @@ export function MediaUploadProvider(props: MediaUploadProviderProps) {
     (id: string) => {
       const file = filesRef.current.get(id)
       if (file === undefined) return
+      cancelledBeforeStartRef.current.delete(id)
 
       // Clear any existing transcode poll timer
       const timer = transPollTimersRef.current.get(id)
@@ -584,13 +610,13 @@ export function MediaUploadProvider(props: MediaUploadProviderProps) {
       if (isImage) {
         probeImageDimensions(file)
           .then((dims) => {
-            createAndStartTusUpload(id, file, dims ?? {})
+            void createAndStartTusUpload(id, file, dims ?? {})
           })
           .catch(() => {
-            createAndStartTusUpload(id, file, {})
+            void createAndStartTusUpload(id, file, {})
           })
       } else {
-        createAndStartTusUpload(id, file, {})
+        void createAndStartTusUpload(id, file, {})
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps

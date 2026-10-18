@@ -16,6 +16,7 @@ import { TELEMETRY_DATA_COLLECTION, scrubTelemetryPayload } from '@narrative/sha
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import { App } from './App'
+import { preloadRoute } from './routePages.js'
 import { registerBundledFonts } from './state/bundledFonts.js'
 import { trackRenderWork } from './renderer/renderWork.js'
 import { installHocuspocusWarningFilter } from './state/installHocuspocusWarningFilter.js'
@@ -113,6 +114,10 @@ window.addEventListener('blur', () => {
 
 // Declare global injected by Vite define
 declare const __BUILD_VERSION__: string
+
+// The opened page's code (a lazy route) starts loading now, in parallel with
+// the session check its route guard waits for (docs/plans/performance.md → L1).
+preloadRoute(window.location.pathname)
 
 const rootEl = document.getElementById('root')
 if (!rootEl) {

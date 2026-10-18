@@ -52,6 +52,8 @@ import { MediaUploadProvider } from '../state/useMediaUpload.js'
 import { FolderDocProvider, useFolderTokensSettled } from '../state/FolderDocProvider.js'
 import { FolderTokensBridge } from '../components/FolderTokensBridge.js'
 import { useFolderSummary } from '../state/folderAccess.js'
+import { preloadEditorParts } from '../ui/lazyEditorParts.js'
+import { markEditorCanvasReady } from '../ui/editorReady.js'
 
 export function ComponentMasterEditor() {
   const { folderId, componentId } = useParams<{ folderId: string; componentId: string }>()
@@ -62,7 +64,10 @@ export function ComponentMasterEditor() {
 
   const handleCanvasReady = useCallback((instance: CanvasInstance | null) => {
     setCanvasInstance(instance)
+    if (instance !== null) markEditorCanvasReady()
   }, [])
+  // The editor's dialogs and overlays (L2, performance.md), loaded when idle.
+  useEffect(() => preloadEditorParts(), [])
 
   useEffect(() => {
     if (componentId === undefined || componentId === '') return

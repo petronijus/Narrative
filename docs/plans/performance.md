@@ -64,13 +64,15 @@ L = a month or more.
 
 ### A. Load and first paint
 
-- **L1 (S–M)** Vendor chunks preloaded on every route, login included: Pixi,
+- **L1 (S–M) ✅ 2026-10-18** Vendor chunks preloaded on every route, login included: Pixi,
   Tiptap (used only by `SlideNotesPanel`/`PresenterOverlay`), Radix, Yjs. The
   catch-all `vendor` group swallows zod, Sentry, tus, tailwind-merge. Drop the
   catch-all, move Inter's registration off Pixi's `Cache` import in
   `main.tsx`, lazy-load notes/presenter/tus. Budgets per route in `just size`.
-- **L2 (M)** EditorLayout chunk (110 kB gz) has no `lazy()`: dialogs, timeline,
-  table inspector, crop/path overlays.
+  Done (Log, 2026-10-18): login 604 → 125 kB gz, editor 912 → 708.
+- **L2 (M) ✅ 2026-10-18** EditorLayout chunk (110 kB gz) has no `lazy()`: dialogs, timeline,
+  table inspector, crop/path overlays. Done (Log): 100 → 64 kB gz; the
+  timeline stays eager (it is on the first paint).
 - **L3 (M)** One `GET /api/media/:id/url` per image (several queries each), then
   always the 2560-px variant: batch the URLs per deck, add a ~1280 variant
   chosen by on-screen size × DPR × zoom.
@@ -208,7 +210,7 @@ L = a month or more.
 ## Order
 
 1. Phase 0: G1, G2, G3, G5 — plus the small standalone wins D1/S2, X1, E4, V2.
-2. L1 and E1 — the two largest everyday wins.
+2. L1 (✅) and E1 (✅) — the two largest everyday wins.
 3. E2 (pixi patch), P1, B2, L3.
 4. R1, S3, L4.
 5. E7 as a measured spike, then the port if it wins.
@@ -718,4 +720,93 @@ slide.reorder.100 slide.add.100 --mode dev`, `just perf-accept`.
     counter `y.tx.local.empty` (and `y.tx.remote.empty`) counts transactions
     that changed nothing; on `deck.open.cold.10` it equals `y.tx.local` (4 =
     4). An open writes nothing to the document; the four are bindings'
+- 2026-10-18, **L1, L2 and the editor's CLS done** (editor-ui; MacBook M3
+  Pro, battery, Low Power Mode off, a machine shared with other agents, load
+  6–30 during the final runs; Lighthouse before/after interleaved on two
+  `vite preview`s of HEAD's and this tree's prod builds, same seeded
+  ten-slide deck, medians of 5).
+
+  | first paint, kB gz (JS + CSS, `just size`) | before | after |
+  | ------------------------------------------ | ------ | ----- |
+  | login `/auth/login`                        | 603.9  | 125.0 |
+  | folders home `/`                           | 603.9  | 179.2 |
+  | folder `/folder/:id`                       | 603.9  | 259.5 |
+  | editor `/deck/:id` (and a share link)      | 912.0  | 708.4 |
+  | present `/deck/:id/present`                | 822.9  | 583.9 |
+  | EditorLayout chunk                         | 100.2  | 63.5  |
+
+  | Lighthouse `/deck/:id`, desktop | FCP | LCP  | TBT | SI   | TTI  | CLS   | score |
+  | ------------------------------- | --- | ---- | --- | ---- | ---- | ----- | ----- |
+  | before (HEAD build)             | 990 | 1666 | 54  | 1774 | 1800 | 0.122 | 0.86  |
+  | after                           | 662 | 1674 | 38  | 1550 | 1691 | 0.005 | 0.92  |
+  | `just lighthouse` (after)       | 720 | 1632 | 17  | 1434 | 1647 | 0.005 | 0.92  |
+
+  `just perf deck.open.* --mode prod` (5 runs; the stored baselines are
+  HEAD's on AC with Low Power Mode on, so the harness calls them not
+  comparable): first paint cold.10 860 → 416, warm.10 506 → 394, cold.100
+  875 → 402, warm.100 486 → 369 ms; settled cold.100 8.3 → 7.6 s.
+  - **L1, vendor chunks off routes that do not use them**: the catch-all
+    `vendor` group and the Radix group are gone (each package goes with the
+    code that imports it); `renderer/fontChanges.ts` no longer imports Pixi
+    — Pixi's `Cache` / `FontStylePromiseCache` get the registered fonts
+    through `renderer/pixiFontSink.ts`, installed by the text renderer —
+    so Inter's registration in `main.tsx` stays and Pixi left the entry;
+    `@narrative/slide-model` and `@narrative/commands` declare
+    `"sideEffects": false` (the built-in object types are registry data now,
+    `builtinObjectTypes.ts`, not top-level calls in the barrel — a first
+    try that kept them in the barrel lost `rectangle` in the build); the
+    folder pages are lazy routes (`routePages.ts`), the route table's path
+    constants moved out of `UserMenu.tsx`; tus-js-client loads on the first
+    upload (`lib/tusClient.ts`; an upload cancelled before it arrived never
+    starts). `main.tsx` preloads the opened route's chunks at boot (a deck
+    route's DeckShell and page at once — they loaded one after the other),
+    in parallel with the session check; a preloaded lazy page renders
+    without suspending (`lazyRoute.preload`).
+  - **Notes and presenter** (Tiptap, 132 kB gz): `SlideNotesPanel` renders a
+    stand-in with the panel's exact frame and the notes as plain text; the
+    editor (`SlideNotesEditor.tsx`) loads on hover / focus / click (which it
+    then takes over) or once the editor settled. The presenter view's rich
+    notes are `PresenterNotes.tsx`, with the plain text as stand-in.
+  - **L2**: `ui/lazyEditorParts.tsx` — crop, path-point, move-to and table
+    overlays, the table inspector, the cheatsheet, share, export, component
+    picker, promote, slide-number and folder-font dialogs (`lazyPart` /
+    `lazyDialog`: own Suspense, preload; a dialog mounts on its first open).
+    The timeline, inspector, slides panel and the text editors stay eager
+    (first paint, or focus on the double-click that opens them).
+  - **When the deferred code loads** (`ui/editorReady.ts`): after the
+    canvas' first frame, 3 s, then idle. Started right after the first
+    frame, these loads put 83 scripts before the LCP (the slide thumbnails;
+    28 at HEAD) and Lighthouse's LCP went 1.61 → 1.99 s, TTI 1.68 → 2.0 s;
+    with no deferred loads at all it was 1.67 s.
+  - **CLS 0.122 → 0.005**: 0.11 of it was the stage — EditorLayout started
+    from guessed toolbar / bottom-panel heights (40 / 56 px) and the
+    ResizeObserver's correction re-centred the artboard a frame after the
+    first paint; they are measured in a layout effect now. The rest: the
+    notes panel grew ~55 px when the deck synced ("No slide selected" →
+    the 72 px editor box); its body keeps the editor box's height in every
+    state, so a slide without notes shows a taller empty panel than before.
+    The 0.005 left is the toolbar's centre group shifting when its right-hand
+    items load.
+  - Budgets: `just size` runs `apps/web/scripts/routeSizes.mjs` after
+    size-limit (the build writes its manifest with
+    `NARRATIVE_BUILD_MANIFEST=1`): every route's first paint against its own
+    budget (login 135, home 190, folder 275, editor 740, present 615 kB); the
+    size-limit glob "total first-paint" is gone, the entry chunk's limit
+    210 → 40 kB.
+  - Tests: unit tests of `lazyRoute.preload`, the font sink's replay and the
+    upload cancelled before tus loaded; `e2e/notes-panel.spec.ts` (a click
+    into the stand-in types into the editor — it caught Tiptap's commands
+    throwing before its view existed — notes reach the presenter view, the
+    editor opens with CLS < 0.05). e2e ran against a dev-mode build of this
+    tree behind `vite preview` (one worker): the smoke set, notes, present,
+    upload, PPTX import, keyboard shortcuts, tables, access tokens, the
+    component picker, the context menu, renderer-visual, inspector-flows,
+    typography, text editing, animation — all green except
+    `renderer-visual` "tearing down another Pixi application", which imports
+    `/src/renderer/thumbnails.ts` (dev-server only), and
+    `route-load-failure` (dev-server module URLs); both to run after the merge.
+  - Not done: the editor route still loads 49 chunks (34 under 3 kB —
+    single lucide icons shared by lazy parts); an entries-aware icon group
+    cut it to 41 but cost login and present a few kB, so it was left out.
+    The folder page keeps Yjs and the token schema (FolderDocProvider).
     no-op transactions, a decode and an empty `afterTransaction` each.

@@ -162,6 +162,9 @@ export default defineConfig(({ mode }) => ({
     // CLI (or release plugin) reads dist/**/*.map directly during deploy.
     sourcemap: 'hidden',
     chunkSizeWarningLimit: 800,
+    // The chunk graph `just size` reads for its per-route budgets
+    // (scripts/routeSizes.mjs); not written into images and deploys.
+    manifest: process.env['NARRATIVE_BUILD_MANIFEST'] === '1',
     rolldownOptions: {
       output: {
         ...(mode === PROFILING_MODE ? { keepNames: true } : {}),
@@ -169,6 +172,14 @@ export default defineConfig(({ mode }) => ({
         // Sentry, React all into their own chunks so the initial download is
         // smaller and a change to any one of them doesn't bust the app cache
         // for the others.
+        //
+        // There is no catch-all `vendor` group any more (L1,
+        // docs/plans/performance.md): one chunk for every other package made
+        // every route that needed any of them (the login page needed
+        // tailwind-merge) download all of them — zod, tus, the markdown
+        // parser, lucide, react-colorful. Without it each package goes with
+        // the code that imports it, and `just size` budgets each route's
+        // first paint (scripts/routeSizes.mjs).
         //
         // A group also takes the dependencies of what it captures (Rolldown's
         // includeDependenciesRecursively), so the order is the priority:
@@ -205,12 +216,8 @@ export default defineConfig(({ mode }) => ({
               test: /[\\/]node_modules[\\/](@tiptap|prosemirror-)/,
               priority: 30,
             },
-            // Radix primitives — many small packages, group as one
-            { name: 'vendor-radix', test: /[\\/]node_modules[\\/]@radix-ui[\\/]/, priority: 20 },
             // Sentry browser SDK
             { name: 'vendor-sentry', test: /[\\/]node_modules[\\/]@sentry[\\/]/, priority: 10 },
-            // Everything else from node_modules → shared "vendor" chunk.
-            { name: 'vendor', test: /[\\/]node_modules[\\/]/, priority: 0 },
           ],
         },
       },

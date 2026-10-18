@@ -2,13 +2,16 @@
  * App.lazy.test.tsx
  *
  * PERF-5 coverage: the editor routes are lazy (`lazyRoute`, a re-armable
- * React.lazy) behind a single <Suspense> boundary. We can't cheaply mount the real <App> (it boots
+ * React.lazy) behind a single <Suspense> boundary; since L1
+ * (docs/plans/performance.md, 2026-10-18) every page but the auth pages is,
+ * declared in `routePages.ts` (the budgets per route in `just size` are the
+ * guard of what each route downloads). We can't cheaply mount the real <App> (it boots
  * Pixi + Hocuspocus), so we assert the two load-bearing properties the
  * change relies on:
  *
- *   1. The heavy route modules are NOT statically imported by App — they
- *      live behind dynamic import() (verified by a source-level check that
- *      App declares them via `lazyRoute(() => import(...), pick)`).
+ *   1. The route modules are NOT statically imported by App — they live
+ *      behind dynamic import() (verified by a source-level check that
+ *      routePages.ts declares them via `lazyRoute(() => import(...), pick)`).
  *   2. A lazy route element renders its Suspense fallback first, then the
  *      resolved component — i.e. the boundary actually catches the pending
  *      chunk and swaps in the real UI (the mechanism App uses).
@@ -24,32 +27,35 @@ import { resolve } from 'node:path'
 
 // vitest runs with cwd = the web package root (apps/web).
 const appSource = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8')
+const routesSource = readFileSync(resolve(process.cwd(), 'src/routePages.ts'), 'utf8')
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 describe('PERF-5 — App lazy-loads the heavy editor routes', () => {
-  it('declares the editor routes via lazyRoute(() => import(...))', () => {
-    // Each heavy route must be code-split, not a static top-level import.
+  it('declares the pages via lazyRoute(() => import(...))', () => {
+    // Each page must be code-split, not a static top-level import.
     for (const mod of [
       './components/DeckShell.js',
       './pages/DeckEditor.js',
       './pages/DeckPresent.js',
       './pages/ComponentMasterEditor.js',
+      './pages/FoldersHome.js',
+      './pages/FolderDecks.js',
+      './pages/FolderSettings.js',
     ]) {
-      expect(appSource).toContain(`import('${mod}')`)
-      // And must NOT be statically imported.
-      expect(appSource).not.toMatch(
-        new RegExp(`^import\\s.*from\\s+'${mod.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`, 'm'),
-      )
+      expect(routesSource).toContain(`import('${mod}')`)
+      for (const source of [appSource, routesSource]) {
+        expect(source).not.toMatch(new RegExp(`^import\\s.*from\\s+'${escape(mod)}'`, 'm'))
+      }
     }
-    expect(appSource).toContain('lazyRoute(')
+    expect(routesSource).toContain('lazyRoute(')
     expect(appSource).toContain('<Suspense')
   })
 
-  it('keeps the dashboard/folder pages eager (static imports)', () => {
-    for (const eager of ['./pages/FoldersHome.js', './pages/FolderDecks.js']) {
-      expect(appSource).toMatch(
-        new RegExp(`from '${eager.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`),
-      )
-    }
+  it('keeps only the auth pages eager (static imports)', () => {
+    const eagerPages = [...appSource.matchAll(/^import\s.*from\s+'(\.\/pages\/[^']+)'/gm)].map(
+      (m) => m[1],
+    )
+    expect(eagerPages.sort()).toEqual(['./pages/AuthError.js', './pages/AuthLogin.js'])
   })
 
   it('renders the Suspense fallback then the resolved lazy route', async () => {

@@ -11,13 +11,13 @@
     "test": "node ../../node_modules/vitest/vitest.mjs run",
     "test:e2e": "playwright test",
     "preview": "vite preview",
-    "size": "size-limit"
+    "size": "size-limit && node scripts/routeSizes.mjs"
   },
   "size-limit": [
     {
-      "name": "main app chunk (volatile, busts on every deploy)",
+      "name": "entry chunk (volatile, busts on every deploy; every route loads it, login included)",
       "path": "dist/assets/index-*.js",
-      "limit": "210 KB",
+      "limit": "40 KB",
       "gzip": true
     },
     {
@@ -33,7 +33,7 @@
       "gzip": true
     },
     {
-      "name": "Tiptap + ProseMirror vendor chunk",
+      "name": "Tiptap + ProseMirror vendor chunk (the notes editors, loaded after first paint)",
       "path": "dist/assets/vendor-tiptap-*.js",
       "limit": "137 KB",
       "gzip": true
@@ -48,22 +48,6 @@
       "name": "GSAP vendor chunk",
       "path": "dist/assets/vendor-gsap-*.js",
       "limit": "32 KB",
-      "gzip": true
-    },
-    {
-      "name": "Total first-paint payload",
-      "path": [
-        "dist/assets/index-*.js",
-        "dist/assets/vendor-pixi-*.js",
-        "dist/assets/vendor-react-*.js",
-        "dist/assets/vendor-tiptap-*.js",
-        "dist/assets/vendor-yjs-*.js",
-        "dist/assets/vendor-gsap-*.js",
-        "dist/assets/vendor-radix-*.js",
-        "dist/assets/vendor-*.js",
-        "!dist/assets/vendor-sentry-*.js"
-      ],
-      "limit": "800 KB",
       "gzip": true
     }
   ],

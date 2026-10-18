@@ -36,6 +36,8 @@ import { useCropMode } from '../state/CropModeContext'
 import { usePathPointsMode } from '../state/PathPointsModeContext'
 import { useDeckStore } from '../state/useDeckStore.js'
 import { ActiveObjectGuards, ActiveObjectOverlays } from './ActiveObjectOverlays'
+// Shown only after a user action: a chunk of its own (ui/lazyEditorParts.tsx).
+import { ShortcutsCheatsheet } from '../ui/lazyEditorParts.js'
 import { useSlideDoc } from '../state/useSlideDoc'
 import { useUndoManager } from '../state/useUndoManager'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext'
@@ -66,7 +68,6 @@ import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useZoomLevel, MIN_ZOOM, MAX_ZOOM } from '../state/useZoomLevel.js'
 import { clientToCanvasCoords } from '../lib/canvasCoords.js'
 import { isModHeld, useShortcuts } from '../state/useShortcuts.js'
-import { ShortcutsCheatsheet } from '../ui/ShortcutsCheatsheet.js'
 import { EditorContextMenu } from '../ui/EditorContextMenu.js'
 import { Rulers, GuideOverlay } from '../ui/Rulers.js'
 import { useRulers } from '../state/RulersContext.js'
@@ -454,10 +455,17 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   const bottomPanelsRef = useRef<HTMLDivElement>(null)
   const [topBarH, setTopBarH] = useState(40)
   const [bottomPanelsH, setBottomPanelsH] = useState(56)
-  useEffect(() => {
+  // A layout effect, measured once before the first paint: the initial
+  // values above are guesses, and the ResizeObserver's correction came a
+  // frame later — after the canvas had painted centred on the guesses, so
+  // the whole stage jumped (most of the editor's layout shift, CLS 0.12 in
+  // Lighthouse; docs/plans/performance.md, 2026-10-18).
+  useLayoutEffect(() => {
     const tEl = topBarRef.current
     const bEl = bottomPanelsRef.current
     if (tEl === null && bEl === null) return
+    if (tEl !== null) setTopBarH(Math.round(tEl.getBoundingClientRect().height))
+    if (bEl !== null) setBottomPanelsH(Math.round(bEl.getBoundingClientRect().height))
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const h = Math.round(entry.contentRect.height)

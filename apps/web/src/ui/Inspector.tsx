@@ -79,7 +79,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { TokenColorInput } from './TokenColorInput.js'
-import { TableInspector } from './TableInspector.js'
+import { TableInspector } from './lazyEditorParts.js'
 import { AlignButtonGroup } from './AlignButtonGroup.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
 import { FontWeightSelect } from './FontWeightSelect.js'
@@ -172,7 +172,7 @@ import { isTokenRef, resolveTokenValue } from '@narrative/slide-model'
 import type { TokenRef, ColorTokenSnapshot } from '@narrative/slide-model'
 import { useApi } from '../api/client.js'
 import { promoteSelectionToComponent } from '../state/promoteSelectionToComponent.js'
-import { SlideNumberPromptDialog } from './SlideNumberPromptDialog.js'
+import { SlideNumberPromptDialog } from './lazyEditorParts.js'
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -24,6 +24,7 @@ import {
   setHtmlTextFace,
   subscribeFontFamilyChanges,
 } from './fontChanges'
+import './pixiFontSink'
 import { _resetRenderWorkForTests, whenRenderWorkIdle } from './renderWork'
 
 afterEach(() => {
@@ -87,6 +88,32 @@ describe('fontChanges', () => {
     removeHtmlTextFace('a')
     expect(pixi.fontCss.has('Brand Sans')).toBe(false)
     expect(pixi.cache.has('Brand Sans-and-url')).toBe(false)
+  })
+
+  it('hands Pixi every family registered before the renderer loaded', async () => {
+    // The app registers Inter at boot and the folder pages their fonts long
+    // before (or without ever) loading Pixi: the sink gets them on install.
+    vi.resetModules()
+    const early = await import('./fontChanges')
+    const inter = [{ url: '/assets/inter.woff2', faces: [{ weight: '100 900', style: 'normal' }] }]
+    early.setHtmlTextUrlFamily('Inter', inter)
+    early.setHtmlTextFace({
+      key: 'k',
+      family: 'Brand Sans',
+      weight: '400',
+      style: 'normal',
+      bytes: ttf(4),
+    })
+    expect(pixi.cache.size).toBe(0)
+    expect(pixi.fontCss.size).toBe(0)
+
+    await import('./pixiFontSink')
+    expect(pixi.cache.get('Inter-and-url')).toEqual({ entries: inter })
+    expect(pixi.cache.get('Brand Sans-and-url')).toEqual({ entries: [] })
+    expect(await pixi.fontCss.get('Brand Sans')!).toContain('font-family: "Brand Sans"')
+    // Pixi builds Inter's CSS itself, from the URLs.
+    expect(pixi.fontCss.has('Inter')).toBe(false)
+    early._resetFontChangesForTests()
   })
 
   it('gives Pixi only names it can write into its SVG unescaped', () => {

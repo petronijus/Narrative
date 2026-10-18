@@ -32,6 +32,9 @@
 // document.body during measurement so it cannot restyle the rest of the page.
 import '../pixiHtmlTextStyleScope.js'
 import '../htmlTextMeasureCounter.js'
+// Must run before any HTMLText rasterises: hands Pixi the fonts registered so
+// far (renderer/fontChanges.ts, which itself does not import Pixi).
+import '../pixiFontSink.js'
 // After the counter: a measurement the memo saves is not counted as one.
 import { invalidateHtmlTextMeasurements } from '../htmlTextBoundsMemo.js'
 import { perfCount } from '@narrative/shared'

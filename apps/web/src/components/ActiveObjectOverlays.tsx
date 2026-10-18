@@ -47,12 +47,15 @@ import { LineEndpointHandles } from '../ui/LineEndpointHandles'
 import { EditorVideoPreview } from '../ui/EditorVideoPreview'
 import { TextEditOverlay } from '../ui/TextEditOverlay'
 import { TableCellEditor } from '../ui/TableCellEditor'
-import { TableBorderSelectionOverlay } from '../ui/TableBorderSelectionOverlay'
-import { TableChrome } from '../ui/TableChrome'
 import { TableRangeHighlight } from '../ui/TableRangeHighlight'
-import { CropOverlay } from '../ui/CropOverlay'
-import { PathPointsOverlay } from '../ui/PathPointsOverlay'
-import { MoveToTargetOverlay } from '../ui/MoveToTargetOverlay'
+// Shown only after a user action: chunks of their own (ui/lazyEditorParts.tsx).
+import {
+  CropOverlay,
+  MoveToTargetOverlay,
+  PathPointsOverlay,
+  TableBorderSelectionOverlay,
+  TableChrome,
+} from '../ui/lazyEditorParts.js'
 
 /**
  * The active slide's object ids with their types, joined: what the guards

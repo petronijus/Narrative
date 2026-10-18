@@ -15,12 +15,12 @@
  * Fix: ship Inter as a self-hosted webfont, register it both in
  * `document.fonts` (so the DOM textarea uses it) AND in Pixi's Cache
  * under `${family}-and-url` (so HTMLText.getFontCss embeds it into
- * the SVG). With both layers seeing the SAME glyph file, metrics
+ * the SVG; through renderer/fontChanges.ts, which hands it to Pixi once the
+ * renderer loads). With both layers seeing the SAME glyph file, metrics
  * match and the caret lands where the user expects.
  */
 
-import { Cache } from 'pixi.js'
-import { announceFontFamilyChanged } from '../renderer/fontChanges.js'
+import { announceFontFamilyChanged, setHtmlTextUrlFamily } from '../renderer/fontChanges.js'
 // `?url` returns the public URL to the asset Vite emits at build time.
 import interLatinNormalUrl from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url'
 import interLatinItalicUrl from '@fontsource-variable/inter/files/inter-latin-wght-italic.woff2?url'
@@ -55,12 +55,13 @@ export async function registerBundledFonts(): Promise<void> {
     return
   }
 
-  Cache.set(`${family}-and-url`, {
-    entries: [
-      { url: interLatinNormalUrl, faces: [{ weight: '100 900', style: 'normal' }] },
-      { url: interLatinItalicUrl, faces: [{ weight: '100 900', style: 'italic' }] },
-    ],
-  })
+  // Pixi's Cache gets the entry through the font registry once the renderer
+  // loads (renderer/pixiFontSink.ts): importing Pixi here put its vendor
+  // chunk on every route, login included.
+  setHtmlTextUrlFamily(family, [
+    { url: interLatinNormalUrl, faces: [{ weight: '100 900', style: 'normal' }] },
+    { url: interLatinItalicUrl, faces: [{ weight: '100 900', style: 'italic' }] },
+  ])
 
   // Text that rasterised before the face and its Cache entry landed shows
   // the fallback: every canvas redraws its Inter text now

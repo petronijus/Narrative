@@ -37,7 +37,7 @@
 
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { useShortcuts } from '../state/useShortcuts.js'
-import { ShortcutsCheatsheet } from '../ui/ShortcutsCheatsheet.js'
+import { ShortcutsCheatsheet } from '../ui/lazyEditorParts.js'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Canvas } from '../renderer/Canvas.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'

@@ -158,8 +158,11 @@ AREAS: list[tuple[str, list[str]]] = [
     # Pointer → slide coordinates: the canvas tools and a file dropped on the canvas.
     ("apps/web/src/lib/canvasCoords.ts", CANVAS_TOOLS + MEDIA + ["keyboard-shortcuts"]),
     ("apps/web/src/lib/endpoints.ts", SMOKE + SYNC + ["render-page"]),
+    ("apps/web/src/lib/tusClient.ts", MEDIA + PPTX),
     ("apps/web/src/lib/shareToken.ts", ACCESS + TOKENS + MEDIA + ["render-page"]),
-    ("apps/web/src/ui/PresenterOverlay.tsx", PRESENT),
+    ("apps/web/src/ui/PresenterOverlay.tsx", PRESENT + ["notes-panel"]),
+    ("apps/web/src/ui/PresenterNotes.tsx", PRESENT + ["notes-panel"]),
+    ("apps/web/src/ui/presenterNotesStyle.ts", ["notes-panel"]),
     ("apps/web/src/components/EditorLayout.tsx", RENDER + CANVAS_TOOLS + ["keyboard-shortcuts"]),
     ("apps/web/src/components/DeckShell.tsx", RENDER + SYNC),
     ("apps/web/src/pages/DeckEditor.tsx", RENDER + SYNC),
@@ -180,7 +183,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/ui/useTextLayoutTick.ts", CANVAS_TOOLS + ["text-autofit"]),
     ("apps/web/src/ui/textEditDom.ts", TEXT),
     ("apps/web/src/ui/Font*", TEXT + ["folder-font-preview"]),
-    ("apps/web/src/ui/SlideNotesPanel.tsx", ["text-edit-commands"]),
+    ("apps/web/src/ui/SlideNotes*", ["notes-panel", "text-edit-commands"]),
+    ("apps/web/src/ui/slideNotesShared.ts", ["notes-panel"]),
     ("apps/web/src/ui/Inspector.tsx", INSPECTOR),
     ("apps/web/src/ui/ColorInput.tsx", INSPECTOR + TOKENS),
     ("apps/web/src/ui/TokenColorInput.tsx", INSPECTOR + TOKENS),
@@ -217,6 +221,15 @@ AREAS: list[tuple[str, list[str]]] = [
     # Around every route: a broken boundary or lazy wrapper blanks the app.
     ("apps/web/src/ui/RouteErrorBoundary.tsx", SMOKE + ["route-load-failure"]),
     ("apps/web/src/ui/lazyRoute.tsx", SMOKE + ["route-load-failure"]),
+    # The route table and its boot / idle preloads (L1); the lazy parts (L2).
+    ("apps/web/src/routePages.ts", SMOKE + ["route-load-failure"]),
+    ("apps/web/src/ui/routePaths.ts", ACCESS),
+    ("apps/web/src/ui/lazyPart.tsx", SMOKE + ["route-load-failure", "notes-panel"]),
+    (
+        "apps/web/src/ui/lazyEditorParts.tsx",
+        CANVAS_TOOLS + MEDIA + COMPONENTS + ACCESS + ["table-commands", "keyboard-shortcuts"],
+    ),
+    ("apps/web/src/ui/componentDrag.ts", COMPONENTS),
     ("apps/web/src/ui/ThemeToggle.tsx", []),
     ("apps/web/src/ui/UserMenu.tsx", ACCESS),
     ("apps/web/src/ui/handleVisuals.tsx", CANVAS_TOOLS),

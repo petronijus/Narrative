@@ -32,11 +32,45 @@
  *     are given to it (`isEmbeddableFamilyName`); any other name — a quote,
  *     a brace, `</style>` — paints in the fallback face instead of breaking
  *     out of the CSS or the markup.
+ *
+ * This module does not import Pixi (docs/plans/performance.md → L1): the
+ * folder pages and the app's boot register fonts here, and a static Pixi
+ * import put the whole renderer on every route, login included. What Pixi is
+ * told goes through a sink, `./pixiFontSink.ts`, which the text renderer
+ * installs before any HTMLText exists; it is handed everything registered
+ * so far when it is installed.
  */
 
-import { Cache, FontStylePromiseCache } from 'pixi.js'
 import { quoteCssFamilyName } from '@narrative/slide-model'
 import { trackRenderWork } from './renderWork.js'
+
+/** One file of a family Pixi embeds from its URL (the bundled Inter). */
+export interface UrlFontEntry {
+  url: string
+  faces: { weight: string; style: string }[]
+}
+
+/**
+ * Where HTMLText's font state lives (Pixi's asset `Cache` and its
+ * `FontStylePromiseCache`), as the registry below needs to write it.
+ */
+export interface HtmlTextFontSink {
+  /** Set Pixi's asset `Cache` entry `<family>-and-url` — the key Pixi embeds a family by. */
+  setEntries(family: string, entries: readonly UrlFontEntry[]): void
+  /** Whether that key is set. */
+  hasEntries(family: string): boolean
+  /** Remove that key. */
+  removeEntries(family: string): void
+  /** Give Pixi the family's `@font-face` CSS (it then never builds it itself). */
+  setCss(family: string, css: string): void
+  /** Drop the family's CSS, so Pixi builds it again on the next raster. */
+  dropCss(family: string): void
+}
+
+let sink: HtmlTextFontSink | null = null
+
+/** Families Pixi embeds from URLs it fetches itself, by family. */
+const urlFamilies = new Map<string, readonly UrlFontEntry[]>()
 
 type Listener = (family: string) => void
 
@@ -71,7 +105,7 @@ function flush(): void {
     // A family Pixi builds the CSS for itself (from its asset Cache: the
     // bundled Inter) is rebuilt on the next raster with the faces it has now.
     if (![...faces.values()].some((face) => face.family === family)) {
-      FontStylePromiseCache.delete(family)
+      sink?.dropCss(family)
     }
     versions.set(family, (versions.get(family) ?? 0) + 1)
     for (const listener of [...listeners]) listener(family)
@@ -132,17 +166,44 @@ function familyCss(family: string): string {
 
 /** Point Pixi at the family's faces as registered here (or forget it with none left). */
 function publishFamily(family: string): void {
-  const key = `${family}-and-url`
+  if (sink === null) return
   const css = familyCss(family)
   if (css === '') {
-    FontStylePromiseCache.delete(family)
-    if (Cache.has(key)) Cache.remove(key)
+    sink.dropCss(family)
+    if (sink.hasEntries(family)) sink.removeEntries(family)
+    const urls = urlFamilies.get(family)
+    if (urls !== undefined) sink.setEntries(family, urls)
     return
   }
   // Pixi embeds a family only if its asset Cache has this key; the CSS it
   // embeds is the promise below, so the entry lists no URLs to download.
-  if (!Cache.has(key)) Cache.set(key, { entries: [] })
-  FontStylePromiseCache.set(family, Promise.resolve(css))
+  if (!sink.hasEntries(family)) sink.setEntries(family, [])
+  sink.setCss(family, css)
+}
+
+/**
+ * Register a family Pixi embeds from URLs it fetches itself — the bundled
+ * Inter, whose files are the app's own static assets (state/bundledFonts.ts).
+ * The caller announces the change.
+ */
+export function setHtmlTextUrlFamily(family: string, entries: readonly UrlFontEntry[]): void {
+  if (!isEmbeddableFamilyName(family)) return
+  urlFamilies.set(family, entries)
+  if (sink !== null && familyCss(family) === '') sink.setEntries(family, entries)
+}
+
+/**
+ * Install where Pixi's font state lives (`./pixiFontSink.ts`, once, before any
+ * HTMLText): every family registered before is published to it now.
+ */
+export function installHtmlTextFontSink(next: HtmlTextFontSink): void {
+  sink = next
+  for (const [family, entries] of urlFamilies) {
+    if (familyCss(family) === '') next.setEntries(family, entries)
+  }
+  for (const family of new Set([...faces.values()].map((face) => face.family))) {
+    publishFamily(family)
+  }
 }
 
 function fontMime(bytes: Uint8Array): string {
@@ -235,11 +296,15 @@ export function createFontLoadFilter(): (faces: Iterable<FontFace>) => boolean {
 
 /** Test helper. */
 export function _resetFontChangesForTests(): void {
-  for (const family of new Set([...faces.values()].map((f) => f.family))) {
-    FontStylePromiseCache.delete(family)
-    if (Cache.has(`${family}-and-url`)) Cache.remove(`${family}-and-url`)
+  for (const family of new Set([
+    ...[...faces.values()].map((f) => f.family),
+    ...urlFamilies.keys(),
+  ])) {
+    sink?.dropCss(family)
+    if (sink?.hasEntries(family) === true) sink.removeEntries(family)
   }
   faces.clear()
+  urlFamilies.clear()
   pending.clear()
   flushScheduled = false
   listeners.clear()
