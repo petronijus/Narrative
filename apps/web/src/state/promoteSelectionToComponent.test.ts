@@ -14,7 +14,8 @@ const invalidateFolderComponentsCache = vi.fn()
 vi.mock('./useFolderComponents.js', () => ({
   invalidateFolderComponentsCache: (id: string) => invalidateFolderComponentsCache(id),
 }))
-const renderSlide = vi.fn().mockResolvedValue('data:image/png;base64,AAAA')
+// The renderer hands back a PNG blob; the upload takes it as a data URL.
+const renderSlide = vi.fn(async (_objects: unknown) => new Blob(['PNG'], { type: 'image/png' }))
 vi.mock('../renderer/thumbnails.js', () => ({
   createThumbnailRenderer: vi.fn(async () => ({ renderSlide, destroy: vi.fn() })),
 }))
@@ -105,7 +106,7 @@ describe('promoteSelectionToComponent', () => {
       name: 'Card',
     })
     await vi.waitFor(() =>
-      expect(uploadComponentThumbnail).toHaveBeenCalledWith('cmp1', 'data:image/png;base64,AAAA'),
+      expect(uploadComponentThumbnail).toHaveBeenCalledWith('cmp1', 'data:image/png;base64,UE5H'),
     )
     const [objects] = renderSlide.mock.calls[0]! as [Array<{ id: string }>]
     expect(objects.map((o) => o.id)).toEqual(['r1'])

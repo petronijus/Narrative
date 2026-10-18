@@ -19,7 +19,7 @@ async function thumbnailPixels(
 ): Promise<{ w: number; h: number; data: number[] } | null> {
   return page.evaluate(async (thumbWidth) => {
     const img = document.querySelector<HTMLImageElement>('[data-slide-id] img')
-    if (img === null || !img.src.startsWith('data:image/png')) return null
+    if (img === null || !img.src.startsWith('blob:')) return null
     // The panel shows a picture the server made until the editor has its own
     // (1920 wide); the editor's thumbnails are THUMB_W wide. The src can change
     // under a decode in flight.

@@ -20,6 +20,7 @@
 import { promoteToComponent, type DeckMutationContext } from '@narrative/slide-model'
 import { invalidateFolderComponentsCache } from './useFolderComponents.js'
 import { createThumbnailRenderer } from '../renderer/thumbnails.js'
+import { blobToDataUrl } from '../renderer/thumbnailImages.js'
 import type { ApiClient } from '../api/client.js'
 
 export interface PromoteSelectionArgs {
@@ -66,8 +67,8 @@ async function renderAndUploadInitialThumbnail(
   let renderer: Awaited<ReturnType<typeof createThumbnailRenderer>> | null = null
   try {
     renderer = await createThumbnailRenderer({ width: 200, resolution: 1 })
-    const dataUrl = await renderer.renderSlide(masterTree)
-    await api.uploadComponentThumbnail(componentId, dataUrl)
+    const png = await renderer.renderSlide(masterTree)
+    await api.uploadComponentThumbnail(componentId, await blobToDataUrl(png))
     invalidateFolderComponentsCache(folderId)
   } catch (err) {
     console.warn('[promote] initial component thumbnail failed', err)

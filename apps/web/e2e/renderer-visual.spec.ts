@@ -60,7 +60,7 @@ async function sampleThumbnailPixel(
   return page.evaluate(
     async ({ slideX, slideY }) => {
       const img = Array.from(document.querySelectorAll('img')).find(
-        (el) => el.src.startsWith('data:image/png') && el.naturalWidth > 100,
+        (el) => el.src.startsWith('blob:') && el.naturalWidth > 100,
       ) as HTMLImageElement | undefined
       if (img === undefined) return null
       return new Promise<{ r: number; g: number; b: number }>((resolve, reject) => {

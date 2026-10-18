@@ -37,6 +37,7 @@ import {
   mountedIds,
   objectData,
   pendingTextRestage,
+  pendingThumbnailWork,
   renderNow,
   stripMasks,
 } from '../renderer/perfProbes.js'
@@ -478,6 +479,8 @@ export function installPerfHarness(): void {
             busy.push('thumbnail rasters')
           if (sceneGraph !== null && pendingTextRestage(sceneGraph) > 0) busy.push('text restage')
           if ((pendingLoads?.() ?? 0) > 0) busy.push('loads')
+          // Thumbnails queued for idle time, debouncing or retrying move no counter yet.
+          if (pendingThumbnailWork() > 0) busy.push('thumbnails')
           if (opts.expectedIds !== undefined) {
             const have = new Set(sceneGraph === null ? [] : mountedIds(sceneGraph))
             if (!opts.expectedIds.every((id) => have.has(id))) busy.push('objects not mounted')

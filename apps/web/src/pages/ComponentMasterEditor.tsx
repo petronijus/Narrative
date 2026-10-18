@@ -27,6 +27,7 @@ import { Loader2 } from 'lucide-react'
 import type * as Y from 'yjs'
 import { useApi } from '../api/client.js'
 import { useSlideThumbnails } from '../state/useSlideThumbnails.js'
+import { thumbnailDataUrl } from '../renderer/thumbnailImages.js'
 import {
   acquireComponentDoc,
   releaseComponentDoc,
@@ -184,11 +185,14 @@ function ComponentThumbnailUploader({ componentId }: { componentId: string }) {
       if (lastUploadedRef.current === thumb) return
       lastUploadedRef.current = thumb
       pendingRef.current = null
-      apiRef.current.uploadComponentThumbnail(componentId, thumb).catch((err: unknown) => {
-        // Non-fatal — drop the marker so a future render can retry.
-        lastUploadedRef.current = null
-        console.warn('[component-thumb] PUT failed', err)
-      })
+      // The thumbnail is an object URL; the API takes the PNG as a data URL.
+      thumbnailDataUrl(thumb)
+        .then((dataUrl) => apiRef.current.uploadComponentThumbnail(componentId, dataUrl))
+        .catch((err: unknown) => {
+          // Non-fatal — drop the marker so a future render can retry.
+          lastUploadedRef.current = null
+          console.warn('[component-thumb] PUT failed', err)
+        })
     }, 1500)
   }, [componentId, masterThumb, tokensFinal])
 

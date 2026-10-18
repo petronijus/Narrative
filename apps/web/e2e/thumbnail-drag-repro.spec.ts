@@ -25,15 +25,16 @@ async function createDeckAndOpen(page: Page): Promise<void> {
   )
 }
 
-async function thumbLengths(page: Page): Promise<Map<string, number>> {
+/** Each slide's thumbnail src: an object URL per picture, so a new picture is a new src. */
+async function thumbLengths(page: Page): Promise<Map<string, string>> {
   const arr = await page.evaluate(() => {
     const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))
     return imgs.map((img) => ({
       slideId: img.closest('[data-slide-id]')?.getAttribute('data-slide-id') ?? '',
-      length: img.src.length,
+      src: img.src,
     }))
   })
-  return new Map(arr.map((e) => [e.slideId, e.length]))
+  return new Map(arr.map((e) => [e.slideId, e.src]))
 }
 
 test('drag updates thumbnail across slide switches (user repro)', async ({ page }) => {
@@ -91,15 +92,15 @@ test('drag updates thumbnail across slide switches (user repro)', async ({ page 
   console.log('after add rA2 on slide 1 (8s wait):', Object.fromEntries(t3))
 
   // Asserts: each step's edit must change THE EDITED slide's thumbnail.
-  const t1S1 = t1.get(s1) ?? 0
-  const t2S1 = t2.get(s1) ?? 0
-  const t2S2 = t2.get(s2) ?? 0
-  const t3S1 = t3.get(s1) ?? 0
-  const t3S2 = t3.get(s2) ?? 0
+  const t1S1 = t1.get(s1) ?? ''
+  const t2S1 = t2.get(s1) ?? ''
+  const t2S2 = t2.get(s2) ?? ''
+  const t3S1 = t3.get(s1) ?? ''
+  const t3S2 = t3.get(s2) ?? ''
 
   console.log({ t1S1, t2S1, t2S2, t3S1, t3S2 })
 
-  expect(t2S2, 'slide 2 thumb updates after adding rB').not.toBe(0)
+  expect(t2S2, 'slide 2 thumb updates after adding rB').not.toBe('')
   expect(t3S1, 'slide 1 thumb updates after adding rA2').not.toBe(t1S1)
   expect(t3S2, 'slide 2 thumb persists').toBe(t2S2)
 })

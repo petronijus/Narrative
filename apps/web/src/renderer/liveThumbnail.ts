@@ -17,7 +17,7 @@
 
 import { perfCount } from '@narrative/shared'
 import { SLIDE_WIDTH } from './constants.js'
-import { captureSlideCanvas } from './captureSlide.js'
+import { canvasToPng, captureSlideCanvas } from './captureSlide.js'
 import { getDefaultRenderScheduler } from './RenderScheduler.js'
 import { settleScene } from './settleScene.js'
 import type { SceneGraph } from './SceneGraph.js'
@@ -26,15 +26,15 @@ import type { SceneGraph } from './SceneGraph.js'
 const SETTLE_TIMEOUT_MS = 1500
 
 /**
- * The thumbnail of the slide on the editor's canvas as a PNG data URL, `width`
- * pixels wide; `null` when the canvas does not show exactly `expectedIds` (a
+ * The thumbnail of the slide on the editor's canvas as a PNG, `width` pixels
+ * wide (encoded asynchronously, off the main thread in Chromium); `null` when the canvas does not show exactly `expectedIds` (a
  * slide switch in progress, a load that does not end).
  */
 export async function captureLiveThumbnail(
   scene: SceneGraph,
   expectedIds: readonly string[],
   width: number,
-): Promise<string | null> {
+): Promise<Blob | null> {
   const settled = await settleScene(scene, {
     expectedIds: () => expectedIds,
     renderNow: () => getDefaultRenderScheduler()?.renderNow(),
@@ -54,5 +54,5 @@ export async function captureLiveThumbnail(
 
   perfCount('thumb.live')
   const canvas = scene.withTextUnfaded(() => captureSlideCanvas(scene, width / SLIDE_WIDTH))
-  return 'toDataURL' in canvas ? canvas.toDataURL('image/png') : null
+  return canvasToPng(canvas)
 }

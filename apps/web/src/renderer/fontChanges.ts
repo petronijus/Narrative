@@ -73,6 +73,7 @@ function flush(): void {
     if (![...faces.values()].some((face) => face.family === family)) {
       FontStylePromiseCache.delete(family)
     }
+    versions.set(family, (versions.get(family) ?? 0) + 1)
     for (const listener of [...listeners]) listener(family)
   }
 }
@@ -93,6 +94,14 @@ export function announceFontFamilyChanged(family: string): void {
       }, 0)
     }),
   )
+}
+
+/** How many times each family's faces changed (absent: never) — part of a thumbnail's key. */
+const versions = new Map<string, number>()
+
+/** The version of every family announced so far (renderer/thumbnailKey.ts). */
+export function fontFamilyVersions(): ReadonlyMap<string, number> {
+  return versions
 }
 
 /** Listen for font family changes; returns the unsubscribe. */

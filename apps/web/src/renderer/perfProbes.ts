@@ -85,3 +85,6 @@ export function stripMasks(sceneGraph: SceneGraph): number {
   walk(sceneGraph.getRoot())
   return n
 }
+
+/** Thumbnails waiting or rendering (the store's queues, debounces and retries): settle waits for 0. */
+export { pendingThumbnailWork } from './thumbnailStore.js'

@@ -40,7 +40,10 @@ import {
 } from '../state/browserSlideExport.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSelection } from '../state/SelectionContext.js'
-import { useSlideThumbnails } from '../state/useSlideThumbnails.js'
+import { useSlideThumbnailStore, useThumbnailUrl } from '../state/useSlideThumbnails.js'
+import type { ThumbnailStore } from '../renderer/thumbnailStore.js'
+import { thumbnailDataUrl } from '../renderer/thumbnailImages.js'
+import { useVisibleSlideRows } from './useVisibleSlideRows.js'
 import { setDeckThumbnail } from '../state/deckThumbnailCache.js'
 import { ApiError, useApi } from '../api/client.js'
 import { useParams } from 'react-router-dom'
@@ -171,7 +174,8 @@ interface SlideItemProps {
   isDragging: boolean
   dropIndicatorAbove: boolean
   dropIndicatorBelow: boolean
-  thumbnailUrl: string | undefined
+  /** The panel's thumbnails: the row reads its own (and re-renders with it only). */
+  thumbnails: ThumbnailStore
   readOnly?: boolean
   onActivate: (id: string, mods?: ActivateModifiers) => void
   onToggleCollapsed: (id: string) => void
@@ -203,7 +207,7 @@ function SlideItemImpl({
   isDragging,
   dropIndicatorAbove,
   dropIndicatorBelow,
-  thumbnailUrl,
+  thumbnails,
   readOnly = false,
   onActivate,
   onToggleCollapsed,
@@ -218,6 +222,7 @@ function SlideItemImpl({
   onConsumeEditRequest,
 }: SlideItemProps) {
   const labelId = `slide-item-label-${slide.id}`
+  const thumbnailUrl = useThumbnailUrl(thumbnails, slide.id)
   const [editing, setEditing] = useState(false)
   const [draftName, setDraftName] = useState(slide.name ?? '')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -525,7 +530,9 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   const tokensFinal = !roleLoading && (folderId === null || folderTokensSettled)
 
   const allSlideIds = slides.map((s) => s.id)
-  const thumbnailMap = useSlideThumbnails(allSlideIds, { liveActiveSlide: true })
+  const thumbnails = useSlideThumbnailStore(allSlideIds, { liveActiveSlide: true })
+  // The rows on screen are drawn first, the rest of the deck at idle.
+  useVisibleSlideRows(listRef, thumbnails, allSlideIds.join('|'))
 
   // P13: persist the first-slide thumbnail to localStorage so the home
   // page can show a deck preview without re-opening every deck. The
@@ -533,7 +540,8 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   const { id: deckId } = useParams<{ id: string }>()
   const { deckCtx } = useSlideDoc()
   const firstSlideId = allSlideIds[0]
-  const firstSlideThumb = firstSlideId !== undefined ? thumbnailMap.get(firstSlideId) : undefined
+  // An object URL (renderer/thumbnailImages.ts): the same one for the same picture.
+  const firstSlideThumb = useThumbnailUrl(thumbnails, firstSlideId)
   const api = useApi()
   // Trailing-edge debounce of the server-side upload:
   //   - Each new firstSlideThumb stashes itself into pendingRef.
@@ -552,7 +560,12 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   isViewerRef.current = isViewer
   useEffect(() => {
     if (deckId !== undefined && deckId !== '' && firstSlideThumb !== undefined) {
-      setDeckThumbnail(deckId, firstSlideThumb)
+      // Kept across reloads: as a data URL (an object URL dies with the page).
+      thumbnailDataUrl(firstSlideThumb)
+        .then((dataUrl) => setDeckThumbnail(deckId, dataUrl))
+        .catch(() => {
+          /* Replaced (and revoked) before it was read: the next one is stored. */
+        })
     }
     if (
       deckId === undefined ||
@@ -573,11 +586,13 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       if (lastUploadedRef.current === p.thumb) return
       lastUploadedRef.current = p.thumb
       pendingRef.current = null
-      apiRef.current.uploadDeckThumbnail(p.deckId, p.thumb).catch((err: unknown) => {
-        // Non-fatal — drop the marker so a future render can retry.
-        lastUploadedRef.current = null
-        console.warn('[deck-thumb] PUT failed', err)
-      })
+      thumbnailDataUrl(p.thumb)
+        .then((dataUrl) => apiRef.current.uploadDeckThumbnail(p.deckId, dataUrl))
+        .catch((err: unknown) => {
+          // Non-fatal — drop the marker so a future render can retry.
+          lastUploadedRef.current = null
+          console.warn('[deck-thumb] PUT failed', err)
+        })
     }, 1500)
   }, [deckId, firstSlideThumb, tokensFinal])
 
@@ -1465,7 +1480,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
                       isDragging={isDragging}
                       dropIndicatorAbove={dropIndicatorAbove}
                       dropIndicatorBelow={dropIndicatorBelow}
-                      thumbnailUrl={thumbnailMap.get(slide.id)}
+                      thumbnails={thumbnails}
                       readOnly={isViewer}
                       onActivate={handleActivate}
                       onToggleCollapsed={handleToggleCollapsed}

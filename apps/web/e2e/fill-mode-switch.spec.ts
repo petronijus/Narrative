@@ -11,7 +11,7 @@ import { test, expect, type Page } from './fixtures/test'
  * 3. Select it, confirm Inspector shows "Solid".
  * 4. Switch to "Linear" — gradient is applied.
  * 5. Switch back to "Solid" — wait for thumbnail debounce + re-render.
- * 6. Read the thumbnail <img> src (data URL) and sample pixels via an
+ * 6. Read the thumbnail <img> src (an object URL) and sample pixels via an
  *    offscreen 2D canvas — the thumbnail IS a raster so it IS readable.
  *    After switching back to solid the thumbnail must show uniform blue.
  * 7. Also read Y.Doc state: fillStyle must be undefined after solid switch.
@@ -64,10 +64,10 @@ async function sampleThumbnailPixel(
       // The slide panel renders thumbnails as <img> elements.
       // Find the first visible thumbnail (current slide).
       const img = document.querySelector('.slide-thumbnail-img') as HTMLImageElement | null
-      if (img === null || !img.src.startsWith('data:')) {
-        // Fallback: try any img with a data: src
+      if (img === null || !img.src.startsWith('blob:')) {
+        // Fallback: any img with an object URL (a slide thumbnail)
         const fallback = Array.from(document.querySelectorAll('img')).find((el) =>
-          el.src.startsWith('data:image/png'),
+          el.src.startsWith('blob:'),
         ) as HTMLImageElement | undefined
         if (fallback === undefined) throw new Error('no thumbnail img found')
         const src = fallback.src
@@ -111,7 +111,7 @@ async function sampleThumbnailPixel(
 }
 
 /**
- * Wait until the thumbnail <img> src changes. Returns the new src (data URL).
+ * Wait until the thumbnail <img> src changes. Returns the new src (an object URL).
  * Polls until src changes from `prevSrc` or timeout.
  */
 async function waitForThumbnailUpdate(page: Page, prevSrc: string): Promise<string> {
@@ -123,7 +123,7 @@ async function waitForThumbnailUpdate(page: Page, prevSrc: string): Promise<stri
           const img = document.querySelector('.slide-thumbnail-img') as HTMLImageElement | null
           if (img !== null) return img.src
           const fallback = Array.from(document.querySelectorAll('img')).find((el) =>
-            el.src.startsWith('data:image/png'),
+            el.src.startsWith('blob:'),
           ) as HTMLImageElement | undefined
           return fallback?.src ?? ''
         })
@@ -141,7 +141,7 @@ async function getThumbnailSrc(page: Page): Promise<string> {
     const img = document.querySelector('.slide-thumbnail-img') as HTMLImageElement | null
     if (img !== null) return img.src
     const fallback = Array.from(document.querySelectorAll('img')).find((el) =>
-      el.src.startsWith('data:image/png'),
+      el.src.startsWith('blob:'),
     ) as HTMLImageElement | undefined
     return fallback?.src ?? ''
   })

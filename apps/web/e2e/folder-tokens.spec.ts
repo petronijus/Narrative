@@ -255,12 +255,21 @@ async function colourByRegion(page: Page, colour: Rgb): Promise<Record<Region, n
 
 /** The share of the slide thumbnail's pixels that are `colour`. */
 async function thumbnailShare(page: Page, colour: Rgb): Promise<number> {
-  const dataUrl = await page.evaluate(
-    () =>
+  // The thumbnail is an object URL: read its PNG bytes in the page (no CSP in dev).
+  const dataUrl = await page.evaluate(async () => {
+    const src =
       Array.from(document.querySelectorAll('img')).find(
-        (el) => el.src.startsWith('data:image/png') && el.naturalWidth > 100,
-      )?.src ?? null,
-  )
+        (el) => el.src.startsWith('blob:') && el.naturalWidth > 100,
+      )?.src ?? null
+    if (src === null) return null
+    const blob = await (await fetch(src)).blob()
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = () => reject(reader.error ?? new Error('thumbnail not readable'))
+      reader.readAsDataURL(blob)
+    })
+  })
   if (dataUrl === null) return 0
   const png = PNG.sync.read(Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64'))
   return countColour(png, colour) / (png.width * png.height)

@@ -57,8 +57,8 @@ test('thumbnails keep updating after switching active slide', async ({ page }) =
     const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))
     return imgs.map((img) => ({
       slideId: img.closest('[data-slide-id]')?.getAttribute('data-slide-id'),
-      hasSrc: img.src.startsWith('data:image/png;'),
-      length: img.src.length,
+      hasSrc: img.src.startsWith('blob:'),
+      src: img.src,
     }))
   })
   console.log('thumbs initial:', thumbsBefore)
@@ -73,7 +73,7 @@ test('thumbnails keep updating after switching active slide', async ({ page }) =
     const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))
     return imgs.map((img) => ({
       slideId: img.closest('[data-slide-id]')?.getAttribute('data-slide-id'),
-      length: img.src.length,
+      src: img.src,
     }))
   })
   console.log('thumbs after edit slide 1:', thumbsAfterEdit1)
@@ -98,7 +98,7 @@ test('thumbnails keep updating after switching active slide', async ({ page }) =
     const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))
     return imgs.map((img) => ({
       slideId: img.closest('[data-slide-id]')?.getAttribute('data-slide-id'),
-      length: img.src.length,
+      src: img.src,
     }))
   })
   console.log('thumbs after edit slide 2:', thumbsAfterEdit2)
@@ -119,7 +119,7 @@ test('thumbnails keep updating after switching active slide', async ({ page }) =
     const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))
     return imgs.map((img) => ({
       slideId: img.closest('[data-slide-id]')?.getAttribute('data-slide-id'),
-      length: img.src.length,
+      src: img.src,
     }))
   })
   console.log('thumbs after edit slide 1 again:', thumbsAfterEdit3)
@@ -141,13 +141,13 @@ test('thumbnails keep updating after switching active slide', async ({ page }) =
 
   // Diagnostic assertions per stage.
   const lookup = (snapshot: typeof thumbsBefore, id: string) =>
-    snapshot.find((t) => t.slideId === id)?.length ?? 0
+    snapshot.find((t) => t.slideId === id)?.src ?? ''
 
-  console.log('slide A initial len:', lookup(thumbsBefore, seeded.fromSlideId))
-  console.log('slide A after edit-A len:', lookup(thumbsAfterEdit1, seeded.fromSlideId))
-  console.log('slide B initial len:', lookup(thumbsBefore, seeded.toSlideId))
-  console.log('slide B after edit-B len:', lookup(thumbsAfterEdit2, seeded.toSlideId))
-  console.log('slide A after edit-A2 len:', lookup(thumbsAfterEdit3, seeded.fromSlideId))
+  console.log('slide A initial:', lookup(thumbsBefore, seeded.fromSlideId))
+  console.log('slide A after edit-A:', lookup(thumbsAfterEdit1, seeded.fromSlideId))
+  console.log('slide B initial:', lookup(thumbsBefore, seeded.toSlideId))
+  console.log('slide B after edit-B:', lookup(thumbsAfterEdit2, seeded.toSlideId))
+  console.log('slide A after edit-A2:', lookup(thumbsAfterEdit3, seeded.fromSlideId))
 
   expect(
     lookup(thumbsAfterEdit1, seeded.fromSlideId),
