@@ -8,10 +8,16 @@
  * Resolution is capped by a pixel budget (25M pixels) rather than a
  * fixed multiplier, so the effective cap depends on the canvas size.
  *
+ * A zoom on a live slide does not re-rasterise every text in one frame:
+ * the texts get the new resolution a batch per frame, those on screen first
+ * (SceneGraph.restageTextResolution, docs/plans/canvas-performance.md step
+ * 3). The last test checks that every text still ends up drawn at it.
+ *
  * Run: PLAYWRIGHT_USE_SYSTEM_CHROME=1 npx playwright test --config apps/web/playwright.config.ts canvas-sharpness-final
  */
 
 import { test, expect } from './fixtures/test'
+import { provisionDeckWithText } from './fixtures/provisionDeck'
 
 const MAX_PIXELS = 25_000_000
 
@@ -191,5 +197,100 @@ test.describe('Canvas Sharpness — zoom-adaptive resolution', () => {
     expect(cssCheck.canvasTransform).toBe('none')
     expect(cssCheck.blurSources).toEqual([])
     await ctx.close()
+  })
+
+  test('a live zoom redraws every text at the new resolution, off screen too', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await provisionDeckWithText(page, {
+      title: 'Canvas Sharpness — live zoom',
+      objectId: 'sharp-seed',
+      text: 'seed',
+      x: 10,
+      y: 10,
+      width: 100,
+      height: 40,
+    })
+    // Texts over the whole slide: at 300 % most of them are off screen.
+    await page.evaluate(() => {
+      const api = window.__narrative_test_api!
+      for (let i = 0; i < 24; i++) {
+        api.addText({
+          id: `sharp-${i}`,
+          x: 40 + (i % 6) * 300,
+          y: 60 + Math.floor(i / 6) * 250,
+          w: 260,
+          h: 80,
+          fontSize: 28,
+          text: `Line ${i} of sharp text`,
+        })
+      }
+    })
+
+    /** Every text node of the scene: the resolution it is set to and the one its texture has. */
+    const texts = (): Promise<{
+      renderer: number
+      pending: number
+      nodes: Array<{ res: number | null; texRes: number | null; landed: boolean }>
+    }> =>
+      page.evaluate(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi internals: _resolution, _gpuData
+        const sg = window.__narrative_scene_graph as any
+        const renderer = sg.getApp().renderer
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const nodes: any[] = []
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const walk = (c: any): void => {
+          if (c.anchor !== undefined && '_didTextUpdate' in c) nodes.push(c)
+          for (const ch of c.children ?? []) walk(ch)
+        }
+        walk(sg.getRoot())
+        return {
+          renderer: renderer.resolution as number,
+          pending: sg.pendingTextRestage as number,
+          nodes: nodes.map((n) => {
+            const gpu = n._gpuData?.[renderer.uid]
+            return {
+              res: n._resolution as number | null,
+              texRes: (gpu?.texture?.source?._resolution as number | undefined) ?? null,
+              landed:
+                gpu !== undefined &&
+                gpu.generatingTexture !== true &&
+                gpu.currentKey === n.styleKey,
+            }
+          }),
+        }
+      })
+
+    const allAt = async (): Promise<string> => {
+      const t = await texts()
+      const off = t.nodes.filter(
+        (n) =>
+          !n.landed ||
+          n.res === null ||
+          Math.abs(n.res - t.renderer) > 0.01 ||
+          n.texRes === null ||
+          Math.abs(n.texRes - t.renderer) > 0.01,
+      )
+      return t.nodes.length >= 25 && t.pending === 0 && off.length === 0
+        ? 'ok'
+        : `${off.length}/${t.nodes.length} texts not at ${t.renderer}, ${t.pending} pending`
+    }
+    await expect.poll(allAt, { timeout: 15_000 }).toBe('ok')
+    const before = (await texts()).renderer
+
+    // Zoom in on the slide's centre with the wheel, as a person does.
+    const box = (await page.locator('.artboard').boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.keyboard.down('ControlOrMeta')
+    for (let i = 0; i < 12; i++) {
+      await page.mouse.wheel(0, -100)
+      await page.waitForTimeout(30)
+    }
+    await page.keyboard.up('ControlOrMeta')
+
+    await expect
+      .poll(async () => (await texts()).renderer, { timeout: 10_000 })
+      .toBeGreaterThan(before + 0.5)
+    await expect.poll(allAt, { timeout: 15_000 }).toBe('ok')
   })
 })

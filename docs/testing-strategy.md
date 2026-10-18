@@ -487,14 +487,15 @@ in a container with a supported base image.
 
 A spec written to _measure_ production behaviour — not to assert a contract —
 stays out of the committed suite until it becomes an assertion.
-`apps/web/e2e/zoom-text-probe.spec.ts` is the
-current example: it reads font faces, model-vs-measured text geometry and
-artboard screenshots across a renderer-resolution change, driven by
-`PROBE_DECK_ID` / `PROBE_SLIDE`. It is the starting point for the text-jump fix
-described in
-[`docs/handoff/0.9.x-production-hardening.md`](./handoff/0.9.x-production-hardening.md);
-when that lands, the measurement becomes a real assertion or the probe is
-deleted.
+`apps/web/e2e/perf-heavy-slide.spec.ts` (opt-in, `PERF_PROBE=1`) is the
+current example. The zoom-text probe (`zoom-text-probe.spec.ts`: font faces,
+model-vs-measured text geometry and artboard screenshots across a
+renderer-resolution change, for the text-jump defect in
+[`docs/handoff/0.9.x-production-hardening.md`](./handoff/0.9.x-production-hardening.md))
+was deleted on 2026-10-18 with the `SceneGraph.forceTextResolutionRefresh`
+it drove, when a zoom's re-rasterisation became staged
+(`SceneGraph.restageTextResolution`). The text-jump defect is still open;
+its last version is in git history (`git show 36d5c438:apps/web/e2e/zoom-text-probe.spec.ts`).
 
 ### Some defects are only reachable in production
 

@@ -52,6 +52,35 @@ import { disposeComponentDocCache } from '../state/componentDocCache.js'
 import { markFirstPaint, markPixiReady } from '../state/loadTimings.js'
 import type { ObjectChangeSet } from '@narrative/slide-model'
 import type { CanvasInstance } from './CanvasInstanceContext.js'
+import { whenIdle, widenRect, type Rect } from './textResolutionStaging.js'
+
+/**
+ * The part of the canvas the window shows, in the canvas's own CSS pixels
+ * (Pixi's stage space), widened by 25 % so text just off screen comes next.
+ * The editor scales the canvas with a CSS transform (the zoom), so the
+ * on-screen box is mapped back through the canvas's layout width. Null when
+ * the canvas is not laid out or entirely off screen.
+ */
+function visibleCanvasRect(canvas: HTMLCanvasElement): Rect | null {
+  const box = canvas.getBoundingClientRect()
+  if (box.width <= 0 || box.height <= 0 || canvas.clientWidth <= 0) return null
+  const left = Math.max(box.left, 0)
+  const top = Math.max(box.top, 0)
+  const right = Math.min(box.right, window.innerWidth)
+  const bottom = Math.min(box.bottom, window.innerHeight)
+  if (right <= left || bottom <= top) return null
+  const kx = canvas.clientWidth / box.width
+  const ky = canvas.clientHeight / box.height
+  return widenRect(
+    {
+      x: (left - box.left) * kx,
+      y: (top - box.top) * ky,
+      width: (right - left) * kx,
+      height: (bottom - top) * ky,
+    },
+    0.25,
+  )
+}
 
 export interface CanvasProps {
   /**
@@ -459,9 +488,18 @@ export function Canvas({
   // caps at ~2.2× instead of the 4× that would OOM.
   //
   // Debounced by 150 ms so rapid mousewheel zoom only commits the
-  // resolution change once after the zoom stabilizes. This avoids
-  // Pixi's HTMLTextPipe generatingTexture race where mid-flight
-  // rasterizations silently skip new resolution changes.
+  // resolution change once after the zoom stabilizes, and then committed
+  // from an idle callback: on a busy main thread the timer can fire while
+  // wheel events of the same gesture are still queued, and each of them
+  // (a new zoom → this effect's cleanup) must get to cancel the commit
+  // first.
+  //
+  // The commit does not let Pixi re-rasterise every text in one frame (its
+  // `resolutionChange` runner would): texts are pinned to the resolution
+  // they were drawn at, the renderer's changes, and the new one is handed to
+  // the texts a batch per frame, those on screen first
+  // (SceneGraph.pinTextResolution / restageTextResolution; plan
+  // canvas-performance step 3).
   useEffect(() => {
     const instance = instanceRef.current
     if (instance === null) return
@@ -474,24 +512,29 @@ export function Canvas({
     const pixelCap = Math.sqrt(maxPixels / (cw * ch))
     const effectiveRes = Math.min(pixelCap, dpr * Math.max(1, zoom))
 
-    const debounceTimer = setTimeout(() => {
+    const commit = (): void => {
       const inst = instanceRef.current
       if (inst === null || !onScreenRef.current) return
       const renderer = inst.app.renderer
       if (Math.abs(renderer.resolution - effectiveRes) < 0.01) return
+      inst.sceneGraph.pinTextResolution()
       renderer.resolution = effectiveRes
       if (container !== null && cw > 0 && ch > 0) {
         renderer.resize(cw, ch)
       }
-      // Force all HTMLText nodes to re-rasterize at the new resolution.
-      // Pixi's async text pipeline + our wireRedrawOnAsyncTextureUpdate
-      // don't cover resolution-only changes — this resets each node's
-      // GPU cache key and catchup guard so the re-rasterization gets
-      // scheduled with follow-up render frames.
-      inst.sceneGraph.forceTextResolutionRefresh()
+      inst.sceneGraph.restageTextResolution(effectiveRes, visibleCanvasRect(inst.app.canvas))
+    }
+
+    let cancelIdle: (() => void) | null = null
+    const debounceTimer = setTimeout(() => {
+      // 500 ms at the latest: a main thread that never idles still gets sharp text.
+      cancelIdle = whenIdle(commit, 500)
     }, 150)
 
-    return () => clearTimeout(debounceTimer)
+    return () => {
+      clearTimeout(debounceTimer)
+      cancelIdle?.()
+    }
   }, [zoom, pixiReady])
 
   // ResizeObserver — reaguje na změnu velikosti parent kontejneru.

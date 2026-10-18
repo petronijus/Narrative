@@ -68,8 +68,9 @@ offset from a _snapshot_ of the measured size (`textNode.y = data.height −
 textNode.height`; horizontal via `anchor.x` + `x`). Neither refresh path
 re-runs them:
 
-- `SceneGraph.forceTextResolutionRefresh()` (zoom changes
-  `renderer.resolution`) and
+- `SceneGraph.restageTextResolution()` (a zoom commits a new
+  `renderer.resolution`; texts are pinned and handed the new value in
+  batches, viewport first — `renderer/textResolutionStaging.ts`) and
 - `SceneGraph.refreshTextNodesUsingFamily()` (a deck font finishes loading)
 
 only reset the GPU cache key and mark the texture dirty. When metrics change
@@ -82,8 +83,9 @@ geometry does not drift across a zoom (all deltas 0), and a pure resolution
 change moves glyph rasters by 0.12 % of pixels, edges only.
 
 Likely fix: re-run both align functions once the re-rasterisation settles,
-rather than only invalidating the texture. Starting point:
-`apps/web/e2e/zoom-text-probe.spec.ts`.
+rather than only invalidating the texture. Starting point: the zoom-text
+probe, deleted with step 3 of `docs/plans/canvas-performance.md` and kept in
+git history (`git show 36d5c438:apps/web/e2e/zoom-text-probe.spec.ts`).
 
 ## Render scheduling
 

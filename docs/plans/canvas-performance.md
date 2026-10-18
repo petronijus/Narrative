@@ -1,6 +1,6 @@
 # Canvas performance on crowded slides
 
-Status: **in progress** — steps 1 and 2 done, 3–5 open (branch `perf/crowded-slide`, started 2026-10-16).
+Status: **in progress** — steps 1–3 done, 4–5 open (branch `perf/crowded-slide`, started 2026-10-16).
 Started because dragging, zooming and typing felt slow on slides with many
 text boxes, pictures and shapes (and slowest on the MacBook).
 
@@ -56,7 +56,7 @@ the effect.
    in a second Pixi app. Other slides keep the current path (they change only
    through collaborators), at idle priority. Target: no task over 50 ms after a
    gesture.
-3. **Zoom** (`renderer/Canvas.tsx`, `SceneGraph.forceTextResolutionRefresh`).
+3. **Zoom** (`renderer/Canvas.tsx`, `SceneGraph.restageTextResolution`).
    Re-rasterise only the texts in the viewport, in batches across frames, the
    rest when they scroll in; commit the resolution when the gesture ends, not
    on a timer a stalled main thread can trip repeatedly. Target: zoom with 300
@@ -115,3 +115,40 @@ the effect.
   `forceTextResolutionRefresh` and `e2e/zoom-text-probe.spec.ts`, which calls
   it, go with it. Check with `e2e/canvas-sharpness-final.spec.ts` and the
   `zoom-wheel+settle` rows of the probe (target: 300 texts at the fps of 40).
+- 2026-10-18, step 3 (`renderer/textResolutionStaging.ts`,
+  `SceneGraph.pinTextResolution` / `restageTextResolution`, the commit in
+  `Canvas.tsx`): built as designed, plus one finding. Batching the
+  _starts_ (8 texts a frame) did not remove the task behind the commit: Pixi
+  rasterises an HTMLText's SVG into the texture (`texImage2D` of the image)
+  in the image's `onload`, and those loads land together — one ~250 ms task
+  of `texSubImage2D`, 150–450 ms after the commit, whatever the batch size.
+  So a batch is now bounded by texts (8) _and_ texture pixels (2 Mpx,
+  estimated from the current texture × the change²), and the next batch
+  waits until the last one's rasters have landed (at most 6 frames, for
+  hidden text). Pinned texts stay pinned; texts mounted later follow the
+  committed resolution. `forceTextResolutionRefresh` and
+  `e2e/zoom-text-probe.spec.ts` are gone (the probe is in git history, see
+  `docs/testing-strategy.md`); `canvas-sharpness-final.spec.ts` gained a
+  live-zoom test (every text, off screen too, ends drawn at the new
+  resolution — fails with the staging switched off, checked). The probe
+  rows now carry a timeline (input end, restage calls and their completion,
+  long tasks). `zoom-wheel+settle`, MacBook M3 Pro (ANGLE Metal, 1× DPR, dev
+  build), 3 runs each, before → after:
+
+  | Texts (objects) | active fps    | long tasks while zooming    | tail (after input)                                        | task time     | uploads     |
+  | --------------- | ------------- | --------------------------- | --------------------------------------------------------- | ------------- | ----------- |
+  | 40 (144)        | 45–47 → 45–49 | 2× ≤ 278 ms → 1× ≤ 181 ms   | 60 fps → 60 fps                                           | 1.29 → 1.11 s | 208 → 208   |
+  | 120 (224)       | 44–46 → 44–47 | 3–4× ≤ 203 ms → 1× ≤ 167 ms | 60 fps → 60 fps                                           | 1.86 → 1.58 s | 596 → 595   |
+  | 300 (404)       | 43–45 → 40–43 | 2× ≤ 151 ms → 2× ≤ 182 ms   | 51 fps, max 167 ms, 1 long task → 60 fps, max 17 ms, none | 3.43 → 2.17 s | 1465 → ~900 |
+
+  What is left in "long tasks while zooming" is the commit itself, one per
+  resolution change (the probe's zoom reaches its clamp and rests there,
+  so it commits twice): `resizeCanvas`, the backbuffer reallocation, ~100 ms
+  with no text on the slide at all (0 texts: 1× 99 ms). Not text, so not
+  this step — a candidate for step 5 (antialias/MSAA, a resize that does not
+  reallocate on every commit). A staging finishes 0.4–0.6 s (40 texts) to
+  1.0–1.4 s (120) after its commit, viewport first; at 300 texts the one at
+  the zoom's peak is overtaken by the zoom back out, so off-screen text is
+  never rasterised at the peak (the ~560 fewer uploads). An earlier run of
+  the 120-text row on the same machine that day (33 fps, max 750 ms, 6 long
+  tasks) did not reproduce in these runs; the machine was quieter.

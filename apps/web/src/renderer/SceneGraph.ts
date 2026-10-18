@@ -49,11 +49,60 @@ import { fontFamilyNames } from '@narrative/slide-model'
 import type { SlideObject, SlideObjectType, ObjectChangeSet } from '@narrative/shared'
 import type { ObjectBounds } from './types'
 import type { RenderScheduler } from './RenderScheduler'
+import { BatchStager, stagingOrder, type Rect } from './textResolutionStaging.js'
 
 interface SceneNode {
   container: Container
   data: SlideObject
 }
+
+/**
+ * The part of Pixi's AbstractText the zoom staging uses. `_autoResolution`
+ * and `_resolution` are Pixi's own (protected/internal in its typings):
+ * `resolution = null` follows `renderer.resolution`, and `_resolution` is the
+ * value the text was last drawn at (set by the text pipe when it rasterises).
+ */
+interface ResolutionText {
+  _autoResolution: boolean
+  _resolution: number | null
+  _didTextUpdate: boolean
+  /**
+   * Per renderer uid, the text pipe's state: the texture drawn now, the key
+   * it was rasterised for, and whether a raster is in flight (HTMLText).
+   */
+  _gpuData?: Record<
+    number,
+    {
+      texture?: { source?: { pixelWidth: number; pixelHeight: number } }
+      currentKey?: string
+      generatingTexture?: boolean
+    }
+  >
+  readonly styleKey: string
+  resolution: number | null
+  destroyed: boolean
+}
+
+/**
+ * How much re-rasterising a zoom does per animation frame (plan
+ * canvas-performance, step 3): at most this many texts, and at most this
+ * many texture pixels. The pixels are what costs — rasterising the SVG into
+ * a canvas, the upload, its mipmaps (measured on an M3 Pro, ANGLE Metal:
+ * 2.5–5 ms of texSubImage2D per Mpx) — and one text of a crowded slide at a
+ * high zoom is anything from 0.1 to several Mpx. 8 texts a frame by count
+ * alone still left a ~220 ms task behind the zoom commit there.
+ */
+const TEXT_RESTAGE_MAX_PER_FRAME = 8
+const TEXT_RESTAGE_PX_PER_FRAME = 2_000_000
+/**
+ * Pixi uploads an HTMLText's raster when its SVG image has loaded, not in
+ * the frame that started it, and Chrome can deliver several of those loads
+ * in one task: a batch per frame alone still stacked ~250 ms of uploads into
+ * one task behind the commit. So the next batch waits for the last one's
+ * rasters to land — up to this many frames, for a text that is never
+ * rendered (hidden) and so never lands.
+ */
+const TEXT_RESTAGE_MAX_WAIT_FRAMES = 6
 
 /**
  * Make an HTMLText rasterise again on the next render, though its style key
@@ -148,6 +197,14 @@ export class SceneGraph {
    * Null is allowed for tests + headless thumbnail rendering.
    */
   private scheduler: RenderScheduler | null = null
+
+  /** Hands a zoom's new resolution to the texts, a batch per frame (restageTextResolution). */
+  private readonly textStager = new BatchStager({
+    maxJobs: TEXT_RESTAGE_MAX_PER_FRAME,
+    budget: TEXT_RESTAGE_PX_PER_FRAME,
+    maxWaitFrames: TEXT_RESTAGE_MAX_WAIT_FRAMES,
+    onBatch: () => this.markDirty(),
+  })
 
   /** Ends the colour-resolver subscription (destroy). */
   private readonly unsubscribeColourResolver: () => void
@@ -853,35 +910,107 @@ export class SceneGraph {
   }
 
   /**
-   * Force every HTMLText node in the scene to re-rasterize at the
-   * current renderer resolution. Called after a zoom-driven resolution
-   * change — Pixi's HTMLTextPipe detects the resolution mismatch and
-   * dispatches an async _updateGpuText, but our
-   * wireRedrawOnAsyncTextureUpdate catchup only fires on text/style
-   * changes, not resolution-only changes. This method resets each
-   * node's GPU cache key and catchup guard so the async texture gets
-   * follow-up frames to land into.
+   * Every text node of the scene — top-level texts, table cells, the leaves
+   * of component instances — with the slide object it is drawn for (the
+   * root's child it sits under; undefined for one outside any object).
    */
-  forceTextResolutionRefresh(): void {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rendererUid = (this.app.renderer as any).uid as number | undefined
-    let touched = 0
-
-    const refreshNode = (c: Container): void => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const node = c as any
-      // HTMLText nodes have .anchor (sprites) + ._didTextUpdate (text)
+  private forEachText(fn: (text: ResolutionText, ownerId: string | undefined) => void): void {
+    const walk = (c: Container, ownerId: string | undefined): void => {
+      const node = c as unknown as Partial<ResolutionText> & { anchor?: unknown }
+      // Text nodes (Pixi's AbstractText) are the ones with an anchor and the
+      // text-update flag; sprites have the anchor only.
       if (node.anchor !== undefined && '_didTextUpdate' in node) {
-        invalidateHtmlText(node, rendererUid)
-        touched++
+        fn(node as ResolutionText, ownerId)
       }
       for (const child of c.children) {
-        if (child instanceof Container) refreshNode(child)
+        if (child instanceof Container) walk(child, ownerId ?? this.containerToId.get(child))
       }
     }
+    walk(this.root, undefined)
+  }
 
-    refreshNode(this.root)
-    if (touched > 0) this.markDirty()
+  /**
+   * Step 1 of a zoom's resolution change (Canvas.tsx; plan
+   * canvas-performance step 3): give every text that follows the renderer's
+   * resolution the one it was drawn at, explicitly. Pixi re-rasterises every
+   * auto-resolution text the moment `renderer.resolution` changes — all of
+   * them in one frame; a text with its own resolution it leaves alone, so
+   * `restageTextResolution` can hand the new value out a few at a time.
+   * Pinning to the value drawn at keeps the text's style key: nothing
+   * rasterises again here. A text not drawn yet is left to follow the
+   * renderer (it will be drawn once, at the new value). Texts stay pinned
+   * afterwards: Canvas.tsx is the only writer of the resolution and pins and
+   * restages on every change. Texts mounted later follow the renderer, which
+   * by then has the committed value.
+   */
+  pinTextResolution(): void {
+    this.forEachText((text) => {
+      if (text._autoResolution && text._resolution !== null) text.resolution = text._resolution
+    })
+  }
+
+  /**
+   * Step 2, after `renderer.resolution` changed to `resolution`: re-rasterise
+   * the scene's texts at it, a batch per animation frame
+   * (`TEXT_RESTAGE_MAX_PER_FRAME` texts / `TEXT_RESTAGE_PX_PER_FRAME`
+   * texture pixels) — those meeting `visibleRect` (stage space, CSS pixels
+   * of the canvas) first, then by distance from it. A call before the previous staging has
+   * finished replaces it: texts that already reached `resolution` are
+   * skipped. Each change of a text's resolution moves its style key, so the
+   * async-raster catch-up (textRenderer `wireRedrawOnAsyncTextureUpdate`)
+   * follows it with frames of its own.
+   */
+  restageTextResolution(resolution: number, visibleRect: Rect | null): void {
+    const texts: Array<{ text: ResolutionText; ownerId: string | undefined }> = []
+    this.forEachText((text, ownerId) => {
+      if (!text._autoResolution && text._resolution !== resolution) texts.push({ text, ownerId })
+    })
+    // The canvas was just resized (its backbuffer is empty): draw it again
+    // even when no text needs a new raster.
+    this.markDirty()
+    const boxes = new Map<string, Rect | null>()
+    const boxOf = ({ ownerId }: { ownerId: string | undefined }): Rect | null => {
+      if (ownerId === undefined) return null
+      let box = boxes.get(ownerId)
+      if (box === undefined) {
+        const world = this.getBounds(ownerId)?.world
+        box =
+          world === undefined
+            ? null
+            : { ...world, x: world.x + this.slideOriginX, y: world.y + this.slideOriginY }
+        boxes.set(ownerId, box)
+      }
+      return box
+    }
+    const rendererUid = (this.app.renderer as unknown as { uid: number }).uid
+    // The pixels the new raster will have: the current texture's, scaled by
+    // the change. A text with no texture yet counts as a full share.
+    const rasterPixels = (text: ResolutionText): number => {
+      const source = text._gpuData?.[rendererUid]?.texture?.source
+      const from = text._resolution ?? resolution
+      const px = source === undefined ? 0 : source.pixelWidth * source.pixelHeight
+      if (px <= 1 || from <= 0) return TEXT_RESTAGE_PX_PER_FRAME / TEXT_RESTAGE_MAX_PER_FRAME
+      return px * (resolution / from) ** 2
+    }
+    // Landed: the pipe holds a texture for the text's current key and none is in flight.
+    const landed = (text: ResolutionText): boolean => {
+      if (text.destroyed) return true
+      const gpu = text._gpuData?.[rendererUid]
+      return gpu !== undefined && gpu.generatingTexture !== true && gpu.currentKey === text.styleKey
+    }
+    this.textStager.stage(
+      stagingOrder(texts, boxOf, visibleRect).map(({ text }) => () => {
+        if (text.destroyed || text._autoResolution || text._resolution === resolution) return null
+        const cost = rasterPixels(text)
+        text.resolution = resolution
+        return { cost, settled: () => landed(text) }
+      }),
+    )
+  }
+
+  /** Texts still waiting for the resolution of the last zoom (the e2e probes read it). */
+  get pendingTextRestage(): number {
+    return this.textStager.pending
   }
 
   /**
@@ -995,6 +1124,7 @@ export class SceneGraph {
    * proper error handling, then the node tree is torn down.
    */
   destroy(): void {
+    this.textStager.cancel()
     this.unsubscribeColourResolver()
     this.unsubscribeFontChanges()
     this.unsubscribeTextLayout()
