@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/precompress.mjs",
     "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc/tsbuildinfo",
     "lint": "eslint --cache --cache-strategy content --cache-location node_modules/.cache/eslint/ src e2e",
     "test": "node ../../node_modules/vitest/vitest.mjs run",

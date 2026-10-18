@@ -74,6 +74,31 @@ http://{$DOMAIN:localhost} {
   @untrusted_client_ip not remote_ip {$CLOUDFLARED_TRUSTED_PROXIES:private_ranges}
   request_header @untrusted_client_ip CF-Connecting-IP {remote_host}
 
+  # ── Compression ─────────────────────────────────────────────────────────────
+  # Cloudflare compresses at its edge, but the LAN, Tailscale and the render
+  # worker reach this port directly and got every bundle and JSON response
+  # raw (docs/plans/performance.md D1). Text types only, by response
+  # Content-Type: never text/event-stream (the MCP endpoint streams over SSE,
+  # and a compressor would hold events back until its buffer fills), never
+  # media, fonts in woff2 or anything else already compressed. The static
+  # bundle is served precompressed instead (file_server below), so this
+  # covers the API and anything the build did not compress.
+  encode zstd gzip {
+    minimum_length 1024
+    # One line per type; values of the same field are OR'd.
+    match {
+      header Content-Type text/html*
+      header Content-Type text/css*
+      header Content-Type text/plain*
+      header Content-Type text/javascript*
+      header Content-Type application/javascript*
+      header Content-Type application/json*
+      header Content-Type image/svg+xml*
+      header Content-Type application/xml*
+      header Content-Type text/xml*
+    }
+  }
+
   # ── REST API ────────────────────────────────────────────────────────────────
   handle_path /api/* {
     reverse_proxy server:3001 {
@@ -219,8 +244,16 @@ http://{$DOMAIN:localhost} {
     header @not_render_page Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self' data:; connect-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; frame-src 'self'"
     header @render_page Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self' data:; connect-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; frame-src 'self'"
     root * /srv/web
-    # SPA fallback — client-side routes return index.html
-    try_files {path} /index.html
+    # SPA fallback — client-side routes return index.html. Not for /assets/*:
+    # a chunk an old tab asks for after a deploy is gone, and it must be a 404
+    # (ui/lazyRoute.tsx reloads on a failed dynamic import), not index.html
+    # answered 200 under a .js name.
+    # (`try_files` takes no matcher, hence the explicit rewrite.)
+    @spa_fallback {
+      not path /assets/*
+      not file
+    }
+    rewrite @spa_fallback /index.html
 
     # index.html names the content-hashed bundles, so a cached copy pins the
     # browser to the previous deploy's JS — a deploy then looks like it did
@@ -228,14 +261,27 @@ http://{$DOMAIN:localhost} {
     # it, which leaves the browser free to cache heuristically off
     # Last-Modified, and that is exactly what happened. Force revalidation on
     # every document (`try_files` serves index.html for /deck/… too, so match
-    # on "not an asset" rather than on the /index.html path). The files under
-    # /assets/* are content-hashed and keep whatever caching they had.
+    # on "not an asset" rather than on the /index.html path).
     @spa_document {
       not path /assets/*
     }
     header @spa_document Cache-Control "no-cache"
 
-    file_server
+    # The files under /assets/* are content-hashed: a new build gives them new
+    # names, so a browser may keep them forever and never revalidate. Only a
+    # file that exists gets it — never the 404 of a stale chunk name.
+    @hashed_asset {
+      path /assets/*
+      file
+    }
+    header @hashed_asset Cache-Control "public, max-age=31536000, immutable"
+
+    # The build writes .br and .gz next to every compressible file
+    # (apps/web/scripts/precompress.mjs); serve those as they are instead of
+    # compressing on each request.
+    file_server {
+      precompressed br gzip
+    }
   }
 
   # ── Logging ─────────────────────────────────────────────────────────────────
