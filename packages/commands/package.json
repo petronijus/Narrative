@@ -10,8 +10,8 @@
   },
   "scripts": {
     "build": "tsc --noEmit",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src scripts",
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc/tsbuildinfo",
+    "lint": "eslint --cache --cache-strategy content --cache-location node_modules/.cache/eslint/ src scripts",
     "test": "node ../../node_modules/vitest/vitest.mjs run",
     "capabilities": "tsx scripts/capabilities.ts",
     "skill": "tsx scripts/skill.ts"

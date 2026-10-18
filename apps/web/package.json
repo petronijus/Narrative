@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src e2e",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc/tsbuildinfo",
+    "lint": "eslint --cache --cache-strategy content --cache-location node_modules/.cache/eslint/ src e2e",
     "test": "node ../../node_modules/vitest/vitest.mjs run",
     "test:e2e": "playwright test",
     "preview": "vite preview",

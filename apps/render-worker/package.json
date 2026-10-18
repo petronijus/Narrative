@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs watch src/index.ts",
     "build": "tsc --project tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src",
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc/tsbuildinfo",
+    "lint": "eslint --cache --cache-strategy content --cache-location node_modules/.cache/eslint/ src",
     "test": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts",
     "start": "node dist/index.js"
   },
