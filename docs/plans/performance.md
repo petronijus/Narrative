@@ -81,11 +81,14 @@ L = a month or more.
 
 - canvas-performance.md steps 3–5 (zoom staging — in progress; text
   measurement; mipmaps).
-- **E1 (M)** Every edit deep-copies the whole deck ~7× per frame: `useSlides()`
-  → `listSlides()` on an `observeDeep` of all slides, 14 callers, each new
-  array defeats `SlideItem`'s memo. One shared, structurally shared deck store
-  with selector hooks; one shared object subscription (≈11 `useSlideObjects`
-  consumers).
+- **E1 (M) — done 2026-10-18** (Log): every edit deep-copied the whole deck
+  ~7× per frame: `useSlides()` → `listSlides()` on an `observeDeep` of all
+  slides, 14 callers, each new array defeating `SlideItem`'s memo. Now one
+  shared, structurally shared deck store per document
+  (`packages/slide-model/src/deckStore.ts`: invalidation by Yjs event path,
+  per object / per slide snapshots reused) with selector hooks
+  (`apps/web/src/state/useDeckStore.ts`); `useSlides`, `useSlideObjects`,
+  `useAnimations` and the active-slide provider read it.
 - **E2 (M)** Pixi HTMLText embeds every face of the family as base64 into each
   text's SVG and waits a fixed 100 ms per raster in Safari
   (`HTMLTextSystem.mjs:107`). Via `pnpm patch pixi.js`: embed only used faces,
@@ -96,8 +99,11 @@ L = a month or more.
   included (`autofitHeights.ts`): filter by layout keys, reuse the on-canvas
   layout.
 - **E5 (M)** Tables: one HTMLText per cell.
-- **E6 (M)** Inspector (45 components, one memo), timeline, overlays: selectors
-  by id on E1's store.
+- **E6 (M) — done 2026-10-18** (Log): inspector, timeline, overlays, layers and
+  slides panels select by id on E1's store; EditorLayout reads objects only
+  in handlers (the overlays that draw objects are `ActiveObjectOverlays`).
+  Open: the Inspector's sections of a text box still render with every
+  keystroke (a Y.Text change gives no field to compare).
 - **E7 (L)** Text rendering without SVG foreignObject (Canvas2D glyph runs in a
   worker, or MSDF atlases) — the structural fix for zoom, WebKit and memory.
   Starts as a measured spike in both engines.
@@ -106,11 +112,14 @@ L = a month or more.
 ### C. Big decks (100+ slides)
 
 - **B1** = E1.
-- **B2 (M)** Opening queues every slide's thumbnail through a second Pixi app
-  with a synchronous PNG encode, each result re-rendering the panel; reorder
-  re-renders every thumbnail. Visible-first, idle for the rest; on reorder
-  only slides with a slide-number leaf; blobs instead of base64; a cache by
-  content hash.
+- **B2 (M) — done 2026-10-18** (Log): opening queued every slide's thumbnail
+  through a second Pixi app with a synchronous PNG encode, each result
+  re-rendering the panel; reorder re-rendered every thumbnail. Now a
+  thumbnail store keyed by content hash (`renderer/thumbnailStore.ts`): only
+  a new picture renders (on reorder only slides with a slide-number leaf),
+  visible first, the rest at idle, blobs instead of base64, per-row
+  subscriptions, edits debounced to the end of a gesture, the live slide
+  without an offscreen fallback per change.
 - **B3** Virtualise the slide panel only if 300-slide decks still show a cost
   after E1.
 - **B4** Full-snapshot stores every debounce; a redundant index per updates
@@ -144,23 +153,37 @@ L = a month or more.
   Paginate `GET /decks` (625 kB for the dev user).
 - **S3 (M)** Agent writes store a full snapshot per transaction (no debounce),
   each command re-reads tokens/fonts/style pack, atomic `ops.apply` forks the
-  whole doc per batch: coalesced stores per run, per-run caches, lazy forks.
+  whole doc per batch: coalesced stores per run, per-run caches, lazy forks. **Done 2026-10-18** (Log):
+  coalesced stores, a per-run folder context, kept batch forks; `GET /decks`
+  paged (S2).
 - **S5** Measure the editor's boot waterfall (G4).
 
 ### G. Workers
 
-- **R1 (M)** Render worker: `concurrency: 1`, SwiftShader, warm pages tied to a
-  token, the full editor bundle. Deck-agnostic warm pool, concurrency sized to
-  the VM, a slim render entry, JPEG in the page for PDF.
-- **R2 (S)** Video worker: poster/thumbnail after the full transcode, in
-  sequence — poster first, in parallel.
-- **R3 (S)** Pre-warm imgproxy variants on upload.
+- **R1 (M)** Render worker — **built** (see Log): two jobs at once behind a
+  cgroup memory gate, a deck-agnostic warm pool (idle pages recycled across
+  sessions), JPEG pages encoded in the page for PDF. Open: the slim render
+  entry / an in-place deck switch (touches `renderer/` and `state/`), the
+  ~0.7 s slide switch of the render page, a 30-slide photo PDF that still
+  misses the 95 s window on two cores.
+- **R2 (S)** Video worker — **built**: poster and thumbnail from one ffmpeg
+  run beside the transcode, on the asset before the playback. Open: the
+  editor shows the poster only once the transcode is done
+  (`renderer/objectRenderers/videoRenderer.ts`).
+- **R3 (S)** — **built**: `preview` and `display` warmed through the cache
+  after an image upload (`IMGPROXY_WARM_ENDPOINT`). Open: video posters.
+- Drivers: `apps/render-worker/perf/render.ts`,
+  `apps/video-worker/perf/transcode.ts`, `apps/server/perf/imgproxyWarm.ts`.
 
 ### H. PPTX import/export
 
-- **X1 (S)** Images and fonts are downscaled and uploaded one at a time;
-  bounded parallelism, stream large media out of the zip.
-- **X2** Measure export (G7).
+- **X1 (S) — done 2026-10-18** (Log): media inflated natively and lazily,
+  pictures and fonts six at a time under a pixel budget for oversize ones;
+  import 2–4× faster, peak RSS down 25–35 % on the real decks. The oversize
+  re-encode moved from mozjpeg to libjpeg-turbo (Log).
+- **X2 — measured and done 2026-10-18** (Log): `just perf-pptx` (G7's PPTX
+  part); export 3–9× faster (no JS deflate of compressed media, assets
+  fetched six at a time).
 
 ### I. Production and deploy
 
@@ -286,6 +309,205 @@ build`, profiling = prod with `react-dom/profiling`. Baselines and the
     preset, 5 runs): FCP 960 ms, LCP 1 588 ms, TBT 47 ms, Speed Index 1 613
     ms, TTI 1 749 ms, **CLS 0.122** (over the 0.1 "good" line: something
     shifts as the editor loads), score 0.87.
+- 2026-10-18, **S3, B4, S2's `/decks` paging done** (state-sync; MacBook M3
+  Pro, Node 24, dev Postgres in Docker, the machine shared with other agents:
+  load average 34–42 during the comparison, so the baselines and the results
+  were run alternately, B1 F1 B2 F2). The probe is new: `just perf-commands`
+  (`apps/server/perf/commands.ts`) drives the real ServerHost against
+  Hocuspocus and Postgres, no LLM — a seeded 100-slide deck (700 objects,
+  195 kB snapshot, not loaded), a folder with tokens, the example style pack
+  and three fonts; 200 commands (object.update / object.create /
+  text.setBoxTypography / text.style.apply, every tenth slide.applyLayout),
+  then 10 atomic `ops.apply` batches of 10 and of 100 ops; p50 / p95 per
+  phase, database statements per command, document stores and bytes.
+
+  | 200 commands, 100 slides                 | before (B1 / B2)           | after (F1 / F2)           |
+  | ---------------------------------------- | -------------------------- | ------------------------- |
+  | per command p50 / p95                    | 31.0 / 121, 23.8 / 49.1 ms | 7.8 / 19.9, 7.9 / 20.2 ms |
+  | store on the command's path, p50         | 20.5, 15.2 ms              | none                      |
+  | document stores during the 200 commands  | 200 (46.3 MB)              | 0                         |
+  | stores, whole run (batches, final flush) | 220 (51.7 MB)              | 1 (278 kB)                |
+  | DB statements / writes per command       | 9.3 / 4.0                  | 4.2 / 2.0                 |
+  | folder context, slide.applyLayout p50    | 9.7, 6.9 ms                | 3.3, 3.6 ms               |
+  | folder context, text.style.apply p50     | 4.6, 3.8 ms                | 2.3, 2.3 ms               |
+  | `ops.apply` ×10, total p50               | 52.3, 47.7 ms              | 9.2, 11.4 ms              |
+  | `ops.apply` ×10, Yjs work p50            | 22.8, 23.5 ms              | 1.6, 2.3 ms               |
+  | `ops.apply` ×100, total p50              | 123, 52.1 ms               | 17.4, 12.5 ms             |
+  | `ops.apply` ×100, Yjs work p50           | 81.4, 27.0 ms              | 8.3, 5.0 ms               |
+
+  On a quiet machine earlier the same day: 15.9 / 27.4 ms per command
+  before (a store of 11.1 ms p50 on every command), 4.3–4.5 / 13–19 ms
+  after the store and context steps.
+  - **Stores coalesced** (`agent/documents.ts`, `hocuspocus/directWrite.ts`,
+    `services/runs.ts`; ADR 0011, amendment of 2026-10-18): a write is
+    applied and broadcast, the sync server's debounce stores it (2 s / 10 s),
+    and the document is stored at once when the run closes or is replaced,
+    after a revert, when the agent host disconnects, and on shutdown. A
+    crash loses at most the debounce window, as for people's edits. With an
+    agent's think time between commands (`--pace 2500`) the debounce still
+    stores once per command (8 stores for 8 commands, 196 kB each) — off the
+    command's path now; the bytes per store are B4's.
+  - **Per-run folder context** (`agent/folderReads.ts`): the target's folder
+    is looked up once per command for all its readers; a run keeps the
+    tokens and the style pack it read while the folder document's version
+    is unchanged (a loaded document's instance and update count, else its
+    newest stored row id — an index-only `max(id)`), read again after any
+    change, a copy handed out on every hit; only after the per-command
+    access check, never across runs, users or folders. Fonts are read every
+    time: their rows have six writers, and telling whether they changed
+    costs what reading them costs (≈ 1 query).
+  - **Kept batch forks** (`packages/commands/src/batchForks.ts`): one fork
+    per live document, kept in step by replaying its updates, dropped on a
+    failed batch, after 60 s idle, past 4 MB of queued updates or 16
+    documents. It also ends a defect: the fork borrowed the live document's
+    client id, so Yjs re-rolled the FORK's id on every copy (`[yjs] Changed
+the client-id`) and every batch added a client to the deck; a kept fork
+    adds one for its life.
+  - **B4**: migration `0038_drop_redundant_update_indexes` drops
+    `deck_updates_deck_id_idx`, `folder_updates_folder_id_idx`,
+    `component_updates_component_id_idx`. EXPLAIN on the dev database, before
+    and after dropping them in a rolled-back transaction: the load, the
+    compaction delete, the owner cascade and `max(id)` all plan onto the
+    `(…_id, id)` composite; `pg_stat_user_indexes` showed 2 / 0 / 0 scans of
+    the single-column indexes against 7164 / 2647 / 58 of the composites.
+    What a store costs is the full snapshot (195–280 kB here, 11–20 ms);
+    the index saving is below this probe's noise. Open: incremental rows
+    with periodic compaction (an ADR 0006 change) would make a store cost
+    what changed.
+  - **S2, `/decks`**: `GET /decks?limit=&cursor=` (opt-in; without `limit`
+    the response is unchanged) pages `list` in its own order — created, then
+    id — so the pages put together are the list
+    (`services/deckRecordsPage.integration.test.ts`). The dev user's 1657
+    decks: the whole list 611 kB JSON, 33 ms p50 in the service; a first page
+    of 60: 15 kB, 2.3 ms. The folder page (`pages/FolderDecks.tsx`) now
+    paints after the first page and fetches the rest in order behind it,
+    ending at the same grid. `pages/Landing.tsx` (named in the survey) is
+    routed nowhere — `/` is `FoldersHome`. Paging the grid itself (load on
+    scroll, newest first) changes what the page shows: a UI decision, not
+    taken here.
+
+- 2026-10-18, **R1/R2/R3 built** (MacBook M3 Pro, a machine shared with other
+  agents: load average 8–55 during the runs, so single numbers swing; each
+  claim below says how it was checked). Stack for R1/R3: the production web
+  build behind a local Caddy with VM 103's routes, the server on its own
+  Postgres database and Redis DB; the render worker as the **production
+  image under VM 103's limits** (`--cpus 2`, `--memory 1200m`, no swap, the
+  compose hardening, sandbox required), routed like production
+  (`RENDER_UPSTREAM`). Decks: every slide a full-bleed photo of noise, a
+  title, two shapes.
+  - **R1, queue wait** (`apps/render-worker/perf/render.ts`, a one-slide PNG asked for 1.5 s
+    into another person's 30-slide PDF, n=3): wait 47.4 s p50 / 70.1 s p95 →
+    5 ms / 455 ms; the PNG's answer 52.4 / 84.6 s → 10.4 / 19.1 s. Before,
+    one run's 20-slide job overran its 70 s budget, failed as a browser
+    fault, and the PNG behind it timed out at 95 s too. `RENDER_CONCURRENCY`
+    (default 2) with a memory gate: a second job opens its page only while
+    `RENDER_PAGE_RESERVE_MB` (450) are free in the container's cgroup, idle
+    pages closed first; a browser fault retires the browser (the jobs still
+    in it finish) instead of closing it under them. Peak container memory
+    786 MiB → 841 MiB with two jobs.
+  - **R1, PDF pages as JPEG in the page**: encode 350–400 ms (PNG) → ~190 ms
+    (JPEG) per slide on two cores; the server no longer decodes and
+    re-encodes (it checks the JPEG's header and size, a PNG from an older
+    page is still converted). Same quality: PSNR against the slide's PNG
+    39.72 / 46.83 / 45.59 dB (photo / text / mixed) for both the page's JPEG
+    and sharp's q85 of the PNG, sizes within 1 KB (both libjpeg-turbo).
+    The 30-slide PDF still failed 1 of 3 (59.6 / 87.3 s when it finished,
+    69.4 / 79.4 s before): a slide costs ~0.7 s to switch to (the render
+    page re-reads `/api/decks/:id` per slide) and ~0.7 s to capture under
+    SwiftShader, so 20 slides sit at the 70 s budget.
+  - **R1, deck-agnostic pool**: an idle page of any session is recycled for
+    another deck — old tab to `about:blank` (its document and WebSocket
+    gone), the origin's storage (explicit types; **not** `shader_cache`:
+    clearing it made SwiftShader recompile every shader, recycled pages
+    then loaded _slower_ than new ones), cookies and HTTP cache cleared, the
+    new deck in a new tab of the same context, the old tab closed after.
+    Saves ~20 % of the app load: micro-benchmark (host, routed) 918–1168 ms
+    for a new context vs 732–873 ms for a reused process; worker log under
+    the limits 1.17 s (new page) → 0.93 s (recycled) to "app ready",
+    clearing 24–70 ms. End to end, a cold one-slide job (~3–6 s) did not
+    move measurably under this machine load (interleaved A/B: old 6.6 /
+    3.1 s, new 3.8 / 4.6 s; the unchanged warm path itself swung 1.3–2.2 s).
+    Isolation is tested with a real Chromium (`render.browser.test.ts`, "a
+    recycled page"): deck A leaves its token in localStorage,
+    sessionStorage, a cookie, IndexedDB, Cache Storage and `window.name`;
+    deck B's page finds none of it, no session-history or
+    `navigation.entries()` URL with A's token, and A's WebSocket closed
+    before B's page was requested.
+  - **R2** (`apps/video-worker/perf/transcode.ts`, host, `FFMPEG_THREADS=2`, 10 s testsrc2):
+    the poster came with the playable file before (1080p ProRes 3.2 s, 4K
+    ProRes 11.0 s p50, H.264 ≈ 0.6 / 1.0 s); now one ffmpeg run beside the
+    transcode makes poster and thumbnail, uploaded and on the asset
+    (`updateVideoStills`) 0.6 s after the probe. Interleaved A/B, 3 rounds:
+    poster 1080p ProRes 2.9–5.1 s → 0.6–0.9 s, 4K ProRes 9.7–16.0 s →
+    3.1–5.3 s (the download of the 246 MB source is most of it). Time to
+    playable is the x264 encode, which swung 12–19 s under the machine's
+    load either way; the tail after it shrank from ~2.0 s (two stills runs,
+    three uploads) to 0.4 s (one upload).
+  - **R3** (`apps/server/perf/imgproxyWarm.ts`, a 3000×2000 photo, the repo's nginx
+    cache in front of imgproxy, n=4 per row): `display` first view 5 s after
+    the upload 543 ms p50 / 1498 ms p95 (MISS) → 7 / 17 ms (HIT); right at
+    upload 638 → 273 ms (it joins the warm-up's encode in flight);
+    `preview` +5 s 116 → 6 ms. Production sets `IMGPROXY_WARM_ENDPOINT:
+http://imgproxy-cache:80`; one image at a time, at most 200 waiting,
+    never in the upload's way.
+  - Next: an in-place deck switch on the render page (no bundle evaluation
+    or Pixi start per cold job; it needs the renderer's and the state
+    layer's module caches reset per deck, so it waits for their owners);
+    the per-slide `/api/decks/:id` read of the render page; an async PDF
+    export (the 95 s window is the hard limit for 30 photo slides on two
+    cores); the editor showing a processing video's poster; warming video
+    posters.
+- 2026-10-18, **X1, X2 done; G7's PPTX probe** (MacBook M3 Pro, Low Power
+  Mode on, a machine busy with other agents — load 15–96 on 12 cores, so
+  base and optimised ran interleaved, 3 rounds each, medians; Node 24.21):
+  - `just perf-pptx` (`apps/server/perf/pptx.ts`): import + export through
+    the real pipeline (dev Postgres, MinIO; videos counted, not queued), one
+    process per run, p50/p95 per phase from `pptx/phases.ts` marks
+    (`node:diagnostics_channel`), sampled RSS, and fingerprints of the
+    imported model and the exported package. Default input: a generated deck
+    (`apps/server/perf/syntheticDeck.ts`: 100 slides, 200 pictures incl. two 54 MP
+    photos, 2 embedded fonts, 199 MB, cached). Its statistics come from
+    `@narrative/perf/stats` (R-7 quantiles), like every server and worker
+    driver since the merge.
+  - Profile (`--cpu-prof`) of the baseline: 40 % idle (serial sharp and
+    MinIO waits), 11 s of pako deflate in export, 4 s of pako inflate and
+    JSZip copies in import, 3 s in probe-image-size's stream SVG parser
+    (`toString` of every whole picture).
+  - Fixes: media inflated with Node's zlib from the archive JSZip already
+    holds (`pptx/zipEntry.ts`) and only when uploaded
+    (`ParsedEmbeddedImage.read`); pictures and fonts six at a time
+    (`lib/concurrency.ts`), largest first, oversize ones under a 100 MP
+    budget (`WeightedSemaphore`); `probe-image-size/sync` on the header;
+    export prefetches assets and picture sizes six at a time and stores
+    JPEG/PNG/GIF/WebP/video instead of deflating them (+0.3–1.6 % file
+    size); two whole-buffer copies dropped.
+
+    | deck (size)                             | import base → opt               | export base → opt | peak RSS (sampled) |
+    | --------------------------------------- | ------------------------------- | ----------------- | ------------------ |
+    | synthetic (199 MB)                      | 39.3 → 20.7 s                   | 49.5 → 5.4 s      | 1.40 → 1.44 GB     |
+    | DesignOps, 109 slides (208 MB)          | 32.5 → 41.6 s (min 31.0 → 21.2) | 24.9 → 9.1 s      | 1.86 → 1.38 GB     |
+    | Audi LIVE, 96 slides, 5 videos (821 MB) | 50.7 → 25.2 s                   | 80.3 → 15.5 s     | 4.59 → 3.02 GB     |
+
+    On a quieter machine (load ~10) the synthetic deck runs 23.2 → 9.1 s
+    import, 17.5 → 3.3 s export.
+
+  - Same results: model and export fingerprints identical base vs optimised
+    on all three decks; `just pptx-roundtrip` on four real decks (DesignOps
+    32, Audi LIVE 1, Atomic 0, IIC 2 differences) identical before and
+    after. The baseline's export of the 821 MB deck differed between its own
+    runs (same size, different content — not chased); the optimised one is
+    stable.
+  - Peak RSS: lazy media saves about the deck's media size (DesignOps
+    serial: 1.54 → 1.14 GB); six unbounded lanes gave 0.75 GB of it back
+    by decoding five 46–96 MP photos at once (2.05 GB), hence the pixel
+    budget. maxRSS on macOS reads below the input buffer itself — use the
+    sampled column.
+  - Open: the oversize re-encode is now DesignOps' critical path —
+    `storedImageLimits.ts` writes JPEG with mozjpeg (q90, 4:4:4): 15.7 s
+    for one 54 MP photo vs 2.5 s with libjpeg-turbo at the same quality,
+    4.6 % larger (a media/quality decision, also for tus uploads). Export
+    still runs JSZip's JS CRC32 over stored media (~1 s / 200 MB) and holds
+    the package in memory; a streaming writer would fix both.
 - 2026-10-18, **the remote transaction per drag move, explained**: Hocuspocus
   4.7.1 sends every update back to all connections of the document, the
   sender included (`Document.handleUpdate` → `broadcast` without a filter;
@@ -296,3 +518,136 @@ build`, profiling = prod with `react-dom/profiling`. Baselines and the
   the decode and the empty transaction; it doubles the downstream bytes of a
   gesture. Upstream behaviour, not overridden locally; an option to skip the
   origin connection for unbatched updates would be an upstream change.
+- 2026-10-18, **oversize JPEG re-encode: libjpeg-turbo instead of mozjpeg**
+  (`apps/server/src/media/storedImageLimits.ts`, q90 4:4:4, optimised
+  Huffman tables): one 54 MP photo 15.7 s → 2.5 s for a file 4.6 % larger;
+  the path runs on every oversized tus upload and PPTX picture. `just
+perf-pptx --runs 3` on the synthetic deck afterwards (load average 40+):
+  import p50 7.3 s (min 4.8 s; 20.7 s with mozjpeg under similar load),
+  `import.images` p50 6.3 s, export p50 7.9 s, peak RSS 1.27 GB. Integration
+  of the three server patches verified the same day: `just check`, `just
+integration` 135/135, server 1696 / commands 1375 / render-worker 35 /
+  video-worker 21 unit tests, the whole e2e suite (multi-client-collab,
+  folders, pptx green; the five desktop specs and route-load-failure:72 fail
+  on HEAD too), `just size` within every limit.
+- 2026-10-18, **B2 done** (renderer; MacBook M3 Pro, Chromium 156 on ANGLE
+  Metal, Low Power Mode on, prod builds; the machine shared with other
+  agents, load 30–47 during the benches, so before and after ran
+  alternately — B1 A1 B2 A2, the open benches two pairs more — from saved
+  builds, 5 runs each):
+  - **What changed.** `renderer/thumbnailStore.ts` decides what is rendered
+    when; `state/useSlideThumbnails.ts` only feeds it. A thumbnail is keyed
+    by its inputs (`renderer/thumbnailKey.ts`: objects with `Y.Text` runs as
+    deltas, background, surface, the token colours and font-family versions
+    it uses, the slide number only for a slide with an `isSlideNumber`
+    leaf); an unchanged key renders nothing, a cached key (undo, duplicate,
+    a slide moved and recreated) is shown without rendering. Visible rows
+    render first (`ui/useVisibleSlideRows.ts`), the rest one per idle
+    callback; edits debounce 500 ms and never fire during a pointer gesture;
+    a live capture that does not settle keeps the last picture and retries at
+    idle, rendering offscreen once after 3 misses of the same content (it
+    used to fall back to a full offscreen render per change). PNGs are
+    encoded with `toBlob` and shown as object URLs
+    (`renderer/thumbnailImages.ts`; `img-src blob:` is in the CSP); the deck
+    preview and the component thumbnail are converted to data URLs only for
+    storage and upload. Each panel row subscribes to its own picture.
+
+    | 100-slide deck                | before (B1 / B2)    | after (A1 / A2)     |
+    | ----------------------------- | ------------------- | ------------------- |
+    | reorder: thumbnails rendered  | 103 / 103           | 0 / 0               |
+    | reorder: thumbnail rasters    | 618 / 618           | 0 / 0               |
+    | reorder: thumbnail uploads    | 156.0 / 156.0 Mpx   | 0.08 / 0.08 Mpx     |
+    | reorder: work after the input | 9.4 / 10.6 s        | 24 / 50 ms          |
+    | reorder: React renders        | 3842 / 3817         | 1192 / 1192         |
+    | add: thumbnails rendered      | 102 / 102           | 0 / 0 (1 reused)    |
+    | add: work after the input     | 16.2 / 12.2 s       | 26 / 23 ms          |
+    | add: React renders            | 4177 / 4177         | 1575 / 1575         |
+    | open cold: React renders      | 7382 ×3, 8125       | 4907, 4781, 5650 ×2 |
+    | open warm: React renders      | 7969, 7539, …, 8247 | 4973, 5147, …, 6783 |
+
+  - **Opening** still renders all 99–100 thumbnails (~600 rasters, ~150
+    Mpx) — by design, the hidden ones at idle. Time to all thumbnails did not
+    move measurably: open.settled (cold) 12.98 / 8.96 / 12.50 / 11.06 s
+    before, 9.43 / 14.86 / 11.07 / 17.47 s after, tracking the load (21–47).
+  - **Nudge / add benches hit the cache**: each run restores the slide, so
+    after the warm-up both states are cached (`thumb.reused` 1, `thumb.live`
+    1 → 0, nudge settle 532 / 552 → 74 / 174 ms). A first nudge to a new
+    position still costs one live capture (~1 ms of drawing).
+  - **Slide switch** unchanged: 0 thumbnail renders before and after; its 24
+    mounts / 12 text rasters are the canvas's (E3's raster cache: not done).
+  - The live-capture fallback and the gesture hold are unit-tested
+    (`thumbnailStore.test.ts`: 10 nudges on a canvas that never settles → no
+    offscreen render until the last content's third miss, then one; 90 moves
+    600 ms apart → one render at the gesture's end), not benched: a
+    SwiftShader crowded drag takes minutes at this load.
+  - **Budgets** unchanged: every budgeted counter of the six benches equals
+    perf/budgets in the after runs; the thumbnail counters the change moved
+    are timed, not budgeted. Not accepted: budgets come from dev results,
+    and the harness's dev mode is the `:5173` server of the main checkout.
+    After the merge: add `thumb.render` and `thumb.text.raster.started` to
+    REORDER_WORK / ADD_WORK (now deterministic: 0), `just perf
+slide.reorder.100 slide.add.100 --mode dev`, `just perf-accept`.
+  - Next: keep pictures by key across sessions (IndexedDB) so a warm open
+    renders none; render hidden rows only when they come near the viewport;
+    E3's raster cache for the canvas.
+- 2026-10-18, **E1, E6 done** (state-sync; MacBook M3 Pro, Chromium 156 with
+  ANGLE Metal, AC power, Low Power Mode off for the final runs; the machine
+  shared with other agents at load 38–71 on 12 cores, so the before and
+  after prod builds ran **interleaved** A B A B on two pages in front of the
+  same dev backend, 10 runs per side after 2 warm-ups, medians with the
+  harness's bootstrap CI).
+  - **One deck store** (`packages/slide-model/src/deckStore.ts`): a derived,
+    read-only cache of the Y.Doc, one per document (`getDeckStore`). One
+    `observeDeep` on the slides array; each event's target is walked up to
+    its slide and classified by the key it sits under (the list, the
+    objects array, one object at any depth, animations, transition /
+    background, nothing for speaker notes). A read after a change rebuilds
+    only what was marked — object snapshots are reused by Y.Map identity,
+    slides and the list when none of their parts changed — so it always
+    equals `listSlides` structurally (property test over random edits,
+    undo and remote updates) while untouched objects keep their identity.
+    Subscribers are told once per frame. React reads it through
+    `useDeckSelector` (`apps/web/src/state/useDeckStore.ts`,
+    `useSyncExternalStore`); `useSlides`, `useSlideObjects`, `useAnimations`,
+    the active-slide provider, the canvas's slide number / surface and
+    background, the thumbnails' backgrounds and order all read it.
+  - **Selectors by id (E6)**: EditorLayout no longer subscribes to the
+    objects (handlers read the store when they run; the overlays that draw
+    objects are `components/ActiveObjectOverlays.tsx`, each selecting the
+    objects it shows); the inspector selects its object by id and memoises
+    the sections that do not show the position (stable writers); layers,
+    slides panel, timeline, lock badges, peer / agent outlines, table range
+    and the context menu (subscribed only while open) select what they
+    show; snap guides live in their own store (`editor/snapGuidesStore.ts`).
+  - **Awareness by content**: this Hocuspocus build broadcasts every flush
+    to every connection, the sender included, so each local edit came back
+    as a remote transaction (`y.tx.remote` = `y.tx.local`) and every remote
+    awareness state as a new object with the same content — every
+    `useRemotePeers` reader (and the avatar chips) re-rendered once per
+    edit while the seeding agent's peer was shown. Snapshots now key on
+    content. (The echo itself is upstream behaviour; left alone.)
+  - **Numbers** (prod, crowded slide 224 objects, before → after):
+
+    | per 90-move drag / 60 keys   | rect drag                 | text drag                 | typing                    |
+    | ---------------------------- | ------------------------- | ------------------------- | ------------------------- |
+    | `listSlides` (objects)       | 540 (120 420) → 0         | 540 (120 420) → 0         | 360 (80 280) → 0          |
+    | slide-object observer calls  | 990 → 90                  | 990 → 90                  | 660 → 60                  |
+    | object snapshots rebuilt     | → 90                      | → 90                      | → 60                      |
+    | React renders                | 74 845 → 5 699            | 73 771 → 13 709           | 39 585 → 13 198           |
+    | React commits                | 262 → 182                 | 254 → 182                 | 123 → 123                 |
+    | input-to-pixel p50 / p90, ms | 20.2 / 32.4 → 15.3 / 25.2 | 19.3 / 31.0 → 17.3 / 30.5 | 19.3 / 35.7 → 17.9 / 33.5 |
+    | wall, ms                     | 6 293 → 5 345             | 5 764 → 4 864             | 4 696 → 4 326             |
+
+    Rect drag: input p50 −24 %, p90 −22 %, wall −15 % (CIs exclude zero);
+    text drag p50 −10 %; typing's times moved within the noise. An earlier
+    interleaved run (E1 and the overlay split, without the inspector memo,
+    load 51, Low Power Mode on): rect drag p50 26.6 → 19.1 ms, renders
+    80 263 → 12 067.
+
+  - Open: a text box's inspector sections still render on every keystroke
+    and move (its snapshot holds a Y.Text, so nothing tells a format change
+    from a move — a per-key "what changed" from the store would); the
+    remaining per-move renders are the components that show the moved
+    object (handles, inspector, the agent's selection outline); the
+    imperative `listSlides` calls at event time (PPTX/PDF export, the
+    page-number prompt, the render page) were left as they are.
