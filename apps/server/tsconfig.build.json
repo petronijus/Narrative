@@ -11,6 +11,7 @@
     "**/*.test.ts",
     "src/test-support/**",
     "src/stylePacks/bootstrap/**",
+    "perf/**",
     "vitest.config.ts"
   ]
 }

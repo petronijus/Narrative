@@ -12,6 +12,7 @@ import type { DeckMutationContext, FolderTokensSnapshot } from '@narrative/slide
 import type { ServerServices } from './services.js'
 import type { FontFaceWeight } from './text/fontWeights.js'
 import type { StylePack } from '@narrative/shared'
+import type { BatchForks } from './batchForks.js'
 
 /** Deck roles, ordered: a higher role may do everything a lower one may. */
 export type Role = 'viewer' | 'editor' | 'owner'
@@ -244,6 +245,13 @@ export interface CommandContext {
    * (agent/folderStylePack.ts).
    */
   stylePack?: StylePack | null
+  /**
+   * Where atomic batches (`ops.apply`) get their fork of `deck.doc`: a
+   * host that runs many batches on the same documents keeps one fork per
+   * document in step with it (batchForks.ts; the server host). Absent:
+   * each batch copies the document (the editor).
+   */
+  batchForks?: BatchForks
 }
 
 /**

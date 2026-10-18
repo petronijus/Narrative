@@ -206,7 +206,7 @@ describe('single-transaction delivery', () => {
     expect(fillOf(human.doc, 'r1')).toBe(0x4060e0)
   })
 
-  it('reports a write as done when only the store after it fails (no duplicate retries)', async () => {
+  it('reports a write as done when the store after it fails (no duplicate retries)', async () => {
     const human = await world.connect('deck1', 'ed')
     world.persistence.failStores = 1
     const errors: unknown[] = []
@@ -215,20 +215,91 @@ describe('single-transaction delivery', () => {
     try {
       const out = await exec({ actor: { userId: 'ed' }, invocation: recolour('#ff0000') })
       expect(out.ok).toBe(true)
+      await eventually(() => fillOf(human.doc, 'r1') === 0xff0000)
+      // The store runs on the debounce, after the command returned.
+      await eventually(() => errors.length > 0)
     } finally {
       console.error = original
     }
-    await eventually(() => fillOf(human.doc, 'r1') === 0xff0000)
-    expect(errors.length).toBeGreaterThan(0)
+    // The document stayed loaded and the next store persists the write.
+    await exec({ actor: { userId: 'ed' }, invocation: recolour('#00ff00', 'r2') })
+    await eventually(() => {
+      const snapshot = world.persistence.snapshots.get('deck1')
+      if (snapshot === undefined) return false
+      const stored = new Y.Doc()
+      Y.applyUpdate(stored, snapshot)
+      return fillOf(stored, 'r1') === 0xff0000 && fillOf(stored, 'r2') === 0x00ff00
+    })
   })
 
-  it('persists agent writes to the store as they happen', async () => {
-    const before = world.persistence.stores
+  it('persists agent writes on the store debounce', async () => {
     await exec({ actor: { userId: 'ed' }, invocation: recolour('#ff0000') })
-    expect(world.persistence.stores).toBeGreaterThan(before)
+    await eventually(() => {
+      const stored = new Y.Doc()
+      Y.applyUpdate(stored, world.persistence.snapshots.get('deck1')!)
+      return fillOf(stored, 'r1') === 0xff0000
+    })
+  })
+})
+
+describe('durability of agent writes (agent/documents.ts)', () => {
+  let slow: AgentWorld
+
+  beforeEach(async () => {
+    // A debounce longer than the test, and connections that linger as in
+    // production, so only the run's end can store.
+    slow = await createAgentWorld({
+      debounce: 60_000,
+      maxDebounce: 120_000,
+      documentLingerMs: 60_000,
+    })
+    slow.createDeck('deck1')
+    slow.grant('deck1', 'ed', 'editor')
+  })
+
+  afterEach(async () => {
+    await slow.destroy()
+  })
+
+  const run = (invocation: { command: string; input: unknown }) =>
+    slow.runtime.host.execute({
+      actor: { userId: 'ed' },
+      surface: 'mcp',
+      sessionKey: 'mcp:ed',
+      target: { deckId: 'deck1' },
+      invocation,
+    })
+
+  const storedFill = (objectId: string): unknown => {
     const stored = new Y.Doc()
-    Y.applyUpdate(stored, world.persistence.snapshots.get('deck1')!)
-    expect(fillOf(stored, 'r1')).toBe(0xff0000)
+    Y.applyUpdate(stored, slow.persistence.snapshots.get('deck1')!)
+    return fillOf(stored, objectId)
+  }
+
+  it('stores a burst of commands once, not once per command, and when the run ends', async () => {
+    const before = slow.persistence.stores
+    for (const [i, id] of ['r1', 'r2', 'r3', 'r1', 'r2'].entries())
+      expect((await run(recolour(`#00000${i + 1}`, id))).ok).toBe(true)
+    // Nothing waited for a store: every write is live, none persisted yet.
+    expect(slow.persistence.stores).toBe(before)
+    expect(storedFill('r1')).toBe(0x4060e0)
+
+    await slow.runtime.host.endSession('mcp:ed')
+    expect(slow.persistence.stores).toBe(before + 1)
+    expect([storedFill('r1'), storedFill('r2'), storedFill('r3')]).toEqual([4, 5, 3])
+  })
+
+  it('stores a revert when it returns', async () => {
+    const out = await run(recolour('#ff0000'))
+    expect(out.ok).toBe(true)
+    const before = slow.persistence.stores
+    const reverted = await run({
+      command: 'agent.revert',
+      input: { runId: out.runId },
+    })
+    expect(reverted.ok).toBe(true)
+    expect(slow.persistence.stores).toBeGreaterThan(before)
+    expect(storedFill('r1')).toBe(0x4060e0)
   })
 })
 
@@ -384,6 +455,69 @@ describe('folder tokens', () => {
     })
     // Tokens were looked for and there are none: the colour cannot be resolved.
     expect(refused).toMatchObject({ ok: false, error: { code: 'invalid_input' } })
+  })
+
+  describe('kept within a run while the folder document is unchanged (agent/folderReads.ts)', () => {
+    const linkInk = (object: string) => ({
+      command: 'object.update',
+      input: { slide: 's1', object, patch: { fill: { $token: 'colors.ink' } } },
+    })
+    const gradient = (object: string) => ({
+      command: 'object.fill.gradient',
+      input: { slide: 's1', objects: [object], kind: 'linear' },
+    })
+    const ed = { userId: 'ed' }
+
+    async function fillAfterGradient(object: string, sessionKey = 'mcp:ed'): Promise<unknown> {
+      expect((await exec({ actor: ed, sessionKey, invocation: linkInk(object) })).ok).toBe(true)
+      expect((await exec({ actor: ed, sessionKey, invocation: gradient(object) })).ok).toBe(true)
+      const doc = world.hocuspocus.documents.get('deck1')!
+      return objectOf(doc, object)?.get('fill')
+    }
+
+    it('reads the stored folder document once, and again once a new snapshot is stored', async () => {
+      world.setFolder('deck1', 'f1', tokens)
+      expect(await fillAfterGradient('r1')).toBe(0x222222)
+      expect(await fillAfterGradient('r2')).toBe(0x222222)
+      expect(world.folderDocumentReads).toBe(1)
+
+      world.setFolder('deck1', 'f1', { colors: { ink: { name: 'Ink', value: '#333333' } } })
+      expect(await fillAfterGradient('r3')).toBe(0x333333)
+      expect(world.folderDocumentReads).toBe(2)
+    })
+
+    it('sees a change an editor makes in the loaded folder document at once', async () => {
+      world.setFolder('deck1', 'f1', tokens)
+      world.grant('folder:f1', 'ed', 'editor')
+      const folder = await world.connect('folder:f1', 'ed')
+      expect(await fillAfterGradient('r1')).toBe(0x222222)
+      expect(await fillAfterGradient('r2')).toBe(0x222222)
+      const reads = world.folderDocumentReads
+
+      const ink = (folder.doc.getMap('tokens').get('colors') as Y.Map<Y.Map<unknown>>).get('ink')!
+      ink.set('value', '#444444')
+      await eventually(() => {
+        const live = world.hocuspocus.documents.get('folder:f1')!
+        const colors = live.getMap('tokens').get('colors') as Y.Map<Y.Map<unknown>>
+        return colors.get('ink')?.get('value') === '#444444'
+      })
+      expect(await fillAfterGradient('r3')).toBe(0x444444)
+      expect(world.folderDocumentReads).toBe(reads + 1)
+    })
+
+    it('is not shared with another session of the same user', async () => {
+      world.setFolder('deck1', 'f1', tokens)
+      await fillAfterGradient('r1', 'mcp:first')
+      await fillAfterGradient('r2', 'mcp:second')
+      expect(world.folderDocumentReads).toBe(2)
+    })
+
+    it('follows the deck into another folder', async () => {
+      world.setFolder('deck1', 'f1', tokens)
+      expect(await fillAfterGradient('r1')).toBe(0x222222)
+      world.setFolder('deck1', 'f2', { colors: { ink: { name: 'Ink', value: '#555555' } } })
+      expect(await fillAfterGradient('r2')).toBe(0x555555)
+    })
   })
 })
 

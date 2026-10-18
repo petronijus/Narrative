@@ -76,6 +76,22 @@ describe('runMigrations', () => {
       { column: 'moved_by_user_id', table: 'users', rule: 'SET NULL' },
     ])
 
+    // 0038: each update table keeps its key and the (parent, id) composite;
+    // the single-column parent indexes it covered are gone.
+    const indexes = await pool.query<{ table: string; index: string }>(
+      `select tablename as table, indexname as index from pg_indexes
+        where tablename in ('deck_updates', 'folder_updates', 'component_updates')
+        order by tablename, indexname`,
+    )
+    expect(indexes.rows).toEqual([
+      { table: 'component_updates', index: 'component_updates_component_id_id_idx' },
+      { table: 'component_updates', index: 'component_updates_pkey' },
+      { table: 'deck_updates', index: 'deck_updates_deck_id_id_idx' },
+      { table: 'deck_updates', index: 'deck_updates_pkey' },
+      { table: 'folder_updates', index: 'folder_updates_folder_id_id_idx' },
+      { table: 'folder_updates', index: 'folder_updates_pkey' },
+    ])
+
     const second = await runMigrations(pool, folder)
     expect(second).toEqual({ applied: [], skipped: journal.entries.length })
   })

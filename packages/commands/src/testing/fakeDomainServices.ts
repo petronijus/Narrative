@@ -23,6 +23,7 @@
  */
 
 import { MAX_RENDER_SLIDES } from '../commands/render.js'
+import { MAX_LIST_PAGE_SIZE } from '../services/common.js'
 import type { RenderSlideRef } from '../services/render.js'
 import type { AgentRunService } from '../services/runs.js'
 import * as Y from 'yjs'
@@ -386,6 +387,15 @@ export function createDomainFakes(
     if (f === undefined) throw notFound('folder', id)
     return f
   }
+  /** The decks `list` answers, in its order: created first, then id. */
+  const listedInOrder = (folderId: string | undefined): DeckWithRole[] =>
+    [...decks.values()]
+      .filter((d) => folderId === undefined || d.folderId === folderId)
+      .sort((a, b) =>
+        a.createdAt === b.createdAt
+          ? a.id.localeCompare(b.id)
+          : a.createdAt.localeCompare(b.createdAt),
+      )
   const requireComponent = (id: string, folderId?: string) => {
     const c = components.get(id)
     if (c === undefined || (folderId !== undefined && c.folderId !== folderId)) {
@@ -471,9 +481,31 @@ export function createDomainFakes(
       async list(args) {
         rDecks('list', args)
         if (args.folderId !== undefined) requireFolder(args.folderId)
-        return [...decks.values()].filter(
-          (d) => args.folderId === undefined || d.folderId === args.folderId,
-        )
+        return listedInOrder(args.folderId)
+      },
+      async listRecordsPage(args) {
+        rDecks('listRecordsPage', args)
+        if (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > MAX_LIST_PAGE_SIZE)
+          throw new CommandError(
+            'invalid_input',
+            `limit must be an integer from 1 to ${MAX_LIST_PAGE_SIZE}`,
+          )
+        if (args.folderId !== undefined) requireFolder(args.folderId)
+        // Keyset: created ascending, then id ascending (as the real service).
+        const after = (d: DeckWithRole): boolean =>
+          args.after === undefined ||
+          d.createdAt > args.after.key ||
+          (d.createdAt === args.after.key && d.id > args.after.id)
+        const matching = listedInOrder(args.folderId).filter(after)
+        const page = matching.slice(0, args.limit)
+        const last = page[page.length - 1]
+        return {
+          decks: page,
+          next:
+            matching.length > args.limit && last !== undefined
+              ? { key: last.createdAt, id: last.id }
+              : null,
+        }
       },
       async listPage(args) {
         rDecks('listPage', args)

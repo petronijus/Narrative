@@ -159,10 +159,9 @@ export const deckUpdates = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (t) => [
-    index('deck_updates_deck_id_idx').on(t.deckId),
-    // Composite (deckId, id) supports the hot WHERE deckId=? ORDER BY id query
-    // (onLoadDocument). Without it, planner uses the single-column index then
-    // sorts.
+    // Composite (deckId, id): the load (WHERE deckId=? ORDER BY id), the
+    // compaction (WHERE deckId=? AND id<?) and the cascade all use it. The
+    // single-column deck_id index it made redundant went in 0038.
     index('deck_updates_deck_id_id_idx').on(t.deckId, t.id),
   ],
 )
@@ -190,7 +189,7 @@ export const folderUpdates = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (t) => [
-    index('folder_updates_folder_id_idx').on(t.folderId),
+    // As deck_updates' (0011; the single-column index went in 0038).
     index('folder_updates_folder_id_id_idx').on(t.folderId, t.id),
   ],
 )
@@ -478,7 +477,7 @@ export const componentUpdates = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (t) => [
-    index('component_updates_component_id_idx').on(t.componentId),
+    // As deck_updates' (0011; the single-column index went in 0038).
     index('component_updates_component_id_id_idx').on(t.componentId, t.id),
   ],
 )

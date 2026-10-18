@@ -40,6 +40,9 @@ import { canEditFolder, isOwnDrafts, sharedByLabel } from '../state/folderAccess
 // FolderDecks
 // ---------------------------------------------------------------------------
 
+/** Decks per request of the deck list (GET /decks?limit=; four rows of a wide grid, many times over). */
+const DECK_PAGE_SIZE = 60
+
 /**
  * Outer wrapper — pulls folderId from the URL and mounts the folder
  * Y.Doc provider so the inner page can render the live styleguide
@@ -114,33 +117,60 @@ function FolderDecksInner() {
   // delay first paint.
   const [activeEditors, setActiveEditors] = useState<Record<string, ActiveEditorUser[]>>({})
 
+  // Each load of the page counts up; a newer one (another folder, a reload
+  // after a failed action) or leaving the page stops an older one's paging.
+  const loadGeneration = useRef(0)
+
   const fetchData = useCallback(async () => {
     if (folderId === undefined) return
+    const generation = ++loadGeneration.current
+    const current = (): boolean => generation === loadGeneration.current
     try {
       // The folder list first: a folder the user is not (or no longer) a
       // member of sends them home, before its deck list would answer 403.
       const fetchedFolders = await api.listFolders()
-      const current = fetchedFolders.find((f) => f.id === folderId)
-      if (current === undefined) {
+      const found = fetchedFolders.find((f) => f.id === folderId)
+      if (found === undefined) {
         // Unknown folder id, or one shared with them no more → back to home
         void navigate('/')
         return
       }
-      const fetchedDecks = await api.listDecks({ folderId })
-      setFolder(current)
-      setFolderNameDraft(current.name)
+      // The decks a page at a time (performance.md S2): the first page shows
+      // at once, the rest follow in order behind it, so a folder of hundreds
+      // of decks paints as soon as one of a few does and the grid ends as the
+      // whole list (oldest first).
+      const first = await api.listDecksPage({ folderId, limit: DECK_PAGE_SIZE })
+      if (!current()) return
+      setFolder(found)
+      setFolderNameDraft(found.name)
       setAllFolders(fetchedFolders)
-      setDecks(fetchedDecks)
+      setDecks(first.decks)
       setError(null)
+      setLoading(false)
+      let cursor = first.nextCursor
+      while (cursor !== null) {
+        const page = await api.listDecksPage({ folderId, limit: DECK_PAGE_SIZE, cursor })
+        if (!current()) return
+        // A deck this page already shows (a copy added here meanwhile) stays once.
+        setDecks((shown) => {
+          const ids = new Set(shown.map((d) => d.id))
+          return [...shown, ...page.decks.filter((d) => !ids.has(d.id))]
+        })
+        cursor = page.nextCursor
+      }
     } catch (err) {
+      if (!current()) return
       setError(err instanceof Error ? err.message : 'Failed to load folder')
     } finally {
-      setLoading(false)
+      if (current()) setLoading(false)
     }
   }, [api, folderId, navigate])
 
   useEffect(() => {
     void fetchData()
+    return () => {
+      loadGeneration.current += 1
+    }
   }, [fetchData])
 
   // Poll "who is editing each deck" every 5s. Server reads from the

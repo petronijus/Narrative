@@ -160,6 +160,11 @@ eval *args: _stack
 load:
     pnpm load:all
 
+# What an agent command costs on the server, per phase, on a seeded deck in the dev Postgres
+# (apps/server/perf/commands.ts: `--slides 100 --commands 200 --batches 10 --folder-live --json out.json`)
+perf-commands *args: _services
+    LOG_LEVEL="${LOG_LEVEL:-warn}" pnpm --filter server run perf:commands "$@"
+
 # Lighthouse (desktop) on a seeded deck's /deck/:id of a production build in front of the dev backend, 5 runs,
 # compared with this machine's baseline: a regression fails (bench deck.open.lighthouse; nothing is uploaded)
 lighthouse *args: _stack

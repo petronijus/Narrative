@@ -846,7 +846,9 @@ describe('GET /decks?folderId', () => {
       createdAt: now,
       updatedAt: now,
     }
-    const scripted = scriptedDb({ selects: [[sharedFolder], [{ role: 'viewer' }], [deck]] })
+    // The deck list selects each row with its keyset (services/decks.ts listedDecks).
+    const listed = { deck, key: '2026-01-01T00:00:00.000000' }
+    const scripted = scriptedDb({ selects: [[sharedFolder], [{ role: 'viewer' }], [listed]] })
 
     const app = await buildApp(scripted.db)
     const res = await app.inject({ method: 'GET', url: '/decks?folderId=f-shared' })

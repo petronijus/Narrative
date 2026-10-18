@@ -65,6 +65,7 @@
 
 import type { Document } from '@hocuspocus/server'
 import {
+  BatchForks,
   CommandError,
   ROLE_RANK,
   requiredRole,
@@ -112,6 +113,7 @@ import type { AgentDocuments } from './documents.js'
 import type { FolderFontsReader } from './folderFonts.js'
 import type { FolderTokensReader } from './folderTokens.js'
 import type { FolderStylePackReader } from './folderStylePack.js'
+import { createFolderReadScope, FolderDocumentCache } from './folderReads.js'
 import { createFixedWindowLimiter } from '../http/fixedWindowLimiter.js'
 import type { OpConfirmation } from './runStore.js'
 import { collectTouched, type Touched } from './touched.js'
@@ -417,7 +419,29 @@ export class ServerHost {
     windowMs: 60_000,
   })
 
+  /**
+   * What each open run keeps of its folder's document (agent/folderReads.ts).
+   * Keyed by the run object: one user, one session, one target; gone with it.
+   */
+  private readonly folderCaches = new WeakMap<ActiveRun, FolderDocumentCache>()
+
+  /**
+   * The forks atomic batches run on, one per live document, kept in step
+   * with it (packages/commands batchForks.ts): a batch on a large deck no
+   * longer copies the deck.
+   */
+  private readonly batchForks = new BatchForks()
+
   constructor(private readonly deps: ServerHostDeps) {}
+
+  private folderCacheOf(run: ActiveRun): FolderDocumentCache {
+    let cache = this.folderCaches.get(run)
+    if (cache === undefined) {
+      cache = new FolderDocumentCache()
+      this.folderCaches.set(run, cache)
+    }
+    return cache
+  }
 
   /**
    * The role the user has on the target, per scope; null = no access. A
@@ -836,21 +860,25 @@ export class ServerHost {
       throw tooManyBuilds(this.deckBuilds.hit(buildKey).retryAfterMs)
 
     // Read before the lease: a snapshot of the folder, not a document this
-    // command writes.
+    // command writes. The readers share one folder lookup, and a run keeps
+    // what they read of the folder document while it is unchanged
+    // (agent/folderReads.ts) — consulted only now, after step 2 authorised
+    // this user on this target for this command.
+    const folderScope = createFolderReadScope(run === undefined ? null : this.folderCacheOf(run))
     const folderTokens =
       this.deps.folderTokens !== undefined &&
       commandReadsFolderTokens(this.deps.registry, commandId, input)
-        ? await this.deps.folderTokens(target)
+        ? await this.deps.folderTokens(target, folderScope)
         : undefined
     const folderFonts =
       this.deps.folderFonts !== undefined &&
       commandReadsFolderFonts(this.deps.registry, commandId, input)
-        ? await this.deps.folderFonts(target)
+        ? await this.deps.folderFonts(target, folderScope)
         : undefined
     const stylePack =
       this.deps.folderStylePack !== undefined &&
       commandReadsStylePack(this.deps.registry, commandId, input)
-        ? await this.deps.folderStylePack(target)
+        ? await this.deps.folderStylePack(target, folderScope)
         : undefined
 
     const lease = await this.deps.documents.acquire(documentName)
@@ -863,6 +891,7 @@ export class ServerHost {
         ...(folderTokens === undefined ? {} : { folderTokens }),
         ...(folderFonts === undefined ? {} : { folderFonts }),
         ...(stylePack === undefined ? {} : { stylePack }),
+        batchForks: this.batchForks,
       }
       // Validation and the async `load` phase happen here, before any transaction.
       const prepared = await prepareInvocation(this.deps.registry, docCtx, commandId, input)
@@ -912,6 +941,11 @@ export class ServerHost {
     } finally {
       lease.release()
     }
+  }
+
+  /** Let go of what the host keeps between invocations (process shutdown). */
+  close(): void {
+    this.batchForks.close()
   }
 
   /** The agent session ended (MCP session closed): close its runs and drop its pending confirmations. */

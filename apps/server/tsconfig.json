@@ -11,9 +11,10 @@
       "@narrative/shared": ["../../packages/shared/src/index.ts"],
       "@narrative/slide-model": ["../../packages/slide-model/src/index.ts"],
       "@narrative/commands": ["../../packages/commands/src/index.ts"],
-      "@narrative/commands/playbooks": ["../../packages/commands/src/playbooks/index.ts"]
+      "@narrative/commands/playbooks": ["../../packages/commands/src/playbooks/index.ts"],
+      "@narrative/perf/stats": ["../../packages/perf/src/stats.ts"]
     }
   },
-  "include": ["src"],
+  "include": ["src", "perf"],
   "exclude": ["node_modules", "dist"]
 }

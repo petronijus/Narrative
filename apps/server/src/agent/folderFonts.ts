@@ -16,9 +16,17 @@ import type { CommandTarget, FontFaceWeight } from '@narrative/commands'
 import type { Database } from '../db/client.js'
 import { listFolderFontAssets } from '../media/assets.js'
 import { folderOf } from './folderTokens.js'
+import { scopedFolderOf, type FolderReadScope } from './folderReads.js'
 
-/** The target's folder font faces; null when it has no folder or the folder has no fonts. */
-export type FolderFontsReader = (target: CommandTarget) => Promise<FontFaceWeight[] | null>
+/**
+ * The target's folder font faces; null when it has no folder or the folder
+ * has no fonts. `scope` shares the command's folder lookup; the faces
+ * themselves are read every time (agent/folderReads.ts says why).
+ */
+export type FolderFontsReader = (
+  target: CommandTarget,
+  scope?: FolderReadScope,
+) => Promise<FontFaceWeight[] | null>
 
 export interface FolderFontsSources {
   /** The folder the target belongs to, or null. */
@@ -28,8 +36,8 @@ export interface FolderFontsSources {
 }
 
 export function createFolderFontsReader(sources: FolderFontsSources): FolderFontsReader {
-  return async (target) => {
-    const folderId = await sources.folderOf(target)
+  return async (target, scope) => {
+    const folderId = await scopedFolderOf(sources, target, scope)
     if (folderId === null) return null
     const faces = await sources.listFonts(folderId)
     return faces.length === 0

@@ -50,6 +50,7 @@ export {
   type BatchResult,
   type PreparedInvocation,
 } from './run.js'
+export { BatchForks, type BatchForksOptions } from './batchForks.js'
 export {
   FileSourceSchema,
   fileSourceUrlHost,

@@ -41,6 +41,16 @@ export interface ApiClient {
   /** List decks. Pass `folderId` to filter to a specific folder. */
   listDecks(opts?: { folderId?: string }): Promise<DeckSummary[]>
   /**
+   * One page of `listDecks` (oldest first, as `listDecks`): `limit` 1–200,
+   * `cursor` = the previous page's `nextCursor` with the same `folderId`.
+   * The pages put together are `listDecks`' answer.
+   */
+  listDecksPage(opts: {
+    folderId?: string
+    limit: number
+    cursor?: string
+  }): Promise<{ decks: DeckSummary[]; nextCursor: string | null }>
+  /**
    * Fetch a single deck by id, with the caller's role (`viewerRole`). With
    * `shareToken` it answers an anonymous share-link visitor too — the one
    * REST read a share link reaches.
@@ -819,6 +829,15 @@ export function createApiClient(): ApiClient {
     listDecks: (opts) => {
       const url = opts?.folderId != null ? `/decks?folderId=${opts.folderId}` : '/decks'
       return requestJson<DeckSummary[]>(url)
+    },
+
+    listDecksPage: (opts) => {
+      const params = new URLSearchParams({ limit: String(opts.limit) })
+      if (opts.folderId !== undefined) params.set('folderId', opts.folderId)
+      if (opts.cursor !== undefined) params.set('cursor', opts.cursor)
+      return requestJson<{ decks: DeckSummary[]; nextCursor: string | null }>(
+        `/decks?${params.toString()}`,
+      )
     },
 
     getDeck: (id, opts) =>

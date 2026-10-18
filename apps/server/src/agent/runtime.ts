@@ -335,6 +335,7 @@ export async function createAgentRuntime(opts: AgentRuntimeOptions): Promise<Age
     async shutdown() {
       stopRetention()
       stopExportSweep()
+      host.close()
       await runs.shutdown()
       presence.clearAll()
       await documents.closeAll()

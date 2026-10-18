@@ -18,7 +18,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
-import { registerDeckRoutes } from './decks.js'
+import { decodeDeckListCursor, encodeDeckListCursor, registerDeckRoutes } from './decks.js'
 import { registerAuthPlugin } from '../auth/fastifyAuth.js'
 import type { Database } from '../db/client.js'
 import type { DeckAccessResult } from '../auth/permissions.js'
@@ -87,7 +87,16 @@ function makeMockDb(initialDecks: MockDeck[] = []) {
         // carries orderBy/limit for the deck list/detail queries.
         where: vi.fn().mockReturnValue(
           Object.assign(Promise.resolve([]), {
-            orderBy: vi.fn().mockImplementation(() => Promise.resolve(deckStore)),
+            // The deck list selects each row with its keyset (services/decks.ts listedDecks).
+            orderBy: vi.fn().mockImplementation(() => {
+              const rows = deckStore.map((deck, i) => ({
+                deck,
+                key: `2026-01-01T00:00:0${i}.000000`,
+              }))
+              return Object.assign(Promise.resolve(rows), {
+                limit: (n: number) => Promise.resolve(rows.slice(0, n)),
+              })
+            }),
             limit: vi
               .fn()
               .mockImplementation(() =>
@@ -183,6 +192,71 @@ describe('GET /decks', () => {
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.body) as unknown[]
     expect(Array.isArray(body)).toBe(true)
+  })
+})
+
+describe('GET /decks?limit — paged (opt-in)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  const three = () => {
+    const now = new Date()
+    return ['deck-1', 'deck-2', 'deck-3'].map((id) => ({
+      id,
+      title: id,
+      ownerUserId: 'dev-user',
+      createdAt: now,
+      updatedAt: now,
+    }))
+  }
+
+  it('answers a page and the cursor of the next', async () => {
+    const app = await buildApp(makeMockDb(three()))
+    const res = await app.inject({ method: 'GET', url: '/decks?limit=2' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { decks: { id: string }[]; nextCursor: string | null }
+    expect(body.decks.map((d) => d.id)).toEqual(['deck-1', 'deck-2'])
+    expect(decodeDeckListCursor(body.nextCursor!, null)).toEqual({
+      key: '2026-01-01T00:00:01.000000',
+      id: 'deck-2',
+    })
+  })
+
+  it('answers no cursor on the last page, and the bare list without a limit', async () => {
+    const app = await buildApp(makeMockDb(three()))
+    const last = await app.inject({ method: 'GET', url: '/decks?limit=3' })
+    expect((last.json() as { nextCursor: unknown }).nextCursor).toBeNull()
+    const whole = await app.inject({ method: 'GET', url: '/decks' })
+    expect((whole.json() as unknown[]).length).toBe(3)
+  })
+
+  it('refuses a cursor without a limit, a cursor it did not issue, and a bad limit', async () => {
+    const app = await buildApp(makeMockDb(three()))
+    const cursor = encodeDeckListCursor({ key: '2026-01-01T00:00:01.000000', id: 'deck-2' }, null)
+    for (const url of [
+      `/decks?cursor=${cursor}`,
+      '/decks?limit=2&cursor=not-a-cursor',
+      `/decks?limit=2&cursor=${cursor}&folderId=another-folder`,
+      '/decks?limit=0',
+      '/decks?limit=201',
+      '/decks?limit=two',
+    ]) {
+      const res = await app.inject({ method: 'GET', url })
+      expect(res.statusCode, url).toBe(400)
+    }
+  })
+})
+
+describe('the GET /decks cursor', () => {
+  it('round-trips a keyset bound to its folder filter', () => {
+    const keyset = { key: '2026-01-01T10:00:00.000002', id: 'deck-b' }
+    expect(decodeDeckListCursor(encodeDeckListCursor(keyset, 'f1'), 'f1')).toEqual(keyset)
+    expect(decodeDeckListCursor(encodeDeckListCursor(keyset, 'f1'), null)).toBeNull()
+    expect(decodeDeckListCursor(encodeDeckListCursor(keyset, null), 'f1')).toBeNull()
+    expect(decodeDeckListCursor('', null)).toBeNull()
+    expect(decodeDeckListCursor('x'.repeat(600), null)).toBeNull()
+    expect(
+      decodeDeckListCursor(Buffer.from('{"v":2,"key":"k","id":"i"}').toString('base64url'), null),
+    ).toBeNull()
   })
 })
 
