@@ -48,6 +48,7 @@ RENDER = [
     "render-export",
     "inspector-flows",
     "canvas-sharpness-final",
+    "text-align-reraster",
     "htmltext-live-update",
     "htmltext-texture-isolation",
     "text-glyph-overhang",

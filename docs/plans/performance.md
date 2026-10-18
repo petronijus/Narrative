@@ -79,8 +79,9 @@ L = a month or more.
 
 ### B. Editor runtime
 
-- canvas-performance.md steps 3–5 (zoom staging — in progress; text
-  measurement; mipmaps).
+- canvas-performance.md steps 3–5: zoom staging done 2026-10-18 (one commit
+  per gesture, staging paused during it, long-task budget; Log); text
+  measurement needs an upstream Pixi option; mipmaps stay (measured < 1 ms).
 - **E1 (M) — done 2026-10-18** (Log): every edit deep-copied the whole deck
   ~7× per frame: `useSlides()` → `listSlides()` on an `observeDeep` of all
   slides, 14 callers, each new array defeating `SlideItem`'s memo. Now one
@@ -651,3 +652,51 @@ slide.reorder.100 slide.add.100 --mode dev`, `just perf-accept`.
     object (handles, inspector, the agent's selection outline); the
     imperative `listSlides` calls at event time (PPTX/PDF export, the
     page-number prompt, the render page) were left as they are.
+- 2026-10-18, **canvas zoom: one commit per gesture, staging paused, idle
+  and long-task budgets; text alignment across a re-raster**
+  (`docs/plans/canvas-performance.md` → Log). MacBook M3 Pro, prod build,
+  GPU (ANGLE Metal), Low Power Mode on, load 20–77 (very busy: other agents'
+  builds). Before and after builds run alternately through `just perf
+--no-build`; the medians of 10 runs per invocation are listed below, one
+  value per invocation.
+
+  | `viewport.zoom.wheel` (40 steps, crowded) | before (5 invocations)      | after (5)                    |
+  | ----------------------------------------- | --------------------------- | ---------------------------- |
+  | input p50 / ms                            | 39, 37, 40.4, 36.6, 36.5    | 27.5, 31.1, 23.5, 29.8, 27.2 |
+  | input p90 / ms                            | 104, 81.7, 114, 82.3, 83.6  | 38.5, 40.2, 35.8, 36.3, 36.5 |
+  | long tasks / ms                           | 748, 868, 1463, 613, 607    | 0, 27.5, 0, 0, 0             |
+  | commits · text rasters                    | 2 · 145–199                 | 0 · 0                        |
+  | raster kpx · uploaded kpx · mipmaps       | 30–42 k · 59–84 k · 290–397 | 0 · 0 · 0                    |
+  | settle / ms                               | 330–460                     | 16–26                        |
+
+  | `viewport.zoom.commit` (new: in, rest, out) | before (3)       | after, final (2) |
+  | ------------------------------------------- | ---------------- | ---------------- |
+  | input p50 / ms                              | 26.1, 37.2, 33.4 | 28.3, 30.8       |
+  | input p90 / ms                              | 101, 236, 119    | 56.1, 45.0       |
+  | long tasks / ms                             | 566, 1979, 723   | 1020, 677        |
+  | settle / ms                                 | 1074, 749, 752   | 655, 566         |
+
+  Same work on both sides: 2 commits, 242 rasters, 48.6 Mpx rastered, 97
+  Mpx uploaded, 484 mipmaps. `text.type.inter`: no change (the quieter
+  pair: p50 19.0 → 19.9, p90 35.7 → 37.1 ms, no long tasks; 60 bounds
+  measures and 60 rasters on both sides). On a busy machine its
+  `net.requests` work counter varied between runs (0–2) before and after:
+  the bench fails then (ran with `PERF_DISCOVER=1`).
+  - **CPU profiles** (one run each, profiling build, self time): wheel
+    `texSubImage2D` 321, `resizeCanvas` 320, `measureHtmlText` 185 ms →
+    none of them (all Pixi code 7 ms). Commit bench: before
+    `texSubImage2D` 261, `resizeCanvas` 215, `measureHtmlText` 159 ms;
+    after 816 / 277 / 107. One run each: how many off-screen texts reach the
+    peak resolution before the zoom back out decides `texSubImage2D` (they
+    now get there in idle time during the rest). Typing `measureHtmlText`
+    132 → 108 ms (the same 120 measurements).
+  - **Mipmaps**: `generateMipmap` is not in any profile (< 1 ms). They stay
+    on: the live thumbnail draws the editor's text rasters at ~1/8.
+  - **The backbuffer**: one resolution change reallocates a 25 Mpx MSAA
+    backbuffer, ~110 ms (12–25 ms without MSAA; width and height each
+    reallocate) — a probe outside the app, 3 repeats each. What remains
+    of the commit cost; a viewport-sized canvas is the candidate (an ADR).
+  - Not accepted as baselines (`just perf-accept`): the budgeted counters
+    of the zoom benches are unchanged (all 0); the time baselines are this
+    machine's and shared with the main tree, so accept
+    `viewport.zoom.wheel viewport.zoom.commit` after the merge.

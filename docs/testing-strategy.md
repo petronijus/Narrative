@@ -497,8 +497,12 @@ for the text-jump defect in
 [`docs/handoff/0.9.x-production-hardening.md`](./handoff/0.9.x-production-hardening.md))
 was deleted on 2026-10-18 with the `SceneGraph.forceTextResolutionRefresh`
 it drove, when a zoom's re-rasterisation became staged
-(`SceneGraph.restageTextResolution`). The text-jump defect is still open;
-its last version is in git history (`git show 36d5c438:apps/web/e2e/zoom-text-probe.spec.ts`).
+(`SceneGraph.restageTextResolution`); its last version is in git history
+(`git show 36d5c438:apps/web/e2e/zoom-text-probe.spec.ts`). The text-jump
+defect became an assertion the same day: `text-align-reraster.spec.ts` (a
+late font, then a zoom; the block extents of bottom- and middle-aligned
+boxes and table cells, sampled at slide scale), fixed with it
+(`.claude/agents/renderer.md` → "Text alignment across a re-raster").
 
 ### Some defects are only reachable in production
 

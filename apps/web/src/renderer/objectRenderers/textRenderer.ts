@@ -32,6 +32,9 @@
 // document.body during measurement so it cannot restyle the rest of the page.
 import '../pixiHtmlTextStyleScope.js'
 import '../htmlTextMeasureCounter.js'
+// After the counter: a measurement the memo saves is not counted as one.
+import { invalidateHtmlTextMeasurements } from '../htmlTextBoundsMemo.js'
+import { perfCount } from '@narrative/shared'
 import { CanvasTextMetrics, Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
 import type { TextStyle } from 'pixi.js'
 import {
@@ -145,9 +148,98 @@ export function wireRedrawOnAsyncTextureUpdate(textNode: HTMLText): void {
       node.__narrativeLastText = nextText
       scheduleAsyncTextureCatchup(node)
       reflagAfterInFlightRaster(node)
+      realignWhenRasterLands(node)
     }
   }
   node.__narrativeRedrawWired = true
+}
+
+/**
+ * How long a re-raster is waited for (frames) before the realignment check
+ * gives up on it — a text that is never drawn (hidden) never rasterises.
+ */
+const LANDING_WATCH_MAX_FRAMES = 120
+const LANDING_WATCH = Symbol('narrative.landingWatch')
+
+/**
+ * Once the raster a change started has landed, lay the text out again if
+ * its measured size moved under it (`realignIfMeasureMoved`).
+ *
+ * The block's place in its box (`applyVerticalAlign`) is computed from the
+ * node's measured height when the text or its style is set. A re-raster can
+ * come with a new measurement nobody asked for — a zoom's resolution
+ * change makes Pixi measure the node again, and a face that arrived since
+ * the last measurement gives other numbers — and the block would then sit
+ * at the old offset with the new size, visibly moved. This waits for the
+ * raster the change started (its texture promise, which resolves before the
+ * frame that draws it) and checks then, so the new texture is first drawn
+ * at the new offset.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi internals: _gpuData, styleKey
+function realignWhenRasterLands(node: any): void {
+  if (node[LANDING_WATCH] === true || typeof requestAnimationFrame !== 'function') return
+  node[LANDING_WATCH] = true
+  let frames = 0
+  const done = (): void => {
+    node[LANDING_WATCH] = false
+  }
+  const tick = (): void => {
+    if (node.destroyed === true) return done()
+    const gpus = Object.values((node._gpuData ?? {}) as Record<string, InFlightGpuText>)
+    const inFlight = gpus.find((g) => g.generatingTexture === true && g.texturePromise)
+    if (inFlight?.texturePromise) {
+      done()
+      inFlight.texturePromise.then(
+        () => realignIfMeasureMoved(node as HTMLText),
+        () => {
+          /* the failed generation is Pixi's to report */
+        },
+      )
+      return
+    }
+    if (gpus.length > 0 && gpus.every((g) => g.currentKey === node.styleKey)) {
+      done()
+      realignIfMeasureMoved(node as HTMLText)
+      return
+    }
+    if (++frames >= LANDING_WATCH_MAX_FRAMES) return done()
+    requestAnimationFrame(tick)
+  }
+  requestAnimationFrame(tick)
+}
+
+/**
+ * Lay a text out again when its measured height is no longer the one its
+ * vertical alignment was computed from. A text box of this renderer goes
+ * through its whole layout from the data it was drawn for (autofit,
+ * alignment, transform, clip mask, the layout listeners); any other node
+ * aligned with `applyVerticalAlign` (a table cell) has its block offset
+ * computed again, keeping what its renderer added to it (the cell padding).
+ * Nothing happens when the height is unchanged — the case of every re-raster
+ * that changes no metrics. Returns whether anything moved.
+ */
+export function realignIfMeasureMoved(textNode: HTMLText): boolean {
+  if (textNode.destroyed) return false
+  const memo = (textNode as unknown as Record<symbol, AlignMemo | undefined>)[ALIGN_TAG]
+  if (memo === undefined) return false
+  if (Math.abs(textNode.height - memo.measured) < 0.01) return false
+  perfCount('text.realign')
+  const container = textNode.parent
+  const data = container === null ? undefined : getStoredData(container)
+  if (container !== null && data !== undefined && getTextNode(container) === textNode) {
+    applyAutofit(container, textNode, data)
+    applyHorizontalAlign(textNode, data)
+    applyVerticalAlign(textNode, data)
+    applyObjectTransform(container, data)
+    applyClipMask(container, data)
+    publishLayout(container, data)
+  } else {
+    const extra = textNode.y - memo.y
+    applyVerticalAlign(textNode, memo.data)
+    textNode.y += extra
+  }
+  markRenderDirty()
+  return true
 }
 
 /**
@@ -465,8 +557,20 @@ export function applyVerticalAlign(textNode: HTMLText, data: TextObject): void {
   // Then place the lines inside their boxes the way PowerPoint does — spare
   // line height above the glyphs, not split around them. The block's height
   // is unchanged, so this is a translation after alignment, not part of it.
-  textNode.y = block + powerpointLineOffsetPx(data, firstLineFontSizePx(data)) * textNode.scale.y
+  const y = block + powerpointLineOffsetPx(data, firstLineFontSizePx(data)) * textNode.scale.y
+  textNode.y = y
+  // What the offset was computed from: a re-raster that brings another
+  // measurement lays the text out again (realignIfMeasureMoved).
+  ;(textNode as unknown as Record<symbol, AlignMemo>)[ALIGN_TAG] = { data, measured, y }
 }
+
+/** The inputs and the result of a node's last `applyVerticalAlign`. */
+interface AlignMemo {
+  data: TextObject
+  measured: number
+  y: number
+}
+const ALIGN_TAG = Symbol('narrative.textAlign')
 
 /**
  * P15: explicit horizontal positioning of the Text node so left /
@@ -735,6 +839,7 @@ if (typeof document !== 'undefined' && typeof document.fonts?.addEventListener =
  * the fallback's numbers would outlive the fallback.
  */
 export function forgetFontMetrics(family: string): void {
+  invalidateHtmlTextMeasurements()
   const prefix = `${family}|`
   for (const key of fontMetricsCache.keys()) {
     if (key.startsWith(prefix)) fontMetricsCache.delete(key)

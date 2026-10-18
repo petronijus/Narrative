@@ -50,7 +50,8 @@ import { fontFamilyNames } from '@narrative/slide-model'
 import type { SlideObject, SlideObjectType, ObjectChangeSet } from '@narrative/shared'
 import type { ObjectBounds } from './types'
 import type { RenderScheduler } from './RenderScheduler'
-import { BatchStager, stagingOrder, type Rect } from './textResolutionStaging.js'
+import { BatchStager, rectDistance, stagingOrder, type Rect } from './textResolutionStaging.js'
+import { AdaptiveBudget, LongTaskWatch } from './restageBudget.js'
 
 interface SceneNode {
   container: Container
@@ -82,6 +83,8 @@ interface ResolutionText {
   readonly styleKey: string
   resolution: number | null
   destroyed: boolean
+  /** False when the text or one of its ancestors is hidden: it is not drawn. */
+  readonly worldVisible: boolean
 }
 
 /**
@@ -95,6 +98,17 @@ interface ResolutionText {
  */
 const TEXT_RESTAGE_MAX_PER_FRAME = 8
 const TEXT_RESTAGE_PX_PER_FRAME = 2_000_000
+/**
+ * Where the browser reports long tasks, the pixel budget follows them
+ * (renderer/restageBudget.ts): it halves after a batch during which a task
+ * of 50 ms or more began, and grows by a quarter after one without, from
+ * `TEXT_RESTAGE_PX_PER_FRAME` within these bounds (one text bigger than the
+ * budget still gets a batch of its own).
+ */
+const TEXT_RESTAGE_MIN_PX = 250_000
+const TEXT_RESTAGE_MAX_PX = 4_000_000
+/** A text off screen gets its new resolution this long after it was due at the latest, idle or not. */
+const TEXT_RESTAGE_IDLE_TIMEOUT_MS = 1000
 /**
  * Pixi uploads an HTMLText's raster when its SVG image has loaded, not in
  * the frame that started it, and Chrome can deliver several of those loads
@@ -202,10 +216,21 @@ export class SceneGraph {
   /** Hands a zoom's new resolution to the texts, a batch per frame (restageTextResolution). */
   private readonly textStager = new BatchStager({
     maxJobs: TEXT_RESTAGE_MAX_PER_FRAME,
-    budget: TEXT_RESTAGE_PX_PER_FRAME,
+    budget: () => this.nextRestageBudget(),
     maxWaitFrames: TEXT_RESTAGE_MAX_WAIT_FRAMES,
+    idleTimeout: TEXT_RESTAGE_IDLE_TIMEOUT_MS,
     onBatch: () => this.markDirty(),
   })
+  /** The restage's pixel budget, kept from one zoom to the next (it learns this machine). */
+  private readonly restageBudget = new AdaptiveBudget(
+    TEXT_RESTAGE_PX_PER_FRAME,
+    TEXT_RESTAGE_MIN_PX,
+    TEXT_RESTAGE_MAX_PX,
+  )
+  /** The page's long tasks; null where the browser reports none (the budget stays fixed). */
+  private readonly longTasks = LongTaskWatch.create()
+  /** When the current staging's last batch began (null before its first). */
+  private lastRestageBatchAt: number | null = null
 
   /** Ends the colour-resolver subscription (destroy). */
   private readonly unsubscribeColourResolver: () => void
@@ -956,14 +981,19 @@ export class SceneGraph {
 
   /**
    * Step 2, after `renderer.resolution` changed to `resolution`: re-rasterise
-   * the scene's texts at it, a batch per animation frame
-   * (`TEXT_RESTAGE_MAX_PER_FRAME` texts / `TEXT_RESTAGE_PX_PER_FRAME`
-   * texture pixels) — those meeting `visibleRect` (stage space, CSS pixels
-   * of the canvas) first, then by distance from it. A call before the previous staging has
-   * finished replaces it: texts that already reached `resolution` are
-   * skipped. Each change of a text's resolution moves its style key, so the
-   * async-raster catch-up (textRenderer `wireRedrawOnAsyncTextureUpdate`)
-   * follows it with frames of its own.
+   * the scene's texts at it. The texts meeting `visibleRect` (stage space,
+   * CSS pixels of the canvas, already widened by the caller) go a batch per
+   * animation frame (`TEXT_RESTAGE_MAX_PER_FRAME` texts, and the texture
+   * pixels this machine uploads in `TEXT_RESTAGE_UPLOAD_MS`); the rest
+   * follow nearest first, a batch per idle callback, so they give way to
+   * whatever the person does next. Without a rect every text goes in frames.
+   * A hidden text takes its new resolution without a place in a batch: it
+   * rasterises when it is shown. A call before the previous staging has
+   * finished replaces it, and texts that already reached `resolution` are
+   * skipped — finished work is kept. Each change of a text's resolution
+   * moves its style key, so the async-raster catch-up (textRenderer
+   * `wireRedrawOnAsyncTextureUpdate`) follows it with frames of its own —
+   * and lays the text out again if its measured size moved.
    */
   restageTextResolution(resolution: number, visibleRect: Rect | null): void {
     const texts: Array<{ text: ResolutionText; ownerId: string | undefined }> = []
@@ -972,6 +1002,7 @@ export class SceneGraph {
     })
     perfCount('text.restage')
     perfCount('text.restage.texts', texts.length)
+    this.lastRestageBatchAt = null
     // The canvas was just resized (its backbuffer is empty): draw it again
     // even when no text needs a new raster.
     this.markDirty()
@@ -1005,14 +1036,60 @@ export class SceneGraph {
       const gpu = text._gpuData?.[rendererUid]
       return gpu !== undefined && gpu.generatingTexture !== true && gpu.currentKey === text.styleKey
     }
+    const ordered = stagingOrder(texts, boxOf, visibleRect)
+    const onScreen =
+      visibleRect === null
+        ? ordered.length
+        : ordered.findIndex((item) => {
+            const box = boxOf(item)
+            return box === null || rectDistance(box, visibleRect) > 0
+          })
     this.textStager.stage(
-      stagingOrder(texts, boxOf, visibleRect).map(({ text }) => () => {
+      ordered.map(({ text }) => () => {
         if (text.destroyed || text._autoResolution || text._resolution === resolution) return null
+        if (!text.worldVisible) {
+          // Nothing is drawn for it, so nothing rasterises now: no place in a batch.
+          text.resolution = resolution
+          return null
+        }
         const cost = rasterPixels(text)
         text.resolution = resolution
         return { cost, settled: () => landed(text) }
       }),
+      { deferFrom: onScreen === -1 ? ordered.length : onScreen },
     )
+  }
+
+  /**
+   * The pixels the next batch of a staging may start: the budget, halved when
+   * a long task began since the previous batch of this staging (its rasters
+   * landing), grown when none did. The first batch of a staging takes the
+   * budget as it stands — the commit before it is a long task of its own.
+   */
+  private nextRestageBudget(): number {
+    if (this.longTasks === null) return TEXT_RESTAGE_PX_PER_FRAME
+    const now = performance.now()
+    const since = this.lastRestageBatchAt
+    this.lastRestageBatchAt = now
+    if (since === null) return this.restageBudget.value
+    const longTask = this.longTasks.since(since)
+    if (longTask) perfCount('text.restage.shrunk')
+    return this.restageBudget.next(longTask)
+  }
+
+  /**
+   * A zoom gesture is under way (Canvas.tsx): start no more rasters for the
+   * resolution it is about to replace. What is left stays queued — the
+   * next commit replaces it, or `resumeTextRestage` goes on with it when the
+   * gesture ends at the same resolution.
+   */
+  pauseTextRestage(): void {
+    this.textStager.pause()
+  }
+
+  /** Go on with a staging `pauseTextRestage` held (the gesture ended where it started). */
+  resumeTextRestage(): void {
+    this.textStager.resume()
   }
 
   /** Texts still waiting for the resolution of the last zoom (the e2e probes read it). */
@@ -1132,6 +1209,7 @@ export class SceneGraph {
    */
   destroy(): void {
     this.textStager.cancel()
+    this.longTasks?.disconnect()
     this.unsubscribeColourResolver()
     this.unsubscribeFontChanges()
     this.unsubscribeTextLayout()

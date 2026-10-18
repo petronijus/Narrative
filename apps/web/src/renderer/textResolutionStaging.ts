@@ -8,8 +8,12 @@
  * (docs/plans/canvas-performance.md, step 3). SceneGraph instead pins each
  * text to the resolution it was drawn at before the change and gives them the
  * new one through a `BatchStager`: a bounded amount of raster work per
- * animation frame, in the order `stagingOrder` puts them. A newer zoom restarts the staging; the
- * generation counter makes sure a frame of the older one never runs.
+ * animation frame, in the order `stagingOrder` puts them — the texts on
+ * screen in frames, the rest when the main thread is idle. A newer zoom
+ * replaces the staging (texts already at its resolution are skipped); the
+ * generation counter makes sure a frame of the older one never runs. While
+ * a zoom gesture is still going the staging is paused, so no raster is
+ * started for a resolution about to be replaced.
  *
  * Pure: no Pixi, no DOM beyond the frame/idle callbacks it is handed (or the
  * window's, by default), so the batching and cancellation are unit-tested
@@ -87,14 +91,38 @@ export const animationFrames: FrameSource = {
   cancel: (handle) => cancelAnimationFrame(handle),
 }
 
+/** Callbacks for when the main thread is idle, `timeout` ms at the latest. */
+export interface IdleSource {
+  request(cb: () => void, timeout: number): number
+  cancel(handle: number): void
+}
+
+/**
+ * The window's idle callbacks. Safari has no `requestIdleCallback`: a zero
+ * timeout queues behind the input already waiting there, which is what a
+ * deferred batch needs to give way to.
+ */
+export const idleCallbacks: IdleSource = {
+  request: (cb, timeout) =>
+    typeof requestIdleCallback === 'function'
+      ? requestIdleCallback(cb, { timeout })
+      : (setTimeout(cb, 0) as unknown as number),
+  cancel: (handle) => {
+    if (typeof cancelIdleCallback === 'function') cancelIdleCallback(handle)
+    else clearTimeout(handle)
+  },
+}
+
 export interface BatchStagerOptions {
   /** At most this many jobs that did work per frame. */
   maxJobs: number
   /**
    * A batch ends once its jobs have cost this much (default: no limit). The
-   * job that crosses it still runs, so every frame makes progress.
+   * job that crosses it still runs, so every frame makes progress. A
+   * function is asked at the start of every batch (a budget that adapts to
+   * what the work has been costing).
    */
-  budget?: number
+  budget?: number | (() => number)
   /**
    * Before the next batch, wait (a frame at a time, this many at most) for
    * the previous batch's work to have settled. Default 0: no waiting. Work
@@ -104,38 +132,60 @@ export interface BatchStagerOptions {
    */
   maxWaitFrames?: number
   frames?: FrameSource
+  /** Where the deferred part of a staging runs (`stage(jobs, { deferFrom })`). */
+  idle?: IdleSource
+  /** A deferred batch runs this long after it was due at the latest, idle or not (default 1000 ms). */
+  idleTimeout?: number
   /** After a batch that did work (SceneGraph: ask for a render). */
   onBatch?: () => void
+}
+
+export interface StageOptions {
+  /**
+   * The jobs from this index on are deferred: they run a batch per idle
+   * callback, after every job before it. Default: none (all in frames).
+   */
+  deferFrom?: number
 }
 
 /**
  * Runs a list of jobs a batch per frame — `maxJobs` jobs or `budget` of
  * cost, whichever comes first, each batch after the previous one's work has
- * settled (`maxWaitFrames`). The first batch runs at once,
- * in the `stage()` call: what is on screen starts rasterising in the very
- * next render. `stage()` again drops what the previous staging had left;
- * `cancel()` drops it with nothing new.
+ * settled (`maxWaitFrames`). The first batch runs at once, in the `stage()`
+ * call: what is on screen starts rasterising in the very next render. The
+ * deferred tail of a staging (`deferFrom`) runs the same way, a batch per
+ * idle callback. `stage()` again drops what the previous staging had left;
+ * `cancel()` drops it with nothing new; `pause()` keeps it, unscheduled,
+ * until `resume()` (or a new `stage()`).
  */
 export class BatchStager {
   private readonly maxJobs: number
-  private readonly budget: number
+  private readonly budget: () => number
   private readonly maxWaitFrames: number
   private readonly frames: FrameSource
+  private readonly idle: IdleSource
+  private readonly idleTimeout: number
   private readonly onBatch: (() => void) | undefined
   private queue: StagedJob[] = []
   private cursor = 0
+  private deferFrom = Infinity
   /** The previous batch's unsettled work, and the frames already waited for it. */
   private inFlight: Array<() => boolean> = []
   private waited = 0
-  private handle: number | null = null
+  /** The scheduled callback and where it was asked from. */
+  private handle: { id: number; source: 'frame' | 'idle' } | null = null
+  private isPaused = false
   /** Bumped by every stage/cancel; a frame scheduled under an older value does nothing. */
   private generation = 0
 
   constructor(opts: BatchStagerOptions) {
     this.maxJobs = Math.max(1, Math.floor(opts.maxJobs))
-    this.budget = opts.budget ?? Infinity
+    const budget = opts.budget ?? Infinity
+    this.budget = typeof budget === 'function' ? budget : () => budget
     this.maxWaitFrames = Math.max(0, Math.floor(opts.maxWaitFrames ?? 0))
     this.frames = opts.frames ?? animationFrames
+    this.idle = opts.idle ?? idleCallbacks
+    this.idleTimeout = opts.idleTimeout ?? 1000
     this.onBatch = opts.onBatch
   }
 
@@ -144,29 +194,63 @@ export class BatchStager {
     return this.queue.length - this.cursor
   }
 
-  stage(jobs: readonly StagedJob[]): void {
+  /** True between `pause()` and the next `resume()` / `stage()` / `cancel()`. */
+  get paused(): boolean {
+    return this.isPaused
+  }
+
+  stage(jobs: readonly StagedJob[], opts: StageOptions = {}): void {
     this.cancel()
     this.queue = [...jobs]
     this.cursor = 0
-    this.runBatch(this.generation)
+    this.deferFrom = Math.max(0, opts.deferFrom ?? Infinity)
+    if (this.deferFrom > 0) this.runBatch(this.generation)
+    else this.next(this.generation)
   }
 
   cancel(): void {
     this.generation++
-    if (this.handle !== null) this.frames.cancel(this.handle)
-    this.handle = null
+    this.unschedule()
     this.queue = []
     this.cursor = 0
+    this.deferFrom = Infinity
     this.inFlight = []
     this.waited = 0
+    this.isPaused = false
+  }
+
+  /** Stop running batches; what is left stays queued. */
+  pause(): void {
+    if (this.isPaused) return
+    this.isPaused = true
+    this.unschedule()
+  }
+
+  /** Go on with what a `pause()` left (nothing to do when nothing is left). */
+  resume(): void {
+    if (!this.isPaused) return
+    this.isPaused = false
+    if (this.pending > 0) this.next(this.generation)
+  }
+
+  private unschedule(): void {
+    if (this.handle === null) return
+    if (this.handle.source === 'frame') this.frames.cancel(this.handle.id)
+    else this.idle.cancel(this.handle.id)
+    this.handle = null
   }
 
   private next(generation: number): void {
-    this.handle = this.frames.request(() => this.runBatch(generation))
+    if (this.isPaused) return
+    const run = (): void => this.runBatch(generation)
+    this.handle =
+      this.cursor >= this.deferFrom
+        ? { id: this.idle.request(run, this.idleTimeout), source: 'idle' }
+        : { id: this.frames.request(run), source: 'frame' }
   }
 
   private runBatch(generation: number): void {
-    if (generation !== this.generation) return
+    if (generation !== this.generation || this.isPaused) return
     this.handle = null
     if (this.inFlight.length > 0) {
       this.inFlight = this.inFlight.filter((settled) => !settled())
@@ -178,9 +262,13 @@ export class BatchStager {
     }
     this.inFlight = []
     this.waited = 0
+    // A batch is all in frames or all deferred, never both.
+    const end =
+      this.cursor < this.deferFrom ? Math.min(this.deferFrom, this.queue.length) : this.queue.length
+    const budget = this.budget()
     let done = 0
     let spent = 0
-    while (done < this.maxJobs && spent < this.budget && this.cursor < this.queue.length) {
+    while (done < this.maxJobs && spent < budget && this.cursor < end) {
       const work = this.queue[this.cursor++]!()
       if (work === null) continue
       done++
@@ -193,6 +281,7 @@ export class BatchStager {
     } else {
       this.queue = []
       this.cursor = 0
+      this.deferFrom = Infinity
       this.inFlight = []
     }
   }
@@ -205,10 +294,6 @@ export class BatchStager {
  * zero timeout queues behind the same events there.
  */
 export function whenIdle(cb: () => void, timeout: number): () => void {
-  if (typeof requestIdleCallback === 'function') {
-    const handle = requestIdleCallback(cb, { timeout })
-    return () => cancelIdleCallback(handle)
-  }
-  const handle = setTimeout(cb, 0)
-  return () => clearTimeout(handle)
+  const handle = idleCallbacks.request(cb, timeout)
+  return () => idleCallbacks.cancel(handle)
 }

@@ -283,6 +283,14 @@ export const INTERACTION_BENCHES: ReadonlyArray<BenchDef<never>> = [
     actions: ['view.zoomIn', 'view.zoomOut'],
     work: ZOOM_WORK,
   }),
+  // The zoom's commit path: zoom in, rest (the backbuffer resizes, the texts
+  // are re-rasterised at the new resolution), zoom back out, rest. The wheel
+  // bench above ends where it started, so it commits nothing.
+  interaction('viewport.zoom.commit', {
+    scene: SCENES.crowded,
+    actions: ['view.zoomIn', 'view.zoomOut'],
+    work: ZOOM_WORK,
+  }),
   interaction('text.type.inter', {
     scene: SCENES.crowded,
     commands: ['text.edit'],

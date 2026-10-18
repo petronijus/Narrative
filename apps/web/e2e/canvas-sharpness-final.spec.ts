@@ -43,7 +43,7 @@ async function gotoEditorAtZoom(
   }, zoom)
   await page.reload()
   await expect(page.locator('canvas')).toBeVisible({ timeout: 15_000 })
-  // Resolution update is debounced (150 ms). Wait for it to settle.
+  // The resolution commits 300 ms after the last zoom input (Canvas.tsx). Wait for it to settle.
   await page.waitForTimeout(2000)
 }
 

@@ -1,6 +1,6 @@
 # Canvas performance on crowded slides
 
-Status: **in progress** — steps 1–3 done, 4–5 open (branch `perf/crowded-slide`, started 2026-10-16).
+Status: **in progress** — steps 1–3 done, 4 measured (needs Pixi upstream), 5 partly measured (branch `perf/crowded-slide`, started 2026-10-16).
 Started because dragging, zooming and typing felt slow on slides with many
 text boxes, pictures and shapes (and slowest on the MacBook).
 
@@ -60,16 +60,37 @@ the effect.
    Re-rasterise only the texts in the viewport, in batches across frames, the
    rest when they scroll in; commit the resolution when the gesture ends, not
    on a timer a stalled main thread can trip repeatedly. Target: zoom with 300
-   texts at the fps of 40 texts.
+   texts at the fps of 40 texts. **Done** (2026-10-18, two parts — Log): the
+   staging, then the commit once per gesture (wheel / pinch input included),
+   the off-screen texts in idle time, a time budget per batch, no
+   re-measuring for a resolution change.
 4. **Text measurement** (`patchHTMLTextRace`/Pixi `measureHtmlText`
    surroundings). Keep the measurement from forcing a layout of the whole app
    DOM (an isolated, contained measuring root); virtualise the Layers list if
-   its DOM is still the cost.
+   its DOM is still the cost. **Measured, not built** (2026-10-18, Log):
+   Pixi appends the measuring SVG to `document.body` itself (no option for a
+   root), so a contained root needs a change upstream (a container option
+   for `measureHtmlText`) — a local copy of the function is not an option.
+   A text whose markup, CSS and faces did not change is no longer measured
+   again (`renderer/htmlTextBoundsMemo.ts`; what makes the realignment
+   after each re-raster free).
 5. **Open questions, measure first.** Masks on the MacBook's GPU (the spec runs
    there; the draw-call count suggests a cost on tilers and integrated GPUs,
    nothing here shows one). Mipmaps for text textures (generated for every
    raster; switching them off saves a third of the texture memory). A
    production-build run of the spec to calibrate the React figures.
+   **Mipmaps measured** (2026-10-18): `generateMipmap` does not show in a
+   zoom's CPU profile at all (under 1 ms of 2.7 s), and the editor's text
+   rasters _are_ minified — the live thumbnail draws them at about 1/8
+   (`renderer/liveThumbnail.ts`) — so switching them off would alias the
+   sidebar's text; it would save GPU memory only. Left on. **The backbuffer**
+   (found while measuring): the canvas is the whole artboard + bleed, 25 Mpx
+   at zoom ≥ 2.2× while the window shows ~2 Mpx, and its MSAA reallocation
+   is ~110 ms per resolution change (M3 Pro; 12–25 ms without MSAA; width and
+   height each reallocate). A viewport-sized canvas with the zoom as a stage
+   transform would remove the reallocation and most of the fill — a
+   render-architecture change (ADR, tech-lead; `EditorLayout` and the overlay
+   coordinates are involved), not started.
 
 ## Out of scope
 
@@ -152,3 +173,31 @@ the effect.
   never rasterised at the peak (the ~560 fewer uploads). An earlier run of
   the 120-text row on the same machine that day (33 fps, max 750 ms, 6 long
   tasks) did not reproduce in these runs; the machine was quieter.
+
+- 2026-10-18, step 3 second part, step 4 measured, step 5 mipmaps measured
+  (`renderer/Canvas.tsx`, `SceneGraph.restageTextResolution`,
+  `renderer/textResolutionStaging.ts`, `renderer/restageBudget.ts`,
+  `renderer/htmlTextBoundsMemo.ts`, `objectRenderers/textRenderer.ts`;
+  numbers in `docs/plans/performance.md` → Log, same day):
+  - **One commit per gesture.** The commit waits until neither the zoom nor
+    wheel / pinch input changed for 300 ms. The `viewport.zoom.wheel` bench
+    rests at the zoom's clamp while the wheel still turns: before, that
+    committed at the peak (backbuffer reallocation and ~160 rasters for a
+    resolution the next step replaced); now a gesture that ends where it
+    started commits nothing. 150 ms was tried first: on the loaded machine
+    the steps of one gesture came up to ~150 ms apart, and it still
+    committed mid-gesture in one run.
+  - **Staging.** Paused while a gesture is under way, resumed when the
+    gesture ends at the committed resolution, replaced by the next commit
+    (texts already at the new resolution are skipped). The texts in the
+    viewport go in frames, the rest in idle callbacks (1 s timeout); a
+    hidden text takes its resolution without a place in a batch. The
+    batch's pixel budget halves after a batch during which a long task
+    began and grows by a quarter without one (Long Tasks API; fixed 2 Mpx
+    elsewhere). A budget from timing the upload call was tried and
+    dropped: it read ~1 ms/Mpx where the profile has ~6, and the batches
+    and long tasks grew.
+  - New bench `viewport.zoom.commit` (zoom in from the fitted zoom, rest
+    1.5 s, zoom out): the commit path the wheel bench no longer exercises.
+  - Text alignment across a re-raster (`.claude/agents/renderer.md`):
+    fixed, `e2e/text-align-reraster.spec.ts`.

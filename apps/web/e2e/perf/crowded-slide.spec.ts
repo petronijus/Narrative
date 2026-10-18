@@ -48,6 +48,7 @@ const IDS = [
   'transform.move.image',
   'transform.move.multi',
   'viewport.zoom.wheel',
+  'viewport.zoom.commit',
   'text.type.inter',
 ]
 
@@ -201,6 +202,34 @@ test('crowded slide', async ({ browser }) => {
             await s.page.waitForTimeout(25)
           }
           await s.page.keyboard.up('ControlOrMeta')
+          await inputEnd()
+        })
+        s.last = c
+        return gestureValues(def.metrics, c)
+      },
+      'viewport.zoom.commit': async (s, def) => {
+        // From the fitted zoom every run: the wheel bench leaves the zoom at
+        // its minimum, from where eight steps would not reach 100 % (no
+        // resolution change, nothing to commit).
+        await s.page.getByRole('button', { name: 'Reset zoom to 100%' }).hover()
+        await s.page.getByRole('button', { name: 'Fit to screen' }).click()
+        await settle(s.page)
+        const a = (await s.page.locator('.artboard').boundingBox())!
+        await s.page.mouse.move(a.x + a.width * 0.47, a.y + a.height * 0.5)
+        const wheel = async (dy: number): Promise<void> => {
+          await s.page.keyboard.down('ControlOrMeta')
+          for (let i = 0; i < 8; i++) {
+            await s.page.mouse.wheel(0, dy)
+            await s.page.waitForTimeout(25)
+          }
+          await s.page.keyboard.up('ControlOrMeta')
+        }
+        const c = await capture(s.page, async (inputEnd) => {
+          // In, then a rest long enough for the commit and its staging to run…
+          await wheel(-50)
+          await s.page.waitForTimeout(1500)
+          // …and back out (the second commit's staging is the settle).
+          await wheel(50)
           await inputEnd()
         })
         s.last = c

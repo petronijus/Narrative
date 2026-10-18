@@ -84,6 +84,16 @@ function visibleCanvasRect(canvas: HTMLCanvasElement): Rect | null {
   )
 }
 
+/**
+ * A zoom commits once neither the zoom nor wheel / pinch input changed for
+ * this long. Was 150 ms after the last zoom change; on a busy main thread
+ * the steps of one wheel gesture arrived up to ~150 ms apart (M3 Pro at
+ * load 20–40, 2026-10-18), and a commit between two of them — 100+ ms of
+ * backbuffer reallocation, then every text re-rasterised — landed in the
+ * middle of the gesture, for a resolution the next step replaced.
+ */
+const ZOOM_COMMIT_QUIET_MS = 300
+
 export interface CanvasProps {
   /**
    * Callback volaný po úspěšném inicializaci Pixi (async).
@@ -135,6 +145,9 @@ export function Canvas({
   const onScreenRef = useRef(onScreen)
   const containerRef = useRef<HTMLDivElement>(null)
   const overlayRootRef = useRef<HTMLDivElement>(null)
+
+  /** `performance.now()` of the last wheel / pinch input (the zoom commit waits for it to stop). */
+  const lastZoomInputAt = useRef(-Infinity)
 
   /** Pending changes from before Pixi is ready. Buffer and flush once instance exists. */
   const pendingChangesRef = useRef<ObjectChangeSet[]>([])
@@ -499,22 +512,31 @@ export function Canvas({
   // gets full sharpness (resolution=2), while a 2× HiDPI display
   // caps at ~2.2× instead of the 4× that would OOM.
   //
-  // Debounced by 150 ms so rapid mousewheel zoom only commits the
-  // resolution change once after the zoom stabilizes, and then committed
-  // from an idle callback: on a busy main thread the timer can fire while
-  // wheel events of the same gesture are still queued, and each of them
-  // (a new zoom → this effect's cleanup) must get to cancel the commit
-  // first.
+  // Committed once the gesture is over: `ZOOM_COMMIT_QUIET_MS` after the last
+  // zoom change AND the last wheel / pinch input (a zoom resting at its clamp while the
+  // wheel still turns is the same gesture — committing there resized the
+  // backbuffer and re-rasterised every text for a resolution the next wheel
+  // step replaced), and then from an idle callback: on a busy main thread
+  // the timer can fire while wheel events of the same gesture are still
+  // queued, and each of them (a new zoom → this effect's cleanup) must get
+  // to cancel the commit first. A commit is the expensive part — the
+  // backbuffer reallocation alone is ~110 ms at the 25 Mpx cap with MSAA
+  // (M3 Pro, 2026-10-18) — so one per gesture, and none for a gesture that
+  // ends where it started.
   //
   // The commit does not let Pixi re-rasterise every text in one frame (its
   // `resolutionChange` runner would): texts are pinned to the resolution
   // they were drawn at, the renderer's changes, and the new one is handed to
-  // the texts a batch per frame, those on screen first
+  // the texts a batch per frame, those on screen first, the rest when idle
   // (SceneGraph.pinTextResolution / restageTextResolution; plan
-  // canvas-performance step 3).
+  // canvas-performance step 3). While a gesture is under way the previous
+  // commit's staging is paused.
   useEffect(() => {
     const instance = instanceRef.current
     if (instance === null) return
+    // The zoom moved: rasters for the committed resolution may be about to
+    // be replaced. The commit below replaces the staging, or resumes it.
+    instance.sceneGraph.pauseTextRestage()
 
     const dpr = window.devicePixelRatio || 1
     const container = containerRef.current
@@ -524,11 +546,37 @@ export function Canvas({
     const pixelCap = Math.sqrt(maxPixels / (cw * ch))
     const effectiveRes = Math.min(pixelCap, dpr * Math.max(1, zoom))
 
+    let cancelIdle: (() => void) | null = null
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    /** Commit `delay` ms from now, or later while zoom input keeps coming. */
+    const arm = (delay: number): void => {
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        const quiet = performance.now() - lastZoomInputAt.current
+        if (quiet < ZOOM_COMMIT_QUIET_MS) {
+          arm(ZOOM_COMMIT_QUIET_MS - quiet)
+          return
+        }
+        // 500 ms at the latest: a main thread that never idles still gets sharp text.
+        cancelIdle = whenIdle(commit, 500)
+      }, delay)
+    }
+
     const commit = (): void => {
+      cancelIdle = null
       const inst = instanceRef.current
       if (inst === null || !onScreenRef.current) return
+      // Input that arrived while the idle callback waited: still the gesture.
+      const quiet = performance.now() - lastZoomInputAt.current
+      if (quiet < ZOOM_COMMIT_QUIET_MS) {
+        arm(ZOOM_COMMIT_QUIET_MS - quiet)
+        return
+      }
       const renderer = inst.app.renderer
-      if (Math.abs(renderer.resolution - effectiveRes) < 0.01) return
+      if (Math.abs(renderer.resolution - effectiveRes) < 0.01) {
+        inst.sceneGraph.resumeTextRestage()
+        return
+      }
       inst.sceneGraph.pinTextResolution()
       renderer.resolution = effectiveRes
       if (container !== null && cw > 0 && ch > 0) {
@@ -537,17 +585,41 @@ export function Canvas({
       inst.sceneGraph.restageTextResolution(effectiveRes, visibleCanvasRect(inst.app.canvas))
     }
 
-    let cancelIdle: (() => void) | null = null
-    const debounceTimer = setTimeout(() => {
-      // 500 ms at the latest: a main thread that never idles still gets sharp text.
-      cancelIdle = whenIdle(commit, 500)
-    }, 150)
+    arm(ZOOM_COMMIT_QUIET_MS)
 
     return () => {
-      clearTimeout(debounceTimer)
+      if (debounceTimer !== null) clearTimeout(debounceTimer)
       cancelIdle?.()
     }
   }, [zoom, pixiReady])
+
+  // When the last zoom input arrived (the zoom commit above waits for it to
+  // stop): a wheel with Ctrl/Cmd (Chrome's trackpad pinch is one too) or
+  // Safari's pinch, anywhere, and a plain wheel over the canvas — it scrolls
+  // the editor, and the commit waits for that rather than resize the
+  // backbuffer mid-scroll.
+  useEffect(() => {
+    const note = (): void => {
+      lastZoomInputAt.current = performance.now()
+    }
+    const onWheel = (e: WheelEvent): void => {
+      const container = containerRef.current
+      if (
+        e.ctrlKey ||
+        e.metaKey ||
+        (container !== null && e.target instanceof Node && container.contains(e.target))
+      ) {
+        note()
+      }
+    }
+    const opts: AddEventListenerOptions = { capture: true, passive: true }
+    window.addEventListener('wheel', onWheel, opts)
+    window.addEventListener('gesturechange', note, opts)
+    return () => {
+      window.removeEventListener('wheel', onWheel, opts)
+      window.removeEventListener('gesturechange', note, opts)
+    }
+  }, [])
 
   // ResizeObserver — reaguje na změnu velikosti parent kontejneru.
   // Uses clientWidth/clientHeight (CSS-transform-independent) so the

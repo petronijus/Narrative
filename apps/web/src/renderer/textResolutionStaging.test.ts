@@ -5,6 +5,7 @@ import {
   stagingOrder,
   widenRect,
   type FrameSource,
+  type IdleSource,
   type StagedJob,
   type Rect,
 } from './textResolutionStaging.js'
@@ -30,6 +31,28 @@ function manualFrames(): FrameSource & { flush: () => void; readonly queued: num
     get queued() {
       return pending.size
     },
+  }
+}
+
+/** Idle callbacks that run only when the test says so; records each timeout asked for. */
+function manualIdle(): IdleSource & {
+  flush: () => void
+  readonly queued: number
+  timeouts: number[]
+} {
+  const frames = manualFrames()
+  const timeouts: number[] = []
+  return {
+    request(cb, timeout) {
+      timeouts.push(timeout)
+      return frames.request(cb)
+    },
+    cancel: (handle) => frames.cancel(handle),
+    flush: () => frames.flush(),
+    get queued() {
+      return frames.queued
+    },
+    timeouts,
   }
 }
 
@@ -204,6 +227,84 @@ describe('BatchStager', () => {
     stager.stage([job(ran, 'new', 1), job(ran, 'new2', 1)])
     frames.flush()
     expect(ran).toEqual(['old', 'new', 'new2'])
+  })
+
+  it('runs the deferred tail in idle callbacks, after the jobs before it', () => {
+    const frames = manualFrames()
+    const idle = manualIdle()
+    const stager = new BatchStager({ maxJobs: 2, frames, idle, idleTimeout: 700 })
+    const log: number[] = []
+    stager.stage(jobs(log, 7), { deferFrom: 3 })
+    // The first batch at once, then frames up to the deferred part (a batch never spans both).
+    expect(log).toEqual([0, 1])
+    expect(idle.queued).toBe(0)
+    frames.flush()
+    expect(log).toEqual([0, 1, 2])
+    expect(frames.queued).toBe(0)
+    expect(idle.queued).toBe(1)
+    idle.flush()
+    expect(log).toEqual([0, 1, 2, 3, 4])
+    idle.flush()
+    idle.flush()
+    expect(log).toEqual([0, 1, 2, 3, 4, 5, 6])
+    expect(stager.pending).toBe(0)
+    expect(idle.timeouts.every((t) => t === 700)).toBe(true)
+  })
+
+  it('with everything deferred, nothing runs in the stage() call', () => {
+    const frames = manualFrames()
+    const idle = manualIdle()
+    const stager = new BatchStager({ maxJobs: 4, frames, idle })
+    const log: number[] = []
+    stager.stage(jobs(log, 2), { deferFrom: 0 })
+    expect(log).toEqual([])
+    idle.flush()
+    expect(log).toEqual([0, 1])
+  })
+
+  it('pause keeps what is left, unscheduled; resume goes on from there', () => {
+    const frames = manualFrames()
+    const stager = new BatchStager({ maxJobs: 2, frames })
+    const log: number[] = []
+    stager.stage(jobs(log, 6))
+    stager.pause()
+    expect(stager.paused).toBe(true)
+    expect(frames.queued).toBe(0)
+    frames.flush()
+    expect(log).toEqual([0, 1])
+    stager.resume()
+    frames.flush()
+    expect(log).toEqual([0, 1, 2, 3])
+    frames.flush()
+    expect(log).toEqual([0, 1, 2, 3, 4, 5])
+  })
+
+  it('a new staging ends a pause; resume with nothing left schedules nothing', () => {
+    const frames = manualFrames()
+    const stager = new BatchStager({ maxJobs: 1, frames })
+    const log: number[] = []
+    stager.stage(jobs(log, 1))
+    stager.pause()
+    stager.resume()
+    expect(frames.queued).toBe(0)
+    stager.pause()
+    stager.stage(jobs(log, 2, 10))
+    expect(stager.paused).toBe(false)
+    expect(log).toEqual([0, 10])
+    frames.flush()
+    expect(log).toEqual([0, 10, 11])
+  })
+
+  it('asks a budget function at the start of every batch', () => {
+    const frames = manualFrames()
+    let budget = 2
+    const stager = new BatchStager({ maxJobs: 8, budget: () => budget, frames })
+    const ran: string[] = []
+    stager.stage(['a', 'b', 'c', 'd', 'e', 'f'].map((id) => job(ran, id, 1)))
+    expect(ran).toEqual(['a', 'b'])
+    budget = 3
+    frames.flush()
+    expect(ran).toEqual(['a', 'b', 'c', 'd', 'e'])
   })
 
   it('a frame of a cancelled staging that still fires does nothing', () => {
