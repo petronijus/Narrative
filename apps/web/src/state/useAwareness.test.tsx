@@ -14,7 +14,7 @@ import { render, screen, act } from '@testing-library/react'
 import React from 'react'
 import { SlideDocContext } from './slideDocContext.js'
 import { createMockSlideDocValue } from './slideDocContext.js'
-import { useAwareness, useRemotePeers } from './useAwareness.js'
+import { useAwareness, usePresencePeers, useRemotePeers } from './useAwareness.js'
 import type { Awareness } from 'y-protocols/awareness'
 import type { PeerAwarenessState } from '@narrative/shared'
 
@@ -270,5 +270,88 @@ describe('useRemotePeers', () => {
       awareness._emit()
     })
     expect(screen.getByTestId('remote-ids').textContent).toBe('')
+  })
+
+  it('does not render when a remote state is re-sent unchanged (a new object, the same content)', () => {
+    const awareness = setup(
+      new Map([
+        [1, makeState('local-id')],
+        [2, makeState('remote-id')],
+      ]),
+    )
+    const before = renders
+    act(() => {
+      // The sync server re-broadcasts states it already sent: y-protocols
+      // stores each as a freshly parsed object.
+      awareness._setStates(
+        new Map([
+          [1, { ...makeState('local-id'), cursor: { x: 1, y: 2, slideId: 's' } }],
+          [2, makeState('remote-id')],
+        ]),
+      )
+      awareness._emit()
+    })
+    expect(renders).toBe(before)
+    act(() => {
+      awareness._setStates(
+        new Map([
+          [1, makeState('local-id')],
+          [2, { ...makeState('remote-id'), selectedObjectIds: ['x'] }],
+        ]),
+      )
+      awareness._emit()
+    })
+    expect(renders).toBeGreaterThan(before)
+  })
+})
+
+describe('usePresencePeers', () => {
+  let renders = 0
+
+  function PresenceReadout() {
+    const { peers } = usePresencePeers()
+    renders++
+    return <div data-testid="presence">{peers.map((p) => p.state.user.name).join(',')}</div>
+  }
+
+  function setup(states: Map<number, PeerAwarenessState>) {
+    const awareness = makeFakeAwareness(states, 1)
+    renders = 0
+    render(
+      <SlideDocContext
+        value={createMockSlideDocValue({ awareness: awareness as unknown as Awareness })}
+      >
+        <PresenceReadout />
+      </SlideDocContext>,
+    )
+    return awareness
+  }
+
+  it('lists every peer, and renders only when an identity changes', () => {
+    const awareness = setup(
+      new Map([
+        [1, makeState('local-id')],
+        [2, makeState('remote-id')],
+      ]),
+    )
+    expect(screen.getByTestId('presence').textContent?.split(',')).toHaveLength(2)
+    const before = renders
+    act(() => {
+      // Cursors and selections move, states are re-sent: no identity changed.
+      awareness._setStates(
+        new Map([
+          [1, { ...makeState('local-id'), cursor: { x: 5, y: 6, slideId: 's' } }],
+          [2, { ...makeState('remote-id'), selectedObjectIds: ['a'] }],
+        ]),
+      )
+      awareness._emit()
+    })
+    expect(renders).toBe(before)
+    act(() => {
+      awareness._setStates(new Map([[1, makeState('local-id')]]))
+      awareness._emit()
+    })
+    expect(renders).toBeGreaterThan(before)
+    expect(screen.getByTestId('presence').textContent?.split(',')).toHaveLength(1)
   })
 })

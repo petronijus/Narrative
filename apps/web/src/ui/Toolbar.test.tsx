@@ -22,6 +22,7 @@ import type { ActiveTool } from '../state/ToolContext'
 
 vi.mock('../state/useAwareness.js', () => ({
   useAwareness: () => ({ peers: [], remotePeers: [], localClientId: 1 }),
+  usePresencePeers: () => ({ peers: [], remotePeers: [], localClientId: 1 }),
   useRemotePeers: () => [],
 }))
 

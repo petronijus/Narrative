@@ -31,7 +31,8 @@ import {
   useMemo,
   type ReactElement,
 } from 'react'
-import { useSlides } from '../state/useSlides.js'
+import { useSlidesSelector } from '../state/useSlides.js'
+import { sameArray } from '../state/useDeckStore.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import {
   closeBrowserSlideExport,
@@ -91,7 +92,25 @@ const DRAG_CLICK_THRESHOLD_PX = 4
 // Outline helpers
 // ---------------------------------------------------------------------------
 
-function slideIndent(s: Slide): number {
+/**
+ * What the panel shows of a slide. Selected from the deck store as such, so
+ * an edit inside a slide — every pointer move of a drag, every keystroke —
+ * re-renders neither the panel nor its rows (the thumbnail is the
+ * thumbnail hook's: it watches the objects itself).
+ */
+type PanelSlide = Pick<Slide, 'id' | 'name' | 'skipped' | 'indent' | 'collapsed'>
+
+function samePanelSlide(a: PanelSlide, b: Slide | PanelSlide): boolean {
+  return (
+    a.id === b.id &&
+    a.name === b.name &&
+    a.skipped === b.skipped &&
+    a.indent === b.indent &&
+    a.collapsed === b.collapsed
+  )
+}
+
+function slideIndent(s: PanelSlide): number {
   return s.indent ?? 0
 }
 
@@ -100,7 +119,7 @@ function slideIndent(s: Slide): number {
  * that belongs to its outline subtree (consecutive slides with a deeper
  * indent).
  */
-function subtreeIds(slides: Slide[], fromIndex: number): string[] {
+function subtreeIds(slides: PanelSlide[], fromIndex: number): string[] {
   const root = slides[fromIndex]
   if (root === undefined) return []
   const out: string[] = [root.id]
@@ -162,7 +181,7 @@ interface DragState {
 // ---------------------------------------------------------------------------
 
 interface SlideItemProps {
-  slide: Slide
+  slide: PanelSlide
   index: number
   indent: number
   hasChildren: boolean
@@ -491,16 +510,9 @@ function SlideItemImpl({
  * of its own props changes by shallow comparison — all handler props are
  * `useCallback`-stable and the remaining props are primitives.
  *
- * Caveat: the `slide` prop's identity still churns on every SlidesPanel
- * render because `useSlides` rebuilds the array via `listSlides` (a fresh
- * deep-convert). Change 1 (rAF-coalescing subscribeToSlides) cuts how OFTEN
- * that happens — from once per Yjs transaction to once per frame — but the
- * per-render identity churn of `slide` is a separate follow-up (ref-stable
- * SlideSummary projection / structural memo). This memo still pays off: it
- * skips the rows whose `slide` reference is unchanged within a render pass
- * (e.g. parent re-renders driven by selection/drag/thumbnail state that
- * don't touch `useSlides`), and once the identity-stability follow-up lands
- * the memo becomes fully effective.
+ * The `slide` prop is the panel's view of the slide (`PanelSlide`), which
+ * keeps its identity until the slide's name, skipped, indent or collapsed
+ * flag changes — so an edit inside a slide renders no row.
  */
 const SlideItem = memo(SlideItemImpl)
 
@@ -515,7 +527,31 @@ interface SlidesPanelProps {
 }
 
 export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement {
-  const slides = useSlides()
+  // One view object per slide, kept while its fields are the same: the row
+  // memo below compares it by identity.
+  const viewCache = useRef(new Map<string, PanelSlide>())
+  const slides = useSlidesSelector((all) => {
+    const cache = viewCache.current
+    const next = new Map<string, PanelSlide>()
+    const views = all.map((s) => {
+      const prev = cache.get(s.id)
+      if (prev !== undefined && samePanelSlide(prev, s)) {
+        next.set(s.id, prev)
+        return prev
+      }
+      const view: PanelSlide = {
+        id: s.id,
+        ...(s.name !== undefined ? { name: s.name } : {}),
+        ...(s.skipped !== undefined ? { skipped: s.skipped } : {}),
+        ...(s.indent !== undefined ? { indent: s.indent } : {}),
+        ...(s.collapsed !== undefined ? { collapsed: s.collapsed } : {}),
+      }
+      next.set(s.id, view)
+      return view
+    })
+    viewCache.current = next
+    return views
+  }, sameArray)
   const { activeSlideId, setActiveSlideId } = useActiveSlide()
   const command = useCommand()
   const { clear: clearSelection } = useSelection()
@@ -1035,7 +1071,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       // slide before `insertAt` (a position in the deck BEFORE the move)
       // that is not itself being moved. slide.move applies the same rule.
       const movingSet = new Set(movingIds)
-      let prev: Slide | undefined
+      let prev: PanelSlide | undefined
       for (let i = Math.min(insertAt, slides.length) - 1; i >= 0; i--) {
         const s = slides[i]
         if (s !== undefined && !movingSet.has(s.id)) {

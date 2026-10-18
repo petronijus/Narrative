@@ -65,7 +65,6 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
   const id = yMap.get('id') as string
   const objectsArr = yMap.get('objects') as Y.Array<Y.Map<unknown>> | undefined
   const animationsArr = yMap.get('animations') as Y.Array<Y.Map<unknown>> | undefined
-  const transitionMap = yMap.get('transition') as Y.Map<unknown> | undefined
 
   const objects: SlideObject[] = []
   if (objectsArr !== undefined) {
@@ -89,6 +88,29 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
     }
   }
 
+  return composeSlide(id, objects, animations, readSlideMeta(yMap))
+}
+
+/**
+ * Everything of a slide's snapshot but its id, objects and animations: the
+ * transition and the optional fields, absent when unset. Shared with the
+ * deck store (deckStore.ts), which rebuilds it only when one of them changed.
+ */
+export type SlideMeta = Omit<Slide, 'id' | 'objects' | 'animations'>
+
+/** A slide's snapshot from its parts — the one shape `listSlides` and the deck store return. */
+export function composeSlide(
+  id: string,
+  objects: SlideObject[],
+  animations: AnimationStep[],
+  meta: SlideMeta,
+): Slide {
+  return { id, objects, animations, ...meta }
+}
+
+/** Reads a slide Y.Map's metadata (see `SlideMeta`). */
+export function readSlideMeta(yMap: Y.Map<unknown>): SlideMeta {
+  const transitionMap = yMap.get('transition') as Y.Map<unknown> | undefined
   const direction = transitionMap?.get('direction') as SlideTransition['direction'] | undefined
   const transition: SlideTransition = {
     kind: (transitionMap?.get('kind') as SlideTransition['kind']) ?? DEFAULT_TRANSITION.kind,
@@ -113,9 +135,6 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
   const specKey = yMap.get('specKey')
 
   return {
-    id,
-    objects,
-    animations,
     transition,
     ...(background !== undefined ? { background } : {}),
     ...(typeof name === 'string' && name.length > 0 ? { name } : {}),

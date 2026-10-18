@@ -88,6 +88,8 @@ interface DragState {
   artboardTop: number
 }
 
+type SnapBounds = { id: string; x: number; y: number; width: number; height: number }
+
 export interface TransformHandlesProps {
   objectIds: string[]
   sceneGraph: SceneGraph
@@ -95,8 +97,12 @@ export interface TransformHandlesProps {
   slideId: string
   /** Callback pro předání aktivních snap guides do EditorLayout (vizualizace). */
   onSnapGuides?: (guides: SnapGuide[]) => void
-  /** Bounds ostatních objektů pro snapping (all objects minus selected). */
-  otherBounds: Array<{ id: string; x: number; y: number; width: number; height: number }>
+  /**
+   * Bounds of the other objects for snapping (all objects minus selected) —
+   * or a function giving them, called on each frame of a handle drag, so the
+   * caller need not re-render (and rebuild the list) on every document change.
+   */
+  otherBounds: SnapBounds[] | (() => SnapBounds[])
   /**
    * P8: when true, corner resizes preserve the original aspect ratio
    * even without Shift held. Used by VideoObject (aspectLocked flag in
@@ -382,7 +388,7 @@ export function TransformHandles({
         const snapResult = snapsThisFrame(snappingEnabled, isModHeld(e))
           ? computeSnap(
               { x: newRect.x, y: newRect.y, width: newRect.width, height: newRect.height },
-              otherBounds,
+              typeof otherBounds === 'function' ? otherBounds() : otherBounds,
               10,
               6,
               extraGuides,

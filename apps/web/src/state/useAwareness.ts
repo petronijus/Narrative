@@ -90,6 +90,18 @@ export function useAwareness(): AwarenessSnapshot {
 }
 
 /**
+ * An awareness state (or part of one) by content. States are small JSON
+ * values — they travel as JSON — so their serialisation is their identity.
+ */
+function stateKey(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? 'undefined'
+  } catch {
+    return String(Math.random())
+  }
+}
+
+/**
  * The other people's awareness, and nothing of this client's own.
  *
  * `useAwareness()` hands out a new snapshot on every awareness change — this
@@ -97,9 +109,12 @@ export function useAwareness(): AwarenessSnapshot {
  * and every reader renders for it, synchronously. Most readers draw other
  * people (cursors, selection frames, who is where) and have no use for the
  * local entry. This hook's snapshot is the same array for as long as no
- * remote peer's state has been replaced (y-protocols swaps a client's state
- * object when, and only when, that client sends a new one), so the local
- * cursor moving renders nothing here.
+ * remote peer's state has changed in content, so the local cursor moving
+ * renders nothing here. (By content, not by object: y-protocols swaps in a
+ * new state object for every awareness message it applies, and the sync
+ * server re-sends unchanged states — it broadcasts every flush to every
+ * connection, the sender included — so a peer that did nothing used to
+ * re-render every reader once per local edit.)
  */
 export function useRemotePeers(): PeerInfo[] {
   const { awareness } = useSlideDoc()
@@ -120,7 +135,7 @@ export function useRemotePeers(): PeerInfo[] {
     const states = awareness.getStates() as Map<number, unknown>
     const key: unknown[] = []
     for (const [clientId, rawState] of states) {
-      if (clientId !== localClientId) key.push(clientId, rawState)
+      if (clientId !== localClientId) key.push(clientId, stateKey(rawState))
     }
     const cached = cacheRef.current
     if (
@@ -137,6 +152,70 @@ export function useRemotePeers(): PeerInfo[] {
     }
     cacheRef.current = { key, peers }
     return peers
+  }, [awareness])
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+/**
+ * Every peer (this client included) as far as presence chips show them: who
+ * (`user`) and on whose behalf (`agent`). The snapshot keeps its identity
+ * while only cursors, selections or the active slide change — this client's
+ * cursor moves at 30 Hz during a drag — so a reader that shows identities
+ * renders when one of them changes. The PeerInfo entries are those of the
+ * last identity change: read only `clientId`, `isLocal`, `state.user` and
+ * `state.agent` from them.
+ */
+export function usePresencePeers(): AwarenessSnapshot {
+  const { awareness } = useSlideDoc()
+  const cacheRef = useRef<{ key: unknown[]; snapshot: AwarenessSnapshot } | null>(null)
+
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      awareness.on('change', onStoreChange)
+      return () => {
+        awareness.off('change', onStoreChange)
+      }
+    },
+    [awareness],
+  )
+
+  const getSnapshot = useCallback((): AwarenessSnapshot => {
+    const localClientId = awareness.clientID
+    const states = awareness.getStates() as Map<number, unknown>
+    // By content (see useRemotePeers): remote states arrive as new objects
+    // on every awareness message, changed or not.
+    const key: unknown[] = [localClientId]
+    for (const [clientId, rawState] of states) {
+      const st = rawState as { user?: unknown; agent?: unknown; selectedObjectIds?: unknown } | null
+      // (Whether the state is valid at all — toPeerInfo — rests on these too.)
+      key.push(
+        clientId,
+        stateKey(st?.user),
+        stateKey(st?.agent),
+        Array.isArray(st?.selectedObjectIds),
+      )
+    }
+    const cached = cacheRef.current
+    if (
+      cached !== null &&
+      cached.key.length === key.length &&
+      cached.key.every((v, i) => v === key[i])
+    ) {
+      return cached.snapshot
+    }
+    const peers: PeerInfo[] = []
+    for (const [clientId, rawState] of states) {
+      const peerInfo = toPeerInfo(clientId, rawState, localClientId)
+      if (peerInfo !== null) peers.push(peerInfo)
+    }
+    const snapshot: AwarenessSnapshot = {
+      peers,
+      remotePeers: peers.filter((p) => !p.isLocal),
+      localClientId,
+    }
+    cacheRef.current = { key, snapshot }
+    return snapshot
   }, [awareness])
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)

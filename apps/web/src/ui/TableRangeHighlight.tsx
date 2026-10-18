@@ -18,7 +18,7 @@
  */
 
 import { useMemo } from 'react'
-import { useSlideObjects } from '../state/useSlideObjects.js'
+import { useActiveSlideObject } from '../state/useDeckStore.js'
 import { useTableEdit } from '../state/TableEditContext.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import type { TableObject } from '@narrative/shared'
@@ -60,7 +60,6 @@ function rangeBbox(
 
 export function TableRangeHighlight() {
   const { active, range } = useTableEdit()
-  const { objects } = useSlideObjects()
   const { zoom } = useZoomLevel()
   // 2-screen-px outline regardless of zoom — same convention as
   // TransformHandles / TableChrome.
@@ -98,11 +97,9 @@ export function TableRangeHighlight() {
     return null
   }, [range, active])
 
-  const table = useMemo(() => {
-    if (target === null) return null
-    const obj = objects.find((o) => o.id === target.tableId)
-    return obj !== undefined && obj.type === 'table' ? obj : null
-  }, [objects, target])
+  // Selected by id: only a change to this table re-renders the highlight.
+  const targetObj = useActiveSlideObject(target?.tableId ?? null)
+  const table = targetObj !== undefined && targetObj.type === 'table' ? targetObj : null
   const bbox = useMemo(() => {
     if (target === null || table === null) return null
     return rangeBbox(table, target.r0, target.c0, target.r1, target.c1)

@@ -1,40 +1,31 @@
 /**
  * state/useSlides.ts
  *
- * Hook for subscribing to the full slide list (M9).
- * Returns Slide[] full snapshot — re-renders when slides change.
+ * The full slide list (M9), read from the deck's shared store
+ * (state/useDeckStore.ts, performance.md → E1).
  *
- * For lightweight metadata only (id + transition), use SlideSummary from subscribeToSlides.
- * This hook provides full Slide[] including objects and animations.
- *
- * Note: For large decks, prefer subscribeToSlides (SlideSummary[]) in the slide panel UI
- * and only subscribe to per-slide objects/animations for the active slide.
+ * The array and every slide in it keep their identity until something in
+ * them changes: an edit on one slide gives a new array with a new snapshot of
+ * that slide and the same snapshots of all the others. Subscribers re-render
+ * once per frame at most. A component that needs only part of the deck should
+ * select it (`useDeckSelector`) so it does not re-render on every edit.
  */
 
-import { useState, useEffect } from 'react'
-import { listSlides, subscribeToSlides } from '@narrative/slide-model'
 import type { Slide } from '@narrative/shared'
-import { useSlideDoc } from './useSlideDoc.js'
+import { useDeckSelector, useDeckSlides } from './useDeckStore.js'
+
+export function useSlides(): Slide[] {
+  return useDeckSlides()
+}
 
 /**
- * Returns the full Slide[] snapshot.
- * Re-renders on any slide structure change (add/remove/reorder/transition update).
- *
- * Does NOT re-render on object/animation changes within slides — those are
- * tracked separately by useSlideObjects and useAnimations for the active slide.
+ * A value derived from the slide list: re-renders only when it changes
+ * (`isEqual`, identity by default). Slides keep their identity until they
+ * change, so selecting one slide re-renders only for edits on that slide.
  */
-export function useSlides(): Slide[] {
-  const { deckCtx } = useSlideDoc()
-  const [slides, setSlides] = useState<Slide[]>(() => listSlides(deckCtx))
-
-  useEffect(() => {
-    // subscribeToSlides gives lightweight SlideSummary — but we need full Slide[]
-    // for this hook. Use subscribeToSlides to detect changes, then call listSlides.
-    const unsubscribe = subscribeToSlides(deckCtx, () => {
-      setSlides(listSlides(deckCtx))
-    })
-    return unsubscribe
-  }, [deckCtx])
-
-  return slides
+export function useSlidesSelector<T>(
+  select: (slides: Slide[]) => T,
+  isEqual?: (a: T, b: T) => boolean,
+): T {
+  return useDeckSelector((store) => select(store.getSlides()), isEqual)
 }

@@ -23,7 +23,7 @@
 
 import { useState } from 'react'
 import { Bot } from 'lucide-react'
-import { useAwareness } from '../state/useAwareness.js'
+import { usePresencePeers } from '../state/useAwareness.js'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { PeerInfo } from '@narrative/shared'
 import { agentPeerLabel, isAgentPeer } from './peerPresence.js'
@@ -204,7 +204,8 @@ function OverflowPopover({ hiddenPeers, localClientId, localPrincipalKey }: Over
  * Vložit do pravé části Toolbar.tsx.
  */
 export function AvatarChips() {
-  const { peers, localClientId } = useAwareness()
+  // Identities only: this client's cursor moving does not re-render the chips.
+  const { peers, localClientId } = usePresencePeers()
   const localPrincipalKey = useLocalAgentPrincipalKey()
 
   if (peers.length === 0) return null

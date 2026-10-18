@@ -13,8 +13,8 @@
  *   captured a Y.Array orphaned by a slide rebuild — the initial sync,
  *   moveSlide's delete + recreate). An edit's render waits for the store's
  *   debounce, and for the end of a pointer gesture.
- * - Background, surface and slide number come from the useSlides()
- *   snapshot; a slide whose key does not change by them (every slide without
+ * - Background, surface and slide number come from the shared deck store
+ *   (a narrow selection, so object edits do not re-render the caller); a slide whose key does not change by them (every slide without
  *   a slide-number leaf, on a reorder) is not rendered again.
  * - The folder's colour tokens and the deck's font faces are inputs too
  *   (renderer/colourResolver.ts, renderer/fontChanges.ts): when either
@@ -39,7 +39,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { subscribeToDeckSlideEvents, yMapToPlainObject } from '@narrative/slide-model'
-import type { SlideMutationContext } from '@narrative/slide-model'
+import type { DeckStore, SlideMutationContext } from '@narrative/slide-model'
 import type { Slide, SlideObject, SlideBackground } from '@narrative/shared'
 import { computeSlideNumber } from '@narrative/shared'
 import type * as Y from 'yjs'
@@ -52,7 +52,7 @@ import { createThumbnailUrl, revokeThumbnailUrl } from '../renderer/thumbnailIma
 import { ThumbnailStore } from '../renderer/thumbnailStore.js'
 import type { ThumbnailInputs } from '../renderer/thumbnailKey.js'
 import { useDeckCtx } from './useDeckCtx.js'
-import { useSlides } from './useSlides.js'
+import { useDeckSelector } from './useDeckStore.js'
 import { ActiveSlideContext } from './ActiveSlideContext.js'
 
 // ---------------------------------------------------------------------------
@@ -191,12 +191,49 @@ interface SlideSnapshot {
   slideNumber: number | undefined
 }
 
-/** A slide's snapshot-side inputs, from a useSlides() list. */
-function snapshotOf(slides: readonly Slide[], slideId: string): SlideSnapshot {
+/** What a thumbnail reads from a slide besides its objects. */
+interface SlideLook {
+  id: string
+  skipped: boolean
+  background: SlideBackground | undefined
+  surface: string | undefined
+}
+
+/**
+ * Each slide's look, in deck order, from the shared deck store. Slide
+ * snapshots keep their identity until they change, so the fields compare by
+ * identity and an object edit selects an equal list: the caller (the slides
+ * panel) does not re-render for it.
+ */
+function selectSlideLooks(store: DeckStore): readonly SlideLook[] {
+  return store.getSlides().map((s: Slide) => ({
+    id: s.id,
+    skipped: s.skipped === true,
+    background: s.background,
+    surface: s.layout?.surface,
+  }))
+}
+function sameSlideLooks(a: readonly SlideLook[], b: readonly SlideLook[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((s, i) => {
+      const t = b[i]!
+      return (
+        s.id === t.id &&
+        s.skipped === t.skipped &&
+        s.background === t.background &&
+        s.surface === t.surface
+      )
+    })
+  )
+}
+
+/** A slide's snapshot-side inputs, from the deck's slide looks. */
+function snapshotOf(slides: readonly SlideLook[], slideId: string): SlideSnapshot {
   const slide = slides.find((s) => s.id === slideId)
   return {
     background: slide?.background,
-    surface: slide?.layout?.surface,
+    surface: slide?.surface,
     slideNumber: computeSlideNumber(slides, slideId),
   }
 }
@@ -214,7 +251,9 @@ export function useSlideThumbnailStore(
   const activeSlideId = useContext(ActiveSlideContext)?.activeSlideId ?? null
   const canvasScene = useCanvasInstance()?.sceneGraph ?? null
   const liveScene = options.liveActiveSlide === true ? canvasScene : null
-  const allSlides = useSlides()
+  // Background, surface and the order with the skipped flags, selected from
+  // the shared deck store (useDeckStore.ts, performance.md → E1).
+  const allSlides = useDeckSelector(selectSlideLooks, sameSlideLooks)
 
   // The latest values, for the store's callbacks and the observers registered once.
   const activeSlideIdRef = useRef(activeSlideId)

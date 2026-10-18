@@ -66,6 +66,7 @@ vi.mock('../state/useSlides', async (importOriginal) => {
   return {
     ...actual,
     useSlides: () => mockSlides,
+    useSlidesSelector: <T,>(select: (slides: typeof mockSlides) => T) => select(mockSlides),
   }
 })
 
@@ -228,6 +229,10 @@ vi.mock('../state/useSlideObjects', () => ({
     objectsCtx: { doc: new Y.Doc(), objects: new Y.Doc().getArray('objects') },
     mutationCtx: { doc: new Y.Doc(), objects: new Y.Doc().getArray('objects') },
   }),
+  useActiveObjectsCtx: () => ({ doc: new Y.Doc(), objects: new Y.Doc().getArray('objects') }),
+  useSlideObject: (id: string | null) => mockObjects.find((o) => o.id === id),
+  useSlideObjectsNow: () => () => mockObjects,
+  useSlideObjectsSelector: <T,>(select: (objects: SlideObject[]) => T) => select(mockObjects),
 }))
 
 vi.mock('../state/useAnimations', () => ({

@@ -197,6 +197,8 @@ export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>>
   getSlideAnimationsCtx: 'infrastructure',
   getSlideObjectsCtx: 'infrastructure',
   hydrateSlideDoc: 'infrastructure',
+  createDeckStore: 'infrastructure',
+  getDeckStore: 'infrastructure',
   isAgentOrigin: 'infrastructure',
   listRegisteredTypes: 'infrastructure',
   peerColorFromId: 'infrastructure',

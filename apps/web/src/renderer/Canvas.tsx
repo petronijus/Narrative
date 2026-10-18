@@ -43,7 +43,7 @@ import {
 import { createVideoInfoResolver, setDefaultVideoInfoResolver } from './videoInfo.js'
 import { useSlideObjectChanges } from '../state/useSlideObjectChanges'
 import { useSlideBackground } from '../state/useSlideBackground.js'
-import { useSlides } from '../state/useSlides.js'
+import { useDeckSelector } from '../state/useDeckStore.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { computeSlideNumber } from '@narrative/shared'
 import { setRenderingSlideNumber } from './slideNumberContext.js'
@@ -403,10 +403,12 @@ export function Canvas({
   // the global. The follow-up effect refreshes already-mounted text nodes
   // when the value changes (e.g. after a slide reorder where the active
   // slide stays the same).
-  const slides = useSlides()
+  // Both are selected from the deck store (a number, a string): an object
+  // edit does not re-render the canvas (performance.md → E1).
   const { activeSlideId } = useActiveSlide()
-  const currentSlideNumber =
-    activeSlideId !== null ? computeSlideNumber(slides, activeSlideId) : undefined
+  const currentSlideNumber = useDeckSelector((store) =>
+    activeSlideId !== null ? computeSlideNumber(store.getSlides(), activeSlideId) : undefined,
+  )
   setRenderingSlideNumber(currentSlideNumber)
   useEffect(() => {
     const instance = instanceRef.current
@@ -415,7 +417,9 @@ export function Canvas({
   }, [currentSlideNumber, pixiReady])
   // The active slide's surface (its layout's, A4.2d): its colour tokens
   // resolve on it; a change repaints what it affects.
-  const surface = slides.find((s) => s.id === activeSlideId)?.layout?.surface
+  const surface = useDeckSelector((store) =>
+    activeSlideId !== null ? store.getSlide(activeSlideId)?.layout?.surface : undefined,
+  )
   useEffect(() => {
     setRenderingSurface(surface)
   }, [surface])

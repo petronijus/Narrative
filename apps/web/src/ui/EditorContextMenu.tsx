@@ -38,12 +38,17 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
-import { getTableMergeInfo, isMaskableShape, type LayerMove } from '@narrative/slide-model'
+import {
+  getSlideObjectsCtx,
+  getTableMergeInfo,
+  isMaskableShape,
+  type LayerMove,
+} from '@narrative/slide-model'
 import { useCommand } from '../state/useCommand.js'
 import { promoteSelectionToComponent } from '../state/promoteSelectionToComponent.js'
 import { cutSelection } from '../state/cutSelection.js'
 import { useObjectClipboard } from '../state/useObjectClipboard.js'
-import { useSlideObjects } from '../state/useSlideObjects.js'
+import { useDeckSelector, useDeckStore } from '../state/useDeckStore.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useTableEdit } from '../state/TableEditContext.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
@@ -147,8 +152,9 @@ interface EditorContextMenuProps {
 
 type Mode = 'object' | 'canvas'
 
+const NO_OBJECTS: SlideObject[] = []
+
 export function EditorContextMenu({ canvasContainerRef, children }: EditorContextMenuProps) {
-  const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const command = useCommand()
   const objectClipboard = useObjectClipboard()
   const { selectedIds, selectOne, selectMany, clear } = useSelection()
@@ -161,6 +167,20 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   // A deck's document name is its id; a component master (null) cannot promote.
   const { deckCtx, documentName: deckId, whenSaved } = useSlideDoc()
   const { activeSlideId } = useActiveSlide()
+  const mutationCtx = activeSlideId !== null ? getSlideObjectsCtx(deckCtx, activeSlideId) : null
+
+  // The menu wraps the canvas and is mounted all the time, but shows the
+  // objects only while it is open: it reads them from the deck store when it
+  // needs them, and subscribes (re-renders on a change) only while open — an
+  // edit or a drag does not re-render it (performance.md → E6).
+  const store = useDeckStore()
+  const [menuOpen, setMenuOpen] = useState(false)
+  useDeckSelector((s) =>
+    menuOpen && activeSlideId !== null ? (s.getSlide(activeSlideId)?.objects ?? null) : null,
+  )
+  /** The active slide's objects as the document has them now. */
+  const objectsNow = (): SlideObject[] =>
+    activeSlideId === null ? NO_OBJECTS : (store.getSlide(activeSlideId)?.objects ?? NO_OBJECTS)
 
   // Promote status — used to show a brief feedback toast text
   const [promoteStatus, setPromoteStatus] = useState<'idle' | 'promoting' | 'done' | 'error'>(
@@ -212,11 +232,13 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
           // Mirror left-click behavior (EditorLayout.tsx): if the hit
           // object belongs to a group, promote selection to the whole
           // group so right-click actions (e.g. Ungroup) operate on it.
-          const hitObj = objects.find((o) => o.id === hitId)
+          const hitObj = objectsNow().find((o) => o.id === hitId)
           const hitGroupId =
             hitObj?.groupId !== undefined && hitObj.groupId !== '' ? hitObj.groupId : null
           if (hitGroupId !== null) {
-            const groupIds = objects.filter((o) => o.groupId === hitGroupId).map((o) => o.id)
+            const groupIds = objectsNow()
+              .filter((o) => o.groupId === hitGroupId)
+              .map((o) => o.id)
             selectMany(groupIds)
             targetIdsRef.current = groupIds
           } else {
@@ -227,7 +249,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
         setMode('object')
         // Capture the table cell under the cursor so the table-specific
         // menu items (insert/delete row + col) target the right slot.
-        const hitObj = objects.find((o) => o.id === hitId)
+        const hitObj = objectsNow().find((o) => o.id === hitId)
         if (hitObj !== undefined && hitObj.type === 'table') {
           const cell = hitTestTableCell(hitObj, slideX, slideY)
           tableCellHitRef.current =
@@ -247,10 +269,12 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   // Resolved targets for object-mode handlers
   // ---------------------------------------------------------------------------
 
-  const resolveTargets = (): SlideObject[] =>
-    targetIdsRef.current
+  const resolveTargets = (): SlideObject[] => {
+    const objects = objectsNow()
+    return targetIdsRef.current
       .map((id) => objects.find((o) => o.id === id))
       .filter((o): o is SlideObject => o !== undefined)
+  }
 
   // ---------------------------------------------------------------------------
   // Object-mode handlers
@@ -302,7 +326,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const tableTarget = (): { table: TableObject; r: number; c: number } | null => {
     const hit = tableCellHitRef.current
     if (hit === null || mutationCtx === null) return null
-    const obj = objects.find((o) => o.id === hit.tableId)
+    const obj = objectsNow().find((o) => o.id === hit.tableId)
     return obj === undefined || obj.type !== 'table'
       ? null
       : { table: obj as TableObject, r: hit.r, c: hit.c }
@@ -390,6 +414,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
     if (targets.length !== 2) return null
     const a = targets[0]!
     const b = targets[1]!
+    const objects = objectsNow()
     const aIdx = objects.indexOf(a)
     const bIdx = objects.indexOf(b)
     if (a.type === 'image' && isMaskableShape(b) && bIdx > aIdx) {
@@ -524,7 +549,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   }
 
   const handleSelectAll = (): void => {
-    selectMany(objects.map((o) => o.id))
+    selectMany(objectsNow().map((o) => o.id))
   }
 
   const handleResetZoom = (): void => {
@@ -552,7 +577,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
     resolveTargets().some((o) => o.groupId !== undefined && o.groupId !== '')
 
   return (
-    <ContextMenu>
+    <ContextMenu onOpenChange={setMenuOpen}>
       {/* asChild merges trigger props onto the user-provided root div.
           Avoids the extra <span> + display:contents combo which was
           intermittently failing to receive bubbled contextmenu events

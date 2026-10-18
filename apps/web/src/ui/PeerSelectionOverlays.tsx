@@ -23,8 +23,8 @@
  * - A peer that publishes `activeSlideId` (every A1 client, and the agent
  *   peer "Claude (MCP)") has its selection drawn only on that slide — see
  *   `peerSelectionOnSlide`. Older peers keep the scene-graph lookup.
- * - Re-renders on the active slide's objects snapshot as well as on
- *   awareness, like LockBadges: an agent's selection names objects its
+ * - Re-renders on the snapshots of the objects peers have selected (from
+ *   the deck store, by id) as well as on awareness: an agent's selection names objects its
  *   command just created or moved, and the awareness update can land
  *   before the reconciler has them — the outline must appear (and follow
  *   the object) once the scene graph catches up.
@@ -35,7 +35,7 @@ import { useRemotePeers } from '../state/useAwareness.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { ObjectBounds } from '../renderer/types.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
-import { useSlideObjects } from '../state/useSlideObjects.js'
+import { useActiveSlideObjectsById } from '../state/useDeckStore.js'
 import { peerSelectionOnSlide } from './peerPresence.js'
 import { useBoundsSettled } from './useBoundsSettled.js'
 import { useTextLayoutTick } from './useTextLayoutTick.js'
@@ -106,10 +106,6 @@ export function PeerSelectionOverlays() {
   const remotePeers = useRemotePeers()
   const canvasInstance = useCanvasInstance()
   const { activeSlideId } = useActiveSlide()
-  // Subscribed for its re-renders only (see the header): bounds are read
-  // from the scene graph, which the reconciler updates from these objects
-  // (and a growing text box without a document change).
-  useSlideObjects()
   useTextLayoutTick(canvasInstance?.sceneGraph ?? null)
 
   // Each peer's selection as far as it applies to this slide.
@@ -117,10 +113,13 @@ export function PeerSelectionOverlays() {
     peer,
     ids: peerSelectionOnSlide(peer, activeSlideId),
   }))
-  useBoundsSettled(
-    canvasInstance?.sceneGraph ?? null,
-    selections.flatMap(({ ids }) => ids),
-  )
+  const selectedIds = selections.flatMap(({ ids }) => ids)
+  // Subscribed for its re-renders only (see the header): bounds are read
+  // from the scene graph, which the reconciler updates from these objects
+  // (and a growing text box without a document change). Only the objects
+  // peers have selected: a change to any other object renders nothing here.
+  useActiveSlideObjectsById(selectedIds)
+  useBoundsSettled(canvasInstance?.sceneGraph ?? null, selectedIds)
 
   // Pokud canvas není ready nebo žádní remote peeri, nerenderujeme nic
   if (canvasInstance === null || remotePeers.length === 0) return null

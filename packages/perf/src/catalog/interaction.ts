@@ -99,6 +99,14 @@ export const TIMED_COUNTERS = [
   'text.restage.texts',
   'y.tx.remote',
   'y.observeDeep.slides',
+  // The shared deck store (slide-model deckStore.ts, performance.md → E1):
+  // its observer calls, the rebuilds a read after a change triggers, the
+  // object snapshots rebuilt, the per-frame notifications. Rebuilds and
+  // notifications follow the frames a gesture spans.
+  'y.observeDeep.deckStore',
+  'y.deckStore.rebuild',
+  'y.deckStore.objects',
+  'y.deckStore.notify',
   'y.observeDeep.deckSlideEvents',
   'gl.draw',
   'gl.stencil',
@@ -162,10 +170,11 @@ function interaction(id: string, o: InteractionOptions): BenchDef<never> {
 /**
  * What a drag costs that must not change unnoticed: no rasters, mounts,
  * uploads or new gradient textures, and — per pointer move — one document
- * transaction, its object update, and today six `listSlides` deep copies of
- * the deck and eleven slide-object observer calls (performance.md → E1: these
- * budgets fall when E1 lands, and the diff shows it). Counted on 2026-10-18 in
- * dev, deterministic across runs on SwiftShader at load 35 and on Metal.
+ * transaction, its object update, no `listSlides` deep copy of the deck and
+ * one slide-object observer call (the renderer's). Counted on 2026-10-18 in
+ * dev, deterministic across runs on SwiftShader at load 35 and on Metal;
+ * before E1 (performance.md) a move made six deck copies and eleven observer
+ * calls.
  * Live thumbnails and mipmaps are not budgeted: whether the thumbnail is drawn
  * from the canvas or offscreen depends on how fast the scene settles.
  */

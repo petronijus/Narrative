@@ -21,8 +21,6 @@ import { SlideNotesPanel } from '../ui/SlideNotesPanel'
 import { SlidesPanel } from '../ui/SlidesPanel'
 import { ResizableSidebar } from '../ui/ResizableSidebar'
 import { OverlayScrollbarV, OverlayScrollbarH } from '../ui/OverlayScrollbars'
-import { TransformHandles } from '../ui/TransformHandles'
-import { LineEndpointHandles } from '../ui/LineEndpointHandles'
 import { SnapGuides } from '../ui/SnapGuides'
 import { PeerCursors } from '../ui/PeerCursors'
 import { PeerSelectionOverlays } from '../ui/PeerSelectionOverlays'
@@ -30,30 +28,20 @@ import { EditorShowHighlight, EditorShowNotice } from '../ui/EditorShowOverlay'
 import { useEditorShow } from '../ui/useEditorShow'
 import { LockBadges } from '../ui/LockBadges'
 import { AutofitHeights } from '../ui/AutofitHeights'
-import { useTextLayoutTick } from '../ui/useTextLayoutTick'
 import { useSelection } from '../state/SelectionContext'
 import { useTool } from '../state/ToolContext'
 import { useTextEdit } from '../state/TextEditContext'
 import { useTableEdit } from '../state/TableEditContext'
 import { useCropMode } from '../state/CropModeContext'
-import { CropOverlay } from '../ui/CropOverlay'
-import { PathPointsOverlay } from '../ui/PathPointsOverlay'
-import { MoveToTargetOverlay } from '../ui/MoveToTargetOverlay'
-import { useAnimations } from '../state/useAnimations'
 import { usePathPointsMode } from '../state/PathPointsModeContext'
-import { TextEditOverlay } from '../ui/TextEditOverlay'
-import { TableCellEditor } from '../ui/TableCellEditor'
-import { TableBorderSelectionOverlay } from '../ui/TableBorderSelectionOverlay'
-import { TableChrome } from '../ui/TableChrome'
-import { TableRangeHighlight } from '../ui/TableRangeHighlight'
-import { EditorVideoPreview } from '../ui/EditorVideoPreview'
-import { useSlideObjects } from '../state/useSlideObjects'
+import { useDeckStore } from '../state/useDeckStore.js'
+import { ActiveObjectGuards, ActiveObjectOverlays } from './ActiveObjectOverlays'
 import { useSlideDoc } from '../state/useSlideDoc'
 import { useUndoManager } from '../state/useUndoManager'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext'
 import { useAwarenessUpdater } from '../state/useAwarenessUpdater.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
-import { yMapToPlainObject } from '@narrative/slide-model'
+import { getSlideObjectsCtx, yMapToPlainObject } from '@narrative/slide-model'
 import { useObjectClipboard } from '../state/useObjectClipboard.js'
 import { cutSelection } from '../state/cutSelection.js'
 import { EditorNotice } from '../ui/EditorNotice.js'
@@ -62,7 +50,12 @@ import type { SlideObject, SlideObjectType, PathAnchor, TableObject } from '@nar
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
 import type { SnapGuide } from '../editor/snap.js'
-import { computeSnap, sameSnapGuides, snapsThisFrame } from '../editor/snap.js'
+import { computeSnap, snapsThisFrame } from '../editor/snap.js'
+import {
+  createSnapGuidesStore,
+  useSnapGuides,
+  type SnapGuidesStore,
+} from '../editor/snapGuidesStore.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { UploadDropZone } from '../ui/UploadDropZone.js'
 import { UploadProgressStack } from '../ui/UploadProgressCard.js'
@@ -399,9 +392,24 @@ function usePersistedBool(key: string, fallback: boolean): [boolean, (v: boolean
   return [value, setValue]
 }
 
+const NO_OBJECTS: SlideObject[] = []
+
+/** The snap guides of the drag in progress (their own store: a new set renders only this). */
+function LiveSnapGuides({
+  store,
+  canvasWidth,
+  canvasHeight,
+}: {
+  store: SnapGuidesStore
+  canvasWidth: number
+  canvasHeight: number
+}) {
+  const guides = useSnapGuides(store)
+  return <SnapGuides guides={guides} canvasWidth={canvasWidth} canvasHeight={canvasHeight} />
+}
+
 export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayoutProps = {}) {
-  const { selectedIds, selectOne, selectMany, toggle, clear, selectedAnimationId } = useSelection()
-  const { animations } = useAnimations()
+  const { selectedIds, selectOne, selectMany, toggle, clear } = useSelection()
   const { editingId: editingTextId, beginEdit, endEdit } = useTextEdit()
   const {
     active: activeTableCell,
@@ -464,12 +472,17 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     if (bEl !== null) ro.observe(bEl)
     return () => ro.disconnect()
   }, [])
-  const { objects, objectsCtx: mutationCtx } = useSlideObjects()
+  // The active slide's objects are NOT read here (performance.md → E6): a
+  // subscription would re-render the whole editor on every document change,
+  // each pointer move of a drag. Handlers read them when they run, from the
+  // deck store (current at that moment); what draws objects subscribes
+  // itself (ActiveObjectOverlays, ActiveObjectGuards, the panels).
+  const deckStore = useDeckStore()
+  const { deckCtx } = useSlideDoc()
   const { undo, redo } = useUndoManager()
   const canvasInstance = useCanvasInstance()
   // A growing text box is as tall as it is drawn, whatever its `height`
-  // says; snapping measures it so (and re-derives when it reflows).
-  const textLayoutTick = useTextLayoutTick(canvasInstance?.sceneGraph ?? null)
+  // says; snapping measures it so.
   const drawnHeightOf = useCallback(
     (o: SlideObject): number => canvasInstance?.sceneGraph.drawnSize(o.id)?.height ?? o.height,
     [canvasInstance],
@@ -510,6 +523,16 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   const objectClipboard = useObjectClipboard()
   const activeSlideIdRef = useRef(activeSlideId)
   activeSlideIdRef.current = activeSlideId
+  /** The active slide's objects as the document has them now. */
+  const currentObjects = useCallback((): SlideObject[] => {
+    const id = activeSlideIdRef.current
+    return id === null ? NO_OBJECTS : (deckStore.getSlide(id)?.objects ?? NO_OBJECTS)
+  }, [deckStore])
+  /** The active slide's objects Y.Array, looked up now (a slide's Y.Map can be replaced). */
+  const currentObjectsCtx = useCallback(() => {
+    const id = activeSlideIdRef.current
+    return id === null ? null : getSlideObjectsCtx(deckCtx, id)
+  }, [deckCtx])
 
   // Agentic A1: `editor.show` — an agent points this editor at a slide and
   // objects (switch, select, flash; never a document write).
@@ -689,48 +712,19 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   const penSessionRef = useRef<PenSession | null>(null)
 
   /** Snap guides — aktivní během dragu/resize */
-  const [snapGuides, setSnapGuidesState] = useState<SnapGuide[]>([])
+  // Kept outside React state: only the guide layer renders when they change.
+  const [snapGuidesStore] = useState(createSnapGuidesStore)
   // Stays the same state (no render) when the guides drawn would not change.
-  const setSnapGuides = useCallback((next: SnapGuide[]) => {
-    setSnapGuidesState((prev) => (sameSnapGuides(prev, next) ? prev : next))
-  }, [])
+  const setSnapGuides = useCallback(
+    (next: SnapGuide[]) => snapGuidesStore.set(next),
+    [snapGuidesStore],
+  )
 
   /** Canvas size pro SnapGuides vizualizaci */
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
 
-  // ---------------------------------------------------------------------------
-  // Prune selection of ids that no longer exist before broadcasting it.
-  // A peer (or a local delete on another slide path) can remove a selected
-  // object; without this the stale id lingers in selectedIds, gets broadcast
-  // over awareness as a phantom, and downstream objects.find(...) returns
-  // undefined. Runs ahead of the awareness broadcast below so peers never see
-  // a deleted id.
-  //
-  // Judged only against a NEW objects snapshot. `objects` is rAF-batched
-  // (slide-model subscribeToSlideObjects), so right after a local insert —
-  // duplicate, Alt-drag clone, paste — the code selects ids the snapshot
-  // does not contain yet. Pruning on that selection change dropped the
-  // fresh selection every time (Mod+D, the context menu's Duplicate and
-  // Alt-drag all ended with nothing selected). A selected id is stale once
-  // a snapshot taken after it was selected still lacks it.
-  // ---------------------------------------------------------------------------
-
-  const prunedAgainstObjectsRef = useRef<SlideObject[] | null>(null)
-  useEffect(() => {
-    if (prunedAgainstObjectsRef.current === objects) return
-    prunedAgainstObjectsRef.current = objects
-    if (selectedIds.size === 0) return
-    const present = new Set(objects.map((o) => o.id))
-    let hasStale = false
-    for (const id of selectedIds) {
-      if (!present.has(id)) {
-        hasStale = true
-        break
-      }
-    }
-    if (!hasStale) return
-    selectMany([...selectedIds].filter((id) => present.has(id)))
-  }, [objects, selectedIds, selectMany])
+  // Stale selected ids are pruned by ActiveObjectGuards (rendered below),
+  // whose effect runs before the broadcast here: peers never see a deleted id.
 
   // ---------------------------------------------------------------------------
   // M8: Selection broadcast → awareness
@@ -754,22 +748,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   // components are now stamped as primitives, so no per-instance
   // bbox math or active-edit tracking is required.
 
-  // M29 Phase 2: clear table-cell-edit state if the active cell's table
-  // disappears (deleted, peer removed it) or selection moves to a non-
-  // table object. Mirrors the instance-edit cleanup effect above.
-  useEffect(() => {
-    if (activeTableCell === null) return
-    const t = objects.find((o) => o.id === activeTableCell.tableId)
-    if (t === undefined || t.type !== 'table') {
-      clearTableCellEdit()
-      return
-    }
-    // Selection moved off the table — drop the editor target so the
-    // inspector doesn't show table chrome for an unrelated object.
-    if (selectedIds.size > 0 && !selectedIds.has(activeTableCell.tableId)) {
-      clearTableCellEdit()
-    }
-  }, [objects, activeTableCell, selectedIds, clearTableCellEdit])
+  // M29 Phase 2: table-cell-edit state whose table went away is cleared by
+  // ActiveObjectGuards.
 
   // Keep the artboard centred in the viewport on mount AND after every
   // zoom change (zoom-to-artboard-centre UX). Runs in useLayoutEffect
@@ -843,6 +823,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      const objects = currentObjects()
       // Middle mouse button — pan the artboard regardless of active tool.
       // Mirrors the hand-tool drag below; pointermove + pointerup already
       // act on panRef without checking the tool, so this just needs to
@@ -954,7 +935,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       if (activeTool !== 'select') {
         // Create tool — viewer cannot create objects
         if (isViewer) return
-        if (mutationCtx === null) return
+        if (currentObjectsCtx() === null) return
         // Pen tool — multi-click session. Each pointerdown drops a new
         // anchor; the pointer drag between down + up shapes symmetric
         // cubic controls on that anchor. Enter commits, Esc cancels.
@@ -1172,6 +1153,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       let activeInitialPositions = initialPositions
       const dragSlideId = activeSlideIdRef.current
       if (dragSlideId === null) return
+      const mutationCtx = currentObjectsCtx()
       if (e.altKey && mutationCtx !== null && dragIds.length > 0) {
         const out = command.tryRun<{ objectIds: string[] }>('object.duplicate', {
           slide: dragSlideId,
@@ -1207,8 +1189,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     },
     [
       activeTool,
-      objects,
-      mutationCtx,
+      currentObjects,
+      currentObjectsCtx,
       selectedIds,
       selectOne,
       toggle,
@@ -1306,6 +1288,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       // Snap (použijeme bounds prvního objektu pro jednoduchost u group)
       const firstProposed = proposed[0]
       if (firstProposed !== undefined) {
+        const objects = currentObjects()
         const firstObj = objects.find((o) => o.id === firstProposed.id)
         if (firstObj !== undefined) {
           const otherBounds = objects
@@ -1341,7 +1324,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
 
       writePositions(proposed)
     },
-    [command, objects, snappingEnabled],
+    [command, currentObjects, snappingEnabled],
   )
   const dragModifierReplay = useDragModifierReplay(dragObjectsFrame)
 
@@ -1448,7 +1431,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         const sx = e.clientX - pendingTap.startClientX
         const sy = e.clientY - pendingTap.startClientY
         if (Math.hypot(sx, sy) <= TAP_THRESHOLD_PX) return
-        const tableObj = objects.find((o) => o.id === pendingTap.tableId)
+        const tableObj = currentObjects().find((o) => o.id === pendingTap.tableId)
         pendingTableTapRef.current = null
         const tapSlideId = activeSlideIdRef.current
         if (tableObj === undefined || tableObj.locked === true || tapSlideId === null) return
@@ -1470,7 +1453,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       // a click without drag doesn't leave a stale 1×1 range.
       const cellDrag = cellSelectionDragRef.current
       if (cellDrag !== null && canvasCoords !== null) {
-        const tableObj = objects.find((o) => o.id === cellDrag.tableId)
+        const tableObj = currentObjects().find((o) => o.id === cellDrag.tableId)
         if (tableObj !== undefined && tableObj.type === 'table') {
           const cell = hitTestTableCell(tableObj, canvasCoords.x, canvasCoords.y)
           if (cell !== null) {
@@ -1490,11 +1473,12 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       dragModifierReplay.track(e)
       dragObjectsFrame(e)
     },
-    [objects, setCursor, setTableCellRange, dragObjectsFrame, dragModifierReplay],
+    [currentObjects, setCursor, setTableCellRange, dragObjectsFrame, dragModifierReplay],
   )
 
   const handlePointerUp = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      const objects = currentObjects()
       if (panRef.current !== null) {
         panRef.current = null
         setMiddlePanning(false)
@@ -1654,7 +1638,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       setSnapGuides([])
     },
     [
-      objects,
+      currentObjects,
       canvasInstance,
       selectedIds,
       selectMany,
@@ -1694,7 +1678,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       const { x, y } = clientToCanvasCoords(e.clientX, e.clientY, rect, zoomRef.current)
       const hitId = canvasInstance.sceneGraph.hitTest(x, y)
       if (hitId === null) return
-      const hit = objects.find((o) => o.id === hitId)
+      const hit = currentObjects().find((o) => o.id === hitId)
       if (hit === undefined) return
       // Group isolation: dbl-click a member of a group we haven't
       // entered yet → "enter" the group and select that member, but
@@ -1782,7 +1766,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     [
       command,
       canvasInstance,
-      objects,
+      currentObjects,
       selectOne,
       beginEdit,
       beginTableCellEdit,
@@ -1988,9 +1972,13 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   const canvasClipboardKey = (): boolean =>
     selectedIdsRef.current.size > 0 && (window.getSelection()?.isCollapsed ?? true)
 
+  /** An object of the active slide, as the document has it now. */
+  const deckStoreObject = (id: string): SlideObject | undefined =>
+    activeSlideId === null ? undefined : deckStore.getObject(activeSlideId, id)
+
   /** The selected objects a person may change: locks are an editor-only guard. */
   const unlockedSelection = (): string[] =>
-    [...selectedIds].filter((id) => objects.find((o) => o.id === id)?.locked !== true)
+    [...selectedIds].filter((id) => deckStoreObject(id)?.locked !== true)
 
   // Arrow-key nudge (1 px, Shift 10 px). `object.move` is the one correct
   // way to move objects: it carries a cropped image's absolute `imageRect`
@@ -2050,7 +2038,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       description: 'Cut selected object(s)',
       handler: () => {
         const targets = [...selectedIds]
-          .map((id) => objects.find((o) => o.id === id))
+          .map((id) => deckStoreObject(id))
           .filter((o): o is SlideObject => o !== undefined)
         cutSelection(targets, {
           copy: (ids, opts) => objectClipboard.copy(ids, opts),
@@ -2155,7 +2143,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       action: 'selection.all',
       description: 'Select all objects',
       handler: () => {
-        selectMany(objects.map((o) => o.id))
+        selectMany(currentObjects().map((o) => o.id))
       },
     },
     {
@@ -2230,38 +2218,12 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   // Other bounds pro snap
   // ---------------------------------------------------------------------------
 
-  // Memoize the snap-target list — `objects` ref churns on Y.Doc batch
-  // emissions but the filtered/mapped output is what gets passed to
-  // TransformHandles + InstanceEditHandles as a prop. Without memo, every
-  // render produces a fresh array reference and breaks downstream
-  // memoization in TransformHandles (re-runs snap candidate compute on
-  // every parent state tick — zoom, pan, marquee, drag draft).
-  const otherBounds = useMemo(
-    () =>
-      objects
-        .filter((o) => !selectedIds.has(o.id))
-        .map((o) => ({ id: o.id, x: o.x, y: o.y, width: o.width, height: drawnHeightOf(o) })),
-    // textLayoutTick: a growing box reflowed without a document change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [objects, selectedIds, drawnHeightOf, textLayoutTick],
-  )
-
-  // Memoize the deck-guides derivation — same rationale as otherBounds.
+  // Memoize the deck-guides derivation: a stable prop for TransformHandles'
+  // snap candidates (ActiveObjectOverlays passes it on).
   const extraGuides = useMemo(
     () => deckGuides.map((g) => ({ orientation: g.orientation, position: g.position })),
     [deckGuides],
   )
-
-  // id → object lookup. Several JSX expressions below resolve a selected id
-  // back to its object via objects.find(...). With N selected and M total
-  // objects that's O(N·M) per render; the Map is O(M) once and O(1) per
-  // lookup. Used by editableIds filter, aspectLock check, all-components
-  // check, and several IIFE blocks below.
-  const objectsById = useMemo(() => {
-    const map = new Map<string, (typeof objects)[number]>()
-    for (const o of objects) map.set(o.id, o)
-    return map
-  }, [objects])
 
   // Cursor style
   const canvasCursor = middlePanning
@@ -2283,6 +2245,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       {/* Transient messages (a paste that could not be done, …). Fixed,
           so it sits outside the zoomed artboard. */}
       <EditorNotice />
+      {/* Selection / table-cell state kept consistent with the objects. */}
+      <ActiveObjectGuards />
       {/* Canvas main column extends edge-to-edge underneath the
           panels (stacked first, z-0). Side panels are positioned
           absolutely on top with z-10 so their frosted-glass
@@ -2466,8 +2430,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                     />
 
                     {/* Snap guide lines — viditelné jen během dragu */}
-                    <SnapGuides
-                      guides={snapGuides}
+                    <LiveSnapGuides
+                      store={snapGuidesStore}
                       canvasWidth={canvasSize.width}
                       canvasHeight={canvasSize.height}
                     />
@@ -2502,83 +2466,15 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                     <LockBadges />
                     <AutofitHeights />
 
-                    {/* P8: click-to-play video preview in the editor.
-                      Mounted BEFORE TransformHandles so the handles +
-                      selection outline + snap guides render ON TOP of
-                      the <video> element. EditorVideoPreview itself
-                      is pointer-events:none on its wrapper; only the
-                      <video> child is interactive. */}
-                    {objects
-                      .filter((o) => o.type === 'video')
-                      .map((vidObj) => (
-                        <EditorVideoPreview
-                          key={`editor-video-${vidObj.id}`}
-                          videoObject={vidObj}
-                        />
-                      ))}
-
-                    {/* Transform handles — lines/arrows get endpoint handles
-                      instead of the 8-handle scale + rotate rig. Locked
-                      objects (P5a) skip the handles entirely; the object
-                      stays selected (Inspector is still useful for
-                      toggling the flag) but can't be dragged / resized. */}
-                    {!isViewer &&
-                      selectedIds.size > 0 &&
-                      canvasInstance !== null &&
-                      mutationCtx !== null &&
-                      activeSlideId !== null &&
-                      (() => {
-                        // M16 P8 — while inside instance edit mode, the outer
-                        // transform rig is suppressed for the active instance
-                        // (the instance outer chrome becomes a faded dashed
-                        // border via InstanceEditHandles below). Other selected
-                        // objects that are NOT the active instance still get
-                        // normal handles.
-                        const editableIds = [...selectedIds].filter((sid) => {
-                          const o = objectsById.get(sid)
-                          if (o === undefined || o.locked === true) return false
-                          // While in crop mode, the cropped image is
-                          // driven by CropOverlay — suppress the normal
-                          // 8-handle transform rig.
-                          if (cropImageId !== null && sid === cropImageId) return false
-                          // While point-edit is active on this path, hide
-                          // the bounding-box handles so the anchor dots
-                          // are unobstructed.
-                          if (pathPointsId !== null && sid === pathPointsId) return false
-                          return true
-                        })
-                        if (editableIds.length === 0) return null
-
-                        if (editableIds.length === 1) {
-                          const onlyId = editableIds[0]
-                          const obj = onlyId !== undefined ? objectsById.get(onlyId) : undefined
-                          if (obj !== undefined && (obj.type === 'line' || obj.type === 'arrow')) {
-                            return <LineEndpointHandles object={obj} slideId={activeSlideId} />
-                          }
-                        }
-                        // P15: aspect-ratio lock now lives on every object
-                        // (BaseSlideObject.aspectLocked) and is toggled from
-                        // a chain icon in the Inspector's Size section. If
-                        // ANY selected object has it on, the resize is
-                        // locked; Shift inverts the state mid-drag (XOR
-                        // applied in TransformHandles).
-                        const aspectLock = editableIds.some((sid) => {
-                          const o = objectsById.get(sid)
-                          return o?.aspectLocked === true
-                        })
-                        return (
-                          <TransformHandles
-                            objectIds={editableIds}
-                            sceneGraph={canvasInstance.sceneGraph}
-                            slideId={activeSlideId}
-                            onSnapGuides={handleSnapGuides}
-                            otherBounds={otherBounds}
-                            forceAspectLock={aspectLock}
-                            extraGuides={extraGuides}
-                            objects={objects}
-                          />
-                        )
-                      })()}
+                    {/* Video previews and the selection's transform rig
+                      (they subscribe to the objects themselves). */}
+                    <ActiveObjectOverlays
+                      part="handles"
+                      isViewer={isViewer}
+                      onSnapGuides={handleSnapGuides}
+                      extraGuides={extraGuides}
+                      editingTextTarget={editingTextTarget}
+                    />
 
                     {/* M8: Remote peer cursors — DOM overlays přes OverlayCompositor */}
                     <PeerCursors />
@@ -2586,106 +2482,15 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                     {/* M11: Drop zone for image uploads — inert for viewer role */}
                     <UploadDropZone canvasContainerRef={canvasContainerRef} />
 
-                    {/* P7: inline text edit overlay. Sits above the Pixi
-                      text and takes focus while the user edits. */}
-                    {editingTextId !== null &&
-                      mutationCtx !== null &&
-                      editingTextTarget !== null &&
-                      (() => {
-                        const obj = objects.find((o) => o.id === editingTextId)
-                        if (obj === undefined || obj.type !== 'text') return null
-                        return (
-                          <TextEditOverlay obj={obj} target={editingTextTarget} onEnd={endEdit} />
-                        )
-                      })()}
-
-                    {/* M29 Phase 2: per-cell editor for the first-class
-                      TableObject. Mounts only when `tableEdit.active.editing`
-                      is true; binds to the cell's Y.Text and handles
-                      Tab/Enter navigation across cells. */}
-                    {activeTableCell !== null &&
-                      activeTableCell.editing &&
-                      mutationCtx !== null &&
-                      activeSlideId !== null &&
-                      (() => {
-                        const obj = objects.find((o) => o.id === activeTableCell.tableId)
-                        if (obj === undefined || obj.type !== 'table') return null
-                        return (
-                          <TableCellEditor
-                            table={obj}
-                            slideId={activeSlideId}
-                            mutationCtx={mutationCtx}
-                          />
-                        )
-                      })()}
-
-                    {/* M29 Phase 3: drag-selected cell range highlight. */}
-                    <TableRangeHighlight />
-
-                    {/* M29: faint blue grid guides on every cell boundary
-                      of a selected table (always visible — survives
-                      width-0 / white-on-white borders so the user can
-                      always see the cell layout) + a brighter overlay
-                      on whichever edges the inspector's border-preset
-                      grid is targeting. Mirrors Keynote. */}
-                    {selectedIds.size === 1 &&
-                      (() => {
-                        const onlyId = [...selectedIds][0]
-                        if (onlyId === undefined) return null
-                        const obj = objects.find((o) => o.id === onlyId)
-                        if (obj === undefined || obj.type !== 'table') return null
-                        return <TableBorderSelectionOverlay table={obj} />
-                      })()}
-
-                    {/* M29 Phase 5: Keynote-style chrome around the
-                      selected table (axis bars + corner handles). */}
-                    {selectedIds.size === 1 &&
-                      activeSlideId !== null &&
-                      (() => {
-                        const onlyId = [...selectedIds][0]
-                        if (onlyId === undefined) return null
-                        const obj = objects.find((o) => o.id === onlyId)
-                        if (obj === undefined || obj.type !== 'table') return null
-                        return (
-                          <TableChrome table={obj} slideId={activeSlideId} isViewer={isViewer} />
-                        )
-                      })()}
-                    {/* P11: Keynote-style image crop overlay. */}
-                    {cropImageId !== null &&
-                      activeSlideId !== null &&
-                      (() => {
-                        const obj = objects.find((o) => o.id === cropImageId)
-                        if (obj === undefined || obj.type !== 'image') return null
-                        return <CropOverlay obj={obj} slideId={activeSlideId} />
-                      })()}
-
-                    {/* Path point-edit overlay — anchors as draggable dots. */}
-                    {pathPointsId !== null &&
-                      activeSlideId !== null &&
-                      (() => {
-                        const obj = objects.find((o) => o.id === pathPointsId)
-                        if (obj === undefined || obj.type !== 'path') return null
-                        return <PathPointsOverlay obj={obj} slideId={activeSlideId} />
-                      })()}
-
-                    {/* moveTo animation target overlay — silhouette + draggable
-                        end-point handle when a moveTo step is selected. */}
-                    {selectedAnimationId !== null &&
-                      activeSlideId !== null &&
-                      (() => {
-                        const step = animations.find((a) => a.id === selectedAnimationId)
-                        if (step === undefined || step.preset !== 'moveTo') return null
-                        const obj = objects.find((o) => o.id === step.objectId)
-                        if (obj === undefined) return null
-                        return (
-                          <MoveToTargetOverlay
-                            obj={obj}
-                            step={step}
-                            slideId={activeSlideId}
-                            readOnly={isViewer}
-                          />
-                        )
-                      })()}
+                    {/* Text and table editors, table chrome, crop, path-point
+                      and moveTo overlays (they subscribe to the objects). */}
+                    <ActiveObjectOverlays
+                      part="editors"
+                      isViewer={isViewer}
+                      onSnapGuides={handleSnapGuides}
+                      extraGuides={extraGuides}
+                      editingTextTarget={editingTextTarget}
+                    />
                   </div>
                 </div>
               </div>

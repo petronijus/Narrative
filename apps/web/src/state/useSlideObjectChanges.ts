@@ -11,13 +11,13 @@
  * Re-subscribes when activeSlideId changes.
  */
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { subscribeToSlideObjects } from '@narrative/slide-model'
 import type { ObjectChangeSet } from '@narrative/slide-model'
 import type { SlideObject } from '@narrative/shared'
 import { useSlideDoc } from './useSlideDoc.js'
 import { useActiveSlide } from './ActiveSlideContext.js'
-import { useSlides } from './useSlides.js'
+import { useSlideIdsKey } from './useDeckStore.js'
 
 /**
  * Subscribe to incremental changes with per-frame batching.
@@ -35,7 +35,6 @@ import { useSlides } from './useSlides.js'
 export function useSlideObjectChanges(callback: (changes: ObjectChangeSet) => void): void {
   const { deckCtx } = useSlideDoc()
   const { activeSlideId } = useActiveSlide()
-  const slides = useSlides()
 
   // Callback in ref — avoid re-subscribe on every re-render
   const callbackRef = useRef(callback)
@@ -51,8 +50,9 @@ export function useSlideObjectChanges(callback: (changes: ObjectChangeSet) => vo
   // in-place reorder) which orphans the observer attached to the old objects
   // Y.Array. When the ordered slide list changes we MUST re-subscribe to the
   // fresh Y.Map for activeSlideId. Transition/object edits don't change this
-  // fingerprint so we don't re-subscribe on every edit.
-  const slideOrderKey = useMemo(() => slides.map((s) => s.id).join('|'), [slides])
+  // fingerprint so we don't re-subscribe on every edit — and, being a string
+  // selected from the deck store, an edit does not even re-render the caller.
+  const slideOrderKey = useSlideIdsKey()
 
   useEffect(() => {
     if (activeSlideId === null) return

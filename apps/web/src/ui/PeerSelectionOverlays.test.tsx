@@ -49,8 +49,8 @@ vi.mock('../state/ActiveSlideContext.js', () => ({
   useActiveSlide: () => ({ activeSlideId: 'slide-1', setActiveSlideId: () => {} }),
 }))
 
-vi.mock('../state/useSlideObjects.js', () => ({
-  useSlideObjects: () => ({ objects: [], objectsCtx: null, mutationCtx: null }),
+vi.mock('../state/useDeckStore.js', () => ({
+  useActiveSlideObjectsById: () => [],
 }))
 
 // ---------------------------------------------------------------------------

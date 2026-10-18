@@ -319,6 +319,10 @@ export {
 } from './slideObserve.js'
 export type { SlideSummary, ObjectChangeSet } from './slideObserve.js'
 
+// Shared, structurally shared read model of a deck (performance.md → E1)
+export { getDeckStore, createDeckStore } from './deckStore.js'
+export type { DeckStore } from './deckStore.js'
+
 // ---------------------------------------------------------------------------
 // Builtin object type registrations
 // ---------------------------------------------------------------------------

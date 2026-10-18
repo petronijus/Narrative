@@ -10,10 +10,10 @@
     "text.autofit.measure": 0,
     "text.raster.kpx": 0,
     "text.raster.started": 0,
-    "y.listSlides": 450,
-    "y.listSlides.objects": 100350,
-    "y.observeDeep.slideObjects": 1080,
-    "y.slideObjects.flush": 1080,
+    "y.listSlides": 0,
+    "y.listSlides.objects": 0,
+    "y.observeDeep.slideObjects": 90,
+    "y.slideObjects.flush": 90,
     "y.tx.local": 90
   }
 }
