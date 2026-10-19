@@ -135,10 +135,13 @@ const DECK_LAST_CHANGE_KEY = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}$/
 /**
  * Whether a keyset key from a cursor is a time this list could have issued:
  * the format, and a real date and time (a 13th month or a 30 February would
- * otherwise reach Postgres' `::timestamp` cast and fail as a 500).
+ * otherwise reach Postgres' `::timestamp` cast and fail as a 500). The year
+ * is 0001–9999: JavaScript has a year 0, Postgres does not (it counts 1 BC
+ * straight to AD 1), so `0000-…` parses here and is rejected there.
  */
-function validKeysetTime(key: string): boolean {
+export function validKeysetTime(key: string): boolean {
   if (!DECK_LAST_CHANGE_KEY.test(key)) return false
+  if (Number(key.slice(0, 4)) < 1) return false
   const ms = Date.parse(`${key.slice(0, 23)}Z`)
   return !Number.isNaN(ms) && new Date(ms).toISOString().slice(0, 23) === key.slice(0, 23)
 }

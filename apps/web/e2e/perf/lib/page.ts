@@ -227,7 +227,8 @@ export async function assertPerfOff(page: Page, deckId: string, mode: string): P
   await expect(page.locator('.artboard')).toBeVisible({ timeout: 60_000 })
   await page.waitForTimeout(1500)
   const state = await page.evaluate(() => ({
-    counts: (globalThis as Record<string, unknown>)['__narrative_perf_counts'] ?? null,
+    // PERF_COUNTS_KEY of @narrative/shared's perfCounters.ts.
+    counts: (globalThis as Record<symbol, unknown>)[Symbol.for('narrative.perf.counts')] ?? null,
     harness: window.__narrative_perf_harness !== undefined,
     selectionHook:
       (window as unknown as { __narrative_selection_snapshot?: unknown })

@@ -22,10 +22,19 @@
  * the web app's boot code switches counting on by setting it
  * (apps/web/src/perf/activation.ts) without importing this module, which
  * would otherwise become a chunk of its own on the editor's critical path.
+ *
+ * The key is a registered symbol, not a string: a string-named global can be
+ * clobbered by the page itself — every element with an `id` or `name` is
+ * reachable as `window[thatName]` (named access) while no own property
+ * shadows it, and in a production page without `?perf=1` none does. An
+ * element `id="__narrative_perf_counts"` in deck content would then switch
+ * counting "on" and have every site write expandos onto it. Named access
+ * never yields a symbol-keyed property; `Symbol.for` keeps the key the same
+ * across the separately bundled chunks (and in a Playwright `evaluate`).
  */
 
 /** Where the counts live; null or absent = counting is off. */
-export const PERF_COUNTS_KEY = '__narrative_perf_counts'
+export const PERF_COUNTS_KEY: unique symbol = Symbol.for('narrative.perf.counts')
 
 type CountsHolder = { [PERF_COUNTS_KEY]?: Record<string, number> | null }
 const holder = globalThis as CountsHolder

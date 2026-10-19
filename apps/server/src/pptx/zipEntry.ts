@@ -21,7 +21,7 @@
  * callers read it, and copy before writing into it (`decodeFontBytes` does).
  */
 
-import { constants, inflateRaw, inflateRawSync } from 'node:zlib'
+import { constants, createInflateRaw, inflateRaw } from 'node:zlib'
 import { promisify } from 'node:util'
 import type JSZip from 'jszip'
 
@@ -65,10 +65,22 @@ export async function readEntryBytes(entry: JSZip.JSZipObject): Promise<Buffer> 
   const native = nativeOf(entry)
   if (native === null) return entry.async('nodebuffer')
   const { c, content } = native
-  const out =
-    c.compression.magic === STORE
-      ? content
-      : await inflateRawAsync(content, { maxOutputLength: Math.max(1, c.uncompressedSize) })
+  let out: Buffer
+  try {
+    out =
+      c.compression.magic === STORE
+        ? content
+        : await inflateRawAsync(content, { maxOutputLength: Math.max(1, c.uncompressedSize) })
+  } catch (err) {
+    // zlib stops at `maxOutputLength` with ERR_BUFFER_TOO_LARGE: the entry
+    // expands past what it declares.
+    if ((err as { code?: unknown }).code === 'ERR_BUFFER_TOO_LARGE') {
+      throw new Error(
+        `Corrupted zip: "${entry.name}" inflates past its declared ${c.uncompressedSize} bytes`,
+      )
+    }
+    throw err
+  }
   if (out.byteLength !== c.uncompressedSize) {
     throw new Error(
       `Corrupted zip: "${entry.name}" inflates to ${out.byteLength} bytes, ${c.uncompressedSize} declared`,
@@ -78,27 +90,71 @@ export async function readEntryBytes(entry: JSZip.JSZipObject): Promise<Buffer> 
 }
 
 /**
+ * Inflate `input` until `limit` bytes have come out, then stop: what a
+ * prefix of a DEFLATE stream decodes to (sync flush, so a truncated stream is
+ * not an error), at most `limit` bytes of it. The inflater is destroyed the
+ * moment the limit is reached, so the work done is bounded by the limit plus
+ * one output chunk however far the input would expand — a run-length bomb
+ * behind the head costs nothing. `null` when the input does not decode.
+ */
+function inflateHead(input: Buffer, limit: number): Promise<Buffer | null> {
+  return new Promise((resolve) => {
+    const inflater = createInflateRaw({
+      finishFlush: constants.Z_SYNC_FLUSH,
+      chunkSize: Math.min(Math.max(limit, constants.Z_MIN_CHUNK), HEAD_CHUNK_BYTES),
+    })
+    const chunks: Buffer[] = []
+    let total = 0
+    let settled = false
+    const settle = (value: Buffer | null): void => {
+      if (settled) return
+      settled = true
+      inflater.destroy()
+      resolve(value)
+    }
+    inflater.on('data', (chunk: Buffer) => {
+      chunks.push(chunk)
+      total += chunk.byteLength
+      if (total >= limit) settle(Buffer.concat(chunks, total).subarray(0, limit))
+    })
+    inflater.on('end', () => settle(Buffer.concat(chunks, total)))
+    inflater.on('error', () => settle(null))
+    inflater.end(input)
+  })
+}
+
+/** Output chunk of a head inflate: the most it can overshoot its limit by. */
+const HEAD_CHUNK_BYTES = 16 * 1024
+
+/**
  * At least the first `n` bytes of the entry (fewer only when it is shorter),
  * without inflating the rest: enough to sniff a file's type from its magic
  * header. A DEFLATE entry is inflated from a prefix of its compressed bytes
- * with a sync flush, which yields everything that prefix decodes to.
+ * with a sync flush, which yields what that prefix decodes to — bounded: the
+ * inflate stops after `min(n, declared size + 1)` bytes, so an entry whose
+ * prefix expands without end (empty stored blocks, then a run-length bomb)
+ * costs one output chunk, and an entry whose head already outgrows its
+ * declared size is rejected as corrupt, as the full read would reject it.
  */
 export async function readEntryHead(entry: JSZip.JSZipObject, n: number): Promise<Buffer> {
+  if (n <= 0) return Buffer.alloc(0)
   const native = nativeOf(entry)
   if (native !== null) {
     const { c, content } = native
     if (c.compression.magic === STORE) return content.subarray(0, n)
+    const limit = Math.min(n, c.uncompressedSize + 1)
     // A deflate block's header is at most a few hundred bytes; one KiB of
-    // input almost always decodes past `n`, and can expand to ~1 MiB at most.
+    // input almost always decodes past `n`.
     for (const prefix of [1024, 64 * 1024]) {
       if (prefix >= content.byteLength) break
-      let head: Buffer
-      try {
-        head = inflateRawSync(content.subarray(0, prefix), { finishFlush: constants.Z_SYNC_FLUSH })
-      } catch {
-        break // corrupt data: the full read below reports it as JSZip would
+      const head = await inflateHead(content.subarray(0, prefix), limit)
+      if (head === null) break // corrupt data: the full read below reports it as JSZip would
+      if (head.byteLength > c.uncompressedSize) {
+        throw new Error(
+          `Corrupted zip: "${entry.name}" inflates past its declared ${c.uncompressedSize} bytes`,
+        )
       }
-      if (head.byteLength >= n) return head.subarray(0, n)
+      if (head.byteLength >= n) return head
     }
   }
   return (await readEntryBytes(entry)).subarray(0, n)

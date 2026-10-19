@@ -22,9 +22,11 @@
 /**
  * `PERF_COUNTS_KEY` of @narrative/shared's perfCounters.ts, by value: importing
  * that module here would put it in a chunk of its own on the critical path
- * (activation.test.ts pins the two together).
+ * (activation.test.ts pins the two together). A registered symbol, so the
+ * page's own elements cannot shadow it through named access on `window`
+ * (perfCounters.ts header).
  */
-export const COUNTS_KEY = '__narrative_perf_counts'
+export const COUNTS_KEY: unique symbol = Symbol.for('narrative.perf.counts')
 
 /** What the harness reads from the editor canvas (registered by renderer/Canvas.tsx). */
 export interface PerfCanvas {
@@ -76,7 +78,7 @@ export function loadPerfHarness(): Promise<void> {
  */
 export function bootPerf(): void {
   if (perfAvailable()) {
-    const g = globalThis as Record<string, unknown>
+    const g = globalThis as { [COUNTS_KEY]?: Record<string, number> | null }
     g[COUNTS_KEY] ??= {}
   }
   if (perfRequested()) void loadPerfHarness().catch((err: unknown) => console.error('[perf]', err))

@@ -140,22 +140,19 @@ interface ReactProbe {
  * `perfCount` writes, reached through the global so that the chunk does not
  * share (and split out) that module with the editor's chunks.
  */
+const countsHolder = globalThis as { [COUNTS_KEY]?: Record<string, number> | null }
 function counts(): Record<string, number> | null {
-  return (
-    ((globalThis as Record<string, unknown>)[COUNTS_KEY] as
-      Record<string, number> | null | undefined) ?? null
-  )
+  return countsHolder[COUNTS_KEY] ?? null
 }
 function perfCount(key: string, n = 1): void {
   const c = counts()
   if (c !== null) c[key] = (c[key] ?? 0) + n
 }
 function startPerfCounters(): void {
-  const g = globalThis as Record<string, unknown>
-  g[COUNTS_KEY] ??= {}
+  countsHolder[COUNTS_KEY] ??= {}
 }
 function resetPerfCounters(): void {
-  if (counts() !== null) (globalThis as Record<string, unknown>)[COUNTS_KEY] = {}
+  if (counts() !== null) countsHolder[COUNTS_KEY] = {}
 }
 function readPerfCounters(): Record<string, number> {
   const c = counts()

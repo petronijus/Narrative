@@ -39,11 +39,11 @@ import { enqueueVideoTranscode } from '../media/enqueue.js'
 import type { MediaOwner } from '../media/mediaOwner.js'
 import { purgeExplicitKeys } from '../media/bucketCleanup.js'
 import { parseFontMetadata } from '../media/fontMetadata.js'
-import { downscaleForStorage, exceedsStoredImageLimits } from '../media/storedImageLimits.js'
+import { downscaleForStorage } from '../media/storedImageLimits.js'
 import { parsePptx, type ParsedPptx } from './parser.js'
 import { buildDeckUpdate } from './writer.js'
 import { endPhase } from './phases.js'
-import { mapConcurrent, WeightedSemaphore } from '../lib/concurrency.js'
+import { mapConcurrent } from '../lib/concurrency.js'
 import { sanitizeFontFamily } from '@narrative/slide-model'
 
 const require = createRequire(import.meta.url)
@@ -68,15 +68,6 @@ const probeImageSize: (buffer: Buffer) => ProbeResult | null = require('probe-im
  * (docs/plans/performance.md, X1).
  */
 export const IMPORT_MEDIA_CONCURRENCY = 6
-
-/**
- * Pixels of oversize pictures (media/storedImageLimits.ts) being downscaled
- * at once. Decoding and re-encoding one costs a few bytes per pixel, and six
- * of them at once (a deck of 96, 75, 47, 46 and 46 MP photos) took the peak
- * RSS from 1.1 GB to 2 GB; under this budget two 46 MP pictures still share,
- * a 96 MP one runs alone, and the small pictures keep every lane meanwhile.
- */
-export const OVERSIZE_PIXEL_BUDGET = 100_000_000
 
 /** Minimal logger surface that both Fastify request loggers and the
  *  Fastify app logger satisfy — accepts `(obj, msg)` like pino. */
@@ -549,7 +540,6 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
   // that started last would finish long after everything else. The results
   // are put back in the deck's order below.
   const embedded = [...parsed.embeddedImages.values()]
-  const oversize = new WeightedSemaphore(OVERSIZE_PIXEL_BUDGET)
   const bySize = embedded.map((_, i) => i).sort((a, b) => embedded[b]!.size - embedded[a]!.size)
   const picturesBySize = await mapConcurrent(
     bySize.map((i) => embedded[i]!),
@@ -575,19 +565,15 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
       // media/storedImageLimits.ts. A failed downscale stores the original.
       let body = bytes
       let dims: { width: number; height: number } | null = null
-      // The header's size (read without decoding) says whether this picture
-      // will be decoded at full size; it is also the row's size when it is not.
+      // The header's size (read without decoding) is the row's size when the
+      // picture is not downscaled. Whether it is, and its turn on the
+      // process-wide pixel budget, go by sharp's own reading of the header
+      // inside downscaleForStorage — not by this prober, which can fail or
+      // disagree with what libvips decodes.
       const header = isImage ? probeImageDims(bytes) : null
       if (isImage) {
-        const pixels =
-          header !== null && exceedsStoredImageLimits(header.width, header.height)
-            ? header.width * header.height
-            : 0
         try {
-          const downscaled =
-            pixels > 0
-              ? await oversize.run(pixels, () => downscaleForStorage(bytes, media.mimeType))
-              : await downscaleForStorage(bytes, media.mimeType)
+          const downscaled = await downscaleForStorage(bytes, media.mimeType)
           if (downscaled !== null) {
             log.info(
               {

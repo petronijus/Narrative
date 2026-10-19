@@ -125,18 +125,29 @@ describe('DeckService.listRecordsPage', () => {
   })
 
   it('refuses a malformed position and a page size out of range', async () => {
-    for (const key of ["x' or 1=1", '2026-13-01T00:00:00.000000', '2026-02-30T10:00:00.000000'])
+    // Year 0 is a date to JavaScript, not to Postgres (it has no year 0).
+    const malformed = [
+      "x' or 1=1",
+      '2026-13-01T00:00:00.000000',
+      '2026-02-30T10:00:00.000000',
+      '0000-01-01T00:00:00.000000',
+    ]
+    for (const key of malformed)
       await expect(
         service.listRecordsPage({ userId: me, limit: 2, after: { key, id: 'a' } }),
       ).rejects.toMatchObject({ status: 400 })
     // listPage (deck.list) takes the same keys.
-    await expect(
-      service.listPage({
-        userId: me,
-        limit: 2,
-        after: { key: '2026-02-30T10:00:00.000000', id: 'a' },
-      }),
-    ).rejects.toMatchObject({ status: 400 })
+    for (const key of ['2026-02-30T10:00:00.000000', '0000-01-01T00:00:00.000000'])
+      await expect(
+        service.listPage({ userId: me, limit: 2, after: { key, id: 'a' } }),
+      ).rejects.toMatchObject({ status: 400 })
+    // The first year Postgres has is a position like any other: before every deck.
+    const first = await service.listRecordsPage({
+      userId: me,
+      limit: 2,
+      after: { key: '0001-01-01T00:00:00.000000', id: 'a' },
+    })
+    expect(first.decks).toEqual((await service.listRecordsPage({ userId: me, limit: 2 })).decks)
     for (const limit of [0, 201, 1.5])
       await expect(service.listRecordsPage({ userId: me, limit })).rejects.toMatchObject({
         status: 400,

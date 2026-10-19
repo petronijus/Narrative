@@ -48,9 +48,9 @@ export async function mapConcurrent<T, R>(
  * waits forever. Waiters are served first come, first served: a heavy task at
  * the head is not overtaken by light ones behind it.
  *
- * Bounds memory rather than calls: the importer caps the pixels of oversize
- * pictures being decoded at once, while `mapConcurrent` keeps the light ones
- * flowing.
+ * Bounds memory rather than calls: `media/storedImageLimits.ts` caps the
+ * pixels of oversize pictures being decoded at once in the whole process,
+ * while the importer's `mapConcurrent` keeps the light ones flowing.
  */
 export class WeightedSemaphore {
   private inUse = 0

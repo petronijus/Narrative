@@ -55,9 +55,30 @@ describe('perfCounters', () => {
 describe('the counts key', () => {
   it('is the one the web app switches counting on with', async () => {
     const { PERF_COUNTS_KEY } = await import('./perfCounters.js')
-    expect(PERF_COUNTS_KEY).toBe('__narrative_perf_counts')
-    ;(globalThis as Record<string, unknown>)[PERF_COUNTS_KEY] = {}
+    expect(PERF_COUNTS_KEY).toBe(Symbol.for('narrative.perf.counts'))
+    ;(globalThis as Record<symbol, unknown>)[PERF_COUNTS_KEY] = {}
     perfCount('x')
     expect(readPerfCounters()).toEqual({ x: 1 })
+  })
+
+  it('cannot be shadowed by a page element reached through named access', () => {
+    // `<div id="__narrative_perf_counts">` makes `window.__narrative_perf_counts`
+    // that element (named access); the old string key would have read it as
+    // "counting on" and written expandos onto it. Modelled on the prototype,
+    // where browsers put named properties.
+    const element = { tagName: 'DIV' }
+    const proto = Object.getPrototypeOf(globalThis) as Record<string, unknown>
+    const names = ['__narrative_perf_counts', 'narrative.perf.counts']
+    for (const name of names)
+      Object.defineProperty(proto, name, { value: element, configurable: true })
+    try {
+      expect(perfCountersOn()).toBe(false)
+      perfCount('x')
+      perfCountFor('sg.mount', 'text')
+      expect(readPerfCounters()).toEqual({})
+      expect(element).toEqual({ tagName: 'DIV' })
+    } finally {
+      for (const name of names) delete proto[name]
+    }
   })
 })

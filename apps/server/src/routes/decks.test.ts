@@ -232,9 +232,12 @@ describe('GET /decks?limit — paged (opt-in)', () => {
   it('refuses a cursor without a limit, a cursor it did not issue, and a bad limit', async () => {
     const app = await buildApp(makeMockDb(three()))
     const cursor = encodeDeckListCursor({ key: '2026-01-01T00:00:01.000000', id: 'deck-2' }, null)
+    // Year 0 parses in JavaScript but not in Postgres (no year 0): a 400, not a 500.
+    const yearZero = encodeDeckListCursor({ key: '0000-01-01T00:00:00.000000', id: 'deck-2' }, null)
     for (const url of [
       `/decks?cursor=${cursor}`,
       '/decks?limit=2&cursor=not-a-cursor',
+      `/decks?limit=2&cursor=${yearZero}`,
       `/decks?limit=2&cursor=${cursor}&folderId=another-folder`,
       '/decks?limit=0',
       '/decks?limit=201',

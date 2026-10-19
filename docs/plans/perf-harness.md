@@ -315,7 +315,9 @@ check` (they need the dev stack; Log); the coverage guard with today's
   ports, the GPU fence, input-to-pixel, the `perf` recipe, the first budgets.
 - 2026-10-18, **steps 2–4** (not committed yet). Delivered:
   - **Counters** (`packages/shared/src/perfCounters.ts`): `perfCount(key)` /
-    `perfCountFor(key, sub)` write into `globalThis.__narrative_perf_counts`;
+    `perfCountFor(key, sub)` write into `globalThis[Symbol.for('narrative.perf.counts')]`
+    (a symbol since 2026-10-18: a string-named global can be shadowed by a
+    page element's `id` through named access on `window`);
     while it is unset (every page without `?perf=1` in a production build,
     the server, the workers, the unit suites) a site is a call that returns at
     once. On globalThis rather than in a module variable: the boot code sets
