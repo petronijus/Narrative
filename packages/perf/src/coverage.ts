@@ -159,11 +159,8 @@ export const ACTION_EXEMPTIONS: Readonly<Record<string, string>> = {
   'present.chooseDisplay': NOT_YET_BENCHED,
   'present.exit': NOT_YET_BENCHED,
   'present.fullscreen': NOT_YET_BENCHED,
-  'present.next': NOT_YET_BENCHED,
   'present.presenterView': NOT_YET_BENCHED,
   'present.preview': NOT_YET_BENCHED,
-  'present.previous': NOT_YET_BENCHED,
-  'present.start': NOT_YET_BENCHED,
   // selection
   'selection.all': NOT_YET_BENCHED,
   'selection.clear': NOT_YET_BENCHED,
@@ -216,7 +213,6 @@ export const COMMAND_EXEMPTIONS: Readonly<Record<string, string>> = {
   'agent.runs': NOT_YET_BENCHED,
   'agent.startRun': NOT_YET_BENCHED,
   // animation
-  'animation.add': NOT_YET_BENCHED,
   'animation.remove': NOT_YET_BENCHED,
   'animation.reorder': NOT_YET_BENCHED,
   'animation.retarget': NOT_YET_BENCHED,
@@ -332,7 +328,6 @@ export const COMMAND_EXEMPTIONS: Readonly<Record<string, string>> = {
   'slide.notes.set': NOT_YET_BENCHED,
   'slide.rename': NOT_YET_BENCHED,
   'slide.setBackground': NOT_YET_BENCHED,
-  'slide.setTransition': NOT_YET_BENCHED,
   'slide.skip': NOT_YET_BENCHED,
   // style
   'style.deck.apply': NOT_YET_BENCHED,

@@ -41,9 +41,9 @@ import {
   getDefaultImageUrlResolver,
 } from './imageUrl.js'
 import { createVideoInfoResolver, setDefaultVideoInfoResolver } from './videoInfo.js'
-import { useSlideObjectChanges } from '../state/useSlideObjectChanges'
+import { useSlideObjectChanges, type SlideObjectChangeInfo } from '../state/useSlideObjectChanges'
 import { useSlideBackground } from '../state/useSlideBackground.js'
-import { useDeckSelector } from '../state/useDeckStore.js'
+import { useDeckSelector, useDeckStore } from '../state/useDeckStore.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { computeSlideNumber } from '@narrative/shared'
 import { setRenderingSlideNumber } from './slideNumberContext.js'
@@ -132,6 +132,16 @@ export interface CanvasProps {
    * every frame queued before it. Fixed for the canvas's lifetime.
    */
   onScreen?: boolean
+  /**
+   * false: Pixi's garbage collector stays off (`gcActive`), so nothing
+   * uploaded is unloaded behind the renderer's back. Present mode keeps
+   * slides prepared off stage (renderer/presentSlides.ts) for minutes at a
+   * time; with the collector on, whatever was not drawn for a minute — the
+   * next slide's text rasters, its pictures — would be unloaded and
+   * rasterised or uploaded again the moment it is shown. What stays resident
+   * is then the ResourceManager's to budget. Fixed for the canvas's lifetime.
+   */
+  gc?: boolean
 }
 
 export function Canvas({
@@ -140,9 +150,11 @@ export function Canvas({
   artboardSize,
   zoom = 1,
   onScreen = true,
+  gc = true,
 }: CanvasProps = {}) {
   // Read once: the canvas is set up for one way of drawing.
   const onScreenRef = useRef(onScreen)
+  const gcRef = useRef(gc)
   const containerRef = useRef<HTMLDivElement>(null)
   const overlayRootRef = useRef<HTMLDivElement>(null)
 
@@ -150,7 +162,9 @@ export function Canvas({
   const lastZoomInputAt = useRef(-Infinity)
 
   /** Pending changes from before Pixi is ready. Buffer and flush once instance exists. */
-  const pendingChangesRef = useRef<ObjectChangeSet[]>([])
+  const pendingChangesRef = useRef<
+    Array<{ changes: ObjectChangeSet; info: SlideObjectChangeInfo }>
+  >([])
 
   /**
    * Always points at the latest artboardSize so the async Pixi init can
@@ -231,6 +245,7 @@ export function Canvas({
         // pixi.js 8.18.x.
         preference: 'webgl',
         antialias: true,
+        gcActive: gcRef.current,
       })
 
       if (cancelled) {
@@ -319,7 +334,7 @@ export function Canvas({
       // Flush pending changes co přišly před initem (např. initial emission
       // z useSlideObjectChanges subscribe synchronně po subscribe).
       for (const pending of pendingChangesRef.current) {
-        sceneGraph.applyChanges(pending)
+        applySlideChangesRef.current(sceneGraph, pending.changes, pending.info)
       }
       pendingChangesRef.current = []
 
@@ -443,14 +458,50 @@ export function Canvas({
   // Reaktivita na Y.Doc přes incremental changes (M3).
   // Initial state přichází synchronně jako první emise (added = current).
   // Batching per rAF v subscribeToObjectChanges — tento callback se volá 1× per tick.
-  useSlideObjectChanges((changes) => {
+  //
+  // The scene graph also learns which slide it holds. Present mode swaps
+  // whole prepared slides in (SceneGraph.swapSlideScene) before the active
+  // slide changes, so the removal emitted for the slide it left is stale by
+  // then, and the first emission of the slide it swapped in has nothing to
+  // do — as long as the deck store still has that slide at the version the
+  // scene was built from; otherwise it is applied as updates (addObject of a
+  // mounted id updates it).
+  const deckStore = useDeckStore()
+  const applySlideChanges = (
+    sceneGraph: SceneGraph,
+    changes: ObjectChangeSet,
+    info: SlideObjectChangeInfo,
+  ): void => {
+    if (info.kind === 'leave') {
+      const held = sceneGraph.heldSlideId
+      if (held !== null && held !== info.slideId) return
+      sceneGraph.applyChanges(changes)
+      sceneGraph.holdSlide(null)
+      return
+    }
+    if (info.kind === 'initial') {
+      const objects = deckStore.getSlide(info.slideId)?.objects
+      if (sceneGraph.holdsSlideAt(info.slideId, objects)) return
+      sceneGraph.applyChanges(changes)
+      sceneGraph.holdSlide(info.slideId, objects ?? null)
+      return
+    }
+    sceneGraph.applyChanges(changes)
+    sceneGraph.markHeldEdited()
+  }
+  // The init's flush of buffered changes runs later: it reads the latest.
+  const applySlideChangesRef = useRef(applySlideChanges)
+  useEffect(() => {
+    applySlideChangesRef.current = applySlideChanges
+  })
+  useSlideObjectChanges((changes, info) => {
     const instance = instanceRef.current
     if (instance === null) {
       // Pixi ještě neinicializován — buffer a flush v init
-      pendingChangesRef.current.push(changes)
+      pendingChangesRef.current.push({ changes, info })
       return
     }
-    instance.sceneGraph.applyChanges(changes)
+    applySlideChanges(instance.sceneGraph, changes, info)
   })
 
   // P2: paint the artboard background on every slide-background change.

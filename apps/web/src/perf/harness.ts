@@ -75,6 +75,24 @@ export interface PerfRecording {
   restagesDone: number[]
 }
 
+/**
+ * One editor frame as a coarse picture: the drawing buffer read back right
+ * after `render` and averaged over `cell`-px squares (RGB means, row by row
+ * from the bottom — GL's origin). Two frames that show the same slide fully
+ * drawn are equal cell for cell; a text or picture still missing moves the
+ * cells it covers.
+ */
+export interface CapturedFrame {
+  /** `performance.now()` when the frame was drawn. */
+  at: number
+  /** The slide the present / editor container said was active then. */
+  slideId: string | null
+  cols: number
+  rows: number
+  /** cols × rows × 3 channel means, 0–255. */
+  cells: number[]
+}
+
 export interface ReactStats {
   commits: number
   renders: number
@@ -127,6 +145,29 @@ export interface PerfHarnessApi {
   setSelection(ids: string[]): void
   loadTimings(): LoadTimings | null
   stripMasks(): number
+  /**
+   * Read back every editor frame from now on as a coarse picture
+   * (`CapturedFrame`) — for the e2e specs that prove a slide is shown whole
+   * on its first frame. Costs a full read-back per frame: never during a
+   * timed run.
+   */
+  startFrameCapture(opts?: { cell?: number }): void
+  /** Stop and hand over the frames captured since `startFrameCapture`. */
+  stopFrameCapture(): CapturedFrame[]
+  /** Draw a frame now and return it as a coarse picture (null without a GL canvas). */
+  captureNow(opts?: { cell?: number }): CapturedFrame | null
+  /**
+   * What the editor's GL context holds now, since the harness loaded (never
+   * reset): textures created and not deleted. Growth across repeated runs of
+   * the same pass is a leak (performance.md → E8).
+   */
+  glLive(): { textures: number }
+  /**
+   * A diagnostic: from now on keep each texture upload of the editor's
+   * context (its size, and the stack that made it) until read; null stops.
+   * Which picture or text an unexpected upload was.
+   */
+  traceUploads(on: boolean): Array<{ w: number; h: number; stack: string }>
 }
 
 interface ReactProbe {
@@ -180,6 +221,9 @@ export function installPerfHarness(): void {
   let lastRenderAt = -Infinity
 
   // --- GL --------------------------------------------------------------------
+  /** Textures of the editor's context created and not deleted (glLive). */
+  let liveTextures = 0
+  let uploadTrace: Array<{ w: number; h: number; stack: string }> | null = null
   const readPixels = new Map<object, (...a: unknown[]) => unknown>()
   const wrapGl = (proto: Record<string, unknown>): void => {
     const wrap = (name: string, count: (prefix: string, args: unknown[]) => void): void => {
@@ -211,8 +255,23 @@ export function installPerfHarness(): void {
         if (px === null) return
         perfCount(`${p}.texUpload`)
         perfCount(`${p}.texUploadKpx`, Math.round(px / 1000))
+        if (uploadTrace !== null && p === 'gl') {
+          const src = a.find((x) => typeof x === 'object' && x !== null) as
+            { width?: number; height?: number } | undefined
+          uploadTrace.push({
+            w: src?.width ?? 0,
+            h: src?.height ?? 0,
+            stack: (new Error().stack ?? '').split('\n').slice(2, 14).join('\n'),
+          })
+        }
       })
     wrap('bufferData', (p) => perfCount(`${p}.bufferData`))
+    wrap('createTexture', (p) => {
+      if (p === 'gl') liveTextures++
+    })
+    wrap('deleteTexture', (p) => {
+      if (p === 'gl') liveTextures--
+    })
     wrap('bindFramebuffer', (p) => perfCount(`${p}.fbBind`))
   }
   if (typeof WebGL2RenderingContext !== 'undefined')
@@ -277,7 +336,54 @@ export function installPerfHarness(): void {
   let domCheckScheduled = false
   let inputFence = true
 
-  const onRender = (startedAt: number, ms: number): void => {
+  // --- frame read-back (e2e only) -------------------------------------------
+  let capture: { cell: number; frames: CapturedFrame[] } | null = null
+  let readBuf: Uint8Array | null = null
+  const grabFrame = (cell: number): CapturedFrame | null => {
+    const gl = editorContext
+    if (gl === null) return null
+    const w = gl.drawingBufferWidth
+    const h = gl.drawingBufferHeight
+    if (readBuf === null || readBuf.length !== w * h * 4) readBuf = new Uint8Array(w * h * 4)
+    const read = readPixels.get(Object.getPrototypeOf(gl) as object)
+    read?.call(gl, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, readBuf)
+    const cols = Math.floor(w / cell)
+    const rows = Math.floor(h / cell)
+    const cells = new Float64Array(cols * rows * 3)
+    const buf = readBuf
+    for (let y = 0; y < rows * cell; y++) {
+      const row = Math.floor(y / cell)
+      for (let x = 0; x < cols * cell; x++) {
+        const i = (y * w + x) * 4
+        const c = (row * cols + Math.floor(x / cell)) * 3
+        cells[c] = cells[c]! + buf[i]!
+        cells[c + 1] = cells[c + 1]! + buf[i + 1]!
+        cells[c + 2] = cells[c + 2]! + buf[i + 2]!
+      }
+    }
+    const n = cell * cell
+    const means: number[] = Array.from(cells, (v) => Math.round(v / n))
+    const el = document.querySelector('[data-active-slide-id]')
+    return {
+      at: performance.now(),
+      slideId: el?.getAttribute('data-active-slide-id') ?? null,
+      cols,
+      rows,
+      cells: means,
+    }
+  }
+
+  const onRender = (startedAt: number, ms: number, toScreen: boolean): void => {
+    if (!toScreen) {
+      // A slide prepared off stage drawn into its own texture: not a frame.
+      perfCount('editor.render.offscreen')
+      lastRenderAt = startedAt + ms
+      return
+    }
+    if (capture !== null) {
+      const f = grabFrame(capture.cell)
+      if (f !== null) capture.frames.push(f)
+    }
     lastRenderAt = startedAt + ms
     perfCount('editor.render')
     const draws = editorDraws - drawsAtLastRender
@@ -509,6 +615,31 @@ export function installPerfHarness(): void {
     loadTimings: () =>
       (window as unknown as { __narrative_perf?: { loadTimings?: LoadTimings } }).__narrative_perf
         ?.loadTimings ?? null,
+    startFrameCapture(opts = {}) {
+      capture = { cell: opts.cell ?? 40, frames: [] }
+    },
+    stopFrameCapture() {
+      const frames = capture?.frames ?? []
+      capture = null
+      return frames
+    },
+    captureNow(opts = {}) {
+      if (scheduler === null) return null
+      const saved = capture
+      capture = { cell: opts.cell ?? 40, frames: [] }
+      try {
+        renderNow(scheduler)
+        return capture.frames.at(-1) ?? null
+      } finally {
+        capture = saved
+      }
+    },
+    glLive: () => ({ textures: liveTextures }),
+    traceUploads(on) {
+      const out = uploadTrace ?? []
+      uploadTrace = on ? [] : null
+      return out
+    },
     stripMasks() {
       if (sceneGraph === null) return 0
       const n = stripMasks(sceneGraph)

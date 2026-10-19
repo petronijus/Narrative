@@ -42,6 +42,7 @@ import {
 import { repaintFilterColours } from './filterEffects.js'
 import {
   getColourResolver,
+  setRenderingSurface,
   subscribeColourResolver,
   tokenColoursDiffer,
   type ColourResolverFn,
@@ -57,6 +58,54 @@ import { AdaptiveBudget, LongTaskWatch } from './restageBudget.js'
 interface SceneNode {
   container: Container
   data: SlideObject
+}
+
+/**
+ * A slide's whole scene as Pixi objects: its root (background first, then one
+ * container per object, in z-order), the object nodes, and what they were
+ * painted with. Built off stage by the present-mode slide cache
+ * (renderer/presentSlides.ts) and swapped in with `swapSlideScene`, which
+ * hands the outgoing slide back in the same form — intact, for the cache to
+ * keep or destroy.
+ */
+export interface SlideScene {
+  slideId: string
+  root: Container
+  /** The artboard background, the root's first child; null when the slide has none mounted. */
+  background: Container | null
+  nodes: Array<SceneNode & { id: string }>
+  /** The colour resolver the nodes were painted with. */
+  paintedWith: ColourResolverFn | null
+  /**
+   * The deck store's objects array the nodes show (its identity is the
+   * slide's version: renderer/presentSlides.ts); null when unknown — the
+   * scene was edited after it was built, or it was mounted change by change.
+   */
+  objects: readonly SlideObject[] | null
+  /**
+   * The surface its colour tokens were resolved on (its layout's, A4.2d),
+   * when it was built for one: the swap makes it the canvas's rendering
+   * surface (colourResolver.setRenderingSurface) as it puts the scene on
+   * stage, so nothing is repainted for the surface it leaves.
+   */
+  surface?: string | undefined
+}
+
+/**
+ * The alpha the scene graph gives an object: its authored opacity, faded to
+ * 35 % when its box lies wholly outside the artboard (`w` × `h`; 0 × 0 = no
+ * artboard set). Shared with the present-mode slide cache, which builds
+ * scenes off stage and must give their nodes the alpha this scene graph would.
+ */
+export function outsideFadeAlpha(data: SlideObject, w: number, h: number): number {
+  const baseAlpha =
+    typeof (data as { opacity?: number }).opacity === 'number'
+      ? (data as { opacity: number }).opacity
+      : 1
+  if (w === 0 || h === 0) return baseAlpha
+  const { x, y, width, height } = data
+  const outside = x + width <= 0 || x >= w || y + height <= 0 || y >= h
+  return outside ? baseAlpha * 0.35 : baseAlpha
 }
 
 /**
@@ -242,11 +291,29 @@ export class SceneGraph {
   /** `onTextLayout` listeners: a text box of this scene drawn at a new height or type scale. */
   private readonly textLayoutListeners = new Set<(id: string, layout: TextBoxLayout) => void>()
 
+  /**
+   * The slide this scene graph holds, and the deck store's objects array its
+   * nodes were built from (`objects`: the version; `edited` once a change set
+   * was applied to them since). Canvas.tsx records it when a slide's objects
+   * are first emitted; `swapSlideScene` when a prepared scene comes in. A
+   * slide's first emission for a slide already held at its current version
+   * has nothing to do (Canvas.tsx), and the removal emitted for a slide no
+   * longer held is stale.
+   */
+  private held: {
+    slideId: string
+    objects: readonly SlideObject[] | null
+    edited: boolean
+  } | null = null
+  /** swapSlideScene switches the rendering surface for a scene painted on it already. */
+  private ignoreColourChanges = false
+
   constructor(app: Application) {
     this.app = app
     this.root = new Container()
     this.app.stage.addChild(this.root)
     this.unsubscribeColourResolver = subscribeColourResolver(({ prev, next }) => {
+      if (this.ignoreColourChanges) return
       this.repaintTokenColours(prev, next)
     })
     // A face installed (or removed) after text in its family was rasterised:
@@ -383,22 +450,15 @@ export class SceneGraph {
   }
 
   private applyOutsideFade(node: SceneNode): void {
-    const w = this.slideBoundsW
-    const h = this.slideBoundsH
     // Respect the object's authored opacity — outside-fade multiplies
     // on top of it so tuning opacity in the Inspector still does what
     // it says. Objects without an opacity field default to 1.
-    const baseAlpha =
-      typeof (node.data as { opacity?: number }).opacity === 'number'
-        ? (node.data as { opacity: number }).opacity
-        : 1
-    if (w === 0 || h === 0) {
-      node.container.alpha = baseAlpha
-      return
-    }
-    const { x, y, width, height } = node.data
-    const outside = x + width <= 0 || x >= w || y + height <= 0 || y >= h
-    node.container.alpha = outside ? baseAlpha * 0.35 : baseAlpha
+    node.container.alpha = outsideFadeAlpha(node.data, this.slideBoundsW, this.slideBoundsH)
+  }
+
+  /** The artboard size the outside fade is computed against (0 × 0: none set). */
+  getSlideBounds(): { width: number; height: number } {
+    return { width: this.slideBoundsW, height: this.slideBoundsH }
   }
 
   /**
@@ -1113,6 +1173,101 @@ export class SceneGraph {
     return this.backgroundContainer
   }
 
+  /** The slide whose objects this scene graph holds (null: none recorded). */
+  get heldSlideId(): string | null {
+    return this.held?.slideId ?? null
+  }
+
+  /**
+   * Record which slide the nodes belong to and the deck store objects array
+   * they show (null: not known). Called by Canvas.tsx with a slide's first
+   * emission, and with null when its objects have been removed.
+   */
+  holdSlide(slideId: string | null, objects: readonly SlideObject[] | null = null): void {
+    this.held = slideId === null ? null : { slideId, objects, edited: false }
+  }
+
+  /** A change set was applied to the held slide: its nodes no longer match the version recorded. */
+  markHeldEdited(): void {
+    if (this.held !== null) this.held.edited = true
+  }
+
+  /** Whether the nodes are slide `slideId` at the deck store's `objects` array, unedited. */
+  holdsSlideAt(slideId: string, objects: readonly SlideObject[] | undefined): boolean {
+    const h = this.held
+    return (
+      h !== null &&
+      h.slideId === slideId &&
+      !h.edited &&
+      h.objects !== null &&
+      h.objects === objects
+    )
+  }
+
+  /**
+   * Show `next` — a slide scene built off stage (renderer/presentSlides.ts) —
+   * instead of the current one, and hand the current one back intact: its
+   * root taken off the stage, its nodes neither destroyed nor touched, so it
+   * can be shown again without mounting or rasterising anything. Nothing is
+   * drawn until the next frame, which draws `next` whole.
+   *
+   * `next.root` may already be on the stage (a transition drew it next to the
+   * outgoing root); otherwise it is added. Node alphas are left as they are:
+   * the builder gave them the outside fade (`outsideFadeAlpha`), and a build
+   * animation may have set its first state on them since. The nodes are
+   * repainted where the colour resolver changed since they were painted, as
+   * every node of this scene graph is (`repaintTokenColours`).
+   */
+  swapSlideScene(next: SlideScene): SlideScene {
+    const held = this.held
+    const outgoing: SlideScene = {
+      slideId: held?.slideId ?? '',
+      root: this.root,
+      background:
+        this.backgroundContainer !== null &&
+        !this.backgroundContainer.destroyed &&
+        this.backgroundContainer.parent === this.root
+          ? this.backgroundContainer
+          : null,
+      nodes: [...this.nodes].map(([id, n]) => ({ id, container: n.container, data: n.data })),
+      // Every mounted node is painted with the installed resolver (repaintTokenColours).
+      paintedWith: getColourResolver(),
+      objects: held !== null && !held.edited ? held.objects : null,
+    }
+    this.textStager.cancel()
+    if (this.root.parent !== null) this.root.parent.removeChild(this.root)
+    this.nodes.clear()
+    this.nodeTypes.clear()
+    this.containerToId.clear()
+    this.fadedText.clear()
+
+    this.root = next.root
+    this.root.position.set(this.slideOriginX, this.slideOriginY)
+    if (next.root.parent === null) this.app.stage.addChild(next.root)
+    this.backgroundContainer = next.background
+    for (const entry of next.nodes) {
+      this.nodes.set(entry.id, { container: entry.container, data: entry.data })
+      this.nodeTypes.set(entry.id, entry.data.type)
+      this.containerToId.set(entry.container, entry.id)
+    }
+    this.held = { slideId: next.slideId, objects: next.objects, edited: false }
+    // The incoming slide's surface becomes the canvas's now — before the
+    // canvas's own effect would switch it a render later, after this scene
+    // had been repainted for the surface it leaves. Its nodes were painted
+    // on it already: the change is nothing to repaint here.
+    if ('surface' in next) {
+      this.ignoreColourChanges = true
+      try {
+        setRenderingSurface(next.surface)
+      } finally {
+        this.ignoreColourChanges = false
+      }
+    }
+    this.repaintTokenColours(next.paintedWith, getColourResolver())
+    this.markDirty()
+    return outgoing
+  }
+
   /**
    * Adopts a pre-built "incoming" slide root as the new active root. Called
    * by the present-mode transition runner AFTER `runSlideTransition()`
@@ -1188,6 +1343,7 @@ export class SceneGraph {
       this.containerToId.set(entry.container, entry.id)
       this.applyOutsideFade(node)
     }
+    this.held = null
     this.repaintTokenColours(paintedWith, getColourResolver())
     this.markDirty()
   }

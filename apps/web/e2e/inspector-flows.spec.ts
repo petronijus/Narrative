@@ -380,42 +380,55 @@ test.describe('Renderer paint smoke', () => {
       )
       .toBe(true)
 
-    // Give the thumbnail debouncer time to flush.
-    await page.waitForTimeout(800)
-
-    const sample = await page.evaluate(async () => {
-      const img = Array.from(document.querySelectorAll('img')).find(
-        (el) => el.src.startsWith('blob:') && el.naturalWidth > 100,
-      ) as HTMLImageElement | undefined
-      if (img === undefined) return null
-      return new Promise<{ r: number; g: number; b: number }>((resolve, reject) => {
-        const tmp = new Image()
-        tmp.onload = () => {
-          const c = document.createElement('canvas')
-          c.width = tmp.naturalWidth
-          c.height = tmp.naturalHeight
-          const ctx = c.getContext('2d')!
-          ctx.drawImage(tmp, 0, 0)
-          // Sample roughly the centre of where the rectangle should appear:
-          // x=200..800, y=150..550 in slide-space (slide is 1280x720 by
-          // default). Centre ~ (500, 350). Normalise into thumbnail pixels.
-          const px = Math.round((500 / 1280) * tmp.naturalWidth)
-          const py = Math.round((350 / 720) * tmp.naturalHeight)
-          const d = ctx.getImageData(px, py, 1, 1).data
-          resolve({ r: d[0]!, g: d[1]!, b: d[2]! })
-        }
-        tmp.onerror = () => reject(new Error('thumbnail load failed'))
-        tmp.src = img.src
+    // The thumbnail lands about a second after the edit: the edit debounce
+    // (500 ms), the scene settling and the first read-back from the canvas.
+    // Poll for the blue picture rather than sampling after a fixed wait,
+    // which read the empty slide's white one whenever the pipeline ran late.
+    type Rgb = { r: number; g: number; b: number }
+    const readSample = (): Promise<Rgb | null> =>
+      page.evaluate(async () => {
+        const img = Array.from(document.querySelectorAll('img')).find(
+          (el) => el.src.startsWith('blob:') && el.naturalWidth > 100,
+        ) as HTMLImageElement | undefined
+        if (img === undefined) return null
+        return new Promise<{ r: number; g: number; b: number }>((resolve, reject) => {
+          const tmp = new Image()
+          tmp.onload = () => {
+            const c = document.createElement('canvas')
+            c.width = tmp.naturalWidth
+            c.height = tmp.naturalHeight
+            const ctx = c.getContext('2d')!
+            ctx.drawImage(tmp, 0, 0)
+            // The centre of the rectangle (x=200..800, y=150..550 on the
+            // 1920×1080 artboard), in thumbnail pixels.
+            const px = Math.round((500 / 1920) * tmp.naturalWidth)
+            const py = Math.round((350 / 1080) * tmp.naturalHeight)
+            const d = ctx.getImageData(px, py, 1, 1).data
+            resolve({ r: d[0]!, g: d[1]!, b: d[2]! })
+          }
+          tmp.onerror = () => reject(new Error('thumbnail load failed'))
+          tmp.src = img.src
+        })
       })
-    })
+    let sample: Rgb | null = null
+    await expect
+      .poll(
+        async () => {
+          sample = await readSample()
+          return sample !== null && sample.b > 180
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(true)
 
-    expect(sample).not.toBeNull()
     // Expected RGB ≈ (59, 130, 246) for #3b82f6. JPEG/PNG round-tripping
     // through Pixi's extract may shift each channel by ±10, so allow
     // tolerance.
-    expect(sample!.b).toBeGreaterThan(180)
-    expect(sample!.r).toBeLessThan(120)
-    expect(sample!.g).toBeGreaterThan(80)
-    expect(sample!.g).toBeLessThan(180)
+    const painted = sample as Rgb | null
+    expect(painted).not.toBeNull()
+    expect(painted!.b).toBeGreaterThan(180)
+    expect(painted!.r).toBeLessThan(120)
+    expect(painted!.g).toBeGreaterThan(80)
+    expect(painted!.g).toBeLessThan(180)
   })
 })

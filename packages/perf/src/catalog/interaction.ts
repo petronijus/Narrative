@@ -89,6 +89,8 @@ export const WORK_COUNTERS = [
   'net.api',
   'net.mediaUrl',
   'net.imgproxy',
+  // Pictures the ResourceManager loaded (fetched and decoded) as textures.
+  'rm.texture.load',
 ] as const
 
 export type WorkCounter = (typeof WORK_COUNTERS)[number]
@@ -134,6 +136,16 @@ export const SCENES = {
   /** A deck of N slides, each with 6 texts, 4 rectangles and 2 pictures (PERF_SLIDES). */
   deck10: { generator: 'deck', seed: 1, size: { slides: 10, objectsPerSlide: 12 } },
   deck100: { generator: 'deck', seed: 1, size: { slides: 100, objectsPerSlide: 12 } },
+  /** Present mode: 12 slides of text in a folder font (scenes.ts → presentTextOps). */
+  presentText: { generator: 'present-text', seed: 1, size: { slides: 12, texts: 8 } },
+  /** Present mode: 12 slides of photos, 12 distinct pictures, 3 a slide (presentPhotoOps). */
+  presentPhoto: { generator: 'present-photo', seed: 1, size: { slides: 12, photos: 12 } },
+  /** Present mode: one slide per transition the DSL has — fade, push ×4, cube, magic (presentTransitionOps). */
+  presentTransitions: { generator: 'present-transitions', seed: 1, size: { slides: 8 } },
+  /** Present mode: build animations — afterPrevious chains, onClick steps, withPrevious groups (presentBuildOps). */
+  presentBuilds: { generator: 'present-builds', seed: 1, size: { slides: 4 } },
+  /** Present mode: a 10 s 1080p H.264 video between two text slides (presentVideoOps). */
+  presentVideo: { generator: 'present-video', seed: 1, size: { slides: 3, videoSeconds: 10 } },
 } as const satisfies Record<string, SceneRef>
 
 /** The driver binds this; anywhere else a run is a mistake. */
@@ -257,6 +269,66 @@ const ZOOM_WORK: readonly WorkCounter[] = [
   'net.requests',
 ]
 
+/**
+ * Time metrics of a presentation pass (performance.md → D): the presentation
+ * opened and made ready, then every advance of the pass, recorded from the
+ * first input on. A pass is smooth when no frame is missed and no advance
+ * waits for anything but its own transition and builds.
+ */
+export const PRESENT_METRICS: Readonly<Record<string, MetricSpec>> = {
+  /** Navigation to "ready": the preparing overlay gone, the first slide shown. */
+  'present.ready': ms,
+  /** Frames drawn (rAF) during the pass. */
+  'present.frames': timedCount,
+  /** Frames the display missed: Σ (round(frame ÷ refresh interval) − 1) over the pass. */
+  'present.dropped': timedCount,
+  /** Frames longer than twice the refresh interval. */
+  'present.hitches': timedCount,
+  'frame.p50': ms,
+  'frame.p99': ms,
+  'frame.max': ms,
+  /** One advance: the input to the incoming slide fully shown and quiet (its transition and builds done). */
+  'advance.p50': ms,
+  'advance.max': ms,
+  /** Long tasks of the pass (Chromium; WebKit has no Long Tasks API). */
+  'longTask.total': ms,
+  'longTask.max': ms,
+  /**
+   * Textures the canvas's GL context gained over the pass (created minus
+   * deleted, ready to the end): every slide was shown and left again, so
+   * anything above 0 stayed behind (performance.md → E8).
+   */
+  'present.glTextures': timedCount,
+  /** JS heap after the pass, MB (Chromium's performance.memory; 0 elsewhere). */
+  'present.heapMB': { unit: 'count', better: 'lower', kind: 'time' },
+  wall: ms,
+}
+
+/**
+ * Work after "ready" that must be none: no text rasterised, no texture
+ * uploaded, nothing mounted, no picture loaded or decoded, no request, no
+ * thumbnail rendered — every advance only composites what was prepared.
+ */
+const PRESENT_WORK: readonly WorkCounter[] = [
+  'text.raster.started',
+  'text.raster.kpx',
+  'gl.texUpload',
+  'gl.texUploadKpx',
+  'sg.mount',
+  'rm.texture.load',
+  'net.requests',
+  'thumb.render',
+]
+/** A playing video uploads a texture per frame and streams its file: those follow the frames. */
+const PRESENT_VIDEO_WORK: readonly WorkCounter[] = [
+  'text.raster.started',
+  'text.raster.kpx',
+  'sg.mount',
+  'rm.texture.load',
+  'thumb.render',
+]
+const PRESENT_ACTIONS = ['present.start', 'present.next', 'present.previous'] as const
+
 export const INTERACTION_BENCHES: ReadonlyArray<BenchDef<never>> = [
   interaction('editor.idle.crowded', {
     scene: SCENES.crowded,
@@ -332,6 +404,58 @@ export const INTERACTION_BENCHES: ReadonlyArray<BenchDef<never>> = [
     scene: SCENES.deck100,
     commands: ['slide.add'],
     work: ADD_WORK,
+  }),
+  // Present mode (apps/web/e2e/perf/present.spec.ts): each run opens the
+  // presentation, waits for "ready", then advances through every slide,
+  // back to the first, and counts the work after ready.
+  interaction('present.advance.text', {
+    scene: SCENES.presentText,
+    actions: PRESENT_ACTIONS,
+    time: PRESENT_METRICS,
+    work: PRESENT_WORK,
+  }),
+  interaction('present.advance.photo', {
+    scene: SCENES.presentPhoto,
+    actions: PRESENT_ACTIONS,
+    time: PRESENT_METRICS,
+    work: PRESENT_WORK,
+  }),
+  interaction('present.transition.all', {
+    scene: SCENES.presentTransitions,
+    actions: PRESENT_ACTIONS,
+    commands: ['slide.setTransition'],
+    time: PRESENT_METRICS,
+    work: PRESENT_WORK,
+  }),
+  interaction('present.build.steps', {
+    scene: SCENES.presentBuilds,
+    actions: PRESENT_ACTIONS,
+    commands: ['animation.add'],
+    time: PRESENT_METRICS,
+    work: PRESENT_WORK,
+  }),
+  interaction('present.video.play', {
+    scene: SCENES.presentVideo,
+    actions: PRESENT_ACTIONS,
+    time: PRESENT_METRICS,
+    work: PRESENT_VIDEO_WORK,
+  }),
+  // Hyperlinks to a slide far away, there and back: the jump target is known
+  // from the slide the link sits on.
+  interaction('present.jump.link', {
+    scene: SCENES.presentPhoto,
+    actions: ['present.start'],
+    time: PRESENT_METRICS,
+    work: PRESENT_WORK,
+  }),
+  // The pop-out presenter window (`?presenter=1`, its notes and next-slide
+  // picture) drives the presentation; the main window is measured, the
+  // presenter window's work is counted with it.
+  interaction('present.presenter.window', {
+    scene: SCENES.presentText,
+    actions: ['present.start'],
+    time: PRESENT_METRICS,
+    work: PRESENT_WORK,
   }),
 ]
 

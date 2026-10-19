@@ -19,7 +19,12 @@ import { Container } from 'pixi.js'
 import type { Application } from 'pixi.js'
 import type { SlideObject } from '@narrative/shared'
 import { SceneGraph } from './SceneGraph'
-import { setColourResolver, getColourResolver, type ColourResolverFn } from './colourResolver'
+import {
+  setColourResolver,
+  getColourResolver,
+  setRenderingSurface,
+  type ColourResolverFn,
+} from './colourResolver'
 import { rectangleRenderer } from './objectRenderers/rectangleRenderer'
 import { ellipseRenderer } from './objectRenderers/ellipseRenderer'
 import { textRenderer } from './objectRenderers/textRenderer'
@@ -170,5 +175,39 @@ describe('SceneGraph — colour resolver changes', () => {
     )
 
     expect(repainted(rect)).toEqual(['token-fill'])
+  })
+
+  it('a scene swapped in on another surface is not repainted for the surface it leaves', () => {
+    // Pink resolves per surface (A4.2d): the incoming slide is a dark one.
+    const bySurface: ColourResolverFn = (value, ctx) =>
+      typeof value === 'object' && value !== null && '$token' in value
+        ? ctx?.surface === 'dark'
+          ? '#550033'
+          : '#ff2bd6'
+        : 'transparent'
+    setColourResolver(bySurface)
+    sg.render([literal])
+    // Built off stage for the dark surface (renderer/presentSlides.ts).
+    setRenderingSurface('dark')
+    const paintedWith = getColourResolver()
+    setRenderingSurface(undefined)
+    const root = new Container()
+    const container = rectangleRenderer.mount(tokenFill as never)
+    root.addChild(container)
+
+    sg.swapSlideScene({
+      slideId: 'dark-slide',
+      root,
+      background: null,
+      nodes: [{ id: tokenFill.id, container, data: tokenFill }],
+      paintedWith,
+      objects: [tokenFill],
+      surface: 'dark',
+    })
+
+    expect(rect).not.toHaveBeenCalled()
+    // The canvas resolves on the incoming slide's surface from now on.
+    expect(getColourResolver()?.(PINK)).toBe('#550033')
+    setRenderingSurface(undefined)
   })
 })

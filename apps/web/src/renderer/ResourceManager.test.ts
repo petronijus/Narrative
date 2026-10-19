@@ -288,3 +288,32 @@ describe('ResourceManager', () => {
     expect(rm.textureCount).toBe(1)
   })
 })
+
+describe('ResourceManager — resident scenes (present mode)', () => {
+  const source = (w: number, h: number, mip = false) =>
+    ({ pixelWidth: w, pixelHeight: h, autoGenerateMipmaps: mip, destroyed: false }) as never
+
+  it('counts a texture shared by two scenes once, mipmaps as a third more', () => {
+    const rm = new ResourceManager()
+    const photo = source(1000, 1000, true)
+    rm.admitResident('a', new Set([photo, source(100, 100)]))
+    rm.admitResident('b', new Set([photo]))
+    expect(rm.residentSceneCount).toBe(2)
+    expect(rm.residentBytes).toBe(Math.round(1000 * 1000 * 4 * (4 / 3)) + 100 * 100 * 4)
+  })
+
+  it('refuses a scene past the budget unless forced, and frees what a released scene held', () => {
+    const rm = new ResourceManager()
+    rm.setResidentBudget(10 * 1000 * 1000)
+    expect(rm.admitResident('a', new Set([source(1000, 1000)]))).toBe(true) // 4 MB
+    expect(rm.admitResident('b', new Set([source(1000, 1000)]))).toBe(true) // 8 MB
+    expect(rm.admitResident('c', new Set([source(1000, 1000)]))).toBe(false) // 12 MB
+    expect(rm.residentSceneCount).toBe(2)
+    // The slide shown and its neighbours are resident whatever the budget.
+    expect(rm.admitResident('c', new Set([source(1000, 1000)]), { force: true })).toBe(true)
+    rm.releaseResident('a')
+    rm.releaseResident('c')
+    expect(rm.residentBytes).toBe(4 * 1000 * 1000)
+    expect(rm.admitResident('d', new Set([source(1000, 1000)]))).toBe(true)
+  })
+})

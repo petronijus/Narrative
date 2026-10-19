@@ -5,23 +5,23 @@
  * wiring layer, not the GSAP tweening itself (that's in
  * packages/animation/src/transitions/*.test.ts).
  *
- * Pixi is mocked structurally — these tests care about who calls what,
- * not about WebGL. The key invariants:
+ * Pixi is mocked structurally — these tests care about the contract, not
+ * about WebGL. The key invariants:
  *
- *   1. incoming Container is built by mounting each incoming slide object
- *      through the registered renderer.
- *   2. incoming is parented on sceneGraph.getApp().stage.
- *   3. Magic Move pairs = id-matched (outgoing-side from sceneGraph.getContainer,
- *      incoming-side from the fresh mounts); non-matched incoming objects
- *      produce no pair.
- *   4. After runSlideTransition resolves, sceneGraph.adoptSlideRoot is
- *      called with the incoming root + the per-object node list.
- *   5. abort() before settlement destroys the incoming root and skips
- *      adoption.
+ *   1. the incoming scene (prepared off stage: renderer/presentSlides.ts) is
+ *      put on sceneGraph.getApp().stage as it is — nothing is mounted;
+ *   2. Magic Move pairs = id-matched (outgoing-side from sceneGraph.getContainer,
+ *      incoming-side from the scene's nodes); non-matched objects produce no pair;
+ *   3. when the timeline ends, sceneGraph.swapSlideScene(incoming) runs and the
+ *      scene it took off the stage goes to `onSwapped`;
+ *   4. abort() before the end swaps nothing, takes the incoming root off the
+ *      stage without destroying it (it is returned, for the cache to keep),
+ *      and gives the outgoing slide its transform and its objects' alphas back.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { SlideObject, SlideTransition } from '@narrative/shared'
+import type { SlideScene } from './SceneGraph.js'
 
 // ---------------------------------------------------------------------------
 // Pixi + animation pkg mocks — set up BEFORE playTransition is imported.
@@ -174,7 +174,7 @@ interface FakeSceneGraph {
   // a designer-supplied name across slides. Tests that don't set a name
   // get undefined → loop falls through to the id-equality path.
   getNode(id: string): { container: MockContainer; data: { name?: string } } | undefined
-  adoptSlideRoot: ReturnType<typeof vi.fn>
+  swapSlideScene: ReturnType<typeof vi.fn>
 }
 
 function makeSceneGraph(outgoingIds: string[] = []): FakeSceneGraph {
@@ -203,8 +203,29 @@ function makeSceneGraph(outgoingIds: string[] = []): FakeSceneGraph {
       // test's id-equality assertion is what gets exercised.
       return { container, data: {} }
     },
-    adoptSlideRoot: vi.fn(),
+    swapSlideScene: vi.fn(() => OUTGOING_SCENE),
   }
+}
+
+/** What the fake scene graph hands back from a swap. */
+const OUTGOING_SCENE = { slideId: 'out' } as unknown as SlideScene
+
+/** A prepared incoming scene: a root (not on stage) and one node per object. */
+function scene(objects: SlideObject[]): SlideScene & { root: MockContainer } {
+  const root = new hoisted.MockContainer()
+  const nodes = objects.map((data) => {
+    const container = new hoisted.MockContainer()
+    root.addChild(container)
+    return { id: data.id, container, data }
+  })
+  return {
+    slideId: 'in',
+    root,
+    background: null,
+    nodes,
+    paintedWith: null,
+    objects,
+  } as unknown as SlideScene & { root: MockContainer }
 }
 
 function rect(id: string, x = 0, y = 0): SlideObject {
@@ -240,40 +261,24 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-describe('playTransition — wiring', () => {
-  it('mounts each incoming slide object via the registered renderer', () => {
-    const sg = makeSceneGraph(['a'])
-    const incoming = [rect('b')]
-    playTransition({
-      sceneGraph: sg as unknown as Parameters<typeof playTransition>[0]['sceneGraph'],
-      incomingObjects: incoming,
-      transition: FADE,
-    })
-    expect(mockRenderer.mount).toHaveBeenCalledTimes(1)
-    expect(mockRenderer.mount).toHaveBeenCalledWith(expect.objectContaining({ id: 'b' }))
-  })
+type SG = Parameters<typeof playTransition>[0]['sceneGraph']
 
-  it('parents the incoming root on sceneGraph.getApp().stage', () => {
-    const sg = makeSceneGraph()
-    const incomingObjs = [rect('x')]
-    playTransition({
-      sceneGraph: sg as unknown as Parameters<typeof playTransition>[0]['sceneGraph'],
-      incomingObjects: incomingObjs,
-      transition: FADE,
-    })
-    // stage has the original root + the new incoming root → 2 children.
-    expect(sg._app.stage.children.length).toBe(2)
+describe('playTransition — wiring', () => {
+  it('mounts nothing: the prepared scene goes on the stage as it is', () => {
+    const sg = makeSceneGraph(['a'])
+    const incoming = scene([rect('b')])
+    playTransition({ sceneGraph: sg as unknown as SG, incoming, transition: FADE })
+    expect(mockRenderer.mount).not.toHaveBeenCalled()
+    // stage has the original root + the incoming one → 2 children.
+    expect(sg._app.stage.children).toHaveLength(2)
+    expect(sg._app.stage.children[1]).toBe(incoming.root)
   })
 
   it('for kind=magic, pairs matched-by-id outgoing ↔ incoming Containers', async () => {
     const sg = makeSceneGraph(['shared-1', 'only-in-outgoing'])
-    const incoming = [rect('shared-1'), rect('only-in-incoming')]
+    const incoming = scene([rect('shared-1'), rect('only-in-incoming')])
 
-    const handle = playTransition({
-      sceneGraph: sg as unknown as Parameters<typeof playTransition>[0]['sceneGraph'],
-      incomingObjects: incoming,
-      transition: MAGIC,
-    })
+    const handle = playTransition({ sceneGraph: sg as unknown as SG, incoming, transition: MAGIC })
     await handle.done
 
     expect(mockCompileSlideTransition).toHaveBeenCalledTimes(1)
@@ -282,16 +287,17 @@ describe('playTransition — wiring', () => {
     expect(transition.kind).toBe('magic')
     expect(targets.magicPairs).toHaveLength(1)
     expect(targets.magicPairs[0].id).toBe('shared-1')
-    // The outgoing Container in the pair is the one the SceneGraph had for that id.
+    // The outgoing Container in the pair is the one the SceneGraph had for that id;
+    // the incoming one is the scene's.
     expect(targets.magicPairs[0].outgoing).toBe(sg._outgoingByObjectId.get('shared-1'))
+    expect(targets.magicPairs[0].incoming).toBe(incoming.nodes[0]!.container)
   })
 
   it('for kind=fade, does NOT compute magicPairs', async () => {
     const sg = makeSceneGraph(['a'])
-    const incoming = [rect('a')]
     const handle = playTransition({
-      sceneGraph: sg as unknown as Parameters<typeof playTransition>[0]['sceneGraph'],
-      incomingObjects: incoming,
+      sceneGraph: sg as unknown as SG,
+      incoming: scene([rect('a')]),
       transition: FADE,
     })
     await handle.done
@@ -300,65 +306,70 @@ describe('playTransition — wiring', () => {
     expect(targets.magicPairs).toBeUndefined()
   })
 
-  it('after done, calls sceneGraph.adoptSlideRoot with incoming root + node list', async () => {
+  it('at the end, swaps the incoming scene in and hands the outgoing one to onSwapped', async () => {
     const sg = makeSceneGraph()
-    const incoming = [rect('n1'), rect('n2')]
+    const incoming = scene([rect('n1'), rect('n2')])
+    const onSwapped = vi.fn()
     const handle = playTransition({
-      sceneGraph: sg as unknown as Parameters<typeof playTransition>[0]['sceneGraph'],
-      incomingObjects: incoming,
+      sceneGraph: sg as unknown as SG,
+      incoming,
       transition: FADE,
+      onSwapped,
     })
+    expect(sg.swapSlideScene).not.toHaveBeenCalled()
     await handle.done
 
-    expect(sg.adoptSlideRoot).toHaveBeenCalledTimes(1)
-
-    const [root, nodes] = sg.adoptSlideRoot.mock.calls[0]! as [MockContainer, unknown[]]
-    // The incoming root we parented on stage is the one adopted.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- structural check
-    const stageChildren = sg._app.stage.children as any[]
-    expect(root).toBe(stageChildren[1])
-    expect(nodes).toHaveLength(2)
-    expect((nodes[0] as { id: string }).id).toBe('n1')
-    expect((nodes[1] as { id: string }).id).toBe('n2')
+    expect(sg.swapSlideScene).toHaveBeenCalledTimes(1)
+    expect(sg.swapSlideScene).toHaveBeenCalledWith(incoming)
+    expect(onSwapped).toHaveBeenCalledWith(OUTGOING_SCENE)
+    // Ended: nothing left to abort.
+    expect(handle.abort()).toBeNull()
   })
 })
 
 describe('playTransition — abort', () => {
-  it('abort() before settlement destroys the incoming root and skips adoption', async () => {
+  it('abort() before the end swaps nothing and hands the incoming scene back whole', async () => {
     // Hold the onComplete callback so the transition never settles naturally
     // — abort() must do the cleanup itself.
-    let heldOnComplete: (() => void) | undefined
     const heldTimeline = {
-      eventCallback(name: string, cb: () => void) {
-        if (name === 'onComplete') heldOnComplete = cb
-      },
+      eventCallback() {},
       play() {
         // Intentionally do not fire onComplete — simulates in-flight.
       },
       kill: vi.fn(),
     }
-    const heldDispose = vi.fn()
-    mockCompileSlideTransition.mockReturnValueOnce({
-      timeline: heldTimeline,
-      dispose: heldDispose,
-    })
+    mockCompileSlideTransition.mockReturnValueOnce({ timeline: heldTimeline, dispose: vi.fn() })
 
-    const sg = makeSceneGraph()
-    const incoming = [rect('a')]
+    const sg = makeSceneGraph(['a'])
+    const outgoingChild = sg._outgoingByObjectId.get('a')!
+    const incoming = scene([rect('a')])
+    const onSwapped = vi.fn()
     const handle = playTransition({
-      sceneGraph: sg as unknown as Parameters<typeof playTransition>[0]['sceneGraph'],
-      incomingObjects: incoming,
-      transition: FADE,
+      sceneGraph: sg as unknown as SG,
+      incoming,
+      transition: MAGIC,
+      onSwapped,
     })
+    // The transition moved things.
+    sg._root.alpha = 0.3
+    sg._root.position.set(400, 0)
+    outgoingChild.alpha = 0
 
-    handle.abort()
-
-    // abort() itself marks aborted + kills timeline + disposes. Resolve the
-    // done promise by firing the held onComplete so we can await cleanly.
-    heldOnComplete?.()
+    const back = handle.abort()
     await handle.done
 
     expect(heldTimeline.kill).toHaveBeenCalled()
-    expect(sg.adoptSlideRoot).not.toHaveBeenCalled()
+    expect(sg.swapSlideScene).not.toHaveBeenCalled()
+    expect(onSwapped).not.toHaveBeenCalled()
+    expect(back).toBe(incoming)
+    expect(incoming.root.destroyed).toBe(false)
+    expect(incoming.root.parent).toBeNull()
+    expect(sg._app.stage.children).toHaveLength(1)
+    // The outgoing slide is shown as it was.
+    expect(sg._root.alpha).toBe(1)
+    expect(sg._root.x).toBe(0)
+    expect(outgoingChild.alpha).toBe(1)
+    // Once only.
+    expect(handle.abort()).toBeNull()
   })
 })

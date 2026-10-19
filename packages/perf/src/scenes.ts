@@ -261,3 +261,384 @@ export function deckOps(
   }
   return { ops, perSlide }
 }
+
+// ---------------------------------------------------------------------------
+// Present mode (docs/plans/performance.md → D)
+// ---------------------------------------------------------------------------
+
+/** A present-mode deck: its ops and every slide's object ids (index = slide index). */
+export interface PresentScene {
+  ops: Op[]
+  perSlide: string[][]
+}
+
+function backgroundOp(slide: unknown, background: Record<string, unknown>): Op {
+  return { command: 'slide.setBackground', input: { slide, background } }
+}
+
+function styledText(
+  slide: unknown,
+  o: Box & { text: string; fontSize: number; fontFamily?: string; color?: string; weight?: number },
+): Op {
+  const op = textOp(slide, o)
+  const object = (op.input as { object: Record<string, unknown> }).object
+  if (o.fontFamily !== undefined) object['fontFamily'] = o.fontFamily
+  if (o.color !== undefined) object['color'] = o.color
+  if (o.weight !== undefined) object['fontWeight'] = o.weight
+  return op
+}
+
+/**
+ * Text-heavy slides in a folder font (`fontFamily`): a title, five body
+ * boxes of 2–5 lines, a caption in the default face, a page-number field,
+ * a coloured or gradient background. `slides` slides; the first exists.
+ */
+export function presentTextOps(slides: number, fontFamily: string): PresentScene {
+  const ops: Op[] = []
+  const perSlide: string[][] = []
+  for (let s = 1; s < slides; s++) ops.push({ command: 'slide.add', input: {} })
+  for (let s = 0; s < slides; s++) {
+    const slide = { index: s }
+    const ids: string[] = []
+    ops.push(
+      backgroundOp(
+        slide,
+        s % 3 === 2
+          ? {
+              kind: 'linearGradient',
+              angleDeg: 20 + s * 13,
+              stops: [
+                { offset: 0, color: '#f4f1ea' },
+                { offset: 1, color: hex(0xc9d6e8 + rnd(s, 0x202020)) },
+              ],
+            }
+          : { kind: 'color', color: hex(0xf2f2f2 - rnd(s + 3, 0x101010)) },
+      ),
+    )
+    const title = { id: `p${s}-title`, x: 120, y: 80, width: 1680, height: 120 }
+    ops.push(
+      styledText(slide, {
+        ...title,
+        text: `Chapter ${s + 1}: ${sentence(s * 5 + 1, 5)}`,
+        fontSize: 64,
+        fontFamily,
+        weight: 700,
+        color: '#1b2a4a',
+      }),
+    )
+    ids.push(title.id)
+    for (let i = 0; i < 5; i++) {
+      const lines = 2 + ((s + i) % 4)
+      const b = {
+        id: `p${s}-body${i}`,
+        x: 120 + (i % 2) * 860,
+        y: 260 + Math.floor(i / 2) * 260,
+        width: 800,
+        height: 44 * lines,
+      }
+      const text = Array.from({ length: lines }, (_, l) =>
+        sentence(s * 17 + i * 3 + l, 6 + ((i + l) % 4)),
+      ).join('\n')
+      ops.push(styledText(slide, { ...b, text, fontSize: 30, fontFamily, color: '#222222' }))
+      ids.push(b.id)
+    }
+    const caption = { id: `p${s}-caption`, x: 120, y: 990, width: 1200, height: 40 }
+    ops.push(styledText(slide, { ...caption, text: sentence(s + 40, 9), fontSize: 20 }))
+    ids.push(caption.id)
+    const number = { id: `p${s}-number`, x: 1700, y: 990, width: 100, height: 40 }
+    ops.push(styledText(slide, { ...number, text: '#', fontSize: 20 }))
+    ops.push({
+      command: 'object.slideNumber.set',
+      input: { slide, object: number.id, on: true },
+    })
+    ids.push(number.id)
+    perSlide.push(ids)
+  }
+  return { ops, perSlide }
+}
+
+/**
+ * Photo slides: a full-bleed picture, two framed ones and a caption, each
+ * slide's pictures distinct where `assets` has enough (12 assets, 12
+ * slides: every picture is shown on three slides).
+ */
+export function presentPhotoOps(slides: number, assets: readonly string[]): PresentScene {
+  const ops: Op[] = []
+  const perSlide: string[][] = []
+  for (let s = 1; s < slides; s++) ops.push({ command: 'slide.add', input: {} })
+  for (let s = 0; s < slides; s++) {
+    const slide = { index: s }
+    const ids: string[] = []
+    const bleed = { id: `q${s}-bleed`, x: 0, y: 0, width: 1920, height: 1080 }
+    ops.push(imageOp(slide, { ...bleed, assetId: assets[s % assets.length]! }))
+    ids.push(bleed.id)
+    for (let i = 0; i < 2; i++) {
+      const b = { id: `q${s}-photo${i}`, x: 1080 + i * 380, y: 520, width: 340, height: 460 }
+      ops.push(imageOp(slide, { ...b, assetId: assets[(s + 4 + i * 4) % assets.length]! }))
+      ids.push(b.id)
+    }
+    const panel = { id: `q${s}-panel`, x: 80, y: 760, width: 900, height: 240 }
+    ops.push(rectOp(slide, { ...panel, fill: 0x101820 }))
+    ids.push(panel.id)
+    const caption = { id: `q${s}-caption`, x: 120, y: 790, width: 820, height: 180 }
+    ops.push(
+      styledText(slide, {
+        ...caption,
+        text: `${sentence(s * 3 + 2, 4)}\n${sentence(s * 3 + 7, 8)}`,
+        fontSize: 40,
+        color: '#ffffff',
+      }),
+    )
+    ids.push(caption.id)
+    // A link to slide `link` is added by the driver (it needs the slide ids).
+    const link = { id: `q${s}-link`, x: 1700, y: 60, width: 160, height: 100 }
+    ops.push(rectOp(slide, { ...link, fill: 0xcc3366 }))
+    ids.push(link.id)
+    perSlide.push(ids)
+  }
+  return { ops, perSlide }
+}
+
+/**
+ * One slide per transition of the DSL (packages/shared deck.ts →
+ * SlideTransitionKind): slide 1 has none, then fade, push left / right /
+ * up / down, cube, and a magic move (slide 8 holds slide 7's objects, same
+ * ids, moved and resized). Each slide: a picture, a title, a text, two
+ * rectangles.
+ */
+export const PRESENT_TRANSITIONS: ReadonlyArray<{
+  kind: 'none' | 'fade' | 'push' | 'cube' | 'magic'
+  durationMs: number
+  direction?: 'left' | 'right' | 'up' | 'down'
+}> = [
+  { kind: 'none', durationMs: 0 },
+  { kind: 'fade', durationMs: 600 },
+  { kind: 'push', durationMs: 600, direction: 'left' },
+  { kind: 'push', durationMs: 600, direction: 'right' },
+  { kind: 'push', durationMs: 600, direction: 'up' },
+  { kind: 'push', durationMs: 600, direction: 'down' },
+  { kind: 'cube', durationMs: 800 },
+  { kind: 'magic', durationMs: 800 },
+]
+
+export function presentTransitionOps(assets: readonly string[]): PresentScene {
+  const ops: Op[] = []
+  const perSlide: string[][] = []
+  const n = PRESENT_TRANSITIONS.length
+  for (let s = 1; s < n; s++) ops.push({ command: 'slide.add', input: {} })
+  for (let s = 0; s < n; s++) {
+    const slide = { index: s }
+    const t = PRESENT_TRANSITIONS[s]!
+    // The magic slide repeats the previous slide's ids: Magic Move pairs them.
+    const k = t.kind === 'magic' ? s - 1 : s
+    const moved = t.kind === 'magic'
+    const ids: string[] = []
+    ops.push(backgroundOp(slide, { kind: 'color', color: hex(0x203040 + rnd(s, 0x303030)) }))
+    const photo = moved
+      ? { id: `t${k}-photo`, x: 900, y: 120, width: 900, height: 600 }
+      : { id: `t${k}-photo`, x: 120, y: 300, width: 720, height: 480 }
+    ops.push(imageOp(slide, { ...photo, assetId: assets[k % assets.length]! }))
+    ids.push(photo.id)
+    const title = moved
+      ? { id: `t${k}-title`, x: 120, y: 760, width: 1400, height: 110 }
+      : { id: `t${k}-title`, x: 120, y: 90, width: 1400, height: 110 }
+    ops.push(
+      styledText(slide, {
+        ...title,
+        text: `${t.kind}${t.direction !== undefined ? ` ${t.direction}` : ''}: ${sentence(k + 9, 4)}`,
+        fontSize: 72,
+        color: '#ffffff',
+        weight: 700,
+      }),
+    )
+    ids.push(title.id)
+    const body = moved
+      ? { id: `t${k}-body`, x: 120, y: 900, width: 1400, height: 120 }
+      : { id: `t${k}-body`, x: 900, y: 320, width: 900, height: 300 }
+    ops.push(
+      styledText(slide, {
+        ...body,
+        text: [0, 1, 2].map((l) => sentence(k * 7 + l, 7)).join('\n'),
+        fontSize: 34,
+        color: '#e8eef5',
+      }),
+    )
+    ids.push(body.id)
+    for (let i = 0; i < 2; i++) {
+      const r = moved
+        ? { id: `t${k}-r${i}`, x: 120 + i * 260, y: 120 + i * 200, width: 220, height: 160 }
+        : { id: `t${k}-r${i}`, x: 900 + i * 460, y: 700, width: 420, height: 260 }
+      ops.push(rectOp(slide, { ...r, fill: 0x3b82f6 + rnd(k * 3 + i, 0x404040) }))
+      ids.push(r.id)
+    }
+    if (t.kind !== 'none')
+      ops.push({
+        command: 'slide.setTransition',
+        input: {
+          slide,
+          kind: t.kind,
+          durationMs: t.durationMs,
+          ...(t.direction !== undefined ? { direction: t.direction } : {}),
+        },
+      })
+    perSlide.push(ids)
+  }
+  return { ops, perSlide }
+}
+
+/** A build step of presentBuildOps. */
+interface BuildStep {
+  object: string
+  preset: string
+  trigger: 'onEnter' | 'onClick' | 'withPrevious' | 'afterPrevious'
+  duration: number
+  params?: Record<string, unknown>
+}
+
+/**
+ * Build animations, four slides:
+ *   1. a title and four bullets building in after each other on entry (fadeIn, slideIn);
+ *   2. three onClick steps (zoomIn, wipeIn, popIn) — `clicks` says how many clicks it takes;
+ *   3. a withPrevious group (scaleIn + rotateIn) after the title, then a moveTo;
+ *   4. bounceIn, flipIn, dissolveIn on a picture, a text and a rectangle.
+ */
+export function presentBuildOps(assets: readonly string[]): PresentScene & { clicks: number[] } {
+  const ops: Op[] = []
+  const perSlide: string[][] = []
+  const clicks: number[] = []
+  for (let s = 1; s < 4; s++) ops.push({ command: 'slide.add', input: {} })
+  const steps: BuildStep[][] = []
+  for (let s = 0; s < 4; s++) {
+    const slide = { index: s }
+    const ids: string[] = []
+    const title = { id: `b${s}-title`, x: 120, y: 80, width: 1680, height: 120 }
+    ops.push(
+      styledText(slide, {
+        ...title,
+        text: `Builds ${s + 1}: ${sentence(s + 30, 4)}`,
+        fontSize: 64,
+        weight: 700,
+      }),
+    )
+    ids.push(title.id)
+    const photo = { id: `b${s}-photo`, x: 1100, y: 280, width: 700, height: 470 }
+    ops.push(imageOp(slide, { ...photo, assetId: assets[(s + 2) % assets.length]! }))
+    ids.push(photo.id)
+    const rect = { id: `b${s}-rect`, x: 1100, y: 800, width: 700, height: 180 }
+    ops.push(rectOp(slide, { ...rect, fill: 0x2a9d8f }))
+    ids.push(rect.id)
+    for (let i = 0; i < 4; i++) {
+      const b = { id: `b${s}-bullet${i}`, x: 120, y: 280 + i * 170, width: 900, height: 130 }
+      ops.push(
+        styledText(slide, {
+          ...b,
+          text: `${sentence(s * 9 + i, 6)}\n${sentence(s * 9 + i + 4, 5)}`,
+          fontSize: 34,
+        }),
+      )
+      ids.push(b.id)
+    }
+    perSlide.push(ids)
+    const on = (o: string): string => `b${s}-${o}`
+    if (s === 0)
+      steps.push([
+        { object: on('bullet0'), preset: 'fadeIn', trigger: 'afterPrevious', duration: 0.4 },
+        {
+          object: on('bullet1'),
+          preset: 'slideIn',
+          trigger: 'afterPrevious',
+          duration: 0.4,
+          params: { direction: 'left', distance: 200 },
+        },
+        { object: on('bullet2'), preset: 'fadeIn', trigger: 'afterPrevious', duration: 0.4 },
+        {
+          object: on('bullet3'),
+          preset: 'slideIn',
+          trigger: 'afterPrevious',
+          duration: 0.4,
+          params: { direction: 'up', distance: 120 },
+        },
+        { object: on('photo'), preset: 'fadeIn', trigger: 'withPrevious', duration: 0.6 },
+      ])
+    else if (s === 1)
+      steps.push([
+        { object: on('photo'), preset: 'zoomIn', trigger: 'onClick', duration: 0.5 },
+        { object: on('bullet0'), preset: 'wipeIn', trigger: 'onClick', duration: 0.5 },
+        { object: on('rect'), preset: 'popIn', trigger: 'onClick', duration: 0.5 },
+      ])
+    else if (s === 2)
+      steps.push([
+        { object: on('bullet0'), preset: 'scaleIn', trigger: 'afterPrevious', duration: 0.5 },
+        { object: on('bullet1'), preset: 'rotateIn', trigger: 'withPrevious', duration: 0.5 },
+        { object: on('rect'), preset: 'moveTo', trigger: 'afterPrevious', duration: 0.8 },
+      ])
+    else
+      steps.push([
+        { object: on('photo'), preset: 'bounceIn', trigger: 'afterPrevious', duration: 0.6 },
+        { object: on('bullet0'), preset: 'flipIn', trigger: 'afterPrevious', duration: 0.5 },
+        { object: on('rect'), preset: 'dissolveIn', trigger: 'afterPrevious', duration: 0.5 },
+      ])
+  }
+  for (const [s, list] of steps.entries()) {
+    clicks.push(list.filter((st) => st.trigger === 'onClick').length)
+    for (const st of list)
+      ops.push({
+        command: 'animation.add',
+        input: {
+          slide: { index: s },
+          object: st.object,
+          preset: st.preset,
+          trigger: st.trigger,
+          duration: st.duration,
+          ...(st.params !== undefined ? { params: st.params } : {}),
+        },
+      })
+  }
+  return { ops, perSlide, clicks }
+}
+
+/** A text slide, a full-bleed autoplaying video, a text slide. */
+export function presentVideoOps(videoAsset: string): PresentScene {
+  const ops: Op[] = []
+  const perSlide: string[][] = []
+  for (let s = 1; s < 3; s++) ops.push({ command: 'slide.add', input: {} })
+  for (let s = 0; s < 3; s++) {
+    const slide = { index: s }
+    const ids: string[] = []
+    if (s === 1) {
+      ops.push({
+        command: 'object.create',
+        input: {
+          slide,
+          id: 'v1-video',
+          object: {
+            type: 'video',
+            assetId: videoAsset,
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+            rotation: 0,
+            opacity: 1,
+            autoplay: true,
+            muted: true,
+          },
+        },
+      })
+      ids.push('v1-video')
+    }
+    const title = { id: `v${s}-title`, x: 120, y: 80, width: 1680, height: 120 }
+    ops.push(
+      styledText(slide, {
+        ...title,
+        text: `Video deck ${s + 1}: ${sentence(s + 50, 4)}`,
+        fontSize: 64,
+        weight: 700,
+        color: s === 1 ? '#ffffff' : '#111111',
+      }),
+    )
+    ids.push(title.id)
+    perSlide.push(ids)
+  }
+  return { ops, perSlide }
+}

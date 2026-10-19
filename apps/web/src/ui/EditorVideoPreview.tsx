@@ -23,14 +23,19 @@
  * — the Pixi canvas, transform handles, snap guides — so it stays in
  * lockstep.
  *
- * Present mode keeps using VideoOverlay (compositor-driven) because
- * there's no CSS scale to fight with there.
+ * Present mode renders it too, with the video the presentation buffered
+ * before it started (renderer/presentVideos.ts, through
+ * present/presentVideosContext.ts): that element is already on its first
+ * frame and attached to the renderer, so the preview only plays it — no
+ * video-info request, no load, no poster-to-live swap on the advance — and
+ * hands it back paused on its first frame when the slide leaves the stage.
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Play, Pause, Volume2, VolumeX } from 'lucide-react'
 import type { VideoObject } from '@narrative/shared'
 import { useVideoInfo } from '../state/useVideoInfo.js'
+import { usePresentVideos } from '../present/presentVideosContext.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useCommand } from '../state/useCommand.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
@@ -52,8 +57,19 @@ export interface EditorVideoPreviewProps {
 
 export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPreviewProps) {
   const isPresent = mode === 'present'
-  const { info, refresh } = useVideoInfo(videoObject.assetId !== '' ? videoObject.assetId : null)
+  // Present mode: the element the presentation buffered for this object.
+  const presentVideos = usePresentVideos()
+  const pooled = isPresent ? (presentVideos?.pool.get(videoObject.id) ?? null) : null
+  const { info: fetchedInfo, refresh } = useVideoInfo(
+    pooled === null && videoObject.assetId !== '' ? videoObject.assetId : null,
+  )
+  const info = pooled?.info ?? fetchedInfo
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  // Read by the playback effect's listeners and cleanup (the context value is set once).
+  const presentVideosRef = useRef(presentVideos)
+  useEffect(() => {
+    presentVideosRef.current = presentVideos
+  }, [presentVideos])
   // MEDIA-1: refresh via ref so the playback effect's dep array stays stable.
   const refreshRef = useRef(refresh)
   refreshRef.current = refresh
@@ -75,22 +91,22 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
   // Sync muted state when prop changes (e.g. Inspector toggle).
   useEffect(() => {
     setMutedState(videoObject.muted ?? true)
-    const el = videoRef.current
+    const el = pooled?.element ?? videoRef.current
     if (el !== null) el.muted = videoObject.muted ?? true
-  }, [videoObject.muted])
+  }, [videoObject.muted, pooled])
 
   const handlePlayPause = useCallback(() => {
-    const el = videoRef.current
+    const el = pooled?.element ?? videoRef.current
     if (el === null) return
     if (el.paused) {
       void el.play().catch(() => undefined)
     } else {
       el.pause()
     }
-  }, [])
+  }, [pooled])
 
   const handleMuteToggle = useCallback(() => {
-    const el = videoRef.current
+    const el = pooled?.element ?? videoRef.current
     if (el === null) return
     const next = !muted
     el.muted = next
@@ -103,7 +119,7 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
         patch: { muted: next },
       })
     }
-  }, [muted, activeSlideId, command, videoObject.id])
+  }, [muted, activeSlideId, command, videoObject.id, pooled])
 
   // Clean up hover timeout on unmount.
   useEffect(() => {
@@ -130,7 +146,7 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
     if (info?.transcodeStatus !== 'done') return
     const playbackUrl = info.playbackUrl
     if (playbackUrl === null) return
-    const videoEl = videoRef.current
+    const videoEl = pooled?.element ?? videoRef.current
     if (videoEl === null) return
 
     // Volume + autoplay only matter in present mode. Editor stays muted/paused.
@@ -138,7 +154,9 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
       videoEl.volume = Math.max(0, Math.min(1, videoObject.volume ?? 1))
     }
 
-    videoEl.src = playbackUrl
+    // A pooled element has its source, its first frame and its renderer
+    // attachment already (renderer/presentVideos.ts).
+    if (pooled === null) videoEl.src = playbackUrl
 
     // MEDIA-1: recover from an expired short-TTL presigned playback URL. If a
     // byte-range request 403s after the URL's TTL lapses, the <video> fires
@@ -155,6 +173,12 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
         return
       }
       refreshing = true
+      if (pooled !== null) {
+        void presentVideosRef.current?.pool.refresh(videoObject.id).finally(() => {
+          refreshing = false
+        })
+        return
+      }
       const resumeAt = videoEl.currentTime
       const wasPlaying = !videoEl.paused
       void refreshRef
@@ -188,29 +212,36 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
     const onCanPlay = (): void => {
       attachLiveVideoToRenderer(videoObject.id, videoEl)
     }
-    if (videoEl.readyState >= 2) attachLiveVideoToRenderer(videoObject.id, videoEl)
-    else videoEl.addEventListener('canplay', onCanPlay, { once: true })
+    if (pooled === null) {
+      if (videoEl.readyState >= 2) attachLiveVideoToRenderer(videoObject.id, videoEl)
+      else videoEl.addEventListener('canplay', onCanPlay, { once: true })
+    }
 
     if (isPresent && videoObject.autoplay === true && videoObject.playOnClick !== true) {
-      const onCanPlay = (): void => {
+      if (videoEl.readyState >= 2) {
         void videoEl.play().catch(() => undefined)
+      } else {
+        const onCanPlay = (): void => {
+          void videoEl.play().catch(() => undefined)
+        }
+        videoEl.addEventListener('canplay', onCanPlay, { once: true })
       }
-      videoEl.addEventListener('canplay', onCanPlay, { once: true })
     }
 
     // Initial seek: poster frame wins, then trimStart, then 0. Computed
     // on the first loadedmetadata so it reflects the latest values from
-    // the refs (not a stale closure capture).
-    videoEl.addEventListener(
-      'loadedmetadata',
-      () => {
-        const trimStart = trimStartRef.current
-        const posterTime = posterTimeRef.current
-        const initialSeek = posterTime > 0 ? Math.max(trimStart, posterTime) : trimStart
-        if (initialSeek > 0) videoEl.currentTime = initialSeek
-      },
-      { once: true },
-    )
+    // the refs (not a stale closure capture). A pooled element is there already.
+    if (pooled === null)
+      videoEl.addEventListener(
+        'loadedmetadata',
+        () => {
+          const trimStart = trimStartRef.current
+          const posterTime = posterTimeRef.current
+          const initialSeek = posterTime > 0 ? Math.max(trimStart, posterTime) : trimStart
+          if (initialSeek > 0) videoEl.currentTime = initialSeek
+        },
+        { once: true },
+      )
     // Rewind to trimStart on Play if we're sitting on the poster preview.
     const onPlay = (): void => {
       const posterTime = posterTimeRef.current
@@ -281,7 +312,13 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
       videoEl.removeEventListener('seeked', onTime)
       videoEl.removeEventListener('error', onSrcError)
       delete currents[videoObject.id]
-      detachLiveVideoFromRenderer(videoObject.id)
+      if (pooled !== null) {
+        // The pool's element stays attached: its slide's scene is kept.
+        videoEl.removeEventListener('canplay', onCanPlay)
+        presentVideosRef.current?.released(videoObject.id)
+      } else {
+        detachLiveVideoFromRenderer(videoObject.id)
+      }
     }
     // Trim / poster deps intentionally omitted — we read them from refs
     // inside the listeners so updates don't tear down the video source.
@@ -292,6 +329,7 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
     videoObject.autoplay,
     videoObject.volume,
     isPresent,
+    pooled,
   ])
 
   // While transcode hasn't finished, render nothing — the Pixi
@@ -323,52 +361,62 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
         pointerEvents: isPresent ? 'auto' : 'none',
       }}
     >
-      <video
-        ref={videoRef}
-        muted={muted}
-        autoPlay={false}
-        loop={videoObject.loop ?? false}
-        playsInline
-        controls={videoObject.showControls === true}
-        // The Pixi sprite is the visible representation; the DOM
-        // <video> is just a decoder host. Hide it from accessibility
-        // tree so screen readers don't announce it twice (alt text is
-        // already exposed by whatever the deck / present mode chooses
-        // to surface).
-        aria-hidden="true"
-        aria-label={videoObject.alt ?? undefined}
-        onMouseEnter={() => {
-          if (isPresent) return
-          if (hoverTimeoutRef.current !== null) {
-            clearTimeout(hoverTimeoutRef.current)
-            hoverTimeoutRef.current = null
-          }
-          setHovered(true)
-        }}
-        onMouseLeave={() => {
-          if (isPresent) return
-          // Short debounce: allows the mouse to move from the video to the
-          // controls bar without the bar disappearing.
-          hoverTimeoutRef.current = setTimeout(() => setHovered(false), 80)
-        }}
-        onClick={(e) => {
-          if (!isPresent) return
-          const v = e.currentTarget
-          if (v.paused) void v.play().catch(() => undefined)
-          else v.pause()
-        }}
-        style={{
-          width: '100%',
-          height: '100%',
-          objectFit: videoObject.fit ?? 'contain',
-          pointerEvents: 'auto',
-          background: 'transparent',
-          // The Pixi sprite is the visible representation in both modes,
-          // so always hide this <video> — keeping it in DOM is required
-          // for VideoSource to decode into and for audio.
-          opacity: 0,
-        }}
-      />
+      {pooled !== null ? (
+        // The pooled element decodes out of sight (renderer/presentVideos.ts);
+        // its box here takes the click that plays or pauses it.
+        <div
+          aria-hidden="true"
+          style={{ width: '100%', height: '100%', pointerEvents: 'auto' }}
+          onClick={handlePlayPause}
+        />
+      ) : (
+        <video
+          ref={videoRef}
+          muted={muted}
+          autoPlay={false}
+          loop={videoObject.loop ?? false}
+          playsInline
+          controls={videoObject.showControls === true}
+          // The Pixi sprite is the visible representation; the DOM
+          // <video> is just a decoder host. Hide it from accessibility
+          // tree so screen readers don't announce it twice (alt text is
+          // already exposed by whatever the deck / present mode chooses
+          // to surface).
+          aria-hidden="true"
+          aria-label={videoObject.alt ?? undefined}
+          onMouseEnter={() => {
+            if (isPresent) return
+            if (hoverTimeoutRef.current !== null) {
+              clearTimeout(hoverTimeoutRef.current)
+              hoverTimeoutRef.current = null
+            }
+            setHovered(true)
+          }}
+          onMouseLeave={() => {
+            if (isPresent) return
+            // Short debounce: allows the mouse to move from the video to the
+            // controls bar without the bar disappearing.
+            hoverTimeoutRef.current = setTimeout(() => setHovered(false), 80)
+          }}
+          onClick={(e) => {
+            if (!isPresent) return
+            const v = e.currentTarget
+            if (v.paused) void v.play().catch(() => undefined)
+            else v.pause()
+          }}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: videoObject.fit ?? 'contain',
+            pointerEvents: 'auto',
+            background: 'transparent',
+            // The Pixi sprite is the visible representation in both modes,
+            // so always hide this <video> — keeping it in DOM is required
+            // for VideoSource to decode into and for audio.
+            opacity: 0,
+          }}
+        />
+      )}
 
       {/* Edit-mode hover controls bar.
           Hover state is tracked on the video element (pointer-events:auto)

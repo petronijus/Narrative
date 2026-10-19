@@ -92,10 +92,12 @@ L = a month or more.
   per object / per slide snapshots reused) with selector hooks
   (`apps/web/src/state/useDeckStore.ts`); `useSlides`, `useSlideObjects`,
   `useAnimations` and the active-slide provider read it.
-- **E2 (M)** Pixi HTMLText embeds every face of the family as base64 into each
-  text's SVG and waits a fixed 100 ms per raster in Safari
-  (`HTMLTextSystem.mjs:107`). Via `pnpm patch pixi.js`: embed only used faces,
-  revisit the delay, pre-decode, an LRU raster cache across slide switches.
+- **E2 (M) — faces done 2026-10-18** (Log), without patching Pixi: a text
+  embeds only the faces its weights and slopes match (keys written by
+  `renderer/pixiFontSink.ts`, the browser's matching in
+  `renderer/fontFaceMatch.ts`), and a text with nothing to embed names no
+  key, so WebKit skips Pixi's 100 ms wait for it. Open: the wait itself for
+  embedded fonts (upstream, Log), the raster cache (E3).
 - **E3 (M)** Slide switch re-mounts and re-rasterises everything: raster cache
   (E2) + idle pre-mount of neighbours.
 - **E4 (S) — done 2026-10-18** (Log): autofit re-measured grow-down texts on
@@ -131,19 +133,52 @@ L = a month or more.
 
 ### D. Present mode
 
-- **P1 (S–M)** Slide 1 waits for the whole deck's media (up to 30 s overlay);
-  the IndexedDB copy the preload writes is never read. Start at slide 1–2,
-  preload in order with bounded concurrency, drop or use the cache.
-- **P2 (M)** Transitions mount the incoming slide at click time: pre-mount the
-  next slide while the current one shows.
-- **P3** A 1080p playback rendition for 4K videos.
+**Goal (Petr, 2026-10-18): once the presenter is ready, every advance,
+transition, build animation and video runs without a hitch, a blink, a
+freeze or a visibly loading slide. A long load before the first slide is
+fine; smoothness is never traded for a faster start.** Measured per
+advance: dropped frames, the longest frame, long tasks, rasters, uploads,
+decodes and network requests after "ready" (all target 0 except frames at
+the display's rate).
+
+- **P0 ✅ 2026-10-18** Benches first: `present.*` layer I scenarios on real-size decks
+  (text-heavy, photo-heavy, video, builds, every transition type) in
+  Chromium and WebKit (the Tauri shell): advance forward/back, jump, the
+  presenter window, with the counters above after ready. Built
+  (`apps/web/e2e/perf/present.spec.ts`, seven benches, the work after ready
+  budgeted at 0) with a visual spec that reads every frame of an advance
+  back (`e2e/present-smooth.spec.ts`); Log. WebKit timings wait for Low
+  Power Mode off on AC.
+- **P1 (S–M) ✅ 2026-10-18** Ready means ready: the whole deck's media fetched and
+  decoded, every slide's text rasterised and its textures uploaded, before
+  the first slide shows (a progress overlay is fine). Was: slide 1 waited
+  for the media download only (up to 30 s), the IndexedDB copy the preload
+  wrote was never read, and nothing was decoded or rasterised ahead. Now
+  (ADR 0016): inputs loaded, pictures fetched, videos buffered, every slide
+  prepared off stage (or a GPU-budgeted window of a big deck), the
+  presenter view's pictures rendered — no timer cuts it short; the
+  IndexedDB copy is gone.
+- **P2 (M) ✅ 2026-10-18** Transitions mounted the incoming slide at click time: the
+  slides are kept prepared (mounted, rasterised, uploaded) and an advance,
+  a step back or a jump swaps a scene in (`SceneGraph.swapSlideScene`);
+  builds are compiled onto the prepared slide before it shows.
+- **P3 ✅ (pre-buffering) 2026-10-18** Videos pre-buffered and their first frame decoded
+  before their slide (`renderer/presentVideos.ts`). Open: a 1080p playback
+  rendition for 4K sources — the video worker keeps the source resolution
+  (a stream copy or a re-encode at source size), so a 4K video decodes and
+  uploads 8.3 Mpx a frame on a 1920 × 1080 slide; a server change, not built.
 
 ### E. WebKit (Safari, the Tauri shell)
 
-- **W1** = E2's Safari delay — check whether the Tauri WKWebView matches
-  `isSafari()`.
-- **W2** SVG foreignObject with embedded fonts is slow in WebKit: E2 now, E7
-  later.
+- **W1 — partly done 2026-10-18** (Log): Pixi waits 100 ms before every
+  raster in WebKit whenever a family is named; texts in system fonts (and
+  runs in fonts nobody registered) name none now. Texts in embedded fonts
+  still wait: Playwright's WebKit draws them correctly without the wait, so
+  the upstream option is proposed (Log). The Tauri prototype (WKWebView,
+  `isSafari()` true) lives on `feat/desktop`, not on this branch: still to
+  measure there.
+- **W2 — first step done 2026-10-18**: SVG bytes per raster now follow the
+  faces a text uses (E2); E7 later.
 - **W3** A raster counter in the renderer (engine-neutral, feeds G6).
 - **W4** AVIF decode at 2560 px (L3), antialias at DPR 2.
 - Low Power Mode: a lighter editor mode when frames are capped (fewer
@@ -211,7 +246,7 @@ L = a month or more.
 
 1. Phase 0: G1, G2, G3, G5 — plus the small standalone wins D1/S2, X1, E4, V2.
 2. L1 (✅) and E1 (✅) — the two largest everyday wins.
-3. E2 (pixi patch), P1, B2, L3.
+3. E2 (faces done without a Pixi patch), P0–P3 (present mode smooth, see D), B2 (✅), L3.
 4. R1, S3, L4.
 5. E7 as a measured spike, then the port if it wins.
 
@@ -810,3 +845,130 @@ slide.reorder.100 slide.add.100 --mode dev`, `just perf-accept`.
     cut it to 41 but cost login and present a few kB, so it was left out.
     The folder page keeps Yjs and the token schema (FolderDocProvider).
     no-op transactions, a decode and an empty `afterTransaction` each.
+
+- 2026-10-18, **P0–P3 done: present mode only composites after ready**
+  (renderer; ADR 0016, proposed — needs the tech-lead's sign-off). MacBook
+  M3 Pro, Chromium 156 on ANGLE Metal, 1× DPR, 1600 × 900, **Low Power Mode
+  on (AC profile)**, load 10–33; prod builds of HEAD + the instrumentation
+  ("before") and of this tree ("after"), served side by side and run
+  interleaved (before, after, …), 1 warm-up + 5 runs each, medians. A run
+  opens the presentation, waits until ready, then advances through every
+  slide and back (builds: clicks through the onClick steps; video: 3 s of
+  playback each way; jump: a link to slide 9 and back, three times;
+  presenter: the pop-out window drives).
+  - **P0, the benches**: `apps/web/e2e/perf/present.spec.ts` (seven
+    `present.*` benches, decks in `scenes.ts → present*Ops`: 12 text slides in
+    a folder font with page numbers and gradients; 12 slides of 12 distinct
+    3000 × 2000 photos; none / fade / push ×4 / cube / magic; four build
+    slides; a 10 s 1080p H.264 video), per pass: frames missed, frames over
+    two intervals, longest frame, p99, worst advance (input → incoming slide
+    quiet), long tasks, GL textures gained over the pass (E8), and the work
+    after ready budgeted at 0 (`perf/budgets/present.*.json`). The visual
+    spec `e2e/present-smooth.spec.ts` reads every frame of each advance back
+    (40-px cell means): a cut shows only the outgoing slide or the incoming
+    one whole; a transition is whole from its end on. It failed on the old
+    code at the first cut (frame 0 of slide 2: 193 off).
+  - **What hitched, and why** (before): every advance mounted the slide
+    (`sg.mount` 176 a text pass), rasterised its texts (176, 36 Mpx) and
+    uploaded them and its pictures in the frames that showed it (512
+    uploads, 113 Mpx, 512 mipmaps); the presenter view rendered the next
+    slide's thumbnail offscreen on every advance (10–20 renders, a second
+    WebGL context, PNG encodes: the 52–65 ms long tasks); photos were decoded
+    on the advance (`rm.texture.load` 9 a photo pass, 30–45 requests);
+    transitions mounted the incoming slide at the click; builds were applied
+    after the transition had shown their objects (a blink); a video slide
+    created its `<video>`, asked for its info and swapped the poster for live
+    frames after the advance.
+  - **Fixes**: `renderer/presentSlides.ts` (slides prepared off stage:
+    mounted, warmed into a 1 × 1 render texture until every raster landed and
+    every texture is uploaded, kept fresh against objects, background, page
+    number, surface, token colours and font faces; a GPU-budgeted window,
+    `ResourceManager.admitResident`, 1 GiB, the slide shown, its neighbours
+    and its links resident always); `SceneGraph.swapSlideScene` (and the
+    held-slide bookkeeping Canvas.tsx feeds, so the subscription's removal
+    and first emission of a swapped slide do nothing); `playTransition`
+    takes the prepared scene; `present/presentation.ts` (navigation: builds
+    compiled on the prepared slide before it shows, played on arrival, clicks
+    gated until then); `present/preloadMedia.ts` (pictures fetched through
+    the renderer's URL resolver; the IndexedDB copy removed);
+    `renderer/presentVideos.ts` (a buffered element per video, on its first
+    frame, attached before ready; EditorVideoPreview plays it);
+    `PresenterOverlay` asks for every slide's picture once; Pixi's GC off on
+    the present canvas; `PresentLayout` gates the first slide on all of it
+    (no 30 s timer).
+
+  | Chromium, prod (before → after) | ready s     | frames missed | > 2 intervals | longest frame ms | worst advance ms | long tasks ms | work after ready                                            |
+  | ------------------------------- | ----------- | ------------- | ------------- | ---------------- | ---------------- | ------------- | ----------------------------------------------------------- |
+  | `present.advance.text`          | 0.71 → 1.98 | 8 → 1         | 2 → 0         | 50 → 33          | 155 → 66         | 0 → 0         | 176 rasters, 512 uploads (113 Mpx), 176 mounts → 0          |
+  | `present.advance.photo`         | 0.74 → 2.10 | 3 → 1         | 1 → 0         | 50 → 33          | 192 → 66         | 52 → 0        | 53–69 uploads, 9 decodes, 30–45 requests, 132 mounts → 0    |
+  | `present.transition.all`        | 0.65 → 1.43 | 0 → 0         | 0 → 0         | 17 → 17          | 888 → 865        | 0 → 0         | 32 rasters, 90 uploads (53 Mpx), 8 decodes, 14 requests → 0 |
+  | `present.build.steps`           | 2.33 → 3.29 | 1 → 0         | 0 → 0         | 33 → 17          | 1839 → 1845      | 0 → 0         | 30 rasters, 65 uploads, 5 decodes, 7 requests → 0           |
+  | `present.video.play`            | 0.57 → 0.73 | 3 → 0         | 1 → 0         | 50 → 17          | 3030 → 3019      | 0 → 0         | 4 rasters, 6 mounts, 1 decode, 1 thumbnail → 0              |
+  | `present.jump.link`             | 0.72 → 2.05 | 2 → 0         | 1 → 0         | 50 → 17          | 259 → 90         | 0 → 0         | 12–16 uploads, 36 mounts, 3 requests → 0                    |
+  | `present.presenter.window`      | 0.71 → 1.95 | 12 → 0        | 4 → 0         | 67 → 17          | 187 → 68         | 65 → 0        | 176 rasters, 512 uploads, 20 thumbnails → 0                 |
+
+  Worst advance of the transition, build and video passes is the
+  transition, the build timeline and the 3 s hold themselves. The 1 frame
+  missed left in the text and photo passes is one 33 ms frame per pass
+  (frame p99 16.8 ms after, 33 ms before); GL textures gained over a pass: 0
+  in every bench (E8, no growth). Ready is longer by design (1–1.4 s on
+  these decks; the photo deck in dev: ~10 s). The build pass's
+  "before" counts and the photo/jump "before" uploads varied between runs
+  (timing-dependent), so those two were compared with `PERF_DISCOVER=1`.
+  - **WebKit**: not measured — Low Power Mode is on in the AC profile
+    (`pmset`: AC lowpowermode 1) and the harness refuses WebKit then (30 fps
+    cap). To run: switch it off, `just perf present.advance.text … --browser
+webkit`.
+  - **Open**: a 1080p playback rendition for 4K sources (the video worker
+    keeps the source resolution: 8.3 Mpx decoded and uploaded a frame on a
+    1920 × 1080 slide; server change); the editor's slide switch could use
+    the same cache (E3); the `idb` dependency is unused now (dropping it
+    needs a lockfile change).
+
+- 2026-10-18, **E2 (faces), W1 (system fonts), W2 (first step)** (MacBook,
+  load 10–38 from a parallel e2e run; no Pixi patch):
+  - Measured first (`rasterbench`, an SVG raster built as HTMLTextSystem
+    builds it, median of 15): Verdana's four TTF faces are 944 kB of
+    URI-encoded SVG per text, one face 259 kB; Chromium serialise + load +
+    draw 26 → 8 ms per raster, WebKit 25 → 12 ms cold, 13 → 4 ms warm. The
+    bundled Inter is two variable files (upright + italic): 140 → 68 kB,
+    Chromium 4.9 → 2.8 ms. Every face is decoded per raster, so the cost
+    is linear in the faces a family has, not the ones a text draws with.
+  - Faces: `style.fontFamily` holds keys (`nrf-<n>`), one per family a text
+    uses, standing for the faces its weights × slopes × width match
+    (`renderer/fontFaceMatch.ts`: CSS Fonts 4 §5.2 — width, slope, weight,
+    ranges for variable faces; an angle-less `oblique` face is also matched
+    as the italic slope, as Chromium and WebKit do, and both picks are
+    embedded). The rules behind a key declare the real family, and the
+    text's CSS stack (`cssOverrides`) is unchanged, so fallbacks, synthetic
+    bold/italic and line metrics are what they were. Inter is registered
+    from its bytes like a folder font. A run made bold/italic or set in
+    another family re-keys the text (`syncHtmlTextFontKeys`); a face that
+    lands later re-keys table cells and component leaves too
+    (`refreshHtmlTextFontKeys`). Run markup writes `font-family: ` with a
+    space, so Pixi's markup scan finds nothing to wait for.
+  - Proof of identical pixels: `e2e/htmltext-face-subset.spec.ts` draws 78
+    requests × 2 families (7 faces of 4 files under awkward descriptors; 2
+    upright faces for synthesis) with the whole family and with the subset
+    — equal in Chromium and in WebKit. It caught the oblique/italic tie.
+  - Counters: `text.raster.fontKb` (and `thumb.…`), `text.raster.safariDelay`
+    (registered, not budgeted). The bench scenes are all Arial, so Chromium
+    timings cannot move; slide.switch.100 alternated before/after/before/
+    after: input.p50 28.1 / 31.3 / 27.8 / 26.4 ms, settle 66–69 ms — noise.
+    WebKit: `safariDelay` 12 → 0 per switch, 6 → 0 per open; input.p50 399 →
+    394 ms, open.settled 3880 → 3880 ms (WebKit's frames dominate there).
+    Budgets unchanged (counts identical; budgets are measured in dev).
+  - Upstream (Petr to decide): an option on HTMLTextSystem to skip or
+    shorten `loadSVGImage`'s fixed 100 ms Safari delay (e.g. when the
+    embedded faces are already decoded in the document, or `delay: 0`),
+    measured unnecessary in Playwright WebKit 27.2 for data-URL faces.
+  - E3's raster cache was moved to another workstream (pre-rendered slides).
+- 2026-10-19, **found while fixing a test race**: the first live-thumbnail
+  capture of a slide (`captureSlideCanvas`, Pixi `extract.canvas`) spends
+  ~290 ms in a synchronous `readPixels` on the main thread — a long task in
+  the editor after the first edit of a slide. To do: read back
+  asynchronously (a PBO / `fenceSync` read, or `createImageBitmap` of the
+  canvas) or from a smaller target. `renderer-visual.spec.ts` and
+  `inspector-flows.spec.ts` sampled the thumbnail after a fixed 800 ms and
+  raced the 500 ms edit debounce plus this readback (failed 1 in 3 on
+  e71d31d4 too); they now poll for the expected colour.

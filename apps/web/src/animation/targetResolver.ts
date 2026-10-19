@@ -62,7 +62,15 @@ interface InternalHandle extends PixiTargetHandle {
  * detach + remount), invalidujeme cached handle porovnáním container
  * reference. Bez toho by GSAP zapisoval na destroyed container.
  */
-export function createPixiTargetResolver(sceneGraph: SceneGraph): TargetResolver {
+/**
+ * Where the resolver finds a target's container: the scene graph, or a slide
+ * scene prepared off stage (renderer/presentSlides.ts) — present mode
+ * compiles an incoming slide's build animations before the slide is shown, so
+ * their first state is on it from its first frame.
+ */
+export type TargetNodeSource = Pick<SceneGraph, 'getNode'>
+
+export function createPixiTargetResolver(sceneGraph: TargetNodeSource): TargetResolver {
   const cache = new Map<string, InternalHandle>()
 
   function buildHandle(targetId: string, container: Container): InternalHandle {

@@ -20,19 +20,6 @@ import type { VideoObject } from '@narrative/shared'
 import type { VideoInfoResponse } from '../api/client'
 
 // ---------------------------------------------------------------------------
-// Mock mediaCache
-// ---------------------------------------------------------------------------
-
-vi.mock('../state/mediaCache.js', () => ({
-  openMediaCache: vi.fn(async () => ({
-    get: vi.fn().mockResolvedValue(null), // cache miss — always fetch
-    put: vi.fn().mockResolvedValue(undefined),
-    clear: vi.fn(),
-    size: vi.fn().mockResolvedValue(0),
-  })),
-}))
-
-// ---------------------------------------------------------------------------
 // Mock useVideoInfo
 // ---------------------------------------------------------------------------
 

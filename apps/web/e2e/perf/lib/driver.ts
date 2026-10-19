@@ -196,6 +196,12 @@ function headline(def: BenchDef<never>, r: BenchResult): string {
     'settle',
     'open.mounted',
     'open.settled',
+    'present.ready',
+    'present.dropped',
+    'present.hitches',
+    'frame.max',
+    'advance.max',
+    'longTask.max',
     'wall',
   ].filter((m) => r.summary[m] !== undefined)
   const time = pick.map((m) => `${m}=${fmt(r.summary[m]!.median)}`).join(' ')

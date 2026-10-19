@@ -104,7 +104,7 @@ COMPONENTS = [
 MEDIA = ["image-upload", "component-master-upload", "upload-crash-repro", "agent-upload-session"]
 PPTX = ["pptx-drop-import", "pptx-drop-into-panel", "pptx-import-fidelity", "pptx-roundtrip"]
 AGENT = ["agent-activity", "agent-confirm", "agent-upload-session", "mcp-oauth-consent"]
-PRESENT = ["present-layout", "slide-transition", "animation-commands"]
+PRESENT = ["present-layout", "present-smooth", "slide-transition", "animation-commands"]
 INSPECTOR = [
     "inspector-flows",
     "inspector-appearance-commands",
@@ -134,7 +134,15 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/state/SelectionContext.tsx", ["keyboard-shortcuts", "inspector-flows", "layers-panel"]),
     # ── web: renderer and canvas ──────────────────────────────────────────
     ("apps/web/src/renderer/playTransition*", PRESENT),
+    # Present mode's prepared slides and pooled videos (ADR 0016).
+    ("apps/web/src/renderer/present*", PRESENT),
+    # What a complete picture of the deck waits for: present mode and the render page.
+    ("apps/web/src/state/useDeckInputs.ts", PRESENT + ["render-page", "render-export"]),
     ("apps/web/src/renderer/*", RENDER),
+    # Which slide a change set belongs to: the canvas (and present mode's scene swaps).
+    ("apps/web/src/state/useSlideObjectChanges.ts", RENDER + PRESENT),
+    # Animation targets: present mode's builds and the editor's timeline preview.
+    ("apps/web/src/animation/*", PRESENT),
     ("apps/web/src/components/FolderTokensBridge.tsx", RENDER),
     ("apps/web/src/components/PresentLayout.tsx", PRESENT),
     ("apps/web/src/components/presentStartSlide.ts", PRESENT),

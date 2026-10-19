@@ -209,13 +209,17 @@ Ids are `area.tool.operation`.
 
 ### Animation and presenting
 
-| Id                                     | Operation                                  |
-| -------------------------------------- | ------------------------------------------ |
-| `animation.compile`                    | layer M: compile a 50-step timeline        |
-| `animation.timeline.scrub`             | scrub the timeline                         |
-| `animation.play`                       | play 30 concurrent animations: frame times |
-| `present.start.{10,100}`               | click to first slide (photo deck)          |
-| `present.transition.{fade,push,magic}` | frame times during the transition          |
+| Id                                | Operation                                                                                                                                                                                                      |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `animation.compile`               | layer M: compile a 50-step timeline                                                                                                                                                                            |
+| `animation.timeline.scrub`        | scrub the timeline                                                                                                                                                                                             |
+| `animation.play`                  | play 30 concurrent animations: frame times                                                                                                                                                                     |
+| `present.advance.{text,photo}` ✅ | a pass through 12 slides and back after ready (present.spec.ts): frames missed, longest frame, long tasks, time to ready; rasters, uploads, mounts, decodes, requests and thumbnails after ready budgeted at 0 |
+| `present.transition.all` ✅       | the same over none, fade, push ×4, cube and magic                                                                                                                                                              |
+| `present.build.steps` ✅          | afterPrevious chains, onClick steps (clicked), withPrevious groups, moveTo                                                                                                                                     |
+| `present.video.play` ✅           | a 10 s 1080p video slide played 3 s, there and back                                                                                                                                                            |
+| `present.jump.link` ✅            | slide links to a slide far away and back, three times                                                                                                                                                          |
+| `present.presenter.window` ✅     | the pop-out presenter window drives the pass; its own work is counted too                                                                                                                                      |
 
 ### Agent surface, workers, import/export (layer S)
 

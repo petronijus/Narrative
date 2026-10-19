@@ -15,8 +15,13 @@ import type { SlideObject } from '@narrative/shared'
 import type { RenderScheduler } from './RenderScheduler.js'
 import type { SceneGraph } from './SceneGraph.js'
 
-/** Called after every editor frame: when it started, how long `render` took. */
-export type RenderHook = (startedAt: number, ms: number) => void
+/**
+ * Called after every `render` of the editor's renderer: when it started, how
+ * long it took, and whether it drew the screen — present mode also draws
+ * slides prepared off stage into a texture of their own
+ * (renderer/presentSlides.ts), which is not a frame.
+ */
+export type RenderHook = (startedAt: number, ms: number, toScreen: boolean) => void
 
 /**
  * Wrap the editor renderer's `render` so every frame — the scheduler's, a
@@ -28,10 +33,13 @@ export function instrumentRender(app: Application, hook: RenderHook): () => void
   const original = renderer.render
   const wrapped = function (this: unknown, ...args: unknown[]): unknown {
     const t = performance.now()
+    const opts = args[0] as { target?: unknown } | null | undefined
+    const toScreen =
+      typeof opts !== 'object' || opts === null || !('target' in opts) || !opts.target
     try {
       return original.apply(this, args)
     } finally {
-      hook(t, performance.now() - t)
+      hook(t, performance.now() - t, toScreen)
     }
   }
   renderer.render = wrapped

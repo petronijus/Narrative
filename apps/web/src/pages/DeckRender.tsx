@@ -82,10 +82,9 @@ import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
-import { useDeckRole } from '../state/DeckRoleContext.js'
 import { useFolderFontsOptional } from '../state/useFolderFonts.js'
 import { useDeckFontsOptional } from '../state/useDeckFonts.js'
-import { useFolderTokensSettled } from '../state/FolderDocProvider.js'
+import { useDeckInputsWaitingFor } from '../state/useDeckInputs.js'
 import type { DeckShellContextValue } from '../components/DeckShell.js'
 import { resolveRenderSlide } from './renderSlide.js'
 
@@ -231,11 +230,9 @@ export function DeckRender() {
   const { activeSlideId, setActiveSlideId } = useActiveSlide()
   const { objects } = useSlideObjects()
   const canvas = useCanvasInstance()
-  const { folderId, isLoading: roleLoading } = useDeckRole()
   const folderFonts = useFolderFontsOptional()
   // A component master's render page has no deck fonts: its faces are its folder's.
   const deckFonts = useDeckFontsOptional() ?? NO_DECK_FONTS
-  const tokensSettled = useFolderTokensSettled()
 
   const target = useMemo(
     () => (synced ? resolveRenderSlide(listSlides(deckCtx), slideParam) : null),
@@ -247,28 +244,13 @@ export function DeckRender() {
   const [outcome, setOutcome] = useState<{ for: string | null; status: RenderStatus } | null>(null)
 
   // What the paint still waits for, by name (reported if it never comes).
+  const inputsWaitingFor = useDeckInputsWaitingFor()
   const waitingFor = useMemo(() => {
-    const out: string[] = []
-    if (!synced) out.push('deck document')
-    if (canvas === null) out.push('canvas')
-    if (roleLoading || folderId === null) out.push('deck folder')
-    else if (folderFonts === null || folderFonts.folderId !== folderId || folderFonts.loading)
-      out.push('folder fonts')
-    if (deckFonts.loading) out.push('deck fonts')
-    if (!tokensSettled) out.push('folder tokens')
+    const out = [...inputsWaitingFor]
+    if (canvas === null) out.splice(out[0] === 'deck document' ? 1 : 0, 0, 'canvas')
     if (target !== null && activeSlideId !== target.slide.id) out.push('slide shown')
     return out
-  }, [
-    synced,
-    canvas,
-    roleLoading,
-    folderId,
-    folderFonts,
-    deckFonts.loading,
-    tokensSettled,
-    target,
-    activeSlideId,
-  ])
+  }, [inputsWaitingFor, canvas, target, activeSlideId])
 
   // Failures known before any settling: they end the page at once.
   const failure = useMemo<RenderStatus | null>(() => {

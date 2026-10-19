@@ -87,9 +87,11 @@ export function showsSlideNumber(serialised: string): boolean {
 /**
  * The font families of `fontVersions` named in the serialised slide, with
  * their versions ('' when none is). A name that only appears inside a text's
- * words costs one render too many, never a stale one.
+ * words costs one render too many, never a stale one. Also how present mode
+ * tells a slide prepared before a face of its families arrived
+ * (renderer/presentSlides.ts).
  */
-function fontSignature(serialised: string, versions: ReadonlyMap<string, number>): string {
+export function fontSignature(serialised: string, versions: ReadonlyMap<string, number>): string {
   let out = ''
   for (const [family, version] of versions) {
     if (serialised.includes(family)) out += `|${family}:${version}`

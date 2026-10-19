@@ -7,7 +7,12 @@
  *   - Left  — current slide's speaker notes (plain text preview from
  *             useSlideNotes; keeps the rich-text formatting as newlines +
  *             list markers so you can glance at them during a talk).
- *   - Mid   — next slide preview via useSlideThumbnails.
+ *   - Mid   — next slide preview via useSlideThumbnails. Every presentable
+ *             slide's picture is asked for from the start, shown or not
+ *             (performance.md → D): present mode waits for them before its
+ *             first slide (`onThumbnails`), so an advance only swaps an
+ *             <img> — it used to render the next slide offscreen (a Pixi
+ *             application of its own, a PNG encode) on every advance.
  *   - Right — elapsed timer from the moment the overlay was mounted.
  *
  * Toggled by a prop from PresentLayout (keyboard 'N' in parent).
@@ -22,7 +27,7 @@
  * relationship — we don't need to touch the canvas here.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSlides } from '../state/useSlides.js'
 import { useSlideNotes } from '../state/useSlideNotes.js'
 import { useSlideThumbnails } from '../state/useSlideThumbnails.js'
@@ -54,6 +59,8 @@ interface PresenterOverlayProps {
    * column grows, typography scales up, thumbnail column gets bigger.
    */
   fullscreen?: boolean
+  /** How many of the presentable slides have their picture, of how many (after each change). */
+  onThumbnails?: (ready: number, total: number) => void
 }
 
 function formatElapsed(ms: number): string {
@@ -69,24 +76,34 @@ export function PresenterOverlay({
   activeSlideId,
   visible,
   fullscreen = false,
+  onThumbnails,
 }: PresenterOverlayProps) {
   const slides = useSlides()
   const { fragment: notesFragment, text: notesText } = useSlideNotes()
 
   // P3: present-mode navigation (and the counter) ignores skipped slides.
-  const presentable = slides.filter((s) => s.skipped !== true)
+  // Memoised on the slide ids: the picture request must not change with an edit.
+  const presentableKey = slides
+    .filter((s) => s.skipped !== true)
+    .map((s) => s.id)
+    .join('\n')
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- recomputed when the presentable ids change
+  const presentable = useMemo(() => slides.filter((s) => s.skipped !== true), [presentableKey])
   const activeIdx = presentable.findIndex((s) => s.id === activeSlideId)
   const nextSlide =
     activeIdx >= 0 && activeIdx < presentable.length - 1
       ? (presentable[activeIdx + 1] ?? null)
       : null
 
-  // Only thumbnail the next slide (and the current one so the renderer keeps
-  // it warm). Limiting the set keeps the background renderer's work bounded.
-  const requestedIds: string[] = []
-  if (activeSlideId !== null) requestedIds.push(activeSlideId)
-  if (nextSlide !== null) requestedIds.push(nextSlide.id)
+  // Every presentable slide's picture, rendered while the presentation is
+  // prepared: the set does not change with the slide shown, so an advance
+  // renders nothing (the store renders a slide again only when it changes).
+  const requestedIds = useMemo(() => presentable.map((s) => s.id), [presentable])
   const thumbnails = useSlideThumbnails(requestedIds)
+  const readyCount = requestedIds.filter((id) => thumbnails.has(id)).length
+  useEffect(() => {
+    onThumbnails?.(readyCount, requestedIds.length)
+  }, [onThumbnails, readyCount, requestedIds.length])
 
   // The rich notes' code, ready before the presenter opens the view ('N').
   useEffect(() => preloadWhenIdle([PresenterNotes]), [])
