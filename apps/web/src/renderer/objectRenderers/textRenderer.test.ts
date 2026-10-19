@@ -4,33 +4,35 @@
  * Locks in the contract between `buildStyleOpts` and Pixi v8's HTMLText
  * pipeline. The pipeline does two distinct things with `style.fontFamily`:
  *
- *   1. `extractFontFamilies` uses it (or each Array entry) as the EXACT
- *      key into Pixi's asset Cache to find an `@font-face` URL to embed
- *      in the SVG it rasterises.
+ *   1. `extractFontFamilies` uses each Array entry as the EXACT key into
+ *      Pixi's asset Cache to find the `@font-face` rules to embed in the SVG
+ *      it rasterises.
  *   2. `textStyleToCSS` interpolates it verbatim into the SVG's
  *      `font-family:` CSS rule.
  *
- * FolderFontLoader registers folder-uploaded fonts under their BARE
- * family name (e.g. `Northwind Sans ST Pro 60 Black-and-url`). For the
- * cache lookup to hit, `style.fontFamily` must equal the bare name. For
- * the resulting CSS to be VALID for family names containing digits or
- * spaces, the rendered rule needs CSS-side quoting. We square that
- * circle by passing the bare name as `style.fontFamily` AND layering a
- * `cssOverrides` entry with a properly quoted + fallback-stacked
- * declaration that wins the cascade.
+ * The entries are therefore the keys of the faces the text draws with
+ * (renderer/fontChanges.ts → `htmlTextFontKeys`, from the text's face
+ * request), and the CSS that draws is a `cssOverrides` entry with the
+ * properly quoted, fallback-stacked family names, which wins the cascade.
  *
  * If either invariant breaks, fonts like "Northwind Sans ST Pro 60 Black"
  * silently fall back to system Arial in the SVG renderer — that's the
  * regression these tests prevent.
  */
 
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { pixiMock } from '../../test/pixiMock'
 
 vi.mock('pixi.js', () => pixiMock())
 
 import { Container, HTMLText } from 'pixi.js'
-import { buildStyleOpts, lineOvershootFor, textRenderer } from './textRenderer.js'
+import {
+  buildStyleOpts,
+  htmlTextFaceRequest,
+  lineOvershootFor,
+  textRenderer,
+} from './textRenderer.js'
+import { _resetFontChangesForTests, setHtmlTextFace } from '../fontChanges.js'
 import type { TextObject } from '@narrative/shared'
 import * as Y from 'yjs'
 
@@ -54,34 +56,65 @@ function makeText(overrides: Partial<TextObject> = {}): TextObject {
 }
 
 describe('buildStyleOpts — Pixi HTMLText cache + CSS bridge', () => {
-  it('passes BARE family names as style.fontFamily (cache lookup hits)', () => {
-    const opts = buildStyleOpts(makeText({ fontFamily: 'Northwind Sans ST Pro 60 Black' }))
-    // Pixi's extractFontFamilies uses each entry of the array as a cache
-    // key. The bare name matches FolderFontLoader's registration.
-    expect(opts.fontFamily).toEqual(['Northwind Sans ST Pro 60 Black'])
+  afterEach(() => _resetFontChangesForTests())
+
+  const face = (key: string, family: string, weight: string, style = 'normal') =>
+    setHtmlTextFace({ key, family, weight, style, bytes: new Uint8Array([0, 1, 0, 0]).buffer })
+
+  it('names the BARE families the text draws with in its face request', () => {
+    const request = htmlTextFaceRequest(makeText({ fontFamily: 'Northwind Sans ST Pro 60 Black' }))
+    expect(request.families).toEqual(['Northwind Sans ST Pro 60 Black'])
+    expect(request.weights).toEqual([400])
+    expect(request.styles).toEqual(['normal'])
+    expect(request.stretch).toBe(100)
   })
 
-  it('leaves out names Pixi would write into its SVG unescaped (a quote, </style>)', () => {
+  it('leaves out names that cannot be embedded (a quote, </style>)', () => {
     const doc = new Y.Doc()
     const text = doc.getText('t')
     text.insert(0, 'a', { fontFamily: "O'Brien Sans" })
     text.insert(1, 'b', { fontFamily: 'Brand Sans' })
-    const opts = buildStyleOpts(
-      makeText({ fontFamily: 'X</style><img src=x>', text } as Partial<TextObject>),
-    )
-    expect(opts.fontFamily).toEqual(['Arial', 'Brand Sans'])
+    const data = makeText({ fontFamily: 'X</style><img src=x>', text } as Partial<TextObject>)
+    expect(htmlTextFaceRequest(data).families).toEqual(['Arial', 'Brand Sans'])
     // The override's quoted stack cannot end the <style> either.
-    expect(opts.cssOverrides[0]).not.toContain('<')
+    expect(buildStyleOpts(data).cssOverrides[0]).not.toContain('<')
   })
 
-  it("adds every run's family, so Pixi embeds those faces too", () => {
+  it("adds every run's and level's family, weight and slope", () => {
     const doc = new Y.Doc()
     const text = doc.getText('t')
     text.insert(0, 'Run ')
-    text.insert(4, 'Wide', { fontFamily: 'Brand Sans' })
-    text.insert(8, ' more', { fontFamily: '"Brand Sans", Druk Wide' })
-    const opts = buildStyleOpts(makeText({ fontFamily: 'Inter', text } as Partial<TextObject>))
-    expect(opts.fontFamily).toEqual(['Inter', 'Brand Sans', 'Druk Wide'])
+    text.insert(4, 'Wide', { fontFamily: 'Brand Sans', fontWeight: 700 })
+    text.insert(8, ' more', { fontFamily: '"Brand Sans", Druk Wide', italic: true })
+    const request = htmlTextFaceRequest(
+      makeText({
+        fontFamily: 'Inter',
+        fontWeight: 300,
+        fontStretch: 87.5,
+        text,
+        listLevels: [{ fontFamily: 'Level Serif', fontWeight: 'bold' }],
+      } as Partial<TextObject>),
+    )
+    expect(request.families).toEqual(['Inter', 'Level Serif', 'Brand Sans', 'Druk Wide'])
+    expect(request.weights).toEqual([300, 700])
+    expect(request.styles).toEqual(['normal', 'italic'])
+    expect(request.stretch).toBe(87.5)
+  })
+
+  it('gives Pixi the keys of the matched faces, none for families with no faces', () => {
+    face('r', 'Brand Sans', '400')
+    face('b', 'Brand Sans', '700')
+    face('i', 'Brand Sans', '400', 'italic')
+    const plain = buildStyleOpts(makeText({ fontFamily: 'Brand Sans, Arial' }))
+    expect(plain.fontFamily).toHaveLength(1)
+    expect(plain.fontFamily[0]).toMatch(/^nrf-\d+$/)
+    // A system font has nothing to embed: no key, so Pixi embeds nothing
+    // (and WebKit skips its 100 ms wait).
+    expect(buildStyleOpts(makeText()).fontFamily).toEqual([])
+    expect(buildStyleOpts(makeText({ fontFamily: 'Roboto, sans-serif' })).fontFamily).toEqual([])
+    // Bold needs another face: another key.
+    const bold = buildStyleOpts(makeText({ fontFamily: 'Brand Sans', fontWeight: 700 }))
+    expect(bold.fontFamily).not.toEqual(plain.fontFamily)
   })
 
   it('emits a cssOverrides entry that re-declares font-family with CSS-safe quoting', () => {
@@ -103,15 +136,13 @@ describe('buildStyleOpts — Pixi HTMLText cache + CSS bridge', () => {
 
   it('falls back to Arial when fontFamily is undefined', () => {
     const opts = buildStyleOpts(makeText())
-    // No custom family → no cache lookup needed → pass a CSS-valid
-    // system font as the bare name.
-    expect(opts.fontFamily).toEqual(['Arial'])
+    expect(htmlTextFaceRequest(makeText()).families).toEqual(['Arial'])
     expect(opts.cssOverrides[0]).toContain('Arial')
   })
 
   it('preserves single-word family names as-is (Inter → Inter)', () => {
     const opts = buildStyleOpts(makeText({ fontFamily: 'Inter' }))
-    expect(opts.fontFamily).toEqual(['Inter'])
+    expect(htmlTextFaceRequest(makeText({ fontFamily: 'Inter' })).families).toEqual(['Inter'])
     // The CSS override still applies a fallback stack on top, which is
     // fine — `Inter` resolves first when installed, fallback when not.
     expect(opts.cssOverrides[0]).toContain('Inter')
@@ -120,9 +151,12 @@ describe('buildStyleOpts — Pixi HTMLText cache + CSS bridge', () => {
 
   it('handles author-supplied stacks (comma-separated fontFamily) name by name', () => {
     const opts = buildStyleOpts(makeText({ fontFamily: 'Roboto, sans-serif' }))
-    // Author included their own fallback stack — each name is its own
-    // cache key (a folder font anywhere in the stack is embedded).
-    expect(opts.fontFamily).toEqual(['Roboto', 'sans-serif'])
+    // Author included their own fallback stack — each name is asked for
+    // (a folder font anywhere in the stack is embedded).
+    expect(htmlTextFaceRequest(makeText({ fontFamily: 'Roboto, sans-serif' })).families).toEqual([
+      'Roboto',
+      'sans-serif',
+    ])
     // The override should respect the author's stack rather than appending
     // another generic — cssFontFamily detects the comma and returns the
     // input unchanged.

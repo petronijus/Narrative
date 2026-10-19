@@ -66,7 +66,11 @@ import { markRenderDirty } from '../RenderScheduler.js'
 import { applyFlip } from './applyFlip.js'
 import { resolveAlpha, resolveColour } from '../colourResolver.js'
 import { cssFontFamily } from '../fontFallback.js'
-import { isEmbeddableFamilyName } from '../fontChanges.js'
+import {
+  htmlTextFontKeys,
+  isEmbeddableFamilyName,
+  type HtmlTextFaceRequest,
+} from '../fontChanges.js'
 import { getRenderingSlideNumber } from '../slideNumberContext.js'
 
 /**
@@ -360,48 +364,109 @@ function colorWithAlpha(hex: number, alpha: number): string {
   return base + a.toString(16).padStart(2, '0')
 }
 
-/**
- * Walk Y.Text deltas and collect every distinct `fontFamily` attribute
- * present on any run (see `htmlTextFontFamilies`).
- */
-function collectRunFontFamilies(data: TextObject): string[] {
-  const t = data.text
-  if (!(t instanceof Y.Text)) return []
-  const delta = toDelta(t)
-  const set = new Set<string>()
-  for (const op of delta) {
-    const fam = op.attributes?.['fontFamily']
-    if (typeof fam === 'string' && fam !== '') set.add(fam)
-  }
-  return [...set]
+/** A CSS weight as a number (`normal` 400, `bold` 700); anything else is the default. */
+function numericFontWeight(w: unknown): number {
+  if (typeof w === 'number' && Number.isFinite(w)) return w
+  if (w === 'bold') return 700
+  return 400
 }
 
 /**
- * Every font family the text uses, by name — the box's (Arial when it has
- * none) and each run's — for `HTMLTextStyle.fontFamily`. Pixi embeds an
- * `@font-face` into the SVG it rasterises for each name it finds in its
- * asset Cache (`getFontCss`), and an SVG image sees no other font: a family
- * left out paints in a fallback face wherever the font is not installed (the
- * render worker always). Pixi also scans the run markup, but its pattern
- * stops at the first space or quote, so a run in "Brand Sans" was never
- * embedded; the names are given here instead. The `font-family` rule Pixi
- * writes from this array is replaced by `cssOverrides` (below) — but Pixi
- * writes it unescaped into a `<style>` set through innerHTML, so a name
- * that is not plain letters, digits, spaces, hyphens and underscores is
- * left out (renderer/fontChanges.ts, `isEmbeddableFamilyName`): its text
- * paints in the fallback face; a quote or `</style>` breaks nothing.
+ * What the text draws with, for the faces Pixi embeds into its SVG
+ * (renderer/fontChanges.ts → `htmlTextFontKeys`, docs/plans/performance.md
+ * → E2): every family its CSS names — the box's stack (Arial when it has
+ * none), each run's and each list level's — and every weight and slope an
+ * element asks for, crossed (a superset is safe; a request left out would
+ * miss its face). The weights are the box's, the levels' and the runs'
+ * (`toHtml` writes a run's weight, `buildListedHtml` a level's into its
+ * runs); the slopes the box's and italic when a run is (`<i>`); the width
+ * is the box's (`cssOverrides`). A name that cannot be embedded
+ * (`isEmbeddableFamilyName`: a quote, `</style>`) is left out: its text
+ * paints in the fallback face.
  */
-export function htmlTextFontFamilies(data: TextObject): string[] {
-  const names = fontFamilyNames(typeof data.fontFamily === 'string' ? data.fontFamily : '').filter(
-    isEmbeddableFamilyName,
-  )
-  if (names.length === 0) names.push('Arial')
-  for (const run of collectRunFontFamilies(data)) {
-    for (const name of fontFamilyNames(sanitizeFontFamily(run) ?? '')) {
-      if (isEmbeddableFamilyName(name) && !names.includes(name)) names.push(name)
+export function htmlTextFaceRequest(data: TextObject): HtmlTextFaceRequest {
+  const families = fontFamilyNames(
+    typeof data.fontFamily === 'string' ? data.fontFamily : '',
+  ).filter(isEmbeddableFamilyName)
+  if (families.length === 0) families.push('Arial')
+  const addFamilies = (raw: string): void => {
+    for (const name of fontFamilyNames(sanitizeFontFamily(raw) ?? '')) {
+      if (isEmbeddableFamilyName(name) && !families.includes(name)) families.push(name)
     }
   }
-  return names
+  const weights = new Set<number>([numericFontWeight(data.fontWeight)])
+  const styles = new Set<'normal' | 'italic'>([data.italic === true ? 'italic' : 'normal'])
+  for (const level of data.listLevels ?? []) {
+    if (level === undefined) continue
+    if (typeof level.fontFamily === 'string' && level.fontFamily !== '')
+      addFamilies(level.fontFamily)
+    if (level.fontWeight !== undefined) weights.add(numericFontWeight(level.fontWeight))
+  }
+  if (data.text instanceof Y.Text && data.isSlideNumber !== true) {
+    for (const op of toDelta(data.text)) {
+      const a = op.attributes
+      if (a === undefined) continue
+      if (typeof a.fontFamily === 'string' && a.fontFamily !== '') addFamilies(a.fontFamily)
+      if (typeof a.fontWeight === 'number') weights.add(a.fontWeight)
+      if (a.italic === true) styles.add('italic')
+    }
+  }
+  return {
+    families,
+    weights: [...weights],
+    styles: [...styles],
+    stretch: data.fontStretch ?? 100,
+  }
+}
+
+/** The face request each style was built for (`createHtmlTextStyle`). */
+const STYLE_REQUESTS = new WeakMap<HTMLTextStyle, HtmlTextFaceRequest>()
+
+/**
+ * The HTMLText style of `data` (`buildStyleOpts`), remembering what it draws
+ * with, so a face that lands later can give it its keys
+ * (`refreshHtmlTextFontKeys`). Every HTMLText of the app — text boxes, table
+ * cells, component leaves — is styled through here.
+ */
+export function createHtmlTextStyle(data: TextObject, scale = 1): HTMLTextStyle {
+  const request = htmlTextFaceRequest(data)
+  const style = new HTMLTextStyle(buildStyleOpts(data, scale, request))
+  STYLE_REQUESTS.set(style, request)
+  return style
+}
+
+function sameKeys(a: unknown, b: readonly string[]): boolean {
+  return Array.isArray(a) && a.length === b.length && a.every((k, i) => k === b[i])
+}
+
+/**
+ * Give `textNode` the keys its text needs now, when they moved: a run made
+ * bold or italic, or set in another family, arrives as a text change with
+ * the style kept (`applyPatch`, `update`), and its face must be embedded
+ * too. Setting `style.fontFamily` re-rasterises; the same keys change
+ * nothing.
+ */
+export function syncHtmlTextFontKeys(textNode: HTMLText, data: TextObject): void {
+  const style = textNode.style as HTMLTextStyle
+  const request = htmlTextFaceRequest(data)
+  STYLE_REQUESTS.set(style, request)
+  const keys = htmlTextFontKeys(request)
+  if (!sameKeys(style.fontFamily, keys)) style.fontFamily = keys
+}
+
+/**
+ * For SceneGraph.refreshTextNodesUsingFamily: whether the HTMLText draws with
+ * `family`, and if so, its keys for the faces registered now (a face that
+ * landed after it was styled — a table cell, a component leaf — would
+ * otherwise never be embedded). Its raster is the caller's to invalidate.
+ */
+export function refreshHtmlTextFontKeys(textNode: HTMLText, family: string): boolean {
+  const style = textNode.style as HTMLTextStyle
+  const request = STYLE_REQUESTS.get(style)
+  if (request === undefined || !request.families.includes(family)) return false
+  const keys = htmlTextFontKeys(request)
+  if (!sameKeys(style.fontFamily, keys)) style.fontFamily = keys
+  return true
 }
 
 /**
@@ -419,14 +484,18 @@ export function htmlTextFontFamilies(data: TextObject): string[] {
  * node drawn at `scale`, so every size, spacing and indent shrinks together
  * and the lines break where they would at the smaller size.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function buildStyleOpts(data: TextObject, scale = 1): any {
+export function buildStyleOpts(
+  data: TextObject,
+  scale = 1,
+  request: HtmlTextFaceRequest = htmlTextFaceRequest(data),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- HTMLTextStyle options, tested field by field
+): any {
   const layoutWidth = data.width / scale
   // Pixi v8 HTMLText is doing two distinct things with `style.fontFamily`:
   //
   //  1. `extractFontFamilies(text, style)` reads the value and uses it
-  //     as the EXACT key into the asset Cache to find an `@font-face`
-  //     entry to embed in the SVG. When it's an Array, each entry is
+  //     as the EXACT key into the asset Cache to find `@font-face` rules
+  //     to embed in the SVG. When it's an Array, each entry is
   //     used as its own key; when it's a string, the WHOLE string
   //     (commas + spaces + quotes and all) is one key.
   //
@@ -434,22 +503,20 @@ export function buildStyleOpts(data: TextObject, scale = 1): any {
   //     the SVG's `font-family:` CSS rule via `${style.fontFamily}` —
   //     no quoting, no validation.
   //
-  // FolderFontLoader registers our uploaded fonts in the cache under
-  // the BARE family name (e.g. `Northwind Sans ST Pro 60 Black-and-url`).
-  // So `style.fontFamily` is an array of bare names — the box's and every
-  // run's (`htmlTextFontFamilies`) — each one a cache key whose face Pixi
-  // embeds. The rule Pixi writes from the array (`font-family: A,B`) is not
-  // valid CSS once a name holds digits or spaces — the CSS tokeniser sees
-  // `Northwind Sans ST Pro 60 Black` as five identifiers followed by a number
-  // followed by an identifier, and drops the rule — so `cssOverrides`
-  // layers a CSS-safe quoted stack after it, which wins the cascade inside
-  // the same `<style>` block. Runs carry their own quoted rule in the
+  // So `style.fontFamily` is the array of keys of the faces this text draws
+  // with (`htmlTextFontKeys`: per family with registered faces, the ones its
+  // weights and slopes match — renderer/fontChanges.ts), empty when nothing
+  // is registered for its families. The rule Pixi writes from it is not the
+  // text's font: `cssOverrides` layers the CSS-safe quoted stack of the real
+  // family names after it, which wins the cascade inside the same `<style>`
+  // block (a name with digits or spaces, `Northwind Sans ST Pro 60 Black`,
+  // is not valid CSS unquoted). Runs carry their own quoted rule in the
   // inline span (richText.toHtml).
   const cssStack =
     cssFontFamily(data.fontFamily) ?? 'Arial, Helvetica, "Helvetica Neue", "Segoe UI", sans-serif'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const opts: any = {
-    fontFamily: htmlTextFontFamilies(data),
+    fontFamily: htmlTextFontKeys(request),
     fontSize: data.fontSize,
     fontWeight: data.fontWeight,
     fontStyle: data.italic === true ? 'italic' : 'normal',
@@ -715,7 +782,7 @@ function applyAutofit(container: Container, textNode: HTMLText, data: TextObject
     asAny(container)[SHRINK_TAG] = undefined
     if (current !== 1) {
       textNode.scale.set(1)
-      textNode.style = new HTMLTextStyle(buildStyleOpts(data))
+      textNode.style = createHtmlTextStyle(data)
     }
     return
   }
@@ -747,7 +814,7 @@ function applyAutofit(container: Container, textNode: HTMLText, data: TextObject
   } else {
     textNode.scale.set(1)
     const fits = (s: number): boolean => {
-      textNode.style = new HTMLTextStyle(buildStyleOpts(data, s))
+      textNode.style = createHtmlTextStyle(data, s)
       return textNode.height * s <= data.height + FIT_TOLERANCE_PX
     }
     const min = minShrinkScale(data)
@@ -765,7 +832,7 @@ function applyAutofit(container: Container, textNode: HTMLText, data: TextObject
     }
     asAny(container)[SHRINK_TAG] = { key, scale }
   }
-  textNode.style = new HTMLTextStyle(buildStyleOpts(data, scale))
+  textNode.style = createHtmlTextStyle(data, scale)
   textNode.scale.set(scale)
 }
 
@@ -1021,7 +1088,7 @@ function mountTextContainer(data: TextObject, opts: { wireCatchup: boolean }): C
   const container = new Container()
   const textNode = new HTMLText({
     text: '',
-    style: new HTMLTextStyle(buildStyleOpts(data)),
+    style: createHtmlTextStyle(data),
   })
   // Set after construction so the per-node uid is allocated against
   // this specific HTMLText instance — keeps the cache key unique even
@@ -1125,7 +1192,10 @@ export const textRenderer = {
       prev.strokeWidth !== next.strokeWidth
 
     if (styleChanged) {
-      textNode.style = new HTMLTextStyle(buildStyleOpts(next, textNode.scale.y))
+      textNode.style = createHtmlTextStyle(next, textNode.scale.y)
+    } else if (textNode.text !== prevText) {
+      // A run's format changed inside the same Y.Text: its faces too.
+      syncHtmlTextFontKeys(textNode, next)
     }
     applyAutofit(node, textNode, next)
 
@@ -1241,14 +1311,9 @@ export const textRenderer = {
                     typeof fillRaw.color === 'string'
                   ? fillRaw.color
                   : '#000000'
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const styleAny = style as any
-            const rawFamily = styleAny.fontFamily
-            const family = Array.isArray(rawFamily)
-              ? rawFamily.join(', ')
-              : typeof rawFamily === 'string'
-                ? rawFamily
-                : undefined
+            // `style.fontFamily` holds face keys, not names: the names are
+            // the style's face request.
+            const family = STYLE_REQUESTS.get(textNode.style as HTMLTextStyle)?.families.join(', ')
             const fallback: TextObject = {
               id: '',
               type: 'text',
@@ -1280,7 +1345,10 @@ export const textRenderer = {
     // keystroke. We now rebuild the style only when a typography field
     // actually changed; a pure text/list edit just updates `.text`.
     if (needsStyleRebuild) {
-      textNode.style = new HTMLTextStyle(buildStyleOpts(merged, textNode.scale.y))
+      textNode.style = createHtmlTextStyle(merged, textNode.scale.y)
+    } else if (textChanged) {
+      // A run made bold or italic, or set in another family: its face too.
+      syncHtmlTextFontKeys(textNode, merged)
     }
     if (textChanged || listChanged || needsStyleRebuild) {
       // The HTML always tracks the merged data — text changes,
@@ -1375,7 +1443,7 @@ export const textRenderer = {
   repaintColours(node: Container, data: TextObject): void {
     const textNode = getTextNode(node)
     if (textNode === undefined) return
-    textNode.style = new HTMLTextStyle(buildStyleOpts(data, textNode.scale.y))
+    textNode.style = createHtmlTextStyle(data, textNode.scale.y)
     // Level colours (bullets, level text, A4.2b) are written into the HTML.
     if (data.listLevels !== undefined) textNode.text = buildHtmlForNode(textNode, data)
     setStoredData(node, data)

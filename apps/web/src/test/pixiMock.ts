@@ -353,8 +353,20 @@ const MockApplication = vi.fn().mockImplementation(() => ({
 // Public factory
 // ---------------------------------------------------------------------------
 
+// HTMLText's font state (renderer/pixiFontSink.ts writes the face keys here).
+const mockAssetCache = new Map<string, unknown>()
+const MockCache = {
+  has: (key: string) => mockAssetCache.has(key),
+  get: (key: string) => mockAssetCache.get(key),
+  set: (key: string, value: unknown) => void mockAssetCache.set(key, value),
+  remove: (key: string) => void mockAssetCache.delete(key),
+}
+const MockFontStylePromiseCache = new Map<string, Promise<string>>()
+
 export function pixiMock(): Record<string, unknown> {
   return {
+    Cache: MockCache,
+    FontStylePromiseCache: MockFontStylePromiseCache,
     Container: MockContainer,
     Graphics: MockGraphics,
     Text: MockText,

@@ -3,74 +3,72 @@
  * announcements that make every canvas redraw its text when they change.
  *
  * HTMLText draws text inside an SVG image, which sees no page fonts — only
- * the `@font-face` rules Pixi puts into that SVG, taken from its
- * `FontStylePromiseCache` (one CSS string per family, `getFontCss`) for the
- * names in `style.fontFamily`. So:
+ * the `@font-face` rules Pixi puts into that SVG: for each name in
+ * `style.fontFamily` that its asset Cache knows (`<name>-and-url`), the CSS
+ * in its `FontStylePromiseCache` under that name (`getFontCss`). So:
  *
- *   - **Faces.** The folder and deck fonts register their faces here with
- *     the bytes the loader already downloaded (`setHtmlTextFace`); the
- *     family's CSS is built from those bytes as `data:` URLs and handed to
- *     Pixi directly. Pixi never downloads a face itself — it would use the
- *     presigned URL from when the font was listed, dead an hour later — and
- *     never builds a family's CSS from only the faces that had loaded when
- *     its first text asked. (The bundled Inter keeps Pixi's own path: its
- *     URLs are the app's static files.)
+ *   - **Faces.** The folder and deck fonts and the bundled Inter register
+ *     their faces here with the bytes already downloaded (`setHtmlTextFace`);
+ *     the CSS is built from those bytes as `data:` URLs and handed to Pixi
+ *     directly. Pixi never downloads a face itself — it would use the
+ *     presigned URL from when the font was listed, dead an hour later.
+ *   - **Only the faces a text uses** (docs/plans/performance.md → E2). Pixi
+ *     embeds what it is given into every raster's SVG, base64 and then
+ *     URI-encoded, and the browser parses and decodes it per raster: a
+ *     family's four 240 kB faces were ~1 MB per text, ~26 ms per raster in
+ *     Chromium against ~8 ms for the one face it drew with. So the names in
+ *     `style.fontFamily` are not families but keys (`htmlTextFontKeys`):
+ *     one per family a text uses, standing for the faces of that family its
+ *     weights and slopes match (renderer/fontFaceMatch.ts — the browser's own
+ *     algorithm, so the embedded subset holds the face it would have picked
+ *     from the whole family, and it picks the same one). The rules behind a
+ *     key still declare the real family name: the text's CSS (its quoted
+ *     `font-family` stack, `cssOverrides` in the text renderer) and every
+ *     fallback stay as they were. A family with no registered face gets no
+ *     key: Pixi then embeds nothing, and in WebKit skips its fixed 100 ms
+ *     wait before the raster (`isSafari() && families.length > 0`, W1).
  *   - **Announcements.** Text rasterised before its face landed keeps the
  *     fallback glyphs until it is rasterised again, so a change of a family's
  *     faces is announced and every SceneGraph redraws its text in that
- *     family (SceneGraph.refreshTextNodesUsingFamily) — wherever the canvas
- *     sits in the React tree and whenever it was created. (The font loader
- *     sits above the canvas and never saw it through context: on any page
- *     where text painted before the folder fonts finished — the render page
- *     every time — it stayed in the fallback face, invisible on a machine
- *     with the font installed, wrong everywhere else.) Announcements made
- *     together are delivered once per family, as tracked render work, so the
- *     render page's settle loop waits for the redraw.
- *   - **Names.** A family name reaches Pixi's SVG unescaped (its
- *     `font-family: A,B` rule, inside a `<style>` set through innerHTML), so
- *     only names made of letters, digits, spaces, hyphens and underscores
- *     are given to it (`isEmbeddableFamilyName`); any other name — a quote,
- *     a brace, `</style>` — paints in the fallback face instead of breaking
- *     out of the CSS or the markup.
+ *     family (SceneGraph.refreshTextNodesUsingFamily, which also gives the
+ *     text the keys of the faces there are now) — wherever the canvas sits
+ *     in the React tree and whenever it was created. (The font loader sits
+ *     above the canvas and never saw it through context: on any page where
+ *     text painted before the folder fonts finished — the render page every
+ *     time — it stayed in the fallback face.) Announcements made together
+ *     are delivered once per family, as tracked render work, so the render
+ *     page's settle loop waits for the redraw.
+ *   - **Names.** A family name reaches the SVG inside the `@font-face`
+ *     rules, set through innerHTML, so only names made of letters, digits,
+ *     spaces, hyphens and underscores are registered
+ *     (`isEmbeddableFamilyName`); any other name — a quote, a brace,
+ *     `</style>` — paints in the fallback face instead of breaking out of the
+ *     CSS or the markup. Keys are `nrf-<n>`.
  *
  * This module does not import Pixi (docs/plans/performance.md → L1): the
  * folder pages and the app's boot register fonts here, and a static Pixi
  * import put the whole renderer on every route, login included. What Pixi is
  * told goes through a sink, `./pixiFontSink.ts`, which the text renderer
- * installs before any HTMLText exists; it is handed everything registered
- * so far when it is installed.
+ * installs before any HTMLText exists; it is handed every key published so
+ * far when it is installed.
  */
 
 import { quoteCssFamilyName } from '@narrative/slide-model'
+import { matchFaces, type FaceRequest, type FaceSlope } from './fontFaceMatch.js'
 import { trackRenderWork } from './renderWork.js'
-
-/** One file of a family Pixi embeds from its URL (the bundled Inter). */
-export interface UrlFontEntry {
-  url: string
-  faces: { weight: string; style: string }[]
-}
 
 /**
  * Where HTMLText's font state lives (Pixi's asset `Cache` and its
  * `FontStylePromiseCache`), as the registry below needs to write it.
  */
 export interface HtmlTextFontSink {
-  /** Set Pixi's asset `Cache` entry `<family>-and-url` — the key Pixi embeds a family by. */
-  setEntries(family: string, entries: readonly UrlFontEntry[]): void
-  /** Whether that key is set. */
-  hasEntries(family: string): boolean
-  /** Remove that key. */
-  removeEntries(family: string): void
-  /** Give Pixi the family's `@font-face` CSS (it then never builds it itself). */
-  setCss(family: string, css: string): void
-  /** Drop the family's CSS, so Pixi builds it again on the next raster. */
-  dropCss(family: string): void
+  /** Make `key` a name Pixi embeds, with these `@font-face` rules. */
+  setCss(key: string, css: string): void
+  /** Forget `key`: Pixi embeds nothing for it. */
+  dropCss(key: string): void
 }
 
 let sink: HtmlTextFontSink | null = null
-
-/** Families Pixi embeds from URLs it fetches itself, by family. */
-const urlFamilies = new Map<string, readonly UrlFontEntry[]>()
 
 type Listener = (family: string) => void
 
@@ -79,9 +77,10 @@ const pending = new Set<string>()
 let flushScheduled = false
 
 interface Face {
+  key: string
   family: string
   weight: string
-  style: string
+  style: FaceSlope
   /** `font-stretch` of the rule: a width or a variable range (A4.2c). */
   stretch: string
   dataUrl: string
@@ -89,10 +88,25 @@ interface Face {
 
 /** Registered faces by key (the font asset id). */
 const faces = new Map<string, Face>()
+/** The same faces by family, in registration order. */
+const facesByFamily = new Map<string, Map<string, Face>>()
+
+/** A key Pixi embeds: some faces of one family. */
+interface FaceSet {
+  key: string
+  family: string
+  faceKeys: readonly string[]
+  /** The CSS last handed to the sink ('' = none). */
+  css: string
+}
+
+/** Published keys by `family + faces` signature. */
+const faceSets = new Map<string, FaceSet>()
+let nextFaceSet = 0
 
 const EMBEDDABLE_FAMILY = /^[A-Za-z0-9_-]+(?: [A-Za-z0-9_-]+)*$/
 
-/** Can `name` be handed to Pixi as a family (a cache key it writes into its SVG unescaped)? */
+/** Can `name` be embedded (written into the SVG's CSS from a registered face)? */
 export function isEmbeddableFamilyName(name: string): boolean {
   return name.length <= 200 && EMBEDDABLE_FAMILY.test(name)
 }
@@ -102,11 +116,6 @@ function flush(): void {
   const families = [...pending]
   pending.clear()
   for (const family of families) {
-    // A family Pixi builds the CSS for itself (from its asset Cache: the
-    // bundled Inter) is rebuilt on the next raster with the faces it has now.
-    if (![...faces.values()].some((face) => face.family === family)) {
-      sink?.dropCss(family)
-    }
     versions.set(family, (versions.get(family) ?? 0) + 1)
     for (const listener of [...listeners]) listener(family)
   }
@@ -151,59 +160,100 @@ const STYLE = /^(?:normal|italic|oblique)$/
 /** One width or a variable face's range (A4.2c): `100%`, `75% 125%`. */
 const STRETCH = /^\d{1,3}(?:\.\d+)?%(?: \d{1,3}(?:\.\d+)?%)?$/
 
-/** The `@font-face` rules for every registered face of `family`, as Pixi embeds them. */
-function familyCss(family: string): string {
-  const quoted = quoteCssFamilyName(family)
-  return [...faces.values()]
-    .filter((face) => face.family === family)
-    .map(
-      (face) =>
-        `@font-face { font-family: ${quoted}; font-weight: ${face.weight}; ` +
+/** The `@font-face` rules of these faces (registered ones; the rest are gone). */
+function facesCss(set: FaceSet): string {
+  const quoted = quoteCssFamilyName(set.family)
+  const out: string[] = []
+  for (const key of set.faceKeys) {
+    const face = faces.get(key)
+    if (face === undefined || face.family !== set.family) continue
+    out.push(
+      `@font-face { font-family: ${quoted}; font-weight: ${face.weight}; ` +
         `font-style: ${face.style}; font-stretch: ${face.stretch}; src: url('${face.dataUrl}'); }`,
     )
-    .join('\n')
+  }
+  return out.join('\n')
 }
 
-/** Point Pixi at the family's faces as registered here (or forget it with none left). */
-function publishFamily(family: string): void {
+/** Hand Pixi the key's CSS as the faces are now (or forget the key with none left). */
+function publishFaceSet(set: FaceSet): void {
+  const css = facesCss(set)
+  if (css === set.css) return
+  set.css = css
   if (sink === null) return
-  const css = familyCss(family)
-  if (css === '') {
-    sink.dropCss(family)
-    if (sink.hasEntries(family)) sink.removeEntries(family)
-    const urls = urlFamilies.get(family)
-    if (urls !== undefined) sink.setEntries(family, urls)
-    return
-  }
-  // Pixi embeds a family only if its asset Cache has this key; the CSS it
-  // embeds is the promise below, so the entry lists no URLs to download.
-  if (!sink.hasEntries(family)) sink.setEntries(family, [])
-  sink.setCss(family, css)
+  if (css === '') sink.dropCss(set.key)
+  else sink.setCss(set.key, css)
+}
+
+/** Every key of `family` again: one of its faces was added, replaced or removed. */
+function republishFamily(family: string): void {
+  for (const set of faceSets.values()) if (set.family === family) publishFaceSet(set)
 }
 
 /**
- * Register a family Pixi embeds from URLs it fetches itself — the bundled
- * Inter, whose files are the app's own static assets (state/bundledFonts.ts).
- * The caller announces the change.
+ * What a text draws with (renderer/objectRenderers/textRenderer.ts →
+ * `htmlTextFaceRequest`): the families its CSS names — the box's stack, each
+ * run's and each list level's — and every weight, slope and width an element
+ * of it asks for. A superset is safe (a face more is embedded); a request
+ * left out is not (its face would be missing from the SVG).
  */
-export function setHtmlTextUrlFamily(family: string, entries: readonly UrlFontEntry[]): void {
-  if (!isEmbeddableFamilyName(family)) return
-  urlFamilies.set(family, entries)
-  if (sink !== null && familyCss(family) === '') sink.setEntries(family, entries)
+export interface HtmlTextFaceRequest {
+  families: readonly string[]
+  weights: readonly number[]
+  styles: readonly FaceRequest['style'][]
+  /** Percent. */
+  stretch: number
+}
+
+/**
+ * The names to give Pixi as `style.fontFamily` for `request`: per family
+ * with registered faces, one key for the faces the request's weights and
+ * slopes match (each face embedded once). Families with none get no key.
+ * The same request gets the same keys while the faces stay; a face added or
+ * removed can change them (`announceFontFamilyChanged` follows, and the
+ * canvases ask again).
+ */
+export function htmlTextFontKeys(request: HtmlTextFaceRequest): string[] {
+  const keys: string[] = []
+  for (const family of request.families) {
+    const own = facesByFamily.get(family)
+    if (own === undefined || own.size === 0) continue
+    const candidates = [...own.values()]
+    const chosen = new Set<string>()
+    for (const weight of request.weights) {
+      for (const style of request.styles) {
+        for (const face of matchFaces(candidates, { weight, style, stretch: request.stretch })) {
+          chosen.add(face.key)
+        }
+      }
+    }
+    if (chosen.size === 0) continue
+    // Registration order, so the same faces always make the same rules.
+    const faceKeys = candidates.filter((f) => chosen.has(f.key)).map((f) => f.key)
+    const signature = `${family}\u0000${faceKeys.join('\u0000')}`
+    let set = faceSets.get(signature)
+    if (set === undefined) {
+      set = { key: `nrf-${++nextFaceSet}`, family, faceKeys, css: '' }
+      faceSets.set(signature, set)
+      publishFaceSet(set)
+    }
+    if (!keys.includes(set.key)) keys.push(set.key)
+  }
+  return keys
+}
+
+/** Does `family` have a registered face (would a text in it embed anything)? */
+export function hasHtmlTextFaces(family: string): boolean {
+  return (facesByFamily.get(family)?.size ?? 0) > 0
 }
 
 /**
  * Install where Pixi's font state lives (`./pixiFontSink.ts`, once, before any
- * HTMLText): every family registered before is published to it now.
+ * HTMLText): every key published before is handed to it now.
  */
 export function installHtmlTextFontSink(next: HtmlTextFontSink): void {
   sink = next
-  for (const [family, entries] of urlFamilies) {
-    if (familyCss(family) === '') next.setEntries(family, entries)
-  }
-  for (const family of new Set([...faces.values()].map((face) => face.family))) {
-    publishFamily(family)
-  }
+  for (const set of faceSets.values()) if (set.css !== '') next.setCss(set.key, set.css)
 }
 
 function fontMime(bytes: Uint8Array): string {
@@ -222,9 +272,15 @@ function base64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
+function forgetFace(face: Face): void {
+  const own = facesByFamily.get(face.family)
+  own?.delete(face.key)
+  if (own !== undefined && own.size === 0) facesByFamily.delete(face.family)
+}
+
 /**
  * Register (or replace) a face HTMLText may draw with: `bytes` is the font
- * file the loader downloaded. A name Pixi cannot be given safely
+ * file the loader downloaded. A name that cannot be embedded safely
  * (`isEmbeddableFamilyName`) is not registered: its text paints in the
  * fallback face.
  */
@@ -241,18 +297,27 @@ export function setHtmlTextFace(face: {
   if (!isEmbeddableFamilyName(face.family)) return
   const previous = faces.get(face.key)
   const view = new Uint8Array(face.bytes)
-  faces.set(face.key, {
+  const next: Face = {
+    key: face.key,
     family: face.family,
     weight: WEIGHT.test(face.weight) ? face.weight : '400',
-    style: STYLE.test(face.style) ? face.style : 'normal',
+    style: STYLE.test(face.style) ? (face.style as FaceSlope) : 'normal',
     stretch: face.stretch !== undefined && STRETCH.test(face.stretch) ? face.stretch : '100%',
     dataUrl: `data:${fontMime(view)};base64,${base64(view)}`,
-  })
+  }
+  if (previous !== undefined) forgetFace(previous)
+  faces.set(face.key, next)
+  let own = facesByFamily.get(next.family)
+  if (own === undefined) {
+    own = new Map()
+    facesByFamily.set(next.family, own)
+  }
+  own.set(next.key, next)
   if (previous !== undefined && previous.family !== face.family) {
-    publishFamily(previous.family)
+    republishFamily(previous.family)
     announceFontFamilyChanged(previous.family)
   }
-  publishFamily(face.family)
+  republishFamily(face.family)
   announceFontFamilyChanged(face.family)
 }
 
@@ -261,7 +326,8 @@ export function removeHtmlTextFace(key: string): void {
   const face = faces.get(key)
   if (face === undefined) return
   faces.delete(key)
-  publishFamily(face.family)
+  forgetFace(face)
+  republishFamily(face.family)
   announceFontFamilyChanged(face.family)
 }
 
@@ -296,15 +362,11 @@ export function createFontLoadFilter(): (faces: Iterable<FontFace>) => boolean {
 
 /** Test helper. */
 export function _resetFontChangesForTests(): void {
-  for (const family of new Set([
-    ...[...faces.values()].map((f) => f.family),
-    ...urlFamilies.keys(),
-  ])) {
-    sink?.dropCss(family)
-    if (sink?.hasEntries(family) === true) sink.removeEntries(family)
-  }
+  for (const set of faceSets.values()) if (set.css !== '') sink?.dropCss(set.key)
+  faceSets.clear()
+  nextFaceSet = 0
   faces.clear()
-  urlFamilies.clear()
+  facesByFamily.clear()
   pending.clear()
   flushScheduled = false
   listeners.clear()

@@ -20,6 +20,7 @@ import {
   announceFontFamilyChanged,
   createFontLoadFilter,
   isEmbeddableFamilyName,
+  htmlTextFontKeys,
   removeHtmlTextFace,
   setHtmlTextFace,
   subscribeFontFamilyChanges,
@@ -49,54 +50,83 @@ describe('fontChanges', () => {
     expect(seen).toEqual(['Inter', 'Brand Sans'])
   })
 
-  it('lets Pixi rebuild the CSS of a family it embeds itself (the bundled Inter)', async () => {
-    pixi.fontCss.set('Inter', Promise.resolve('@font-face{}'))
-    announceFontFamilyChanged('Inter')
-    await whenRenderWorkIdle()
-    expect(pixi.fontCss.has('Inter')).toBe(false)
-  })
+  const brand = (key: string, weight: string, style = 'normal', marker = 1, stretch?: string) =>
+    setHtmlTextFace({
+      key,
+      family: 'Brand Sans',
+      weight,
+      style,
+      ...(stretch !== undefined ? { stretch } : {}),
+      bytes: ttf(marker),
+    })
+  const request = (
+    weights: number[],
+    styles: ('normal' | 'italic')[] = ['normal'],
+    families = ['Brand Sans'],
+  ) => ({ families, weights, styles, stretch: 100 })
+  const cssOf = async (key: string) => {
+    expect(pixi.cache.get(`${key}-and-url`)).toEqual({ entries: [] })
+    return pixi.fontCss.get(key)!
+  }
 
-  it('embeds registered faces from their bytes — every face of the family, no URL for Pixi to fetch', async () => {
+  it('embeds only the faces a text matches, from their bytes, under the real family name', async () => {
     const seen: string[] = []
     subscribeFontFamilyChanges((family) => seen.push(family))
-    setHtmlTextFace({
-      key: 'a',
-      family: 'Brand Sans',
-      weight: '400',
-      style: 'normal',
-      bytes: ttf(1),
-    })
-    setHtmlTextFace({
-      key: 'b',
-      family: 'Brand Sans',
-      weight: '700',
-      style: 'italic',
-      bytes: ttf(2),
-    })
-    const css = await pixi.fontCss.get('Brand Sans')!
-    expect(css.match(/@font-face/g)).toHaveLength(2)
-    expect(css).toContain('font-family: "Brand Sans"; font-weight: 700; font-style: italic;')
+    brand('r', '400', 'normal', 1)
+    brand('b', '700', 'normal', 2)
+    brand('i', '400', 'italic', 3)
+    brand('bi', '700', 'italic', 4)
+    const keys = htmlTextFontKeys(request([400]))
+    expect(keys).toHaveLength(1)
+    const css = await cssOf(keys[0]!)
+    expect(css.match(/@font-face/g)).toHaveLength(1)
+    expect(css).toContain('font-family: "Brand Sans"; font-weight: 400; font-style: normal;')
     expect(css).toContain("src: url('data:font/ttf;base64,")
-    expect(pixi.cache.get('Brand Sans-and-url')).toEqual({ entries: [] })
+    // Bold and italic runs bring their faces; each face is embedded once.
+    const mixed = await cssOf(htmlTextFontKeys(request([400, 700, 600], ['normal', 'italic']))[0]!)
+    expect(mixed.match(/@font-face/g)).toHaveLength(4)
     await whenRenderWorkIdle()
     expect(seen).toEqual(['Brand Sans'])
-    // Registered CSS is not dropped by its own announcement.
-    expect(pixi.fontCss.has('Brand Sans')).toBe(true)
-
-    removeHtmlTextFace('b')
-    expect((await pixi.fontCss.get('Brand Sans')!).match(/@font-face/g)).toHaveLength(1)
-    removeHtmlTextFace('a')
-    expect(pixi.fontCss.has('Brand Sans')).toBe(false)
-    expect(pixi.cache.has('Brand Sans-and-url')).toBe(false)
   })
 
-  it('hands Pixi every family registered before the renderer loaded', async () => {
+  it('gives the same request the same key, and nothing for a family with no faces', () => {
+    brand('r', '400')
+    brand('b', '700')
+    const a = htmlTextFontKeys(request([400], ['normal'], ['Arial', 'Brand Sans']))
+    expect(a).toHaveLength(1)
+    // 500 matches the 400 face as well (no 500): the same faces, the same key.
+    expect(htmlTextFontKeys(request([500]))).toEqual(a)
+    expect(htmlTextFontKeys(request([400], ['normal'], ['Arial']))).toEqual([])
+  })
+
+  it('keeps a key current when its faces are replaced or removed', async () => {
+    brand('r', '400', 'normal', 1)
+    brand('b', '700', 'normal', 2)
+    const [both] = htmlTextFontKeys(request([400, 700]))
+    expect((await cssOf(both!)).match(/@font-face/g)).toHaveLength(2)
+    removeHtmlTextFace('b')
+    expect((await pixi.fontCss.get(both!)!).match(/@font-face/g)).toHaveLength(1)
+    // With the bold face gone, bold now matches the regular one: a new key.
+    expect(htmlTextFontKeys(request([400, 700]))).not.toEqual([both])
+    removeHtmlTextFace('r')
+    expect(pixi.fontCss.has(both!)).toBe(false)
+    expect(pixi.cache.has(`${both}-and-url`)).toBe(false)
+    expect(htmlTextFontKeys(request([400]))).toEqual([])
+  })
+
+  it('a variable face covers every weight: one face for any request', async () => {
+    brand('v', '100 900', 'normal', 1)
+    brand('vi', '100 900', 'italic', 2)
+    const keys = htmlTextFontKeys(request([300, 400, 800]))
+    expect((await cssOf(keys[0]!)).match(/@font-face/g)).toHaveLength(1)
+    expect(await cssOf(keys[0]!)).toContain('font-weight: 100 900; font-style: normal;')
+  })
+
+  it('hands Pixi every key published before the renderer loaded', async () => {
     // The app registers Inter at boot and the folder pages their fonts long
     // before (or without ever) loading Pixi: the sink gets them on install.
     vi.resetModules()
     const early = await import('./fontChanges')
-    const inter = [{ url: '/assets/inter.woff2', faces: [{ weight: '100 900', style: 'normal' }] }]
-    early.setHtmlTextUrlFamily('Inter', inter)
     early.setHtmlTextFace({
       key: 'k',
       family: 'Brand Sans',
@@ -104,15 +134,13 @@ describe('fontChanges', () => {
       style: 'normal',
       bytes: ttf(4),
     })
+    const [key] = early.htmlTextFontKeys(request([400]))
     expect(pixi.cache.size).toBe(0)
     expect(pixi.fontCss.size).toBe(0)
 
     await import('./pixiFontSink')
-    expect(pixi.cache.get('Inter-and-url')).toEqual({ entries: inter })
-    expect(pixi.cache.get('Brand Sans-and-url')).toEqual({ entries: [] })
-    expect(await pixi.fontCss.get('Brand Sans')!).toContain('font-family: "Brand Sans"')
-    // Pixi builds Inter's CSS itself, from the URLs.
-    expect(pixi.fontCss.has('Inter')).toBe(false)
+    expect(pixi.cache.get(`${key}-and-url`)).toEqual({ entries: [] })
+    expect(await pixi.fontCss.get(key!)!).toContain('font-family: "Brand Sans"')
     early._resetFontChangesForTests()
   })
 

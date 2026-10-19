@@ -58,12 +58,17 @@ export const OPEN_METRICS: Readonly<Record<string, MetricSpec>> = {
 export const WORK_COUNTERS = [
   'text.raster.started',
   'text.raster.kpx',
+  // kB of @font-face CSS embedded into the rasters' SVGs, and the rasters
+  // that wait Pixi's fixed 100 ms in WebKit (performance.md → E2, W1).
+  'text.raster.fontKb',
+  'text.raster.safariDelay',
   'text.measure.bounds',
   'text.autofit.measure',
   'text.restage',
   'thumb.render',
   'thumb.live',
   'thumb.text.raster.started',
+  'thumb.text.raster.fontKb',
   'thumb.reused',
   'sg.mount',
   'sg.update',

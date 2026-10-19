@@ -34,6 +34,7 @@ import * as Y from 'yjs'
 import { getRenderer } from './objectRenderers'
 import { setTableCellFaded } from './objectRenderers/tableRenderer.js'
 import {
+  refreshHtmlTextFontKeys,
   subscribeTextLayout,
   textBoxLayout,
   type TextBoxLayout,
@@ -894,19 +895,15 @@ export class SceneGraph {
 
     // Text that is not a top-level text object — table cells, the leaves of
     // component instances — is drawn by the same HTMLText: every one whose
-    // families (the box's and its runs', textRenderer.htmlTextFontFamilies)
+    // families (the box's, its runs' and levels', textRenderer.htmlTextFaceRequest)
     // include this one rasterises again, now with the face.
     const walk = (c: Container): void => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const t = c as any
       if (t.anchor !== undefined && '_didTextUpdate' in t && !handled.has(t)) {
-        const families: unknown = t.style?.fontFamily
-        const list = Array.isArray(families)
-          ? families
-          : typeof families === 'string'
-            ? [families]
-            : []
-        if (list.includes(family)) {
+        // Its keys follow the faces there are now (a face that landed
+        // after it was styled is embedded from this raster on).
+        if (refreshHtmlTextFontKeys(t, family)) {
           invalidateHtmlText(t, rendererUid)
           touched++
         }
