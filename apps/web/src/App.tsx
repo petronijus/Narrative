@@ -17,19 +17,20 @@
  *   editor/present/component routes (and the DeckShell that mounts the
  *   renderer + Hocuspocus tree) behind a <Suspense> fallback, so the
  *   heavy vendor chunks defer off the dashboard/login critical path and
- *   only download when the user actually opens an editor. The dashboard,
- *   folder, landing and auth routes stay eager.
+ *   only download when the user actually opens an editor. The auth routes
+ *   stay eager.
+ *
+ * L1 (docs/plans/performance.md, 2026-10-18): the folder pages are lazy too,
+ *   and every lazy page loads before React asks for it — the opened one at
+ *   boot, the likely next one when idle (routePages.ts, `IdleRoutePreload`).
  */
 
-import { Suspense } from 'react'
+import { Suspense, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { AuthProvider } from './state/AuthContext.js'
 import { DesktopBridge } from './desktop/DesktopBridge.js'
 import { ThemeProvider } from './state/ThemeContext.js'
 import { PerfHudProvider } from './state/PerfHudContext.js'
-import { FoldersHome } from './pages/FoldersHome.js'
-import { FolderDecks } from './pages/FolderDecks.js'
-import { FolderSettings } from './pages/FolderSettings.js'
 import { ProtectedRoute } from './components/ProtectedRoute.js'
 import { AuthLogin } from './pages/AuthLogin.js'
 import { AuthError } from './pages/AuthError.js'
@@ -37,55 +38,44 @@ import { VersionChip } from './ui/VersionChip.js'
 import { ThemeToggle } from './ui/ThemeToggle.js'
 import { PerfHudToggle } from './ui/PerfHudToggle.js'
 import { PerfHud } from './ui/PerfHud.js'
-import { ACCESS_TOKENS_PATH, ADMIN_PATH } from './ui/UserMenu.js'
-import { lazyRoute } from './ui/lazyRoute.js'
+import { ACCESS_TOKENS_PATH, ADMIN_PATH } from './ui/routePaths.js'
+import { preloadWhenIdle } from './ui/lazyPart.js'
+import { whenEditorSettled } from './ui/editorReady.js'
+import {
+  COMPONENT_PATH,
+  DECK_PATH,
+  FOLDER_PATH,
+  nextPagesFor,
+  FoldersHome,
+  FolderDecks,
+  FolderSettings,
+  DeckShell,
+  DeckEditor,
+  DeckPresent,
+  DeckRender,
+  ComponentRenderShell,
+  Admin,
+  AccessTokens,
+  ConfirmAgentAction,
+  ComponentMasterEditor,
+} from './routePages.js'
 import { RouteErrorBoundary, RouteSpinner } from './ui/RouteErrorBoundary.js'
 
-// PERF-5: heavy editor routes, lazily loaded so vendor-pixi / vendor-tiptap
-// / vendor-gsap split into their own chunks and stay off the dashboard +
-// login critical path. `lazyRoute` is React.lazy that the error boundary can
-// re-arm after a failed chunk load (ui/lazyRoute.tsx); each module exports a
-// named component, which `pick` selects.
-const DeckShell = lazyRoute(
-  () => import('./components/DeckShell.js'),
-  (m) => m.DeckShell,
-)
-const DeckEditor = lazyRoute(
-  () => import('./pages/DeckEditor.js'),
-  (m) => m.DeckEditor,
-)
-const DeckPresent = lazyRoute(
-  () => import('./pages/DeckPresent.js'),
-  (m) => m.DeckPresent,
-)
-// The page the render worker screenshots (agentic A3): one slide, no chrome.
-const DeckRender = lazyRoute(
-  () => import('./pages/DeckRender.js'),
-  (m) => m.DeckRender,
-)
-// A component master's render page: DeckRender in the master's providers.
-const ComponentRenderShell = lazyRoute(
-  () => import('./pages/ComponentRender.js'),
-  (m) => m.ComponentRenderShell,
-)
-// Account settings: small, rarely visited — kept off the dashboard chunk.
-const Admin = lazyRoute(
-  () => import('./pages/Admin.js'),
-  (m) => m.Admin,
-)
-const AccessTokens = lazyRoute(
-  () => import('./pages/AccessTokens.js'),
-  (m) => m.AccessTokens,
-)
-// The agent confirmation page: opened from a link an agent hands the user.
-const ConfirmAgentAction = lazyRoute(
-  () => import('./pages/ConfirmAgentAction.js'),
-  (m) => m.ConfirmAgentAction,
-)
-const ComponentMasterEditor = lazyRoute(
-  () => import('./pages/ComponentMasterEditor.js'),
-  (m) => m.ComponentMasterEditor,
-)
+/**
+ * Once the page is up and the browser idle, load what the user most likely
+ * opens next (a folder from the folder list, a deck from a folder), so that
+ * click does not wait for the network. Idle time only: never in a first
+ * paint's way.
+ */
+function IdleRoutePreload() {
+  const { pathname } = useLocation()
+  useEffect(() => {
+    const { pages, afterEditorPaint } = nextPagesFor(pathname)
+    if (pages.length === 0) return
+    return afterEditorPaint ? whenEditorSettled(pages) : preloadWhenIdle(pages)
+  }, [pathname])
+  return null
+}
 
 export function App() {
   return (
@@ -108,22 +98,16 @@ export function App() {
                   {/* Protected routes — require session or share_token */}
                   <Route element={<ProtectedRoute />}>
                     <Route path="/" element={<FoldersHome />} />
-                    <Route path="/folder/:folderId" element={<FolderDecks />} />
-                    <Route path="/folder/:folderId/settings" element={<FolderSettings />} />
+                    <Route path={FOLDER_PATH} element={<FolderDecks />} />
+                    <Route path={`${FOLDER_PATH}/settings`} element={<FolderSettings />} />
                     <Route path={ACCESS_TOKENS_PATH} element={<AccessTokens />} />
                     <Route path={ADMIN_PATH} element={<Admin />} />
                     <Route path="/confirm/:id" element={<ConfirmAgentAction />} />
-                    <Route
-                      path="/folder/:folderId/component/:componentId"
-                      element={<ComponentMasterEditor />}
-                    />
-                    <Route
-                      path="/folder/:folderId/component/:componentId/render"
-                      element={<ComponentRenderShell />}
-                    >
+                    <Route path={COMPONENT_PATH} element={<ComponentMasterEditor />} />
+                    <Route path={`${COMPONENT_PATH}/render`} element={<ComponentRenderShell />}>
                       <Route index element={<DeckRender />} />
                     </Route>
-                    <Route path="/deck/:id" element={<DeckShell />}>
+                    <Route path={DECK_PATH} element={<DeckShell />}>
                       <Route index element={<DeckEditor />} />
                       <Route path="present" element={<DeckPresent />} />
                       <Route path="render" element={<DeckRender />} />
@@ -137,6 +121,7 @@ export function App() {
                 perf-HUD button. Hidden on present route — the presenter
                 view must stay clean. */}
             <GlobalChrome />
+            <IdleRoutePreload />
             <PerfHud />
             {/* Inside the desktop app: its menu and menu clicks (ADR 0015). */}
             <DesktopBridge />

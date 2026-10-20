@@ -31,7 +31,8 @@
  */
 
 import { API_BASE } from '../lib/endpoints.js'
-import * as tus from 'tus-js-client'
+import type * as tus from 'tus-js-client'
+import { loadTus } from '../lib/tusClient.js'
 import type { AppendPptxResult, ImportPptxResult } from '../api/client.js'
 
 const UPLOAD_ENDPOINT = `${API_BASE}/api/uploads`
@@ -81,14 +82,17 @@ export function importPptxViaTus(
 export function importPptxViaTus(
   opts: ImportPptxOptions & { deckId: string; insertAt?: number },
 ): Promise<AppendPptxResult>
-export function importPptxViaTus(
+export async function importPptxViaTus(
   opts: ImportPptxOptions & PptxTarget,
 ): Promise<ImportPptxResult | AppendPptxResult> {
   const { file, folderId, deckId, insertAt, onProgress, signal } = opts
+  // Its own chunk, fetched by the first upload (lib/tusClient.ts).
+  const { Upload } = await loadTus()
+  if (signal?.aborted === true) throw new Error('Upload cancelled')
   return new Promise<ImportPptxResult | AppendPptxResult>((resolve, reject) => {
     let resultFromBody: ImportPptxResult | AppendPptxResult | null = null
 
-    const upload = new tus.Upload(file, {
+    const upload = new Upload(file, {
       endpoint: UPLOAD_ENDPOINT,
       retryDelays: [0, 1000, 3000, 5000],
       chunkSize: 5 * 1024 * 1024,

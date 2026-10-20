@@ -1111,7 +1111,12 @@ export async function copyMedia(
       let transcodeStatus = row.transcodeStatus
       if (row.kind === 'video') {
         if (row.transcodeStatus === 'done') {
-          for (const key of ['playbackKey', 'posterKey', 'thumbnailKey'] as const) {
+          for (const key of [
+            'playbackKey',
+            'posterKey',
+            'thumbnailKey',
+            'presentPlaybackKey',
+          ] as const) {
             const from = row[key]
             if (typeof from !== 'string' || from === '') continue
             const to = `${mediaOwnerPrefix(target)}/videos/${newId}/${basename(from)}`
@@ -1138,6 +1143,10 @@ export async function copyMedia(
         height: row.height,
         kind: row.kind,
         durationSec: row.durationSec,
+        // The rendition's size comes with its file (copied above when done).
+        ...(row.transcodeStatus === 'done' && row.presentPlaybackKey !== null
+          ? { presentWidth: row.presentWidth, presentHeight: row.presentHeight }
+          : {}),
         transcodeStatus,
         transcodeError: transcodeStatus === 'failed' ? row.transcodeError : null,
         fontFamily: row.fontFamily,

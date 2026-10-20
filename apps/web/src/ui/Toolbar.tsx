@@ -16,6 +16,7 @@ import { downloadBlob, safeFilename } from '../lib/download.js'
 import { attachmentFilename } from '../api/client.js'
 import { API_URL } from '../lib/endpoints.js'
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -55,7 +56,7 @@ import {
   Table2,
   Component as ComponentIcon,
 } from 'lucide-react'
-import { ComponentPickerDrawer } from './ComponentPickerDrawer.js'
+import { ComponentPickerDrawer } from './lazyEditorParts.js'
 import { useFolderComponents } from '../state/useFolderComponents.js'
 import { useStampComponent } from '../state/useStampComponent.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
@@ -71,12 +72,12 @@ import { useDeckFontsOptional } from '../state/useDeckFonts.js'
 import { AvatarChips } from './AvatarChips.js'
 import { AgentActivityButton } from './AgentActivityPopover.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
-import { ShareDialog } from './ShareDialog.js'
+import { ShareDialog } from './lazyEditorParts.js'
 import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useApi } from '../api/client.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { listSlides } from '@narrative/slide-model'
-import { ExportPptxDialog } from './ExportPptxDialog.js'
+import { ExportPptxDialog } from './lazyEditorParts.js'
 import { exportDeckPdfInBrowser } from '../state/browserDeckPdf.js'
 import { MAX_PDF_SLIDES } from '@narrative/commands'
 import { dismissEditorNotice, showEditorNotice } from '../state/editorNotice.js'
@@ -157,7 +158,7 @@ interface ToolbarProps {
   masterMode?: boolean
 }
 
-export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
+function ToolbarImpl({ masterMode = false }: ToolbarProps = {}) {
   const { activeTool, setActiveTool } = useTool()
   const navigate = useNavigate()
   const location = useLocation()
@@ -249,7 +250,15 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
           )
         console.warn('[export] building the PDF in the browser failed; asking the server', err)
         showEditorNotice('Exporting the PDF on the server…')
-        return (await api.exportDeckPdf(id)).blob
+        return (
+          await api.exportDeckPdf(id, (done, total) =>
+            showEditorNotice(
+              total > 0
+                ? `Exporting the PDF on the server… ${done} of ${total}`
+                : 'Exporting the PDF on the server…',
+            ),
+          )
+        ).blob
       })
       dismissEditorNotice()
       downloadBlob(blob, `${safeFilename(title)}.pdf`)
@@ -1045,6 +1054,14 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     </TooltipProvider>
   )
 }
+
+/**
+ * Its only prop is a boolean, so a re-render of the editor around it (every
+ * pointer move of a drag commits several times) renders the toolbar's ~20
+ * tooltip-wrapped buttons for nothing: memoised, it renders when its own
+ * hooks (selection, tool, role, …) say so.
+ */
+export const Toolbar = memo(ToolbarImpl)
 
 // ---------------------------------------------------------------------------
 // Table grid picker — Word / PowerPoint / LibreImpress-style popover where

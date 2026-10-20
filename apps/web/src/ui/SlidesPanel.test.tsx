@@ -38,9 +38,14 @@ import { readSlideClipboard, setSlideClipboard } from '../state/slideClipboard'
 // ---------------------------------------------------------------------------
 
 // Thumbnails are a renderer concern.
-vi.mock('../state/useSlideThumbnails', () => ({
-  useSlideThumbnails: () => new Map<string, string>(),
-}))
+vi.mock('../state/useSlideThumbnails', () => {
+  const store = { setVisible: () => {} }
+  return {
+    useSlideThumbnails: () => new Map<string, string>(),
+    useSlideThumbnailStore: () => store,
+    useThumbnailUrl: () => undefined,
+  }
+})
 
 // Owner, so the edit controls are shown.
 vi.mock('../state/DeckRoleContext', () => ({

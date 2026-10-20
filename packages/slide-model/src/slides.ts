@@ -17,6 +17,8 @@ import {
   type Archetype,
   type SlideBrief,
   type SlideClaim,
+  perfCount,
+  perfCountersOn,
 } from '@narrative/shared'
 import type {
   Slide,
@@ -63,7 +65,6 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
   const id = yMap.get('id') as string
   const objectsArr = yMap.get('objects') as Y.Array<Y.Map<unknown>> | undefined
   const animationsArr = yMap.get('animations') as Y.Array<Y.Map<unknown>> | undefined
-  const transitionMap = yMap.get('transition') as Y.Map<unknown> | undefined
 
   const objects: SlideObject[] = []
   if (objectsArr !== undefined) {
@@ -87,6 +88,29 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
     }
   }
 
+  return composeSlide(id, objects, animations, readSlideMeta(yMap))
+}
+
+/**
+ * Everything of a slide's snapshot but its id, objects and animations: the
+ * transition and the optional fields, absent when unset. Shared with the
+ * deck store (deckStore.ts), which rebuilds it only when one of them changed.
+ */
+export type SlideMeta = Omit<Slide, 'id' | 'objects' | 'animations'>
+
+/** A slide's snapshot from its parts — the one shape `listSlides` and the deck store return. */
+export function composeSlide(
+  id: string,
+  objects: SlideObject[],
+  animations: AnimationStep[],
+  meta: SlideMeta,
+): Slide {
+  return { id, objects, animations, ...meta }
+}
+
+/** Reads a slide Y.Map's metadata (see `SlideMeta`). */
+export function readSlideMeta(yMap: Y.Map<unknown>): SlideMeta {
+  const transitionMap = yMap.get('transition') as Y.Map<unknown> | undefined
   const direction = transitionMap?.get('direction') as SlideTransition['direction'] | undefined
   const transition: SlideTransition = {
     kind: (transitionMap?.get('kind') as SlideTransition['kind']) ?? DEFAULT_TRANSITION.kind,
@@ -111,9 +135,6 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
   const specKey = yMap.get('specKey')
 
   return {
-    id,
-    objects,
-    animations,
     transition,
     ...(background !== undefined ? { background } : {}),
     ...(typeof name === 'string' && name.length > 0 ? { name } : {}),
@@ -614,6 +635,14 @@ export function listSlides(ctx: SlideMutationContext): Slide[] {
   const result: Slide[] = []
   for (let i = 0; i < ctx.slides.length; i++) {
     result.push(yMapToSlide(ctx.slides.get(i)))
+  }
+  // Perf harness (docs/plans/perf-harness.md): every call deep-copies the
+  // deck — how often, and how many objects it converts, is the E1 number.
+  if (perfCountersOn()) {
+    perfCount('y.listSlides')
+    let objects = 0
+    for (const slide of result) objects += slide.objects.length
+    perfCount('y.listSlides.objects', objects)
   }
   return result
 }

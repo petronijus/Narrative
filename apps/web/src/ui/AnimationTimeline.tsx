@@ -53,7 +53,8 @@ import { useAnimations } from '../state/useAnimations.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
-import { useSlideObjects } from '../state/useSlideObjects.js'
+import { sameArray, useDeckSelector, useDeckStore } from '../state/useDeckStore.js'
+import type { SlideObject } from '@narrative/shared'
 import { createPixiTargetResolver } from '../animation/targetResolver.js'
 import { triggerOptionsFor } from './animationTriggers.js'
 
@@ -359,13 +360,33 @@ function VideoClipBar({
   )
 }
 
+const NO_OBJECTS: SlideObject[] = []
+
 export function AnimationTimeline() {
   const { animations } = useAnimations()
   const { activeSlideId } = useActiveSlide()
   const command = useCommand()
   const { role } = useDeckRole()
   const canvasInstance = useCanvasInstance()
-  const { objects: slideObjects } = useSlideObjects()
+  // The objects the timeline shows — its videos and the objects with steps —
+  // selected by id from the deck store: moving or typing into any other
+  // object does not re-render the timeline (performance.md → E6). Handlers
+  // that need every object read them when they run (`allObjectsNow`).
+  const store = useDeckStore()
+  const animatedIds = useMemo(() => new Set(animations.map((a) => a.objectId)), [animations])
+  const slideObjects = useDeckSelector(
+    (s) =>
+      (activeSlideId === null
+        ? NO_OBJECTS
+        : (s.getSlide(activeSlideId)?.objects ?? NO_OBJECTS)
+      ).filter((o) => o.type === 'video' || animatedIds.has(o.id)),
+    sameArray,
+  )
+  const allObjectsNow = useCallback(
+    (): SlideObject[] =>
+      activeSlideId === null ? NO_OBJECTS : (store.getSlide(activeSlideId)?.objects ?? NO_OBJECTS),
+    [store, activeSlideId],
+  )
   const { selectOne, selectedAnimationId, setSelectedAnimationId } = useSelection()
   const isViewer = role === 'viewer'
 
@@ -1067,8 +1088,8 @@ export function AnimationTimeline() {
     // SceneGraph.render does a full diff — for objects that still exist it
     // calls renderer.update(container, prev, next) which re-applies the
     // canonical transform props. That clears GSAP's lingering mutations.
-    canvasInstance?.sceneGraph.render(slideObjects)
-  }, [canvasInstance, slideObjects])
+    canvasInstance?.sceneGraph.render(allObjectsNow())
+  }, [canvasInstance, allObjectsNow])
 
   const stopPlayheadLoop = useCallback(() => {
     if (rafIdRef.current !== null) {
@@ -1128,7 +1149,7 @@ export function AnimationTimeline() {
     // compiling so the compiler doesn't spam a warning per scrub for
     // every dangling reference. Real cleanup of orphans happens in
     // mutations.removeObject; this is the runtime safety net.
-    const liveIds = new Set(slideObjects.map((o) => o.id))
+    const liveIds = new Set(allObjectsNow().map((o) => o.id))
     const compilable = animations.filter((s) => liveIds.has(s.objectId))
     if (compilable.length === 0) return null
     const resolver = createPixiTargetResolver(canvasInstance.sceneGraph)
@@ -1144,7 +1165,7 @@ export function AnimationTimeline() {
     })
     runtimeRef.current = runtime
     return runtime
-  }, [animations, canvasInstance, slideObjects])
+  }, [animations, canvasInstance, allObjectsNow])
 
   const handlePlayPause = useCallback(() => {
     const rt = ensureRuntime()

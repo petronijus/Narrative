@@ -19,8 +19,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-export const ACCESS_TOKENS_PATH = '/settings/access-tokens'
-export const ADMIN_PATH = '/admin'
+import { ACCESS_TOKENS_PATH, ADMIN_PATH } from './routePaths.js'
+
+export { ACCESS_TOKENS_PATH, ADMIN_PATH }
 
 export function UserMenu() {
   const navigate = useNavigate()

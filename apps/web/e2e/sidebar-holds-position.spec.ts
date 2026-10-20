@@ -51,7 +51,7 @@ test('the slide panel stays at the end while thumbnails are still rendering', as
   await page.waitForTimeout(2_000)
   const busy = await page.evaluate(
     () =>
-      document.querySelectorAll('ul.scrollbar-narrative img[src^="data:image/png"]').length <
+      document.querySelectorAll('ul.scrollbar-narrative img[src^="blob:"]').length <
       document.querySelectorAll('ul.scrollbar-narrative [data-slide-id]').length,
   )
   expect(busy, 'thumbnails had already finished — the deck is too light to exercise this').toBe(
@@ -81,7 +81,7 @@ test('the slide panel stays at the end while thumbnails are still rendering', as
       target,
       min,
       events,
-      imgs: document.querySelectorAll('ul.scrollbar-narrative img[src^="data:image/png"]').length,
+      imgs: document.querySelectorAll('ul.scrollbar-narrative img[src^="blob:"]').length,
     }
   })
 

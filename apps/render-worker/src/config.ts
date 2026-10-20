@@ -17,10 +17,23 @@
  *   RENDER_IDLE_MS                  Chromium quits after this long without a
  *                                   job (default 60 s); a page kept for a
  *                                   render session closes after as long
- *   RENDER_WARM_PAGES               pages kept open between jobs, one per
- *                                   render session (default 1; 0 opens a
- *                                   page per job). Each costs memory beside
- *                                   the 1200 MB the container may use
+ *   RENDER_CONCURRENCY              jobs rendered at once (default 2, 1–4):
+ *                                   with one, a person's single slide waits
+ *                                   behind somebody's 20-slide export. A
+ *                                   further job opens its page only while
+ *                                   RENDER_PAGE_RESERVE_MB are free in the
+ *                                   container (memory.ts), so a heavy page
+ *                                   still renders alone. Sized for VM 103's
+ *                                   `cpus: 2`, `mem_limit: 1200m`
+ *   RENDER_PAGE_RESERVE_MB          free memory a second page needs to open
+ *                                   beside a running job (default 450: a
+ *                                   20-slide photo job's page, measured)
+ *   RENDER_WARM_PAGES               idle pages kept between jobs (default:
+ *                                   RENDER_CONCURRENCY; 0 opens a page per
+ *                                   job): a session's own page, or a spare
+ *                                   another deck's job recycles
+ *                                   (warmPages.ts). Idle pages are closed
+ *                                   first when a job needs the memory
  *   RENDER_CHROME_EXECUTABLE        a Chrome / Chromium binary to use instead
  *                                   of Playwright's headless shell (machines
  *                                   Playwright ships no build for)
@@ -35,6 +48,8 @@ export interface RenderWorkerConfig {
   appOrigin: string
   upstream: string | null
   idleMs: number
+  concurrency: number
+  pageReserveBytes: number
   warmPages: number
   chromeExecutable: string | null
   requireSandbox: boolean
@@ -60,7 +75,17 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): RenderWorkerCo
   if (!Number.isFinite(idleMs) || idleMs < 1_000) {
     throw new Error(`RENDER_IDLE_MS must be at least 1000: ${env['RENDER_IDLE_MS']}`)
   }
-  const warmPages = Number(env['RENDER_WARM_PAGES'] ?? 1)
+  const concurrency = Number(env['RENDER_CONCURRENCY'] || 2)
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 4) {
+    throw new Error(`RENDER_CONCURRENCY must be 1–4: ${env['RENDER_CONCURRENCY']}`)
+  }
+  const reserveMb = Number(env['RENDER_PAGE_RESERVE_MB'] || 450)
+  if (!Number.isFinite(reserveMb) || reserveMb < 0) {
+    throw new Error(
+      `RENDER_PAGE_RESERVE_MB must be a number of MB: ${env['RENDER_PAGE_RESERVE_MB']}`,
+    )
+  }
+  const warmPages = Number(env['RENDER_WARM_PAGES'] || concurrency)
   if (!Number.isInteger(warmPages) || warmPages < 0 || warmPages > 4) {
     throw new Error(`RENDER_WARM_PAGES must be 0–4: ${env['RENDER_WARM_PAGES']}`)
   }
@@ -69,6 +94,8 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): RenderWorkerCo
     appOrigin: originOf(env['RENDER_APP_ORIGIN'] ?? 'http://localhost:5173', 'RENDER_APP_ORIGIN'),
     upstream: env['RENDER_UPSTREAM'] ? originOf(env['RENDER_UPSTREAM'], 'RENDER_UPSTREAM') : null,
     idleMs,
+    concurrency,
+    pageReserveBytes: reserveMb * 1024 * 1024,
     warmPages,
     chromeExecutable: env['RENDER_CHROME_EXECUTABLE'] || null,
     requireSandbox: env['RENDER_REQUIRE_SANDBOX'] === '1',

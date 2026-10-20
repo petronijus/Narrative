@@ -296,6 +296,39 @@ describe('useMediaUpload', () => {
     expect(tusInstances[0]!.abortMock).toHaveBeenCalledWith(true)
   })
 
+  it('an upload cancelled before tus-js-client arrived never starts; Retry starts it', async () => {
+    let capturedCtx: MediaUploadContextValue | null = null
+    render(
+      <TestWrapper
+        onContext={(ctx) => {
+          capturedCtx = ctx
+        }}
+      />,
+    )
+
+    // tus-js-client is a chunk loaded on the first upload (lib/tusClient.ts):
+    // a cancel in the same task lands before the tus.Upload exists.
+    let id = ''
+    act(() => {
+      id = capturedCtx!.startUpload(makeImageFile())
+      capturedCtx!.cancelUpload(id)
+    })
+    await waitFor(() => {
+      expect(capturedCtx!.uploads.find((u) => u.id === id)!.status).toBe('cancelled')
+    })
+    // Let the image probe and the module load settle: still nothing started.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+    expect(tusInstances).toHaveLength(0)
+    expect(capturedCtx!.uploads.find((u) => u.id === id)!.status).toBe('cancelled')
+
+    act(() => {
+      capturedCtx!.retryUpload(id)
+    })
+    await waitFor(() => expect(tusInstances).toHaveLength(1))
+  })
+
   it('non-image/non-video MIME is rejected client-side with error status — no tus call', async () => {
     let capturedCtx: MediaUploadContextValue | null = null
 

@@ -48,6 +48,11 @@ services:
       dockerfile: apps/server/Dockerfile
     container_name: narrative-server
     restart: unless-stopped
+    # Time between SIGTERM and SIGKILL (Docker's default is 10 s). The server
+    # stores the documents Hocuspocus holds before it waits for in-flight
+    # requests (apps/server/src/shutdown.ts), and gives those 8 s; this leaves
+    # room for both on a busy host.
+    stop_grace_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -101,6 +106,15 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?required}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?required}
+      # Multipart uploads nobody completed or aborted (a server killed while
+      # it streamed a .pptx into the bucket, a tus upload given up) are
+      # removed after a day. MinIO refuses the S3 lifecycle action for this
+      # (AbortIncompleteMultipartUpload: "did not validate against our
+      # published schema", tried 2026-10-19); this is its own setting. 24 h
+      # keeps a tus upload resumable for a day. Pinned here (MinIO's defaults)
+      # so it does not change under us; docs/storage.md "Incomplete uploads".
+      MINIO_API_STALE_UPLOADS_EXPIRY: 24h
+      MINIO_API_STALE_UPLOADS_CLEANUP_INTERVAL: 6h
     volumes:
       - minio_data:/data
     ports:

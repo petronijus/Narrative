@@ -60,30 +60,45 @@ Note the masking hazard: slide thumbnails decode via `Image.decode()`, a
 different path from the canvas texture worker. Thumbnails working is **not**
 evidence that texture loading works.
 
-## Known open defect — text alignment does not survive re-rasterisation
+## Text alignment across a re-raster — fixed 2026-10-18
 
-Diagnosed 2026-09-08, **not fixed**. `applyVerticalAlign` /
-`applyHorizontalAlign` in `objectRenderers/textRenderer.ts` compute the block
-offset from a _snapshot_ of the measured size (`textNode.y = data.height −
-textNode.height`; horizontal via `anchor.x` + `x`). Neither refresh path
-re-runs them:
+Diagnosed 2026-09-08. `applyVerticalAlign` in `objectRenderers/textRenderer.ts`
+computes the block's offset from the node's measured height when the text or
+its style is set (`textNode.y = data.height − textNode.height`, plus the
+PowerPoint line offset, which follows the font's line metrics). A re-raster
+can come with another measurement nobody asked for — a face that arrived
+after the first draw, a zoom's resolution change (Pixi measures the node
+again) — and the block then sat at the old offset with the new size.
+Horizontal alignment is anchor-based (`anchor.x` + `x`) and follows the new
+width by itself.
 
-- `SceneGraph.forceTextResolutionRefresh()` (zoom changes
-  `renderer.resolution`) and
-- `SceneGraph.refreshTextNodesUsingFamily()` (a deck font finishes loading)
+What it was, reproduced: a **table cell** drawn before its folder font
+arrived. `SceneGraph.refreshTextNodesUsingFamily()` lays top-level text boxes
+out again (`applyPatch` with the family), but cells and other nested HTMLText
+only had their raster invalidated: a bottom-aligned cell kept the fallback's
+two-line offset and drew the block font's four lines from there, clipped by
+the cell (96 px of the block missing); a top-aligned one kept a 3 px stale
+line offset. Top-level boxes and a zoom with today's staging were fine
+(measured: block extents equal to a fresh layout).
 
-only reset the GPU cache key and mark the texture dirty. When metrics change
-under the re-rasterisation — **the font arriving is the big one** — the block
-keeps a stale offset and visibly jumps.
+The fix: every `applyVerticalAlign` records what it computed from; a re-raster
+(the wired `onViewUpdate` of `wireRedrawOnAsyncTextureUpdate`) waits for its
+texture promise and, before the frame that draws the new texture, lays the
+text out again when the measured height moved (`realignIfMeasureMoved`: the
+whole layout for a text box, the block offset with the renderer's own
+padding kept for a cell). A re-raster that changes no metrics changes
+nothing. `e2e/text-align-reraster.spec.ts` (late font, then a zoom; bottom,
+middle, a cell and its top-aligned twin; pixels sampled at slide scale)
+fails without it.
 
-Evidence (real deck, slide 3): `HIbkfrux` model height 331.21 / measured 159 /
-`textY` 172.2; `YhA4hJsE` 356.6 / 159 / 197.6. Measured **non-causes**: node
-geometry does not drift across a zoom (all deltas 0), and a pure resolution
-change moves glyph rasters by 0.12 % of pixels, edges only.
-
-Likely fix: re-run both align functions once the re-rasterisation settles,
-rather than only invalidating the texture. Starting point:
-`apps/web/e2e/zoom-text-probe.spec.ts`.
+Related: `renderer/htmlTextBoundsMemo.ts` keeps an HTMLText's measurement
+while its markup, CSS, anchor and the page's faces are unchanged (the check
+after each re-raster reads the height; without the memo a zoom would measure
+every text again). Its face generation is bumped on
+`loadingdone` and by `forgetFontMetrics` — a face installed some other way
+than through `renderer/fontChanges.ts` must bump it too
+(`invalidateHtmlTextMeasurements`), or measurements taken against the
+fallback stay.
 
 ## Render scheduling
 
@@ -94,6 +109,27 @@ frames**, so a pending frame can stall indefinitely — which is why the
 visibility handler calls `renderNow()` and not `markDirty()`, and why
 `pageshow`/`persisted` (bfcache) also forces a repaint. Tests:
 `RenderScheduler.test.ts`. Keep that invariant if you touch the scheduler.
+
+## Zoom commits (2026-10-18)
+
+The editor zoom is a CSS transform; Pixi only sees `renderer.resolution`
+(`Canvas.tsx`), and a commit is expensive: the backbuffer reallocation alone
+is ~110 ms at the 25 Mpx cap with MSAA on an M3 Pro (12–25 ms without MSAA;
+width and height each reallocate), then every text re-rasterises. So a
+commit waits until neither the zoom nor wheel / pinch input changed for
+300 ms — a gesture that ends where it started commits nothing — and pauses
+the previous staging while a gesture is under way. The staging
+(`restageTextResolution`) gives the texts in the viewport their new
+resolution in frames, the rest in idle callbacks; the pixels a batch may
+start halve after a batch during which a long task began and grow back
+without one (`renderer/restageBudget.ts`, the Long Tasks API; fixed 2 Mpx
+where there is none). Timing the upload call itself does not work as a
+budget: it measured ~1 ms/Mpx where the CPU profile has ~6 (the SVG's
+measuring, drawing and mipmaps land around it), and the batches grew. The canvas being the whole artboard + bleed (25
+Mpx at zoom ≥ 2.2× while the window shows ~2 Mpx) is the cost left:
+a viewport-sized canvas with the zoom as a stage transform would remove the
+reallocation and most of the fill, but it is a render-architecture change
+(ADR + tech-lead, and `EditorLayout` / overlay coordinates are involved).
 
 ## Shape outlines — one definition (2026-09-29)
 

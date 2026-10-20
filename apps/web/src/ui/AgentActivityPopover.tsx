@@ -25,7 +25,7 @@ import { Bot, Loader2, RotateCcw } from 'lucide-react'
 import type { AgentRunSummary } from '@narrative/commands'
 import { ApiRequestError, useApi, type AgentRunTarget } from '../api/client.js'
 import { useAuth } from '../state/AuthContext.js'
-import { useAwareness } from '../state/useAwareness.js'
+import { useRemotePeers } from '../state/useAwareness.js'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -51,7 +51,7 @@ export function AgentActivityButton({ target }: { target: AgentRunTarget }) {
   const [open, setOpen] = useState(false)
   // Set while a row asks for confirmation, so Escape can cancel that first.
   const [confirmingRunId, setConfirmingRunId] = useState<string | null>(null)
-  const { remotePeers } = useAwareness()
+  const remotePeers = useRemotePeers()
   const agentWorking = remotePeers.some(isAgentPeer)
   const label = agentWorking ? 'Agent activity — an agent is working now' : 'Agent activity'
 

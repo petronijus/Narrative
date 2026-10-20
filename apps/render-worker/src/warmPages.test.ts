@@ -6,6 +6,7 @@ import { WarmPages, type WarmPage } from './warmPages.js'
 /** A context that closes like Playwright's (a 'close' event), and its page. */
 function fakePage(
   name = 'deck:d1',
+  generation = 0,
 ): WarmPage & { closed: () => boolean; closeListeners: () => number } {
   const events = new EventEmitter()
   let closed = false
@@ -23,6 +24,7 @@ function fakePage(
     context,
     page,
     pageErrors: ['old'],
+    generation,
     closed: () => closed,
     closeListeners: () => events.listenerCount('close'),
   }
@@ -57,13 +59,66 @@ describe('WarmPages', () => {
     expect(a.closeListeners()).toBe(1)
   })
 
-  it('closes a page asked for another deck', async () => {
+  it('never hands a session page to another deck as is; it stays a spare', async () => {
     const pages = new WarmPages({ max: 1, idleMs: 60_000, log })
     const a = fakePage('deck:d1')
     pages.keep('nrr_a', a)
     expect(pages.take('nrr_a', 'deck:d2')).toBeUndefined()
     await Promise.resolve()
+    expect([a.closed(), pages.size]).toEqual([false, 1])
+  })
+
+  it('hands out the oldest idle page as a spare, without its token or errors', () => {
+    const pages = new WarmPages({ max: 3, idleMs: 60_000, log })
+    const a = fakePage('deck:d1')
+    const b = fakePage('deck:d2')
+    pages.keep('nrr_a', a)
+    pages.keep('nrr_b', b)
+    const spare = pages.takeSpare()
+    expect(spare?.page).toBe(a.page)
+    expect(spare).not.toHaveProperty('token')
+    expect(spare?.pageErrors).toEqual([])
+    // Taken out: its session cannot get it back, the other page is still kept.
+    expect(pages.take('nrr_a', 'deck:d1')).toBeUndefined()
+    expect(pages.takeSpare()?.page).toBe(b.page)
+    expect(pages.takeSpare()).toBeUndefined()
+  })
+
+  it('skips spares whose page closed meanwhile', async () => {
+    const pages = new WarmPages({ max: 2, idleMs: 60_000, log })
+    const a = fakePage('deck:d1')
+    const b = fakePage('deck:d2')
+    pages.keep('nrr_a', a)
+    pages.keep('nrr_b', b)
+    ;(a.page as unknown as { isClosed: () => boolean }).isClosed = () => true
+    expect(pages.takeSpare()?.page).toBe(b.page)
+    await Promise.resolve()
     expect(a.closed()).toBe(true)
+  })
+
+  it('evicts the oldest idle page for memory, and says when there is none', async () => {
+    const pages = new WarmPages({ max: 2, idleMs: 60_000, log })
+    const a = fakePage('deck:d1')
+    const b = fakePage('deck:d2')
+    pages.keep('nrr_a', a)
+    pages.keep('nrr_b', b)
+    expect(pages.evictOldest('memory')).toBe(true)
+    await Promise.resolve()
+    expect([a.closed(), b.closed(), pages.size]).toEqual([true, false, 1])
+    expect(pages.evictOldest('memory')).toBe(true)
+    expect(pages.evictOldest('memory')).toBe(false)
+  })
+
+  it('does not keep a page of an earlier generation (its browser was retired)', async () => {
+    const pages = new WarmPages({ max: 2, idleMs: 60_000, log })
+    const running = fakePage('deck:d1', pages.generation)
+    pages.closeAll('failed job')
+    pages.keep('nrr_a', running)
+    await Promise.resolve()
+    expect([running.closed(), pages.size]).toEqual([true, 0])
+    const fresh = fakePage('deck:d1', pages.generation)
+    pages.keep('nrr_a', fresh)
+    expect(pages.size).toBe(1)
   })
 
   it('keeps at most `max` pages, the oldest going first, and closes idle ones', async () => {

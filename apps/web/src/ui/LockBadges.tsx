@@ -4,8 +4,9 @@
  * P5a: small padlock glyph rendered in the top-left corner of every locked
  * object so the author sees the lock state without opening the Inspector.
  * DOM overlay (not Pixi) — same pattern as PeerSelectionOverlays. Re-renders
- * on the `objects` list from `useSlideObjects`; by the time React paints,
- * SceneGraph.getBounds already reflects the latest transform.
+ * when a locked object of the active slide changes (selected from the deck
+ * store); by the time React paints, SceneGraph.getBounds already reflects
+ * the latest transform.
  *
  * Also renders a dashed selection outline for any LOCKED object that is in
  * the local selection. Locked objects are filtered out of the editable set
@@ -15,9 +16,10 @@
 
 import { Lock } from 'lucide-react'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
-import { useSlideObjects } from '../state/useSlideObjects.js'
+import { useActiveSlideObjectsWhere } from '../state/useDeckStore.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
+import type { SlideObject } from '@narrative/shared'
 import type { ObjectBounds } from '../renderer/types.js'
 import { useTextLayoutTick } from './useTextLayoutTick.js'
 
@@ -27,8 +29,11 @@ function cornersToPoints(corners: ObjectBounds['corners']): string {
   return corners.map(({ x, y }) => `${x},${y}`).join(' ')
 }
 
+const isLocked = (o: SlideObject): boolean => o.locked === true
+
 export function LockBadges() {
-  const { objects } = useSlideObjects()
+  // Only the locked objects: a drag of another object does not re-render the badges.
+  const objects = useActiveSlideObjectsWhere(isLocked)
   const { selectedIds } = useSelection()
   const canvasInstance = useCanvasInstance()
   const { zoom } = useZoomLevel()

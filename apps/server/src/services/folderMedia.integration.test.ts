@@ -943,7 +943,7 @@ describe('the PowerPoint export takes what the deck shows (item 11)', () => {
 
     const out = await exportDeckToPptx(deps, deckId)
     if (!out.ok) throw new Error(`export failed: ${out.error}`)
-    const zip = await JSZip.loadAsync(out.buffer)
+    const zip = await JSZip.loadAsync(await out.package.toBuffer())
     const media_ = Object.keys(zip.files).filter((p) => p.startsWith('ppt/media/'))
     expect(media_).toHaveLength(1)
     expect(Buffer.from(await zip.file(media_[0]!)!.async('uint8array')).equals(PNG)).toBe(true)

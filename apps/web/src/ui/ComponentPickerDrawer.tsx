@@ -309,16 +309,7 @@ function EmptyState() {
 }
 
 // ---------------------------------------------------------------------------
-// Drag-and-drop dataTransfer payload
+// Drag-and-drop dataTransfer payload (ui/componentDrag.ts)
 // ---------------------------------------------------------------------------
 
-/**
- * Custom MIME type used by the drawer's drag-out and the canvas drop-target.
- * Distinct from `text/*` so the existing image / text-paste handlers don't
- * accidentally match component drags.
- */
-export const COMPONENT_DRAG_MIME = 'application/x-narrative-component'
-
-export interface ComponentDragPayload {
-  componentId: string
-}
+export { COMPONENT_DRAG_MIME, type ComponentDragPayload } from './componentDrag.js'

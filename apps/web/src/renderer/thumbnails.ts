@@ -1,14 +1,14 @@
 /**
  * renderer/thumbnails.ts
  *
- * Slide thumbnail renderer — rasterises a SlideObject[] to a PNG data URL.
+ * Slide thumbnail renderer — rasterises a SlideObject[] to a PNG blob.
  *
  * Design:
  * - One shared offscreen Pixi Application per ThumbnailRenderer instance.
  * - The app is scaled so that the full 1920×1080 slide fits inside opts.width × derived-height.
  * - Each renderSlide() call builds a temporary Container, pipes SlideObject[] through the
- *   same objectRenderers registry (mount()), renders the frame, extracts a base64 PNG, then
- *   destroys the temp container. The offscreen app is reused across calls.
+ *   same objectRenderers registry (mount()), renders the frame, encodes it as a PNG blob
+ *   (asynchronously: canvas.toBlob), then destroys the temp container. The offscreen app is reused across calls.
  * - Concurrent renderSlide() calls are serialised through a Promise chain so the offscreen
  *   canvas is never used by two renders simultaneously.
  * - Textures from the main ResourceManager are NOT used here — thumbnails render shapes
@@ -43,10 +43,11 @@ import { applyBackground } from './ArtboardBackground.js'
 import { getDefaultImageUrlResolver } from './imageUrl.js'
 import { patchHTMLTextRace } from './patchHTMLTextRace.js'
 import { destroyPixiApplication } from './pixiApplication.js'
-import { DEFAULT_BACKGROUND } from '@narrative/shared'
+import { DEFAULT_BACKGROUND, perfCount } from '@narrative/shared'
 import type { SlideBackground, SlideObject } from '@narrative/shared'
 import { setRenderingSlideNumber } from './slideNumberContext.js'
 import { withRenderingSurface } from './colourResolver.js'
+import { canvasToPng } from './captureSlide.js'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -72,7 +73,7 @@ export interface ThumbnailOptions {
  */
 export interface ThumbnailRenderer {
   /**
-   * Renders a slide's object list to a PNG data URL.
+   * Renders a slide's object list to a PNG (renderer/thumbnailImages.ts makes its URL).
    *
    * Async: waits for any in-progress render to finish before starting a new one
    * (serialised queue — safe to call concurrently from multiple slide subscriptions).
@@ -89,7 +90,7 @@ export interface ThumbnailRenderer {
     slideNumber?: number,
     /** The slide's surface (its layout's, A4.2d): its colour tokens resolve on it. */
     surface?: string,
-  ): Promise<string>
+  ): Promise<Blob>
 
   /**
    * Destroys the underlying offscreen Pixi Application and releases GPU resources.
@@ -131,7 +132,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // Prevent Pixi from attaching the canvas to document.body
     antialias: false,
     // Offscreen app: we drive renders synchronously. Without this the rAF
-    // ticker also renders between our call and extract.base64(), and a
+    // ticker also renders between our call and the extract, and a
     // filter crash on a later tick leaks out as an Uncaught TypeError.
     autoStart: false,
     sharedTicker: false,
@@ -180,7 +181,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     background?: SlideBackground,
     slideNumber?: number,
     surface?: string,
-  ): Promise<string> {
+  ): Promise<Blob> {
     // Set the page-number context so any text leaf flagged
     // `isSlideNumber` rasterises with this slide's value. Cleared
     // before any await — concurrent thumbnail renders are serialised
@@ -213,7 +214,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     //      `mountImageBackground` silently returns and the slide panel
     //      tile shows the bare slide content with no background.
     //   2. Await the resulting promise so the async sprite mount lands
-    //      BEFORE the one-shot `extract.base64()` below. Otherwise the
+    //      BEFORE the one-shot extract below. Otherwise the
     //      PNG we capture has the background container empty.
     //
     // The thumbnail renderer doesn't share a ResourceManager with the
@@ -221,7 +222,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // lifetime — destroyed alongside `app`), so the acquire/release
     // hooks stay unset and `mountImageBackground` falls through to its
     // direct `Image.decode() + Texture.from(img)` path.
-    // Collect async work that must finish before the one-shot extract.base64
+    // Collect async work that must finish before the one-shot extract
     // below: image-background decode + each object renderer's thumbnailMount
     // ready promise. Declared above the bg block so the bg's promise can
     // be pushed alongside the per-object ones.
@@ -325,14 +326,13 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
       renderFrame(slideContainer)
     }
 
-    // Extract PNG. Pixi 8.x's extract.base64 returns Promise<string>; the
-    // earlier code path treated it as sync and destroyed the source
-    // container before the extract finished — first render usually
-    // succeeded thanks to the framebuffer still holding pixels, but
-    // subsequent renders intermittently produced blank thumbnails or
-    // dropped silently when the GPU resources had been freed mid-extract.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PixiJS v8 extract API type varies by version
-    const dataUrl: string = await (app.renderer as any).extract.base64(slideContainer, 'image/png')
+    // The frame as a canvas (synchronous: the read-back), then a PNG encoded
+    // asynchronously — the encode is off the main thread in Chromium, and no
+    // base64 string is made (renderer/thumbnailImages.ts). The container is
+    // destroyed only after the encode: the canvas holds the pixels by then.
+    const canvas = app.renderer.extract.canvas(slideContainer) as
+      HTMLCanvasElement | OffscreenCanvas
+    const png = await canvasToPng(canvas)
 
     // The renderer can be destroyed mid-await above (user navigated to
     // present mode or the SlidesPanel unmounted). Pixi nullifies app.stage
@@ -371,7 +371,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
       slideContainer.destroy()
     }
 
-    return dataUrl
+    return png
   }
 
   // ---------------------------------------------------------------------------
@@ -384,17 +384,17 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
       background?: SlideBackground,
       slideNumber?: number,
       surface?: string,
-    ): Promise<string> {
+    ): Promise<Blob> {
       if (destroyed) {
         return Promise.reject(new Error('[ThumbnailRenderer] renderer has been destroyed'))
       }
 
       // Chain onto the serialisation queue.
       // Each render runs only after the previous one resolves/rejects.
-      let resolveRender!: (value: string) => void
+      let resolveRender!: (value: Blob) => void
       let rejectRender!: (reason: unknown) => void
 
-      const resultPromise = new Promise<string>((resolve, reject) => {
+      const resultPromise = new Promise<Blob>((resolve, reject) => {
         resolveRender = resolve
         rejectRender = reject
       })
@@ -406,6 +406,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
             return
           }
           try {
+            perfCount('thumb.render')
             return renderSlideInternal(objects, background, slideNumber, surface).then(
               resolveRender,
               rejectRender,

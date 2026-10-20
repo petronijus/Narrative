@@ -159,10 +159,9 @@ export const deckUpdates = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (t) => [
-    index('deck_updates_deck_id_idx').on(t.deckId),
-    // Composite (deckId, id) supports the hot WHERE deckId=? ORDER BY id query
-    // (onLoadDocument). Without it, planner uses the single-column index then
-    // sorts.
+    // Composite (deckId, id): the load (WHERE deckId=? ORDER BY id), the
+    // compaction (WHERE deckId=? AND id<?) and the cascade all use it. The
+    // single-column deck_id index it made redundant went in 0038.
     index('deck_updates_deck_id_id_idx').on(t.deckId, t.id),
   ],
 )
@@ -190,7 +189,7 @@ export const folderUpdates = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (t) => [
-    index('folder_updates_folder_id_idx').on(t.folderId),
+    // As deck_updates' (0011; the single-column index went in 0038).
     index('folder_updates_folder_id_id_idx').on(t.folderId, t.id),
   ],
 )
@@ -298,6 +297,36 @@ export const deckMovedMedia = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// media_owner_sweeps — the storage sweep a deleted owner still needs
+// ---------------------------------------------------------------------------
+
+/**
+ * The second prefix sweep of a deleted deck or component master, due once
+ * the grace window has passed (media/ownerSweeps.ts): what was too young to
+ * sweep at the delete — a copy or a transcode still writing. In the
+ * database, so a restart does not forget it. No foreign key: the owner is
+ * gone by the time the row matters. Migration 0040.
+ */
+export const mediaOwnerSweeps = pgTable(
+  'media_owner_sweeps',
+  {
+    /** `deck` (`decks/<id>/`) or `component` (`components/<id>/`). */
+    ownerKind: text('owner_kind').$type<'deck' | 'component'>().notNull(),
+    ownerId: text('owner_id').notNull(),
+    /** When it may run next; a process taking it moves this forward. */
+    dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+    /** Sweeps that ended with an error so far. */
+    attempts: integer('attempts').default(0).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ name: 'media_owner_sweeps_pk', columns: [t.ownerKind, t.ownerId] }),
+    index('media_owner_sweeps_due_idx').on(t.dueAt),
+    check('media_owner_sweeps_kind_check', sql`${t.ownerKind} IN ('deck', 'component')`),
+  ],
+)
+
+// ---------------------------------------------------------------------------
 // share_links — public-token-based access (M10)
 // ---------------------------------------------------------------------------
 
@@ -379,6 +408,15 @@ export const mediaAssets = pgTable(
     posterKey: text('poster_key'),
     /** S3/MinIO key for the sidebar thumbnail: decks/<deckId>/videos/<id>/thumb.jpg */
     thumbnailKey: text('thumbnail_key'),
+    /**
+     * 0039: the playback fitted into 1920×1080 for a video larger than that
+     * (<prefix>/videos/<id>/present.mp4), and its size — what present mode
+     * plays at 1080p or less (docs/plans/performance.md, P3). NULL for
+     * smaller videos, images and videos transcoded before 0039.
+     */
+    presentPlaybackKey: text('present_playback_key'),
+    presentWidth: integer('present_width'),
+    presentHeight: integer('present_height'),
     /**
      * Transcode job status — NULL for image assets.
      * Lifecycle: pending → processing → done | failed (set by BullMQ worker, phase 2).
@@ -478,7 +516,7 @@ export const componentUpdates = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (t) => [
-    index('component_updates_component_id_idx').on(t.componentId),
+    // As deck_updates' (0011; the single-column index went in 0038).
     index('component_updates_component_id_id_idx').on(t.componentId, t.id),
   ],
 )

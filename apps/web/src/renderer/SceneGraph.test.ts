@@ -109,3 +109,86 @@ describe('SceneGraph', () => {
     expect(sg.objectCount).toBe(0)
   })
 })
+
+describe('SceneGraph — whole slide scenes (present mode)', () => {
+  const objectsA = [rect1] as unknown as Parameters<SceneGraph['holdSlide']>[1] & object
+  const objectsB = [rect2] as unknown as Parameters<SceneGraph['holdSlide']>[1] & object
+
+  function sceneOf(slideId: string, objects: readonly SlideObjectData[]) {
+    const root = new Container()
+    const nodes = objects.map((data) => {
+      const container = new Container()
+      root.addChild(container)
+      return { id: data.id, container, data }
+    })
+    return {
+      slideId,
+      root,
+      background: null,
+      nodes,
+      paintedWith: null,
+      objects,
+    } as unknown as Parameters<SceneGraph['swapSlideScene']>[0]
+  }
+
+  it('holds a slide at a version until a change set is applied to it', () => {
+    const sg = new SceneGraph(makeApp())
+    sg.render([rect1])
+    sg.holdSlide('A', objectsA)
+    expect(sg.heldSlideId).toBe('A')
+    expect(sg.holdsSlideAt('A', objectsA)).toBe(true)
+    // Another version of the same slide (the deck store rebuilt its objects).
+    expect(sg.holdsSlideAt('A', [...objectsA])).toBe(false)
+    expect(sg.holdsSlideAt('B', objectsA)).toBe(false)
+    sg.markHeldEdited()
+    expect(sg.holdsSlideAt('A', objectsA)).toBe(false)
+    sg.holdSlide(null)
+    expect(sg.heldSlideId).toBeNull()
+  })
+
+  it('swaps a prepared scene in and hands the outgoing one back intact', () => {
+    const app = makeApp()
+    const sg = new SceneGraph(app)
+    sg.render([rect1])
+    sg.holdSlide('A', objectsA)
+    const outgoingRoot = sg.getRoot()
+    const outgoingNode = sg.getContainer('r1')!
+    const incoming = sceneOf('B', [rect2])
+
+    const outgoing = sg.swapSlideScene(incoming)
+
+    // The scene graph is slide B now, at the version the scene was built from.
+    expect(sg.getRoot()).toBe(incoming.root)
+    expect(sg.getMountedIds()).toEqual(['r2'])
+    expect(sg.getContainer('r2')).toBe(incoming.nodes[0]!.container)
+    expect(sg.holdsSlideAt('B', objectsB as never)).toBe(false)
+    expect(sg.holdsSlideAt('B', incoming.objects as never)).toBe(true)
+    expect(app.stage.children).toContain(incoming.root)
+    expect(app.stage.children).not.toContain(outgoingRoot)
+    // Slide A comes back whole: its root off the stage, its node not destroyed.
+    expect(outgoing.slideId).toBe('A')
+    expect(outgoing.root).toBe(outgoingRoot)
+    expect(outgoing.objects).toBe(objectsA)
+    expect(outgoing.nodes.map((n) => n.id)).toEqual(['r1'])
+    expect(outgoing.nodes[0]!.container).toBe(outgoingNode)
+    expect(outgoingNode.destroyed).toBe(false)
+  })
+
+  it('hands back an edited slide without a version (it is rebuilt, not kept)', () => {
+    const sg = new SceneGraph(makeApp())
+    sg.swapSlideScene(sceneOf('A', [rect1]))
+    sg.markHeldEdited()
+    const outgoing = sg.swapSlideScene(sceneOf('B', [rect2]))
+    expect(outgoing.slideId).toBe('A')
+    expect(outgoing.objects).toBeNull()
+  })
+
+  it('puts a scene already on the stage (a transition drew it) in place without adding it twice', () => {
+    const app = makeApp()
+    const sg = new SceneGraph(app)
+    const incoming = sceneOf('B', [rect2])
+    app.stage.addChild(incoming.root)
+    sg.swapSlideScene(incoming)
+    expect(app.stage.children.filter((c) => c === incoming.root)).toHaveLength(1)
+  })
+})

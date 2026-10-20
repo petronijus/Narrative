@@ -392,9 +392,8 @@ test('deck.exportPdf makes a page per slide, the skipped ones left out unless as
   await command(request, 'slide.skip', { slide: { index: 2 }, skipped: true })
   await page.goto('about:blank')
 
-  const linked = await command<{ url: string; pages: number; leftOut: number }>(
+  const linked = await exportPdfCommand<{ url: string; pages: number; leftOut: number }>(
     request,
-    'deck.exportPdf',
     {},
   )
   expect(linked).toMatchObject({ pages: 2, leftOut: 1 })
@@ -406,14 +405,26 @@ test('deck.exportPdf makes a page per slide, the skipped ones left out unless as
   expect(near(await jpegPixel(page, pages[0]!, 400, 300), RED)).toBe(true)
   expect(near(await jpegPixel(page, pages[1]!, 400, 300), RED)).toBe(false)
 
-  const all = await command<{ base64: string; pages: number; leftOut: number }>(
-    request,
-    'deck.exportPdf',
-    { includeSkipped: true, delivery: 'base64' },
-  )
+  const all = await exportPdfCommand<{ base64: string; pages: number; leftOut: number }>(request, {
+    includeSkipped: true,
+    delivery: 'base64',
+  })
   expect(all).toMatchObject({ pages: 3, leftOut: 0 })
   expect(pdfPages(Buffer.from(all.base64, 'base64'))).toHaveLength(3)
 })
+
+/** deck.exportPdf to its end: called again with its `jobId` while the server still makes it. */
+async function exportPdfCommand<T>(
+  request: import('@playwright/test').APIRequestContext,
+  input: Record<string, unknown>,
+): Promise<T> {
+  let out = await command<{ status: string; jobId: string }>(request, 'deck.exportPdf', input)
+  while (out.status !== 'done')
+    out = await command<{ status: string; jobId: string }>(request, 'deck.exportPdf', {
+      jobId: out.jobId,
+    })
+  return out as unknown as T
+}
 
 async function exportPdfFromToolbar(page: import('@playwright/test').Page): Promise<Buffer> {
   await page.getByRole('button', { name: /^Export$/ }).click()
@@ -431,7 +442,8 @@ test('the editor exports the deck as a PDF in the browser, the server only when 
   await seedDeck(page.request)
   const serverPdfs: string[] = []
   page.on('request', (req) => {
-    if (req.url().includes('/export.pdf')) serverPdfs.push(req.url())
+    // Started once (a POST); its job is then polled.
+    if (req.url().includes('/export.pdf') && req.method() === 'POST') serverPdfs.push(req.url())
   })
   await page.goto(`/deck/${deckId}`)
   await expect(page.locator('[role="option"][data-slide-id]').first()).toBeVisible({

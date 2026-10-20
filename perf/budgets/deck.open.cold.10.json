@@ -1,0 +1,12 @@
+{
+  "format": 1,
+  "id": "deck.open.cold.10",
+  "counters": {
+    "gl.texUpload": 15,
+    "sg.mount": 12,
+    "text.autofit.measure": 0,
+    "text.raster.kpx": 429,
+    "text.raster.started": 6,
+    "y.tx.local": 4
+  }
+}

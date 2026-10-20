@@ -27,7 +27,6 @@
  */
 
 import type { PlaceholderHints } from './writer.js'
-import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { PutObjectCommand } from '@aws-sdk/client-s3'
 import { nanoid } from 'nanoid'
@@ -41,8 +40,10 @@ import type { MediaOwner } from '../media/mediaOwner.js'
 import { purgeExplicitKeys } from '../media/bucketCleanup.js'
 import { parseFontMetadata } from '../media/fontMetadata.js'
 import { downscaleForStorage } from '../media/storedImageLimits.js'
-import { parsePptx, type ParsedEmbeddedImage, type ParsedPptx } from './parser.js'
+import { parsePptx, type ParsedPptx } from './parser.js'
 import { buildDeckUpdate } from './writer.js'
+import { endPhase } from './phases.js'
+import { mapConcurrent } from '../lib/concurrency.js'
 import { sanitizeFontFamily } from '@narrative/slide-model'
 
 const require = createRequire(import.meta.url)
@@ -51,9 +52,22 @@ interface ProbeResult {
   height: number
   type: string
 }
-const probeImageSize: (
-  stream: Readable,
-) => Promise<ProbeResult | null> = require('probe-image-size')
+/**
+ * The synchronous prober: it reads only the header, from a buffer we hold
+ * anyway. The stream prober runs every format's parser over the whole
+ * stream, and its SVG parser turns each chunk — here the whole picture —
+ * into a string first: 3 s of blocked event loop per 200 pictures.
+ */
+const probeImageSize: (buffer: Buffer) => ProbeResult | null = require('probe-image-size/sync')
+
+/**
+ * Embedded files read, downscaled and uploaded at once. The work is the
+ * object store's round trips and sharp on libuv's pool (4 threads unless
+ * UV_THREADPOOL_SIZE says otherwise); six in flight keep both busy without
+ * holding more than six pictures' bytes. Measured with `just perf-pptx`
+ * (docs/plans/performance.md, X1).
+ */
+export const IMPORT_MEDIA_CONCURRENCY = 6
 
 /** Minimal logger surface that both Fastify request loggers and the
  *  Fastify app logger satisfy — accepts `(obj, msg)` like pino. */
@@ -116,8 +130,10 @@ export async function importDeckFromPptxBytes(args: {
   filenameForTitle?: string
   db: Database
   log: ImportLogger
+  /** Queues a video's transcode (default: the BullMQ queue; see `registerOwnedMedia`). */
+  enqueueVideo?: VideoEnqueuer
 }): Promise<{ ok: true; result: ImportDeckResult } | { ok: false; error: ImportDeckError }> {
-  const { bytes, folderId, ownerUserId, filenameForTitle, db, log } = args
+  const { bytes, folderId, ownerUserId, filenameForTitle, db, log, enqueueVideo } = args
 
   if (bytes.byteLength === 0) {
     return { ok: false, error: { kind: 'emptyBody' } }
@@ -135,6 +151,7 @@ export async function importDeckFromPptxBytes(args: {
   if (access === null || !roleAtLeast(access.role, 'editor')) {
     return { ok: false, error: { kind: 'forbidden' } }
   }
+  endPhase('import', 'access')
 
   let parsed: ParsedPptx
   try {
@@ -162,6 +179,7 @@ export async function importDeckFromPptxBytes(args: {
     media
 
   const { state, slideCount, objectsCreated, skipped, placeholders } = buildDeckUpdate(parsed)
+  endPhase('import', 'build')
 
   // The deck, its owner grant and its first document state commit in the
   // same transaction as the media rows — the rows reference the deck, and a
@@ -173,6 +191,7 @@ export async function importDeckFromPptxBytes(args: {
       ownerUserId,
       media,
       log,
+      ...(enqueueVideo !== undefined ? { enqueueVideo } : {}),
       alongside: async (tx) => {
         const [deck] = await tx
           .insert(decks)
@@ -208,6 +227,7 @@ export async function importDeckFromPptxBytes(args: {
     }
     throw err
   }
+  endPhase('import', 'store')
 
   // Walk the parsed shapes once to gather every font-family that any
   // text / table / run references. This drives the "missing fonts"
@@ -254,6 +274,9 @@ export async function importDeckFromPptxBytes(args: {
   }
 }
 
+/** Queues one video's HLS transcode; `enqueueVideoTranscode` unless a caller swaps it. */
+export type VideoEnqueuer = typeof enqueueVideoTranscode
+
 /** A Drizzle transaction handle, as `db.transaction` hands it to its callback. */
 export type DbTransaction = Parameters<Parameters<Database['transaction']>[0]>[0]
 
@@ -290,6 +313,7 @@ export async function registerDeckMedia<T = void>(args: {
   log: ImportLogger
   /** Writes that must commit atomically with the media rows. */
   alongside?: (tx: DbTransaction) => Promise<T>
+  enqueueVideo?: VideoEnqueuer
 }): Promise<T | undefined> {
   const { deckId, ...rest } = args
   return registerOwnedMedia({ ...rest, owner: { deckId } })
@@ -308,8 +332,15 @@ export async function registerOwnedMedia<T = void>(args: {
   log: ImportLogger
   /** Writes that must commit atomically with the media rows. */
   alongside?: (tx: DbTransaction) => Promise<T>
+  /**
+   * Queues each video's transcode after the commit. Production leaves it at
+   * the BullMQ queue; the performance driver swaps in a counter so measuring
+   * never hands jobs to a worker of the shared dev stack.
+   */
+  enqueueVideo?: VideoEnqueuer
 }): Promise<T | undefined> {
   const { db, owner, ownerUserId, media, log, alongside } = args
+  const enqueue = args.enqueueVideo ?? enqueueVideoTranscode
 
   const result = await db.transaction(async (tx) => {
     const r = alongside !== undefined ? await alongside(tx) : undefined
@@ -321,7 +352,7 @@ export async function registerOwnedMedia<T = void>(args: {
 
   for (const job of media.videoTranscodeJobs) {
     try {
-      await enqueueVideoTranscode({
+      await enqueue({
         assetId: job.assetId,
         ...('deckId' in owner ? { deckId: owner.deckId } : {}),
         storageKey: job.storageKey,
@@ -419,15 +450,15 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
   const SUPPORTED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
   const SUPPORTED_VIDEO_MIME = new Set(['video/mp4', 'video/webm', 'video/quicktime'])
   const s3 = buildS3Client()
-  const mediaPathToAssetId = new Map<string, string>()
-  const mediaAssetRows: Array<typeof mediaAssets.$inferInsert> = []
-  const videoTranscodeJobs: Array<{
-    assetId: string
-    storageKey: string
-    mimeType: string
-  }> = []
-  let uploadedImageCount = 0
-  let skippedUnsupportedImages = 0
+  type MediaRow = typeof mediaAssets.$inferInsert
+  type TranscodeJob = { assetId: string; storageKey: string; mimeType: string }
+
+  // Every face and every picture is independent of the others, so they are
+  // read, downscaled and uploaded IMPORT_MEDIA_CONCURRENCY at a time. Each
+  // task returns its row (or null when it was skipped) and the rows are
+  // collected in the deck's order afterwards — the order a serial loop had —
+  // so ids, rows and the shapes they patch do not depend on which upload
+  // finished first.
 
   // ─── Embedded fonts ────────────────────────────────────────────────────
   // Walk `<p:embeddedFontLst>` faces first — they're independent of the
@@ -437,142 +468,185 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
   // is the same opentype.js entry point the tus font-upload route uses;
   // mismatched / corrupt bytes log + skip instead of crashing the
   // entire import.
-  let uploadedFontCount = 0
-  let skippedFontCount = 0
-  for (const font of parsed.embeddedFonts) {
-    const assetId = nanoid(12)
-    const mimeType = 'font/ttf'
-    const storageKey = `decks/${deckId}/fonts/${assetId}/original.${font.ext}`
-    let metadata
-    try {
-      const ab = font.bytes.buffer.slice(
-        font.bytes.byteOffset,
-        font.bytes.byteOffset + font.bytes.byteLength,
-      ) as ArrayBuffer
-      metadata = parseFontMetadata(ab)
-    } catch (err) {
-      log.warn(
-        { err, zipPath: font.zipPath, typeface: font.typeface, variant: font.variant },
-        'pptx: parseFontMetadata failed, skipping font',
-      )
-      skippedFontCount++
-      continue
-    }
-    try {
-      await s3.send(
-        new PutObjectCommand({
-          Bucket: MEDIA_BUCKET,
-          Key: storageKey,
-          Body: font.bytes,
-          ContentType: mimeType,
-          CacheControl: 'public, max-age=31536000, immutable',
-        }),
-      )
-    } catch (err) {
-      log.warn(
-        { err, zipPath: font.zipPath, typeface: font.typeface },
-        'pptx: MinIO font upload failed, skipping',
-      )
-      skippedFontCount++
-      continue
-    }
-    // The parser's `typeface` attr (`<p:font typeface="Druk Wide">`) is
-    // the family name slide content references. opentype.js's family
-    // name might differ (e.g. "Druk Wide Bold" vs "Druk Wide"). Prefer
-    // the PPTX-authored typeface so font-family CSS lookups resolve.
-    mediaAssetRows.push({
-      id: assetId,
-      deckId,
-      uploaderUserId: ownerUserId,
-      mimeType,
-      sizeBytes: font.bytes.byteLength,
-      storageKey,
-      originalFilename: font.zipPath.split('/').pop() ?? null,
-      kind: 'font',
-      // Sanitise the PPTX-authored typeface at the import boundary — it
-      // becomes a font-family CSS value on the client. A legit typeface is
-      // plain letters/spaces and survives untouched; a hostile one is
-      // stripped (null → client falls back to a default family).
-      fontFamily: sanitizeFontFamily(font.typeface) ?? null,
-      fontWeight: metadata.weight,
-      fontStyle: metadata.style,
-      fontPostscriptName: metadata.postscriptName,
-      fontAxes: metadata.axes ?? {},
-    })
-    uploadedFontCount++
-  }
-
-  for (const [zipPath, media] of parsed.embeddedImages) {
-    const isImage = SUPPORTED_IMAGE_MIME.has(media.mimeType)
-    const isVideo = SUPPORTED_VIDEO_MIME.has(media.mimeType)
-    if (!isImage && !isVideo) {
-      skippedUnsupportedImages++
-      continue
-    }
-    const assetId = nanoid(12)
-    const storageKey = `decks/${deckId}/uploads/${assetId}/original.${media.ext}`
-    // A raster above imgproxy's source limit would never render (422), so
-    // it is brought under the limit here, in its own format — see
-    // media/storedImageLimits.ts. A failed downscale stores the original.
-    let body = media.bytes
-    let dims: { width: number; height: number } | null = null
-    if (isImage) {
+  const fontRows = await mapConcurrent(
+    parsed.embeddedFonts,
+    IMPORT_MEDIA_CONCURRENCY,
+    async (font): Promise<MediaRow | null> => {
+      const assetId = nanoid(12)
+      const mimeType = 'font/ttf'
+      const storageKey = `decks/${deckId}/fonts/${assetId}/original.${font.ext}`
+      let metadata
       try {
-        const downscaled = await downscaleForStorage(media.bytes, media.mimeType)
-        if (downscaled !== null) {
-          log.info(
-            {
-              zipPath,
-              fromBytes: media.bytes.byteLength,
-              toBytes: downscaled.bytes.byteLength,
-              width: downscaled.width,
-              height: downscaled.height,
-            },
-            'pptx: downscaled oversize image to the stored-image limits',
-          )
-          body = downscaled.bytes
-          dims = { width: downscaled.width, height: downscaled.height }
-        }
+        const ab = font.bytes.buffer.slice(
+          font.bytes.byteOffset,
+          font.bytes.byteOffset + font.bytes.byteLength,
+        ) as ArrayBuffer
+        metadata = parseFontMetadata(ab)
       } catch (err) {
-        log.warn({ err, zipPath }, 'pptx: downscaling an oversize image failed, storing original')
+        log.warn(
+          { err, zipPath: font.zipPath, typeface: font.typeface, variant: font.variant },
+          'pptx: parseFontMetadata failed, skipping font',
+        )
+        return null
       }
+      try {
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: MEDIA_BUCKET,
+            Key: storageKey,
+            Body: font.bytes,
+            ContentType: mimeType,
+            CacheControl: 'public, max-age=31536000, immutable',
+          }),
+        )
+      } catch (err) {
+        log.warn(
+          { err, zipPath: font.zipPath, typeface: font.typeface },
+          'pptx: MinIO font upload failed, skipping',
+        )
+        return null
+      }
+      // The parser's `typeface` attr (`<p:font typeface="Druk Wide">`) is
+      // the family name slide content references. opentype.js's family
+      // name might differ (e.g. "Druk Wide Bold" vs "Druk Wide"). Prefer
+      // the PPTX-authored typeface so font-family CSS lookups resolve.
+      return {
+        id: assetId,
+        deckId,
+        uploaderUserId: ownerUserId,
+        mimeType,
+        sizeBytes: font.bytes.byteLength,
+        storageKey,
+        originalFilename: font.zipPath.split('/').pop() ?? null,
+        kind: 'font',
+        // Sanitise the PPTX-authored typeface at the import boundary — it
+        // becomes a font-family CSS value on the client. A legit typeface is
+        // plain letters/spaces and survives untouched; a hostile one is
+        // stripped (null → client falls back to a default family).
+        fontFamily: sanitizeFontFamily(font.typeface) ?? null,
+        fontWeight: metadata.weight,
+        fontStyle: metadata.style,
+        fontPostscriptName: metadata.postscriptName,
+        fontAxes: metadata.axes ?? {},
+      }
+    },
+  )
+  const mediaAssetRows: MediaRow[] = fontRows.filter((r): r is MediaRow => r !== null)
+  const uploadedFontCount = mediaAssetRows.length
+  const skippedFontCount = fontRows.length - uploadedFontCount
+  endPhase('import', 'fonts')
+
+  // Largest first: an oversize picture's downscale takes seconds, and one
+  // that started last would finish long after everything else. The results
+  // are put back in the deck's order below.
+  const embedded = [...parsed.embeddedImages.values()]
+  const bySize = embedded.map((_, i) => i).sort((a, b) => embedded[b]!.size - embedded[a]!.size)
+  const picturesBySize = await mapConcurrent(
+    bySize.map((i) => embedded[i]!),
+    IMPORT_MEDIA_CONCURRENCY,
+    async (media): Promise<'unsupported' | null | { row: MediaRow; job?: TranscodeJob }> => {
+      const { zipPath } = media
+      const isImage = SUPPORTED_IMAGE_MIME.has(media.mimeType)
+      const isVideo = SUPPORTED_VIDEO_MIME.has(media.mimeType)
+      if (!isImage && !isVideo) return 'unsupported'
+      const assetId = nanoid(12)
+      const storageKey = `decks/${deckId}/uploads/${assetId}/original.${media.ext}`
+      // Inflated only now, and released when this task ends: the deck's
+      // pictures are never all in memory at once.
+      let bytes: Buffer
+      try {
+        bytes = await media.read()
+      } catch (err) {
+        log.warn({ err, zipPath }, 'pptx: reading an embedded file failed, skipping asset')
+        return null
+      }
+      // A raster above imgproxy's source limit would never render (422), so
+      // it is brought under the limit here, in its own format — see
+      // media/storedImageLimits.ts. A failed downscale stores the original.
+      let body = bytes
+      let dims: { width: number; height: number } | null = null
+      // The header's size (read without decoding) is the row's size when the
+      // picture is not downscaled. Whether it is, and its turn on the
+      // process-wide pixel budget, go by sharp's own reading of the header
+      // inside downscaleForStorage — not by this prober, which can fail or
+      // disagree with what libvips decodes.
+      const header = isImage ? probeImageDims(bytes) : null
+      if (isImage) {
+        try {
+          const downscaled = await downscaleForStorage(bytes, media.mimeType)
+          if (downscaled !== null) {
+            log.info(
+              {
+                zipPath,
+                fromBytes: bytes.byteLength,
+                toBytes: downscaled.bytes.byteLength,
+                width: downscaled.width,
+                height: downscaled.height,
+              },
+              'pptx: downscaled oversize image to the stored-image limits',
+            )
+            body = downscaled.bytes
+            dims = { width: downscaled.width, height: downscaled.height }
+          }
+        } catch (err) {
+          log.warn({ err, zipPath }, 'pptx: downscaling an oversize image failed, storing original')
+        }
+      }
+      try {
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: MEDIA_BUCKET,
+            Key: storageKey,
+            Body: body,
+            ContentType: media.mimeType,
+            CacheControl: 'public, max-age=31536000, immutable',
+          }),
+        )
+      } catch (err) {
+        log.warn({ err, zipPath }, 'pptx: MinIO upload failed, skipping asset')
+        return null
+      }
+      if (isImage && dims === null) dims = header
+      return {
+        row: {
+          id: assetId,
+          deckId,
+          uploaderUserId: ownerUserId,
+          mimeType: media.mimeType,
+          sizeBytes: body.byteLength,
+          storageKey,
+          originalFilename: zipPath.split('/').pop() ?? null,
+          width: dims?.width ?? null,
+          height: dims?.height ?? null,
+          kind: isVideo ? 'video' : 'image',
+          ...(isVideo ? { transcodeStatus: 'pending' as const } : {}),
+        },
+        ...(isVideo ? { job: { assetId, storageKey, mimeType: media.mimeType } } : {}),
+      }
+    },
+  )
+
+  const pictures = new Array<(typeof picturesBySize)[number]>(embedded.length)
+  bySize.forEach((i, k) => (pictures[i] = picturesBySize[k]!))
+
+  const mediaPathToAssetId = new Map<string, string>()
+  const videoTranscodeJobs: TranscodeJob[] = []
+  let uploadedImageCount = 0
+  let skippedUnsupportedImages = 0
+  pictures.forEach((p, i) => {
+    if (p === 'unsupported') {
+      skippedUnsupportedImages++
+      return
     }
-    try {
-      await s3.send(
-        new PutObjectCommand({
-          Bucket: MEDIA_BUCKET,
-          Key: storageKey,
-          Body: body,
-          ContentType: media.mimeType,
-          CacheControl: 'public, max-age=31536000, immutable',
-        }),
-      )
-    } catch (err) {
-      log.warn({ err, zipPath }, 'pptx: MinIO upload failed, skipping asset')
-      continue
-    }
-    if (isImage && dims === null) dims = await probeImageDims(media)
-    mediaPathToAssetId.set(zipPath, assetId)
-    mediaAssetRows.push({
-      id: assetId,
-      deckId,
-      uploaderUserId: ownerUserId,
-      mimeType: media.mimeType,
-      sizeBytes: body.byteLength,
-      storageKey,
-      originalFilename: zipPath.split('/').pop() ?? null,
-      width: dims?.width ?? null,
-      height: dims?.height ?? null,
-      kind: isVideo ? 'video' : 'image',
-      ...(isVideo ? { transcodeStatus: 'pending' as const } : {}),
-    })
-    if (isVideo) {
-      videoTranscodeJobs.push({ assetId, storageKey, mimeType: media.mimeType })
-    }
+    if (p === null) return
+    mediaPathToAssetId.set(embedded[i]!.zipPath, p.row.id!)
+    mediaAssetRows.push(p.row)
+    if (p.job !== undefined) videoTranscodeJobs.push(p.job)
     uploadedImageCount++
-  }
+  })
 
   patchParsedAssetIds(parsed, mediaPathToAssetId)
+  endPhase('import', 'images')
 
   return {
     mediaAssetRows,
@@ -625,11 +699,9 @@ export function patchParsedAssetIds(
   }
 }
 
-async function probeImageDims(
-  img: ParsedEmbeddedImage,
-): Promise<{ width: number; height: number } | null> {
+function probeImageDims(bytes: Buffer): { width: number; height: number } | null {
   try {
-    const r = await probeImageSize(Readable.from(img.bytes))
+    const r = probeImageSize(bytes)
     if (r === null) return null
     return { width: r.width, height: r.height }
   } catch {

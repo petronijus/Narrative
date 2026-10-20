@@ -16,10 +16,13 @@ import type {
   DeckListPage,
   DeckListPageArgs,
   DeckRecord,
+  DeckRecordsPage,
+  DeckRecordsPageArgs,
   DeckRole,
   DeckService,
   DeckWithRole,
   DuplicatedDeck,
+  ListKeyset,
   MoveDecksResult,
   MovedDeckMedia,
   TokenRebindReport,
@@ -41,11 +44,8 @@ import {
 } from '../auth/permissions.js'
 import { listUsersBySubs } from '../auth/users.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
-import {
-  purgeDeckBucketPrefix,
-  purgeUnreferencedKeys,
-  sweepAgainAfterGrace,
-} from '../media/bucketCleanup.js'
+import { purgeDeckBucketPrefix, purgeUnreferencedKeys } from '../media/bucketCleanup.js'
+import { scheduleOwnerSweeps } from '../media/ownerSweeps.js'
 import { listDeckFontAssets } from '../media/assets.js'
 import { activeEditorsByDeck } from '../hocuspocus/presence.js'
 import { closeConnectionsForDocument, closeDeckConnections } from '../hocuspocus/connections.js'
@@ -129,6 +129,20 @@ export function validDeckTitle(raw: unknown): string {
 
 const DECK_LAST_CHANGE_KEY = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}$/
 
+/**
+ * Whether a keyset key from a cursor is a time this list could have issued:
+ * the format, and a real date and time (a 13th month or a 30 February would
+ * otherwise reach Postgres' `::timestamp` cast and fail as a 500). The year
+ * is 0001–9999: JavaScript has a year 0, Postgres does not (it counts 1 BC
+ * straight to AD 1), so `0000-…` parses here and is rejected there.
+ */
+export function validKeysetTime(key: string): boolean {
+  if (!DECK_LAST_CHANGE_KEY.test(key)) return false
+  if (Number(key.slice(0, 4)) < 1) return false
+  const ms = Date.parse(`${key.slice(0, 23)}Z`)
+  return !Number.isNaN(ms) && new Date(ms).toISOString().slice(0, 23) === key.slice(0, 23)
+}
+
 export function createDecksService(deps: ServiceDeps): DeckService {
   const { db } = deps
 
@@ -174,42 +188,94 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     return r.adminOwns === true ? 'owner' : (higherRole(r.deckRole, r.folderRole) ?? 'viewer')
   }
 
-  async function list(args: { userId: string; folderId?: string | undefined }) {
-    const { userId } = args
-    const filterFolderId = args.folderId ?? null
+  // `list` and `listRecordsPage` order by creation, then id (a stable order
+  // for decks created in the same microsecond). The keyset is the creation
+  // time as text with microseconds — the column holds microseconds and a
+  // JavaScript Date only milliseconds (see listPage) — and the id.
+  const createdKey = sql<string>`to_char(${decks.createdAt}, 'YYYY-MM-DD"T"HH24:MI:SS.US')`
 
-    if (filterFolderId !== null) await requireFilterFolder(userId, filterFolderId)
+  /**
+   * The decks the user can open, as `list` answers them, in its order;
+   * `page` keyset-pages them (fetching `limit + 1` rows to know whether
+   * another page follows).
+   */
+  async function listedDecks(args: {
+    userId: string
+    folderId: string | null
+    page?: { limit: number; after?: ListKeyset | undefined }
+  }): Promise<{ decks: DeckWithRole[]; next: ListKeyset | null }> {
+    const { userId, folderId, page } = args
+    if (page?.after !== undefined && !validKeysetTime(page.after.key))
+      throw badRequest('cursor: not a position this list returned')
+    if (folderId !== null) await requireFilterFolder(userId, folderId)
 
+    const filters: SQL[] = []
+    if (folderId !== null) filters.push(eq(decks.folderId, folderId))
+    if (page?.after !== undefined)
+      filters.push(
+        sql`(${decks.createdAt}, ${decks.id}) > (${page.after.key}::timestamp, ${page.after.id})`,
+      )
+    const limited = <T extends { limit(n: number): unknown }>(q: T) =>
+      page === undefined ? q : (q.limit(page.limit + 1) as T)
+
+    let rows: Array<{ record: DeckWithRole; key: string }>
     if (deps.bypass === true && userId === DEV_USER_SUB) {
       // BYPASS_AUTH=true dev fallback: both 'dev-user' and legacy 'demo-user' owned decks.
       // The other synthetic identities (auth/devIdentity.ts) see what their roles allow.
       // TODO(post-M10): remove when production migration script has run.
-      const ownerCondition = inArray(decks.ownerUserId, ['dev-user', 'demo-user'])
-      const whereClause =
-        filterFolderId !== null
-          ? and(ownerCondition, eq(decks.folderId, filterFolderId))
-          : ownerCondition
-      const rows = await db.select().from(decks).where(whereClause).orderBy(decks.createdAt)
-      // In bypass mode dev-user always has owner role on their own decks.
-      return rows.map((r) => ({ ...deckRecord(r), viewerRole: 'owner' as const }))
-    }
-
-    // Decks the user may see: a deck grant or the deck's folder (accessJoins),
-    // in one query that also yields both roles — no N+1.
-    const access = accessJoins(userId)
-    const rows = await db
-      .select({ deck: decks, ...access.roles })
-      .from(decks)
-      .leftJoin(deckPermissions, access.deckGrant)
-      .leftJoin(folderPermissions, access.folderGrant)
-      .leftJoin(users, access.adminGrant)
-      .where(
-        filterFolderId !== null
-          ? and(access.visible, eq(decks.folderId, filterFolderId))
-          : access.visible,
+      const found = await limited(
+        db
+          .select({ deck: decks, key: createdKey })
+          .from(decks)
+          .where(and(inArray(decks.ownerUserId, ['dev-user', 'demo-user']), ...filters))
+          .orderBy(decks.createdAt, decks.id),
       )
-      .orderBy(decks.createdAt)
-    return rows.map((r) => ({ ...deckRecord(r.deck), viewerRole: listedRole(r) }))
+      // In bypass mode dev-user always has owner role on their own decks.
+      rows = found.map((r) => ({
+        record: { ...deckRecord(r.deck), viewerRole: 'owner' as const },
+        key: r.key,
+      }))
+    } else {
+      // Decks the user may see: a deck grant or the deck's folder (accessJoins),
+      // in one query that also yields both roles — no N+1.
+      const access = accessJoins(userId)
+      const found = await limited(
+        db
+          .select({ deck: decks, key: createdKey, ...access.roles })
+          .from(decks)
+          .leftJoin(deckPermissions, access.deckGrant)
+          .leftJoin(folderPermissions, access.folderGrant)
+          .leftJoin(users, access.adminGrant)
+          .where(and(access.visible, ...filters))
+          .orderBy(decks.createdAt, decks.id),
+      )
+      rows = found.map((r) => ({
+        record: { ...deckRecord(r.deck), viewerRole: listedRole(r) },
+        key: r.key,
+      }))
+    }
+    if (page === undefined) return { decks: rows.map((r) => r.record), next: null }
+    const kept = rows.slice(0, page.limit)
+    const last = kept[kept.length - 1]
+    return {
+      decks: kept.map((r) => r.record),
+      next:
+        rows.length > page.limit && last !== undefined
+          ? { key: last.key, id: last.record.id }
+          : null,
+    }
+  }
+
+  async function list(args: { userId: string; folderId?: string | undefined }) {
+    return (await listedDecks({ userId: args.userId, folderId: args.folderId ?? null })).decks
+  }
+
+  async function listRecordsPage(args: DeckRecordsPageArgs): Promise<DeckRecordsPage> {
+    return listedDecks({
+      userId: args.userId,
+      folderId: args.folderId ?? null,
+      page: { limit: validPageLimit(args.limit), after: args.after },
+    })
   }
 
   /**
@@ -247,7 +313,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     // milliseconds would skip or repeat decks stored within one millisecond.
     const lastChangeKey = sql<string>`to_char(${lastChange}, 'YYYY-MM-DD"T"HH24:MI:SS.US')`
 
-    if (args.after !== undefined && !DECK_LAST_CHANGE_KEY.test(args.after.key))
+    if (args.after !== undefined && !validKeysetTime(args.after.key))
       throw badRequest('cursor: not a position this list returned')
     if (args.folderId !== undefined) await requireFilterFolder(args.userId, args.folderId)
 
@@ -536,14 +602,22 @@ export function createDecksService(deps: ServiceDeps): DeckService {
         playbackKey: mediaAssets.playbackKey,
         posterKey: mediaAssets.posterKey,
         thumbnailKey: mediaAssets.thumbnailKey,
+        presentPlaybackKey: mediaAssets.presentPlaybackKey,
       })
       .from(mediaAssets)
       .where(eq(mediaAssets.deckId, id))
 
-    const [deleted] = await db
-      .delete(decks)
-      .where(eq(decks.id, id))
-      .returning({ id: decks.id, folderId: decks.folderId, title: decks.title })
+    // The delete and the second sweep of its prefix commit together
+    // (media/ownerSweeps.ts): what is too young to sweep now goes later, also
+    // after a restart.
+    const deleted = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .delete(decks)
+        .where(eq(decks.id, id))
+        .returning({ id: decks.id, folderId: decks.folderId, title: decks.title })
+      if (row) await scheduleOwnerSweeps(tx, [{ deckId: id }])
+      return row
+    })
     if (!deleted) throw notFound('Deck not found')
     notifyDeleted(deps, { actorId: args.userId, audience, kind: 'deck', title: deleted.title })
     // Nobody may keep the deck open, and its guests read its folder's token
@@ -553,7 +627,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     if (deleted.folderId !== null) closeConnectionsForDocument(`folder:${deleted.folderId}`)
 
     const explicitKeys = assetRows.flatMap((r) =>
-      [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey].filter(
+      [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey, r.presentPlaybackKey].filter(
         (k): k is string => typeof k === 'string' && k !== '',
       ),
     )
@@ -562,12 +636,12 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     // Neither deletes a file another media row still names (a pre-0009
     // folder font stored under this deck's prefix, say). Both loss-tolerant:
     // errors are logged and swallowed.
+    // What is too young to sweep now (a transcode or a copy still writing)
+    // goes with the sweep scheduled above.
     await Promise.all([
       purgeDeckBucketPrefix(db, id, deps.log),
       purgeUnreferencedKeys(db, explicitKeys, deps.log),
     ])
-    // What was too young to sweep (a transcode or a copy still writing).
-    sweepAgainAfterGrace(() => purgeDeckBucketPrefix(db, id, deps.log), deps.log, { deckId: id })
   }
 
   /**
@@ -876,6 +950,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
 
   return {
     list,
+    listRecordsPage,
     listPage,
     get,
     create,

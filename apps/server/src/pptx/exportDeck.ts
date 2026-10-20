@@ -21,13 +21,18 @@
  *      another deck's media, another folder's or the folder's fonts is
  *      skipped like a missing asset, so an export can never be used to read
  *      media the exporter has no access to.
- *   4. Hand the slides to `writeDeck` (pptx/ooxml/) — the OOXML writer that
+ *   4. Hand the slides to `planDeck` (pptx/ooxml/) — the OOXML writer that
  *      shares its units, vocabulary and element readers with the importer, so
  *      an exported deck imports back as the same model (pptx/roundtrip.test.ts)
  *      and every part is schema-valid (pptx/ooxml/validate.test.ts).
+ *   5. Return the package as a plan (pptx/zipWriter.ts): its exact size is
+ *      known and everything that can fail has run — only reading the media
+ *      again is left — before the caller streams it to its destination (the
+ *      response, the bucket). Media is read from storage twice, once for
+ *      its CRC and sizes and once into the package, and never held whole:
+ *      memory stays flat however large the deck's media (performance.md, X3).
  */
 
-import type { Readable } from 'node:stream'
 import * as Y from 'yjs'
 import { and, eq, type SQL } from 'drizzle-orm'
 import { GetObjectCommand } from '@aws-sdk/client-s3'
@@ -45,16 +50,17 @@ import type { Slide, SlideObject } from '@narrative/shared'
 import { components, decks, mediaAssets } from '../db/schema.js'
 import { visibleInSql } from '../media/visibleMedia.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
-import { writeDeck, type AssetLoader } from './ooxml/writeDeck.js'
+import { planDeck, type AssetLoader, type DeckPackage } from './ooxml/writeDeck.js'
 import { getSlideNotesDoc, readFolderTokens, type NotesDoc } from '@narrative/slide-model'
 import type { ServiceDeps } from '../services/deps.js'
 import { readDocCopy } from '../services/liveDocs.js'
+import { endPhase } from './phases.js'
 
 export const PPTX_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 
 export type PptxExportOutcome =
-  | { ok: true; buffer: Buffer; filename: string; slideCount: number }
+  | { ok: true; package: DeckPackage; filename: string; slideCount: number }
   | { ok: false; error: 'deckNotFound' | 'noSlides' | 'writeFailed' }
 
 export async function exportDeckToPptx(
@@ -74,6 +80,7 @@ export async function exportDeckToPptx(
     const handles = hydrateSlideDoc(doc)
     const rawSlides = listSlides(handles)
     if (rawSlides.length === 0) return { ok: false, error: 'noSlides' }
+    endPhase('export', 'read')
 
     const folderTokens = await loadFolderTokens(deps, deck.folderId)
     const variant = readDeckMeta(doc).variant
@@ -90,6 +97,8 @@ export async function exportDeckToPptx(
       )
     }
 
+    endPhase('export', 'tokens')
+
     const assetLoader = createDeckAssetLoader({ db, log, s3: buildS3Client() }, deck)
 
     // Speaker notes, as the notes editor holds them; no entry → no notes page.
@@ -99,16 +108,22 @@ export async function exportDeckToPptx(
       if (notes.length > 0) notesBySlideId.set(slide.id, notes)
     }
 
-    let buffer: Buffer
+    let pkg: DeckPackage
     try {
-      buffer = await writeDeck(slides, { title: deck.title, assetLoader, notesBySlideId })
+      pkg = await planDeck(slides, {
+        title: deck.title,
+        assetLoader,
+        notesBySlideId,
+        onAssetError: (assetId, err) =>
+          log.warn({ err, assetId }, 'pptx-export: failed to read asset bytes'),
+      })
     } catch (err) {
       log.error({ err, deckId }, 'pptx-export: writing the package failed')
       return { ok: false, error: 'writeFailed' }
     }
     return {
       ok: true,
-      buffer,
+      package: pkg,
       filename: safeFilename(deck.title || 'deck') + '.pptx',
       slideCount: slides.length,
     }
@@ -130,44 +145,43 @@ export function deckAssetScope(deck: { id: string; folderId: string | null }): S
 }
 
 /**
- * The writer's asset loader for one deck: resolves an asset id to its bytes
- * when the asset is in the deck's scope (`deckAssetScope`), else null — the
- * writer then skips it like a missing file. Memoised so repeated references
- * (the same logo on every slide) hit MinIO once; the package is assembled in
- * memory.
+ * The writer's asset loader for one deck: resolves an asset id to a source
+ * of its bytes when the asset is in the deck's scope (`deckAssetScope`), else
+ * null — the writer then skips it like a missing file. The source opens a
+ * fresh read of the stored object each time: the writer reads it once for
+ * its CRC and sizes and once into the package (a read that fails the first
+ * time leaves the asset out; the writer logs it). Rows are looked up once.
  */
 export function createDeckAssetLoader(
   deps: Pick<ServiceDeps, 'db' | 'log'> & { s3: Pick<ReturnType<typeof buildS3Client>, 'send'> },
   deck: { id: string; folderId: string | null },
 ): AssetLoader {
-  const { db, log, s3 } = deps
+  const { db, s3 } = deps
   const scope = deckAssetScope(deck)
-  const assetCache = new Map<string, { bytes: Buffer; mimeType: string } | null>()
+  const rows = new Map<string, Promise<{ storageKey: string; mimeType: string } | null>>()
   return async (assetId) => {
-    if (assetCache.has(assetId)) return assetCache.get(assetId) ?? null
-    const [row] = await db
-      .select({ storageKey: mediaAssets.storageKey, mimeType: mediaAssets.mimeType })
-      .from(mediaAssets)
-      .leftJoin(components, eq(components.id, mediaAssets.componentId))
-      .where(and(eq(mediaAssets.id, assetId), scope))
-      .limit(1)
-    if (!row) {
-      assetCache.set(assetId, null)
-      return null
+    let row = rows.get(assetId)
+    if (row === undefined) {
+      row = db
+        .select({ storageKey: mediaAssets.storageKey, mimeType: mediaAssets.mimeType })
+        .from(mediaAssets)
+        .leftJoin(components, eq(components.id, mediaAssets.componentId))
+        .where(and(eq(mediaAssets.id, assetId), scope))
+        .limit(1)
+        .then(([r]) => r ?? null)
+      rows.set(assetId, row)
     }
-    try {
-      const obj = await s3.send(new GetObjectCommand({ Bucket: MEDIA_BUCKET, Key: row.storageKey }))
-      if (obj.Body === undefined) {
-        assetCache.set(assetId, null)
-        return null
-      }
-      const result = { bytes: await streamToBuffer(obj.Body as Readable), mimeType: row.mimeType }
-      assetCache.set(assetId, result)
-      return result
-    } catch (err) {
-      log.warn({ err, assetId }, 'pptx-export: failed to fetch asset bytes')
-      assetCache.set(assetId, null)
-      return null
+    const found = await row
+    if (found === null) return null
+    return {
+      mimeType: found.mimeType,
+      open: async () => {
+        const obj = await s3.send(
+          new GetObjectCommand({ Bucket: MEDIA_BUCKET, Key: found.storageKey }),
+        )
+        if (obj.Body === undefined) throw new Error(`no body for ${found.storageKey}`)
+        return obj.Body as AsyncIterable<Uint8Array>
+      },
     }
   }
 }
@@ -311,15 +325,6 @@ function resolveTokensDeep(
     touched = true
   }
   return touched ? next : value
-}
-
-/** Drain a Readable into a Buffer (the AWS SDK returns Body as a stream). */
-async function streamToBuffer(stream: Readable): Promise<Buffer> {
-  const chunks: Buffer[] = []
-  for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array))
-  }
-  return Buffer.concat(chunks)
 }
 
 /**

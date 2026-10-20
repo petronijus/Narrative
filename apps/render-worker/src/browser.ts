@@ -1,7 +1,9 @@
 /**
  * browser.ts — one Chromium, started when a job needs it and quit when none
  * has for `idleMs` (docs/plans/a3-render-worker.md, "Memory": zero cost
- * between agent sessions, warm during one).
+ * between agent sessions, warm during one). Several jobs may share it; after
+ * a browser fault it is retired — new jobs get a fresh one, and it closes
+ * once the jobs still in it have ended.
  *
  * Which Chromium: RENDER_CHROME_EXECUTABLE when it is set (that one only, no
  * fallback); else Playwright's headless shell (installed in the image); else,
@@ -49,7 +51,8 @@ const ARGS = [
   '--enable-unsafe-swiftshader',
   // As few renderer processes as Chromium allows. Each browser context still
   // gets its own — a page kept for a render session and the page of another
-  // session's job are two — so RENDER_WARM_PAGES counts in memory.
+  // session's job are two — so RENDER_WARM_PAGES and RENDER_CONCURRENCY count
+  // in memory (a recycled page keeps its context's process).
   '--renderer-process-limit=1',
   // Docker's /dev/shm is 64 MB by default; Chromium falls back to /tmp.
   '--disable-dev-shm-usage',
@@ -101,9 +104,19 @@ export function renderersSandboxed(procRoot = '/proc'): boolean | null {
   return renderers > 0 ? true : null
 }
 
+/** One launched (or launching) Chromium and the jobs using it. */
+interface Instance {
+  browser: Promise<Browser>
+  users: number
+  /** Retired: no new job gets it, and it closes when its last job ends. */
+  retired: boolean
+}
+
 export class BrowserHolder {
-  private browser: Promise<Browser> | null = null
-  private active = 0
+  /** The browser new jobs get; null until one is needed. */
+  private current: Instance | null = null
+  /** Every browser still open: the current one and retired ones still in use. */
+  private readonly open = new Set<Instance>()
   private idleTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(private readonly opts: BrowserHolderOptions) {}
@@ -111,58 +124,92 @@ export class BrowserHolder {
   /**
    * Run `fn` with the browser, starting it if needed (a start this call
    * begins gives up after `launchTimeoutMs`); it quits `idleMs` after the
-   * last use.
+   * last use. Several jobs may use it at once.
    */
   async use<T>(
     fn: (browser: Browser) => Promise<T>,
     opts?: { launchTimeoutMs?: number },
   ): Promise<T> {
-    this.active += 1
     if (this.idleTimer !== null) {
       clearTimeout(this.idleTimer)
       this.idleTimer = null
     }
+    const instance = this.get(opts?.launchTimeoutMs)
+    instance.users += 1
     try {
-      return await fn(await this.get(opts?.launchTimeoutMs))
+      return await fn(await instance.browser)
     } finally {
-      this.active -= 1
-      if (this.active === 0) {
+      instance.users -= 1
+      if (instance.retired && instance.users === 0) void this.closeInstance(instance, 'retired')
+      if (this.users() === 0 && this.current !== null) {
         this.idleTimer = setTimeout(() => void this.close('idle'), this.opts.idleMs)
         this.idleTimer.unref()
       }
     }
   }
 
+  /**
+   * After a browser-side fault: the next job gets a fresh Chromium; this one
+   * closes once the jobs still running in it are done (closing it under
+   * them would fail jobs that did nothing wrong).
+   */
+  retire(why: string): void {
+    const instance = this.current
+    if (instance === null) return
+    this.current = null
+    instance.retired = true
+    this.opts.log(`browser retired (${why})`)
+    if (instance.users === 0) void this.closeInstance(instance, why)
+  }
+
+  /** Close every browser now, in use or not (idle, shutdown). */
   async close(why: string): Promise<void> {
     if (this.idleTimer !== null) clearTimeout(this.idleTimer)
     this.idleTimer = null
-    const pending = this.browser
-    this.browser = null
-    if (pending === null) return
+    this.current = null
+    await Promise.all([...this.open].map((instance) => this.closeInstance(instance, why)))
+  }
+
+  private users(): number {
+    let users = 0
+    for (const instance of this.open) users += instance.users
+    return users
+  }
+
+  private async closeInstance(instance: Instance, why: string): Promise<void> {
+    if (!this.open.delete(instance)) return
+    if (this.current === instance) this.current = null
     try {
-      await (await pending).close()
+      await (await instance.browser).close()
       this.opts.log(`browser closed (${why})`)
     } catch {
-      // It was gone already.
+      // It was gone already, or never started.
     }
   }
 
-  private get(launchTimeoutMs?: number): Promise<Browser> {
-    if (this.browser === null) {
-      const launching = this.launch(launchTimeoutMs)
-      this.browser = launching
+  private get(launchTimeoutMs?: number): Instance {
+    if (this.current === null) {
+      const instance: Instance = {
+        browser: this.launch(launchTimeoutMs),
+        users: 0,
+        retired: false,
+      }
+      this.current = instance
+      this.open.add(instance)
       // A crashed or closed browser is replaced on the next use.
-      launching.then(
+      instance.browser.then(
         (browser) =>
           browser.on('disconnected', () => {
-            if (this.browser === launching) this.browser = null
+            this.open.delete(instance)
+            if (this.current === instance) this.current = null
           }),
         () => {
-          if (this.browser === launching) this.browser = null
+          this.open.delete(instance)
+          if (this.current === instance) this.current = null
         },
       )
     }
-    return this.browser
+    return this.current
   }
 
   private async launch(timeoutMs?: number): Promise<Browser> {

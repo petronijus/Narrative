@@ -23,7 +23,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { listSlides } from '@narrative/slide-model'
+import type { SlideObject } from '@narrative/shared'
 import type { EditorShowMessage } from '@narrative/commands'
 import { useEditorShowMessages } from '../state/editorShow.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
@@ -32,9 +32,8 @@ import { useTextEdit } from '../state/TextEditContext.js'
 import { useCropMode } from '../state/CropModeContext.js'
 import { usePathPointsMode } from '../state/PathPointsModeContext.js'
 import { useTableEdit } from '../state/TableEditContext.js'
-import { useSlideObjects } from '../state/useSlideObjects.js'
-import { useSlideDoc } from '../state/useSlideDoc.js'
-import { useAwareness } from '../state/useAwareness.js'
+import { useDeckSelector, useDeckStore } from '../state/useDeckStore.js'
+import { useRemotePeers } from '../state/useAwareness.js'
 
 /** How long the highlight outline stays up once it is drawn. */
 export const SHOW_HIGHLIGHT_MS = 2_000
@@ -84,18 +83,27 @@ interface Target {
   startedAt: number
 }
 
+const NO_OBJECTS: SlideObject[] = []
+
 export function useEditorShow(): EditorShowState {
-  const { deckCtx } = useSlideDoc()
   const { activeSlideId, setActiveSlideId } = useActiveSlide()
   const { selectMany, clear } = useSelection()
   const { editingId: editingTextId, endEdit: endTextEdit } = useTextEdit()
   const { cropImageId, exitCrop } = useCropMode()
   const { pathPointsId, exitPathPoints } = usePathPointsMode()
   const { active: activeTableCell, endEdit: endTableCellEdit } = useTableEdit()
-  const { objects } = useSlideObjects()
-  const { remotePeers } = useAwareness()
+  const remotePeers = useRemotePeers()
+  const store = useDeckStore()
 
   const [target, setTarget] = useState<Target | null>(null)
+  // The active slide's objects — subscribed only while a target waits to
+  // resolve: this hook runs in EditorLayout, which must not re-render on
+  // every document change (performance.md → E6).
+  const objects = useDeckSelector((s) =>
+    target === null || activeSlideId === null
+      ? NO_OBJECTS
+      : (s.getSlide(activeSlideId)?.objects ?? NO_OBJECTS),
+  )
   const [highlight, setHighlight] = useState<ShowHighlight | null>(null)
   const [pending, setPending] = useState<PendingShow | null>(null)
   const tokenRef = useRef(0)
@@ -128,7 +136,7 @@ export function useEditorShow(): EditorShowState {
   )
 
   useEditorShowMessages((message) => {
-    const slideIndex = listSlides(deckCtx).findIndex((s) => s.id === message.slideId)
+    const slideIndex = store.getSlides().findIndex((s) => s.id === message.slideId)
     if (slideIndex === -1) return
     if (inModalEdit) {
       setPending({
@@ -152,7 +160,7 @@ export function useEditorShow(): EditorShowState {
   useEffect(() => {
     if (target === null || target.token !== tokenRef.current) return
     if (activeSlideId !== target.slideId) return
-    const slide = listSlides(deckCtx).find((s) => s.id === target.slideId)
+    const slide = store.getSlide(target.slideId)
     // The slide vanished mid-switch: nothing to select.
     const wanted =
       slide === undefined
@@ -167,7 +175,7 @@ export function useEditorShow(): EditorShowState {
     setHighlight(
       wanted.length > 0 ? { token: target.token, objectIds: wanted, color: target.color } : null,
     )
-  }, [target, activeSlideId, objects, deckCtx, selectMany, clear])
+  }, [target, activeSlideId, objects, store, selectMany, clear])
 
   // Drop a target that never resolves (the slide switch was refused, or the
   // snapshot never caught up) instead of selecting at some surprising later
@@ -208,7 +216,7 @@ export function useEditorShow(): EditorShowState {
     if (activeTableCell?.editing === true) endTableCellEdit()
     setPending(null)
     // Re-check: the slide may have been deleted while the notice was up.
-    if (listSlides(deckCtx).some((s) => s.id === pending.message.slideId)) apply(pending.message)
+    if (store.getSlide(pending.message.slideId) !== undefined) apply(pending.message)
   }, [
     pending,
     editingTextId,
@@ -219,7 +227,7 @@ export function useEditorShow(): EditorShowState {
     exitPathPoints,
     activeTableCell,
     endTableCellEdit,
-    deckCtx,
+    store,
     apply,
   ])
 

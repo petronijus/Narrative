@@ -3,6 +3,8 @@ node_modules/
 
 # Build outputs
 dist/
+# Perf harness builds (just perf --mode prod|profiling)
+dist-perf-*/
 build/
 *.tsbuildinfo
 

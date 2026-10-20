@@ -11,11 +11,8 @@ import { eq } from 'drizzle-orm'
 import type { ComponentMaster, ComponentRecord, ComponentService } from '@narrative/commands'
 import { components, decks, mediaAssets } from '../db/schema.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
-import {
-  purgeComponentBucketPrefix,
-  purgeUnreferencedKeys,
-  sweepAgainAfterGrace,
-} from '../media/bucketCleanup.js'
+import { purgeComponentBucketPrefix, purgeUnreferencedKeys } from '../media/bucketCleanup.js'
+import { scheduleOwnerSweeps } from '../media/ownerSweeps.js'
 import { isStorageSafeId, mediaOwnerPrefix } from '../media/mediaOwner.js'
 import { closeConnectionsForDocument } from '../hocuspocus/connections.js'
 import type { ServiceDeps } from './deps.js'
@@ -125,6 +122,7 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
         .set({ componentId: null, folderId: row.folderId })
         .where(eq(mediaAssets.componentId, args.componentId))
       await tx.delete(components).where(eq(components.id, args.componentId))
+      await scheduleOwnerSweeps(tx, [{ componentId: args.componentId }])
     })
     // Nobody keeps the master open (a store that still runs finds its owner
     // gone and stores nothing — hocuspocus/persistence.ts).
@@ -134,13 +132,9 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
     // of media deleted earlier, leftovers of failed copies. The sweep keeps
     // any key a media row names, a video's outputs its row does not name yet
     // and anything younger than the grace window (media/bucketCleanup.ts);
-    // it runs once more after the window.
+    // it runs once more after the window (scheduled above,
+    // media/ownerSweeps.ts).
     await purgeComponentBucketPrefix(db, args.componentId, deps.log)
-    sweepAgainAfterGrace(
-      () => purgeComponentBucketPrefix(db, args.componentId, deps.log),
-      deps.log,
-      { componentId: args.componentId },
-    )
     // A thumbnail outside that prefix (an id that cannot name storage keys
     // is not swept at all) goes by its key.
     if (

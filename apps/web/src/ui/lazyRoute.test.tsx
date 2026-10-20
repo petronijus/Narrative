@@ -122,4 +122,54 @@ describe('lazyRoute', () => {
     // Nothing failed this time: nothing left to reset.
     expect(resetFailedRoutes()).toBe(0)
   })
+
+  it('renders a preloaded page without suspending, and loads it once', async () => {
+    const load = vi.fn(() => Promise.resolve({ Page: () => <p>page</p> }))
+    const Page = lazyRoute(load, (m) => m.Page)
+    await Page.preload()
+    await Page.preload()
+    expect(load).toHaveBeenCalledTimes(1)
+
+    // No act/await: the page is in the first commit, the fallback never is.
+    render(
+      <Suspense fallback={<p>fallback</p>}>
+        <Page />
+      </Suspense>,
+    )
+    expect(screen.getByText('page')).toBeTruthy()
+    expect(screen.queryByText('fallback')).toBe(null)
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a failed preload to the render, which reports it and can be retried', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const load = vi
+      .fn<() => Promise<{ Page: () => ReactNode }>>()
+      .mockRejectedValueOnce(new TypeError('Importing a module script failed.'))
+      .mockResolvedValue({ Page: () => <p>page</p> })
+    const Page = lazyRoute(load, (m) => m.Page)
+    await expect(Page.preload()).resolves.toBeUndefined()
+
+    const view = render(
+      <CatchAll key="first">
+        <Suspense fallback={null}>
+          <Page />
+        </Suspense>
+      </CatchAll>,
+    )
+    await screen.findByText('failed')
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(resetFailedRoutes()).toBe(1)
+    await act(async () => {
+      view.rerender(
+        <CatchAll key="second">
+          <Suspense fallback={null}>
+            <Page />
+          </Suspense>
+        </CatchAll>,
+      )
+    })
+    await screen.findByText('page')
+    expect(load).toHaveBeenCalledTimes(2)
+  })
 })

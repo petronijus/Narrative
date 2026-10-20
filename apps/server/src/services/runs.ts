@@ -393,7 +393,9 @@ export class RunManager implements AgentRunService {
     if (previous !== undefined) {
       // The session keeps working on the same document: hand the lease on,
       // so the document (and with it the previous run's undo history) does
-      // not unload between two requests of one session.
+      // not unload between two requests of one session. The previous run's
+      // work is stored first, as at the end of any run (closeRun).
+      if (this.undo.has(previous.id)) await previous.lease?.persist()
       run.lease = previous.lease
       previous.lease = null
     }
@@ -484,8 +486,15 @@ export class RunManager implements AgentRunService {
     // "before" is let go now, its undo history kept.
     const entry = this.undo.get(run.id)
     if (entry !== undefined) entry.before = null
-    run.lease?.release()
+    // A run that wrote its document has its work stored when it ends
+    // (agent/documents.ts: Durability). A revert stored itself already; on
+    // shutdown the agent host's connections store as they close
+    // (AgentDocuments.closeAll).
+    const lease = run.lease
     run.lease = null
+    if (lease !== null && entry !== undefined && reason !== 'shutdown' && reason !== 'reverted')
+      await lease.persist()
+    lease?.release()
     this.presence.clearRun(run.id)
     // The run's UndoManager keeps its own reference to the origin object;
     // no write can carry this origin any more, so the cache may forget it.
@@ -784,6 +793,8 @@ export class RunManager implements AgentRunService {
           }
         }, origin)
       })
+      // A person asked for it: stored when it returns.
+      await lease.persist()
     } finally {
       lease.release()
     }

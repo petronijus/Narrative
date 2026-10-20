@@ -1,13 +1,13 @@
 {
   "name": "@narrative/video-worker",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs watch src/index.ts",
     "build": "tsc --project tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src",
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc/tsbuildinfo",
+    "lint": "eslint --cache --cache-strategy content --cache-location node_modules/.cache/eslint/ src perf",
     "test": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts",
     "start": "node dist/index.js"
   },
@@ -21,6 +21,7 @@
     "pino": "^10.4.0"
   },
   "devDependencies": {
+    "@narrative/perf": "workspace:*",
     "@types/node": "^24.19.2",
     "@types/pg": "^8.23.1",
     "typescript": "^6.0.3",

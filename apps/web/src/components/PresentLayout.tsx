@@ -4,63 +4,69 @@
  * M5: Present mode fullscreen shell.
  * M6: Animation runtime integration.
  * M9: Slide navigation.
- * M12: Media preloading pipeline + VideoOverlay for progressive MP4 playback.
+ * M12: Media preloading pipeline + video playback.
  *
- * Preload flow (M12):
- *   1. On mount, start media preload for all slides.
- *   2. Full-screen "Preparing presentation…" overlay with progress bar while preloading.
- *   3. After preload completes (or 30 s timeout), dismiss overlay and show slide.
- *   4. User can press Esc at any time to abort preload and return to editor.
- *
- * VideoOverlay (M12):
- *   For each VideoObject on the active slide, a VideoOverlay component is rendered.
- *   VideoOverlay uses OverlayCompositor to position a DOM <video> element (sourced
- *   from the progressive MP4) over the Pixi canvas at the correct world coordinates.
+ * Ready means ready (docs/plans/performance.md → D; ADR 0016). Before the
+ * first slide shows, behind a "Preparing presentation…" overlay:
+ *   1. the deck's inputs are loaded (document, folder, font lists, tokens:
+ *      state/useDeckInputs.ts);
+ *   2. every picture is fetched and every video buffered on its first frame
+ *      (present/preloadMedia.ts, renderer/presentVideos.ts);
+ *   3. the slides are prepared off stage — mounted, pictures decoded and
+ *      uploaded, texts rasterised (renderer/presentSlides.ts) — all of them,
+ *      or as many as the GPU budget holds, the start slide and its
+ *      neighbours always;
+ *   4. the presenter view's slide pictures are rendered.
+ * Then every advance only swaps a prepared scene in (present/presentation.ts):
+ * no mount, raster, upload, decode or request on the way. However long the
+ * preparation takes, it is not cut short on a timer — the presenter may skip
+ * it ("Skip and present now"); Esc returns to the editor.
  *
  * Architecture:
- * - Žádný toolbar, sidebar, inspector — čistý fullscreen render.
- * - Canvas komponenta (sdílený renderer pipeline) je umístěna v centered
- *   slide-sized kontejneru. CSS transform: scale() aplikuje scale-to-fit.
- * - Pixi canvas má fyzický CSS size SLIDE_WIDTH × SLIDE_HEIGHT (1920×1080)
- *   a ResizeObserver na viewport počítá scale = min(vw/sw, vh/sh).
- * - Žádné pointer listeners → canvas je read-only (pointer-events:none).
+ * - No toolbar, sidebar or inspector — a pure fullscreen render.
+ * - The Canvas (the shared renderer pipeline) sits in a centred slide-sized
+ *   container, scaled to fit with a CSS transform.
+ * - The Pixi canvas has the CSS size SLIDE_WIDTH × SLIDE_HEIGHT (1920×1080)
+ *   and a ResizeObserver on the viewport computes scale = min(vw/sw, vh/sh).
+ * - No pointer listeners → the canvas is read-only (pointer-events:none).
  * - Keyboard: Escape → editor, Arrow/Space/Page → slide navigation.
- * - Fullscreen API: klávesa F nebo F11.
+ * - Fullscreen API: F or F11.
  * - `?slide=N` (1-based, every slide counted): start at slide N instead of
  *   the active slide — see presentStartSlide.ts (agentic A1,
  *   `editor.present.link`).
  *
  * Accessibility:
- * - role="application" s aria-label pro screen reader context.
- * - Subtle escape hint v rohu (aria-hidden).
+ * - role="application" with an aria-label for screen-reader context.
+ * - Subtle escape hint in the corner (aria-hidden).
  */
 
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { useShortcuts } from '../state/useShortcuts.js'
-import { ShortcutsCheatsheet } from '../ui/ShortcutsCheatsheet.js'
+import { ShortcutsCheatsheet } from '../ui/lazyEditorParts.js'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Canvas } from '../renderer/Canvas.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
-import { playTransition } from '../renderer/playTransition.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
-import { useAnimations } from '../state/useAnimations.js'
 import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
-import { useMediaPreload } from '../state/useMediaPreload.js'
-import { createAnimationRuntime } from '@narrative/animation'
-import { getDefaultRenderScheduler } from '../renderer/RenderScheduler'
-import { createClickInputBridge } from '@narrative/animation'
-import { createPixiTargetResolver } from '../animation/targetResolver.js'
+import { useDeckStore } from '../state/useDeckStore.js'
+import { useDeckInputsWaitingFor } from '../state/useDeckInputs.js'
 import { EditorVideoPreview } from '../ui/EditorVideoPreview.js'
 import { PresenterOverlay } from '../ui/PresenterOverlay.js'
-import type { AnimationRuntime } from '@narrative/animation'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { VideoObject } from '@narrative/shared'
 import { sanitizeHref } from '@narrative/shared'
 import { presentStartSlideId } from './presentStartSlide.js'
 import { PresentDisplayPicker } from '../present/PresentDisplayPicker.js'
 import { requestPresentationFullscreen } from '../present/presentScreen.js'
+import { Presentation } from '../present/presentation.js'
+import { preloadDeckMedia, type MediaPreloadProgress } from '../present/preloadMedia.js'
+import { PresentSlideCache } from '../renderer/presentSlides.js'
+import { PresentVideoPool } from '../renderer/presentVideos.js'
+import { getDefaultResourceManager } from '../renderer/ResourceManager.js'
+import { whenRenderWorkIdle } from '../renderer/renderWork.js'
+import { PresentVideosContext, type PresentVideosValue } from '../present/presentVideosContext.js'
 
 /** Vypočte scale-to-fit pro slide do daného viewportu při zachování aspect ratio. */
 function computeScale(viewportW: number, viewportH: number): number {
@@ -68,7 +74,20 @@ function computeScale(viewportW: number, viewportH: number): number {
   return Math.min(viewportW / SLIDE_WIDTH, viewportH / SLIDE_HEIGHT)
 }
 
-const PRELOAD_TIMEOUT_MS = 30_000
+/** Where the preparation is, for the overlay. */
+interface Preparation {
+  phase: 'loading' | 'media' | 'slides' | 'ready'
+  media: MediaPreloadProgress
+  slides: { prepared: number; planned: number }
+  thumbnails: { ready: number; total: number }
+}
+
+const NO_PREPARATION: Preparation = {
+  phase: 'loading',
+  media: { total: 0, completed: 0, errored: 0 },
+  slides: { prepared: 0, planned: 0 },
+  thumbnails: { ready: 0, total: 0 },
+}
 
 export interface PresentLayoutProps {
   /**
@@ -97,38 +116,16 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
     computeScale(window.innerWidth, window.innerHeight),
   )
 
-  // Animation runtime ref — imperative, mimo React render cycle
-  const runtimeRef = useRef<AnimationRuntime | null>(null)
-
   // Canvas instance z DeckShell context (null dokud Pixi neinicializuje)
   const canvasInstance = useCanvasInstance()
 
-  // Animations snapshot z Y.Doc.
-  // M16 P8 — present mode runs the SAME merged step list as the editor
-  // timeline. Slide-native steps + per-instance master steps with target
-  // ids re-mapped to the per-instance Pixi child container. Single
-  // source of truth → no parity drift between edit and play.
-  const { animations } = useAnimations()
-
   // M9: slide list + active slide for navigation
   const slides = useSlides()
+  const store = useDeckStore()
   const { activeSlideId, setActiveSlideId } = useActiveSlide()
+  const inputsWaitingFor = useDeckInputsWaitingFor({ folderOptional: true })
 
-  // `?slide=N`: jump there once the slide list is known. Remembered per
-  // parameter value, so the jump happens once per link — the presenter then
-  // navigates freely — and a same-tab navigation to another link (only the
-  // query changes, the layout stays mounted) jumps again.
-  const startSlideParam = searchParams.get('slide')
-  const appliedStartParamRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (startSlideParam === null || appliedStartParamRef.current === startSlideParam) return
-    if (slides.length === 0) return
-    appliedStartParamRef.current = startSlideParam
-    const target = presentStartSlideId(startSlideParam, slides)
-    if (target !== null) setActiveSlideId(target)
-  }, [startSlideParam, slides, setActiveSlideId])
-
-  // M12: active slide objects for VideoOverlay
+  // M12: active slide objects for the video previews
   const { objects } = useSlideObjects()
   const videoObjects = objects.filter((o): o is VideoObject => o.type === 'video')
 
@@ -140,11 +137,183 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
     objectsRef.current = objects
   }, [objects])
 
-  // M12: Media preload
-  const { start: startPreload, progress: preloadProgress, isPreloading } = useMediaPreload()
+  // ---------------------------------------------------------------------------
+  // Preparation: ready means ready (see the file comment)
+  // ---------------------------------------------------------------------------
+
+  const presentationRef = useRef<Presentation | null>(null)
+  const [preparation, setPreparation] = useState<Preparation>(NO_PREPARATION)
   const [preloadDismissed, setPreloadDismissed] = useState(false)
-  const preloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const showPreloadOverlay = isPreloading && !preloadDismissed
+  const ready = preparation.phase === 'ready'
+  const showPreloadOverlay = !isPresenterWindow && !ready && !preloadDismissed
+  const [videos, setVideos] = useState<PresentVideosValue | null>(null)
+
+  // The presenter view's slide pictures (main window): the overlay reports
+  // how many of the slides it shows have theirs.
+  const thumbsRef = useRef({ ready: 0, total: 0, settled: false })
+  const thumbWaitersRef = useRef<Array<() => void>>([])
+  const onThumbnails = useCallback((ready: number, total: number) => {
+    thumbsRef.current = { ready, total, settled: ready >= total }
+    setPreparation((p) => (p.phase === 'ready' ? p : { ...p, thumbnails: { ready, total } }))
+    if (ready >= total) {
+      const waiters = thumbWaitersRef.current
+      thumbWaitersRef.current = []
+      for (const w of waiters) w()
+    }
+  }, [])
+
+  // The slide to start at: `?slide=N`, else the active slide (kept per deck), else the first.
+  const startSlideParam = searchParams.get('slide')
+  /** The `?slide=` value already acted on (see the jump effect below). */
+  const appliedStartParamRef = useRef<string | null>(null)
+  /** The first slide was shown (prepared, or the preparation skipped). */
+  const startedRef = useRef(false)
+  const inputsReady = inputsWaitingFor.length === 0 && slides.length > 0
+  const startRef = useRef<{ canvas: CanvasInstance; cancel: () => void } | null>(null)
+
+  useEffect(() => {
+    if (isPresenterWindow || canvasInstance === null || !inputsReady) return
+    if (startRef.current?.canvas === canvasInstance) return
+    const deck = store.getSlides()
+    const fromParam = startSlideParam !== null ? presentStartSlideId(startSlideParam, deck) : null
+    const startId =
+      fromParam ??
+      (activeSlideId !== null && deck.some((s) => s.id === activeSlideId)
+        ? activeSlideId
+        : (deck.find((s) => s.skipped !== true) ?? deck[0])!.id)
+    if (fromParam !== null) appliedStartParamRef.current = startSlideParam
+
+    // The canvas installs its ResourceManager before it reports ready.
+    let resourceManager: ReturnType<typeof getDefaultResourceManager>
+    try {
+      resourceManager = getDefaultResourceManager()
+    } catch {
+      return
+    }
+    const pool = new PresentVideoPool()
+    const cache = new PresentSlideCache({
+      sceneGraph: canvasInstance.sceneGraph,
+      resourceManager,
+      liveVideo: (objectId) => pool.get(objectId)?.element ?? null,
+    })
+    const presentation = new Presentation({
+      sceneGraph: canvasInstance.sceneGraph,
+      cache,
+      store,
+      setActiveSlideId,
+    })
+    presentationRef.current = presentation
+    setVideos({
+      pool,
+      released: (objectId) => {
+        void pool.rewind(objectId).then(() => cache.rewarmContaining(objectId))
+      },
+    })
+    const abort = new AbortController()
+    let cancelled = false
+    const unsubscribeCache = cache.subscribe(() => {
+      const p = cache.progress()
+      setPreparation((prev) =>
+        prev.phase === 'ready'
+          ? prev
+          : { ...prev, slides: { prepared: p.prepared, planned: p.planned } },
+      )
+    })
+    startRef.current = {
+      canvas: canvasInstance,
+      cancel: () => {
+        cancelled = true
+        abort.abort()
+        unsubscribeCache()
+        presentation.destroy()
+        cache.destroy()
+        pool.destroy()
+        if (presentationRef.current === presentation) presentationRef.current = null
+      },
+    }
+
+    void (async () => {
+      // 1. Media: every picture fetched, every video buffered on its first frame.
+      setPreparation((p) => ({ ...p, phase: 'media' }))
+      await preloadDeckMedia(deck, {
+        videos: pool,
+        signal: abort.signal,
+        onProgress: (media) => setPreparation((p) => ({ ...p, media })),
+      })
+      if (cancelled) return
+      // 2. The slides, prepared off stage.
+      setPreparation((p) => ({ ...p, phase: 'slides' }))
+      presentation.prepare(startId)
+      await new Promise<void>((resolve) => {
+        const check = (): void => {
+          if (cancelled || presentation.isPrepared(startId)) {
+            stop()
+            resolve()
+          }
+        }
+        const stop = cache.subscribe(check)
+        check()
+      })
+      // 3. The presenter view's pictures, and anything still loading for the canvas.
+      await new Promise<void>((resolve) => {
+        if (thumbsRef.current.settled) resolve()
+        else thumbWaitersRef.current.push(resolve)
+      })
+      await whenRenderWorkIdle(abort.signal)
+      await document.fonts.ready
+      if (cancelled || presentationRef.current !== presentation || startedRef.current) return
+      if (presentation.start(startId)) {
+        startedRef.current = true
+        setPreparation((p) => ({ ...p, phase: 'ready' }))
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- started once per canvas, from the state at that moment
+  }, [canvasInstance, inputsReady, isPresenterWindow])
+
+  // Torn down with the canvas (and on unmount).
+  useEffect(() => {
+    return () => {
+      startRef.current?.cancel()
+      startRef.current = null
+    }
+  }, [canvasInstance])
+
+  /** Skip the rest of the preparation: present what is there; slides not prepared are waited for. */
+  const skipPreparation = useCallback(() => {
+    setPreloadDismissed(true)
+    const presentation = presentationRef.current
+    if (presentation === null || activeSlideId === null || startedRef.current) return
+    startedRef.current = true
+    // The slide prepared: swapped in; otherwise the canvas shows it as it
+    // mounted it, and the presentation goes on from there.
+    if (!presentation.start(activeSlideId)) presentation.follow(activeSlideId)
+    setPreparation((p) => ({ ...p, phase: 'ready' }))
+  }, [activeSlideId])
+
+  // `?slide=N`: jump there once the slide list is known. Remembered per
+  // parameter value, so the jump happens once per link — the presenter then
+  // navigates freely — and a same-tab navigation to another link (only the
+  // query changes, the layout stays mounted) jumps again.
+  useEffect(() => {
+    if (startSlideParam === null || appliedStartParamRef.current === startSlideParam) return
+    if (slides.length === 0) return
+    const target = presentStartSlideId(startSlideParam, slides)
+    // With a canvas the start slide is chosen when the preparation starts.
+    if (canvasInstance !== null && !ready) return
+    appliedStartParamRef.current = startSlideParam
+    if (target === null) return
+    const presentation = presentationRef.current
+    if (presentation !== null && ready) presentation.jump(target)
+    else setActiveSlideId(target)
+  }, [startSlideParam, slides, setActiveSlideId, canvasInstance, ready])
+
+  // The active slide moved without the presentation (the slide shown was
+  // deleted under the presenter): it follows.
+  useEffect(() => {
+    const presentation = presentationRef.current
+    if (!ready || presentation === null || activeSlideId === null) return
+    if (presentation.shown !== activeSlideId) presentation.follow(activeSlideId)
+  }, [activeSlideId, ready])
 
   // M19 phase 3: presenter overlay — toggled by 'N' key. When visible, the
   // canvas shrinks (via flex-1 min-h-0 on the wrapper) and the overlay takes
@@ -209,36 +378,6 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   }, [])
 
   // ---------------------------------------------------------------------------
-  // M12: Start preload on mount
-  // ---------------------------------------------------------------------------
-
-  useEffect(() => {
-    if (slides.length === 0) return
-
-    void startPreload(slides)
-
-    // Fail-safe: dismiss overlay after 30 s regardless of preload state
-    preloadTimeoutRef.current = setTimeout(() => {
-      setPreloadDismissed(true)
-    }, PRELOAD_TIMEOUT_MS)
-
-    return () => {
-      if (preloadTimeoutRef.current !== null) {
-        clearTimeout(preloadTimeoutRef.current)
-        preloadTimeoutRef.current = null
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
-  }, [])
-
-  // Auto-dismiss when preload finishes
-  useEffect(() => {
-    if (preloadProgress.isDone && !preloadDismissed) {
-      setPreloadDismissed(true)
-    }
-  }, [preloadProgress.isDone, preloadDismissed])
-
-  // ---------------------------------------------------------------------------
   // Fullscreen API toggle
   // ---------------------------------------------------------------------------
 
@@ -260,80 +399,28 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   }, [])
 
   // ---------------------------------------------------------------------------
-  // Animation runtime lifecycle
+  // M9: Slide navigation
   // ---------------------------------------------------------------------------
 
-  useEffect(() => {
-    // Počkáme dokud Pixi není ready
-    if (canvasInstance === null) return
-    // Pokud nejsou žádné animace, runtime nevytvářej
-    if (animations.length === 0) return
-
-    const resolver = createPixiTargetResolver(canvasInstance.sceneGraph)
-    const inputBridge = createClickInputBridge(document.body)
-
-    // P12b: onTick wakes the render scheduler so GSAP-driven Pixi state
-    // actually paints under autoStart:false.
-    const scheduler = getDefaultRenderScheduler()
-    const runtime = createAnimationRuntime(animations, {
-      targetResolver: resolver,
-      inputBridge,
-      ...(scheduler !== null ? { onTick: () => scheduler.markDirty() } : {}),
-    })
-    runtimeRef.current = runtime
-    runtime.play()
-
-    return () => {
-      runtime.destroy()
-      runtimeRef.current = null
-      // Release the document.body click listener installed by
-      // createClickInputBridge. Without this, every entry into present mode
-      // leaks a click handler that lives until the page reloads.
-      inputBridge.dispose?.()
-    }
-  }, [canvasInstance, animations])
-
-  // ---------------------------------------------------------------------------
-  // M9: Slide navigation helpers
-  // ---------------------------------------------------------------------------
-
-  // M13: Transition-aware navigation. If the target slide defines a
-  // non-trivial transition, mount it via playTransition() before swapping
-  // activeSlideId so React state matches the already-painted new scene.
-  //
-  // Spam-press semantics: if the user hits ArrowRight again while a
-  // transition is mid-flight we abort it and snap instantly to the slide
-  // one past the aborted transition's target. That turns "five fast
-  // ArrowRight presses while animating" into "skip all animations and
-  // land five slides ahead" — matches Keynote-style presenter behaviour.
-  const transitionInFlightRef = useRef<{ abort(): void; targetId: string } | null>(null)
-
+  // With a canvas, every move goes through the presentation (prepared
+  // scenes, transitions, builds: present/presentation.ts) once it is ready;
+  // before that the overlay is up and the keys wait. Without a presentation
+  // — the pop-out presenter window (no canvas: the main window plays the
+  // transition), or a canvas whose preparation never started — the active
+  // slide moves directly (skipped slides passed over) and the canvas mounts
+  // it the editor's way.
   const navigateToSlide = useCallback(
     (direction: 'next' | 'prev') => {
-      if (slides.length === 0) return
-
-      // If a transition is already running, abort it and jump straight to
-      // the slide one step beyond its target — no animation.
-      if (transitionInFlightRef.current !== null) {
-        const runningTargetId = transitionInFlightRef.current.targetId
-        transitionInFlightRef.current.abort()
-        transitionInFlightRef.current = null
-
-        const runningIdx = slides.findIndex((s) => s.id === runningTargetId)
-        if (runningIdx === -1) return
-        const jumpIdx = direction === 'next' ? runningIdx + 1 : runningIdx - 1
-        const clampedIdx = Math.max(0, Math.min(jumpIdx, slides.length - 1))
-        const landing = slides[clampedIdx]
-        if (landing !== undefined) setActiveSlideId(landing.id)
+      const presentation = presentationRef.current
+      if (presentation !== null) {
+        if (!ready) return
+        if (direction === 'next') presentation.next()
+        else presentation.previous()
         return
       }
-
+      if (slides.length === 0) return
       const currentIdx = slides.findIndex((s) => s.id === activeSlideId)
       if (currentIdx === -1) return
-
-      // P3: skip slides flagged with `skipped` — advance past them in the
-      // requested direction until we find a presentable slide or fall off
-      // the end.
       const step = direction === 'next' ? 1 : -1
       let targetIdx = currentIdx + step
       while (targetIdx >= 0 && targetIdx < slides.length) {
@@ -341,59 +428,33 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
         if (candidate !== undefined && candidate.skipped !== true) break
         targetIdx += step
       }
-      if (targetIdx < 0 || targetIdx >= slides.length) return
+      const target = slides[targetIdx]
+      if (target !== undefined) setActiveSlideId(target.id)
+    },
+    [slides, activeSlideId, setActiveSlideId, ready],
+  )
 
-      const targetSlide = slides[targetIdx]
-      if (targetSlide === undefined) return
-
-      const incomingTransition = targetSlide.transition
-      const useTransition =
-        canvasInstance !== null &&
-        incomingTransition.kind !== 'none' &&
-        incomingTransition.durationMs > 0
-
-      if (!useTransition) {
-        setActiveSlideId(targetSlide.id)
+  /** Cut to a slide (a link, a jump from the presenter window). */
+  const jumpToSlide = useCallback(
+    (slideId: string) => {
+      const presentation = presentationRef.current
+      if (presentation !== null) {
+        if (ready) presentation.jump(slideId)
         return
       }
-
-      const handle = playTransition({
-        sceneGraph: canvasInstance!.sceneGraph,
-        incomingObjects: targetSlide.objects,
-        transition: incomingTransition,
-        // BG2: feed the incoming background into the transition so it
-        // animates together with the slide's objects. Without this, the
-        // outgoing slide's background remains painted while objects
-        // fade / slide, then the new background snaps in only after
-        // adoptSlideRoot runs — visually jarring.
-        ...(targetSlide.background !== undefined
-          ? { incomingBackground: targetSlide.background }
-          : {}),
-      })
-      transitionInFlightRef.current = {
-        abort: handle.abort,
-        targetId: targetSlide.id,
-      }
-
-      handle.done.finally(() => {
-        // If a spam-press already aborted and nulled the ref (swapping us
-        // past this target), leave React state alone — that branch already
-        // called setActiveSlideId to the further landing slide.
-        if (transitionInFlightRef.current?.targetId === targetSlide.id) {
-          transitionInFlightRef.current = null
-          setActiveSlideId(targetSlide.id)
-        }
-      })
+      setActiveSlideId(slideId)
     },
-    [slides, activeSlideId, setActiveSlideId, canvasInstance],
+    [setActiveSlideId, ready],
   )
 
   // Mirror navigateToSlide into a ref so the one-time BroadcastChannel
   // listener below can call the latest closure without re-installing.
   const navigateToSlideRef = useRef(navigateToSlide)
+  const jumpToSlideRef = useRef(jumpToSlide)
   useEffect(() => {
     navigateToSlideRef.current = navigateToSlide
-  }, [navigateToSlide])
+    jumpToSlideRef.current = jumpToSlide
+  }, [navigateToSlide, jumpToSlide])
 
   // P11: hyperlink interceptor. Installed once on the slide container
   // in capture phase so it fires BEFORE the document-level click bridge
@@ -430,7 +491,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
         e.preventDefault()
         const link = o.hyperlink
         if (link.kind === 'slide') {
-          if (link.slideId !== '') setActiveSlideId(link.slideId)
+          if (link.slideId !== '') jumpToSlideRef.current(link.slideId)
         } else {
           // Sanitise before navigating: sanitizeHref allows only
           // http/https/mailto (bare hosts get https:// prepended) and
@@ -470,14 +531,13 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       el.removeEventListener('click', handleClick, true)
       el.removeEventListener('mousemove', handleMove)
     }
-  }, [setActiveSlideId])
+  }, [])
 
   // BroadcastChannel setup — installed once per deck id. Receiver computes
   // direction by comparing the current activeSlideId to the incoming id:
   // an adjacent jump runs through navigateToSlide (plays transitions, plays
-  // in-slide animations on arrival); non-adjacent multi-step jumps fall
-  // back to a direct setActiveSlideId because there's no good transition to
-  // play through multiple slides.
+  // in-slide animations on arrival); non-adjacent multi-step jumps cut,
+  // because there's no good transition to play through multiple slides.
   useEffect(() => {
     if (id === undefined || typeof BroadcastChannel === 'undefined') return
     const channel = new BroadcastChannel(`narrative:deck:${id}:activeSlide`)
@@ -493,20 +553,28 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       const targetIdx = localSlides.findIndex((s) => s.id === slideId)
 
       suppressBroadcastRef.current = true
-      if (currentIdx !== -1 && targetIdx === currentIdx + 1) {
+      // The slides between two neighbours may be skipped ones.
+      const between = (a: number, b: number): boolean =>
+        localSlides.slice(Math.min(a, b) + 1, Math.max(a, b)).every((s) => s.skipped === true)
+      if (currentIdx !== -1 && targetIdx > currentIdx && between(currentIdx, targetIdx)) {
         navigateToSlideRef.current('next')
-      } else if (currentIdx !== -1 && targetIdx === currentIdx - 1) {
+      } else if (
+        currentIdx !== -1 &&
+        targetIdx !== -1 &&
+        targetIdx < currentIdx &&
+        between(currentIdx, targetIdx)
+      ) {
         navigateToSlideRef.current('prev')
       } else {
-        // Non-adjacent jump — direct set, no transition.
-        setActiveSlideId(slideId)
+        // Non-adjacent jump — a cut.
+        jumpToSlideRef.current(slideId)
       }
     }
     return () => {
       channel.close()
       bcRef.current = null
     }
-  }, [id, setActiveSlideId])
+  }, [id])
 
   // Broadcast every local activeSlideId change — except when the change was
   // itself caused by a remote broadcast (flag flip around setState).
@@ -612,6 +680,17 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
     )
   }
 
+  const { media } = preparation
+  const mediaShare = media.total > 0 ? (media.completed + media.errored) / media.total : 1
+  const slideShare =
+    preparation.slides.planned > 0 ? preparation.slides.prepared / preparation.slides.planned : 0
+  const progressShare =
+    preparation.phase === 'loading'
+      ? 0
+      : preparation.phase === 'media'
+        ? mediaShare / 2
+        : 0.5 + slideShare / 2
+
   return (
     <div
       ref={containerRef}
@@ -651,25 +730,31 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
           /* Which slide is on screen. Present mode renders no slides panel, so
              this is the only place the current slide is legible from the DOM. */
           data-active-slide-id={activeSlideId ?? undefined}
+          /* Whether the presentation is prepared (renderer/presentSlides.ts). */
+          data-present-ready={ready ? 'true' : 'false'}
         >
-          {/* Canvas itself is pointer-events:none */}
+          {/* Canvas itself is pointer-events:none. Pixi's garbage collector
+              is off: what is prepared stays until the ResourceManager says. */}
           <div className="pointer-events-none absolute inset-0">
             <Canvas
               onReady={onCanvasReady}
               artboardSize={{ width: SLIDE_WIDTH, height: SLIDE_HEIGHT }}
+              gc={false}
             />
           </div>
 
           {/* Video DOM overlays — slide-space positioned, no compositor.
-              Same component as editor; mode='present' enables autoplay +
-              volume + click-to-toggle. */}
-          {videoObjects.map((vidObj) => (
-            <EditorVideoPreview
-              key={`present-video-${vidObj.id}`}
-              videoObject={vidObj}
-              mode="present"
-            />
-          ))}
+              Same component as editor; mode='present' plays the video the
+              preparation buffered (renderer/presentVideos.ts). */}
+          <PresentVideosContext value={videos}>
+            {videoObjects.map((vidObj) => (
+              <EditorVideoPreview
+                key={`present-video-${vidObj.id}`}
+                videoObject={vidObj}
+                mode="present"
+              />
+            ))}
+          </PresentVideosContext>
         </div>
 
         {/* M12: Preload overlay */}
@@ -689,26 +774,23 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
                 <div
                   className="h-2 w-full rounded-full bg-gray-700 overflow-hidden"
                   role="progressbar"
-                  aria-valuenow={preloadProgress.total > 0 ? preloadProgress.completed : 0}
+                  aria-valuenow={Math.round(progressShare * 100)}
                   aria-valuemin={0}
-                  aria-valuemax={preloadProgress.total}
+                  aria-valuemax={100}
                 >
                   <div
                     className="h-full rounded-full bg-blue-500 transition-all duration-300"
-                    style={{
-                      width:
-                        preloadProgress.total > 0
-                          ? `${Math.round((preloadProgress.completed / preloadProgress.total) * 100)}%`
-                          : '0%',
-                    }}
+                    style={{ width: `${Math.round(progressShare * 100)}%` }}
                   />
                 </div>
                 <p className="text-xs text-gray-400 text-center tabular-nums">
-                  {preloadProgress.total > 0
-                    ? `${preloadProgress.completed} / ${preloadProgress.total} media items`
-                    : 'Scanning media…'}
-                  {preloadProgress.errored > 0 && (
-                    <span className="text-yellow-500 ml-1">({preloadProgress.errored} failed)</span>
+                  {preparation.phase === 'loading'
+                    ? 'Loading the deck…'
+                    : preparation.phase === 'media'
+                      ? `${media.completed + media.errored} / ${media.total} media items`
+                      : `${preparation.slides.prepared} / ${preparation.slides.planned} slides ready`}
+                  {media.errored > 0 && (
+                    <span className="text-yellow-500 ml-1">({media.errored} failed)</span>
                   )}
                 </p>
               </div>
@@ -716,7 +798,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
               <button
                 type="button"
                 className="text-xs text-gray-500 hover:text-gray-300 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
-                onClick={() => setPreloadDismissed(true)}
+                onClick={skipPreparation}
               >
                 Skip and present now
               </button>
@@ -756,8 +838,13 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
         </div>
       </div>
 
-      {/* M19 phase 3: presenter overlay — toggled by 'N' */}
-      <PresenterOverlay activeSlideId={activeSlideId} visible={presenterVisible} />
+      {/* M19 phase 3: presenter overlay — toggled by 'N'. Its slide pictures
+          are rendered during the preparation, shown or not. */}
+      <PresenterOverlay
+        activeSlideId={activeSlideId}
+        visible={presenterVisible}
+        onThumbnails={onThumbnails}
+      />
 
       {/* P9: Keyboard shortcuts cheatsheet — triggered by Mod+/ */}
       <ShortcutsCheatsheet open={cheatsheetOpen} onClose={() => setCheatsheetOpen(false)} />

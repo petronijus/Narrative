@@ -288,6 +288,19 @@ to look at a slide twice within a minute and check the log: only the first
 job is followed by `browser started` / a page load, and the second comes
 back in about a second.
 
+**Performance R1–R3 (unreleased):** the worker renders `RENDER_CONCURRENCY`
+jobs at once (compose: 2) — a second one opens its page only while
+`RENDER_PAGE_RESERVE_MB` (450) are free in the container, read from its
+cgroup; `RENDER_WARM_PAGES` now defaults to the concurrency, and a job of
+another session takes an idle page recycled (its storage and tab replaced,
+`apps/render-worker/src/render.ts` `recyclePage`). The `ready` line ends with
+`concurrency=2 warm=2 free=<MB>MB`; without `free=` the worker cannot read
+the cgroup and the memory gate is off — check before relying on two jobs.
+The server warms new images' `preview` and `display` variants through
+`IMGPROXY_WARM_ENDPOINT` (compose: `http://imgproxy-cache:80`). After the
+deploy: upload a large photo, wait five seconds, and its first view in the
+editor shows `X-Cache-Status: HIT` on the `display` request.
+
 ## The desktop app's update feed
 
 Since the desktop app (ADR 0015), Caddy serves `/opt/narrative/desktop-feed`

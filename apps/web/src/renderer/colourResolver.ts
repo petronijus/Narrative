@@ -244,6 +244,47 @@ export function tokenColoursDiffer(
   return false
 }
 
+/**
+ * What every token reference in `value` resolves to on `surface` with the
+ * installed resolver (the folder's, not the canvas's surface binding), as
+ * one string: '' when `value` holds no reference. Part of a thumbnail's key
+ * (renderer/thumbnailKey.ts) — two strings differ exactly when some token
+ * colour of `value` would paint differently.
+ */
+export function tokenColourSignature(value: unknown, surface: string | undefined): string {
+  const resolver = bindSurface(_base, surface)
+  const parts: string[] = []
+  collectTokenColours(value, resolver, parts)
+  return parts.join(',')
+}
+
+function collectTokenColours(
+  value: unknown,
+  resolver: ColourResolverFn | null,
+  out: string[],
+): void {
+  if (typeof value !== 'object' || value === null) return
+  if (isTokenRef(value)) {
+    out.push(resolver === null ? '-' : resolver(value))
+    return
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectTokenColours(item, resolver, out)
+    return
+  }
+  // A Y.Text body: its runs may colour themselves with tokens.
+  const toDelta = (value as { toDelta?: unknown }).toDelta
+  if (typeof toDelta === 'function') {
+    collectTokenColours(toDelta.call(value) as unknown, resolver, out)
+    return
+  }
+  // Otherwise plain records only (a Pixi object or a class instance holds no token).
+  if (Object.getPrototypeOf(value) !== Object.prototype) return
+  for (const key in value as Record<string, unknown>) {
+    collectTokenColours((value as Record<string, unknown>)[key], resolver, out)
+  }
+}
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return (
     typeof value === 'object' &&

@@ -24,9 +24,9 @@ import {
   componentIdsInKeys,
   purgeComponentBucketPrefix,
   purgeDeckBucketPrefix,
-  sweepAgainAfterGrace,
   purgeUnreferencedKeys,
 } from '../media/bucketCleanup.js'
+import { scheduleOwnerSweeps } from '../media/ownerSweeps.js'
 import { buildS3Client, MEDIA_BUCKET, presignGetUrl } from '../media/s3Client.js'
 import { closeConnectionsForDocument, closeDeckConnections } from '../hocuspocus/connections.js'
 import {
@@ -410,11 +410,12 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
         playbackKey: mediaAssets.playbackKey,
         posterKey: mediaAssets.posterKey,
         thumbnailKey: mediaAssets.thumbnailKey,
+        presentPlaybackKey: mediaAssets.presentPlaybackKey,
       })
       .from(mediaAssets)
       .where(deckIds.length > 0 ? or(inArray(mediaAssets.deckId, deckIds), ownMedia) : ownMedia)
     const keysOf = (r: (typeof assetRows)[number]) =>
-      [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey].filter(
+      [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey, r.presentPlaybackKey].filter(
         (k): k is string => typeof k === 'string' && k !== '',
       )
     const explicitKeys = assetRows.flatMap(keysOf)
@@ -428,10 +429,15 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
 
     // Decks first (FK is ON DELETE RESTRICT); cascades remove their updates,
     // permissions, share links and media rows. One transaction, so a crash
-    // cannot leave the decks destroyed while the folder survives.
+    // cannot leave the decks destroyed while the folder survives — and the
+    // second sweep of every prefix commits with it (media/ownerSweeps.ts).
     await db.transaction(async (tx) => {
       if (containedDecks.length > 0) await tx.delete(decks).where(eq(decks.folderId, id))
       await tx.delete(folders).where(eq(folders.id, id))
+      await scheduleOwnerSweeps(tx, [
+        ...containedDecks.map((d) => ({ deckId: d.id })),
+        ...[...sweptComponents].map((c) => ({ componentId: c })),
+      ])
     })
 
     // Nobody keeps the folder's documents open: its decks, its component
@@ -448,9 +454,9 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
         ...containedDecks.map((d) => purgeDeckBucketPrefix(db, d.id, deps.log)),
         ...[...sweptComponents].map((c) => purgeComponentBucketPrefix(db, c, deps.log)),
       ])
+    // What is too young to sweep now (a transcode or a copy still writing)
+    // goes with the sweeps scheduled above.
     await Promise.all([sweepPrefixes(), purgeUnreferencedKeys(db, explicitKeys, deps.log)])
-    // What was too young to sweep (a transcode or a copy still writing).
-    sweepAgainAfterGrace(sweepPrefixes, deps.log, { folderId: id })
     notifyDeleted(deps, {
       actorId: args.userId,
       audience,

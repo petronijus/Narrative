@@ -11,13 +11,30 @@
  * Re-subscribes when activeSlideId changes.
  */
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { subscribeToSlideObjects } from '@narrative/slide-model'
 import type { ObjectChangeSet } from '@narrative/slide-model'
 import type { SlideObject } from '@narrative/shared'
 import { useSlideDoc } from './useSlideDoc.js'
 import { useActiveSlide } from './ActiveSlideContext.js'
-import { useSlides } from './useSlides.js'
+import { useSlideIdsKey } from './useDeckStore.js'
+
+/**
+ * Which slide a change set belongs to, and what it is:
+ *   - `initial`: the slide's objects as they are now, emitted once when the
+ *     slide becomes active (all of them `added`);
+ *   - `change`: an edit of the active slide's objects since;
+ *   - `leave`: every object of the slide that stopped being active, removed
+ *     (emitted before the next slide's `initial`).
+ * A consumer that swaps whole slide scenes itself (present mode,
+ * renderer/presentSlides.ts) uses it to tell a removal of a slide it no
+ * longer holds, and a first emission of a slide it holds already, from the
+ * changes it must apply.
+ */
+export interface SlideObjectChangeInfo {
+  slideId: string
+  kind: 'initial' | 'change' | 'leave'
+}
 
 /**
  * Subscribe to incremental changes with per-frame batching.
@@ -32,10 +49,11 @@ import { useSlides } from './useSlides.js'
  *
  * @param callback Function called on each batched change set
  */
-export function useSlideObjectChanges(callback: (changes: ObjectChangeSet) => void): void {
+export function useSlideObjectChanges(
+  callback: (changes: ObjectChangeSet, info: SlideObjectChangeInfo) => void,
+): void {
   const { deckCtx } = useSlideDoc()
   const { activeSlideId } = useActiveSlide()
-  const slides = useSlides()
 
   // Callback in ref — avoid re-subscribe on every re-render
   const callbackRef = useRef(callback)
@@ -46,13 +64,16 @@ export function useSlideObjectChanges(callback: (changes: ObjectChangeSet) => vo
   // set before subscribing to the new slide. Without this the SceneGraph would
   // retain objects from the previous slide and stack new ones on top.
   const lastSnapshotRef = useRef<SlideObject[]>([])
+  /** The slide `lastSnapshotRef` belongs to. */
+  const lastSlideRef = useRef<string | null>(null)
 
   // Slide order fingerprint — moveSlide() recreates the slide Y.Map (Yjs has no
   // in-place reorder) which orphans the observer attached to the old objects
   // Y.Array. When the ordered slide list changes we MUST re-subscribe to the
   // fresh Y.Map for activeSlideId. Transition/object edits don't change this
-  // fingerprint so we don't re-subscribe on every edit.
-  const slideOrderKey = useMemo(() => slides.map((s) => s.id).join('|'), [slides])
+  // fingerprint so we don't re-subscribe on every edit — and, being a string
+  // selected from the deck store, an edit does not even re-render the caller.
+  const slideOrderKey = useSlideIdsKey()
 
   useEffect(() => {
     if (activeSlideId === null) return
@@ -62,13 +83,22 @@ export function useSlideObjectChanges(callback: (changes: ObjectChangeSet) => vo
     // will emit the new slide's objects via the initial synchronous emission.
     if (lastSnapshotRef.current.length > 0) {
       const prevIds = lastSnapshotRef.current.map((o) => o.id)
-      callbackRef.current({ added: [], removed: prevIds, updated: [], snapshot: [] })
+      callbackRef.current(
+        { added: [], removed: prevIds, updated: [], snapshot: [] },
+        { slideId: lastSlideRef.current ?? activeSlideId, kind: 'leave' },
+      )
       lastSnapshotRef.current = []
     }
 
+    // The first emission is the slide's objects as they are (synchronous
+    // inside subscribe, or once the slide arrives: subscribeToSlideObjects).
+    let first = true
+    lastSlideRef.current = activeSlideId
     const unsubscribe = subscribeToSlideObjects(deckCtx, activeSlideId, (changes) => {
       lastSnapshotRef.current = changes.snapshot
-      callbackRef.current(changes)
+      const kind = first ? 'initial' : 'change'
+      first = false
+      callbackRef.current(changes, { slideId: activeSlideId, kind })
     })
     return unsubscribe
   }, [deckCtx, activeSlideId, slideOrderKey])

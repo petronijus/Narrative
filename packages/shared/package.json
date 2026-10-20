@@ -1,6 +1,6 @@
 {
   "name": "@narrative/shared",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -10,8 +10,8 @@
   },
   "scripts": {
     "build": "tsc --noEmit",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src",
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc/tsbuildinfo",
+    "lint": "eslint --cache --cache-strategy content --cache-location node_modules/.cache/eslint/ src",
     "test": "node ../../node_modules/vitest/vitest.mjs run"
   },
   "devDependencies": {

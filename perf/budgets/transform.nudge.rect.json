@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "id": "transform.nudge.rect",
+  "counters": {
+    "gl.texUpload": 0,
+    "procedural.created": 0,
+    "sg.destroy": 0,
+    "sg.mount": 0,
+    "sg.update": 1,
+    "text.autofit.measure": 0,
+    "text.raster.kpx": 0,
+    "text.raster.started": 0,
+    "y.listSlides": 0,
+    "y.listSlides.objects": 0,
+    "y.observeDeep.slideObjects": 1,
+    "y.slideObjects.flush": 1,
+    "y.tx.local": 1
+  }
+}

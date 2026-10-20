@@ -7,7 +7,9 @@
  * turned into a JPEG on a canvas, and the pages go into one PDF with
  * shared's `buildImagePdf` — the writer the server's `deck.exportPdf` uses
  * too, so both files are alike. When the browser cannot render, the editor
- * asks the server (`GET /decks/:id/export.pdf`) instead.
+ * asks the server instead: `POST /decks/:id/export.pdf` queues a job, and
+ * `GET /decks/:id/export.pdf/:jobId` is polled for its progress and link
+ * (routes/pngExport.ts, render/pdfExportQueue.ts on the server).
  */
 
 import type * as Y from 'yjs'

@@ -48,6 +48,7 @@ function createMockActiveSlide(): ActiveSlideContextValue {
 
 vi.mock('../state/useSlides', () => ({
   useSlides: () => mockSlides,
+  useSlidesSelector: <T,>(select: (slides: typeof mockSlides) => T) => select(mockSlides),
 }))
 
 vi.mock('../state/useSlideObjects', async () => {
@@ -58,6 +59,12 @@ vi.mock('../state/useSlideObjects', async () => {
   const ctx = { doc, objects }
   return {
     useSlideObjects: () => ({ objects: mockObjects, objectsCtx: ctx, mutationCtx: ctx }),
+    useActiveObjectsCtx: () => ctx,
+    useSlideObject: (id: string | null) =>
+      (mockObjects as Array<{ id: string }>).find((o) => o.id === id),
+    useSlideObjectsNow: () => () => mockObjects,
+    useSlideObjectsSelector: <T,>(select: (objects: typeof mockObjects) => T) =>
+      select(mockObjects),
   }
 })
 

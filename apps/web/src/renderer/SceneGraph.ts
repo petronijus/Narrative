@@ -28,11 +28,13 @@
  */
 
 import { Container, Point } from 'pixi.js'
+import { perfCount, perfCountFor } from '@narrative/shared'
 import type { Application } from 'pixi.js'
 import * as Y from 'yjs'
 import { getRenderer } from './objectRenderers'
 import { setTableCellFaded } from './objectRenderers/tableRenderer.js'
 import {
+  refreshHtmlTextFontKeys,
   subscribeTextLayout,
   textBoxLayout,
   type TextBoxLayout,
@@ -40,6 +42,7 @@ import {
 import { repaintFilterColours } from './filterEffects.js'
 import {
   getColourResolver,
+  setRenderingSurface,
   subscribeColourResolver,
   tokenColoursDiffer,
   type ColourResolverFn,
@@ -49,11 +52,122 @@ import { fontFamilyNames } from '@narrative/slide-model'
 import type { SlideObject, SlideObjectType, ObjectChangeSet } from '@narrative/shared'
 import type { ObjectBounds } from './types'
 import type { RenderScheduler } from './RenderScheduler'
+import { BatchStager, rectDistance, stagingOrder, type Rect } from './textResolutionStaging.js'
+import { AdaptiveBudget, LongTaskWatch } from './restageBudget.js'
 
 interface SceneNode {
   container: Container
   data: SlideObject
 }
+
+/**
+ * A slide's whole scene as Pixi objects: its root (background first, then one
+ * container per object, in z-order), the object nodes, and what they were
+ * painted with. Built off stage by the present-mode slide cache
+ * (renderer/presentSlides.ts) and swapped in with `swapSlideScene`, which
+ * hands the outgoing slide back in the same form — intact, for the cache to
+ * keep or destroy.
+ */
+export interface SlideScene {
+  slideId: string
+  root: Container
+  /** The artboard background, the root's first child; null when the slide has none mounted. */
+  background: Container | null
+  nodes: Array<SceneNode & { id: string }>
+  /** The colour resolver the nodes were painted with. */
+  paintedWith: ColourResolverFn | null
+  /**
+   * The deck store's objects array the nodes show (its identity is the
+   * slide's version: renderer/presentSlides.ts); null when unknown — the
+   * scene was edited after it was built, or it was mounted change by change.
+   */
+  objects: readonly SlideObject[] | null
+  /**
+   * The surface its colour tokens were resolved on (its layout's, A4.2d),
+   * when it was built for one: the swap makes it the canvas's rendering
+   * surface (colourResolver.setRenderingSurface) as it puts the scene on
+   * stage, so nothing is repainted for the surface it leaves.
+   */
+  surface?: string | undefined
+}
+
+/**
+ * The alpha the scene graph gives an object: its authored opacity, faded to
+ * 35 % when its box lies wholly outside the artboard (`w` × `h`; 0 × 0 = no
+ * artboard set). Shared with the present-mode slide cache, which builds
+ * scenes off stage and must give their nodes the alpha this scene graph would.
+ */
+export function outsideFadeAlpha(data: SlideObject, w: number, h: number): number {
+  const baseAlpha =
+    typeof (data as { opacity?: number }).opacity === 'number'
+      ? (data as { opacity: number }).opacity
+      : 1
+  if (w === 0 || h === 0) return baseAlpha
+  const { x, y, width, height } = data
+  const outside = x + width <= 0 || x >= w || y + height <= 0 || y >= h
+  return outside ? baseAlpha * 0.35 : baseAlpha
+}
+
+/**
+ * The part of Pixi's AbstractText the zoom staging uses. `_autoResolution`
+ * and `_resolution` are Pixi's own (protected/internal in its typings):
+ * `resolution = null` follows `renderer.resolution`, and `_resolution` is the
+ * value the text was last drawn at (set by the text pipe when it rasterises).
+ */
+interface ResolutionText {
+  _autoResolution: boolean
+  _resolution: number | null
+  _didTextUpdate: boolean
+  /**
+   * Per renderer uid, the text pipe's state: the texture drawn now, the key
+   * it was rasterised for, and whether a raster is in flight (HTMLText).
+   */
+  _gpuData?: Record<
+    number,
+    {
+      texture?: { source?: { pixelWidth: number; pixelHeight: number } }
+      currentKey?: string
+      generatingTexture?: boolean
+    }
+  >
+  readonly styleKey: string
+  resolution: number | null
+  destroyed: boolean
+  /** False when the text or one of its ancestors is hidden: it is not drawn. */
+  readonly worldVisible: boolean
+}
+
+/**
+ * How much re-rasterising a zoom does per animation frame (plan
+ * canvas-performance, step 3): at most this many texts, and at most this
+ * many texture pixels. The pixels are what costs — rasterising the SVG into
+ * a canvas, the upload, its mipmaps (measured on an M3 Pro, ANGLE Metal:
+ * 2.5–5 ms of texSubImage2D per Mpx) — and one text of a crowded slide at a
+ * high zoom is anything from 0.1 to several Mpx. 8 texts a frame by count
+ * alone still left a ~220 ms task behind the zoom commit there.
+ */
+const TEXT_RESTAGE_MAX_PER_FRAME = 8
+const TEXT_RESTAGE_PX_PER_FRAME = 2_000_000
+/**
+ * Where the browser reports long tasks, the pixel budget follows them
+ * (renderer/restageBudget.ts): it halves after a batch during which a task
+ * of 50 ms or more began, and grows by a quarter after one without, from
+ * `TEXT_RESTAGE_PX_PER_FRAME` within these bounds (one text bigger than the
+ * budget still gets a batch of its own).
+ */
+const TEXT_RESTAGE_MIN_PX = 250_000
+const TEXT_RESTAGE_MAX_PX = 4_000_000
+/** A text off screen gets its new resolution this long after it was due at the latest, idle or not. */
+const TEXT_RESTAGE_IDLE_TIMEOUT_MS = 1000
+/**
+ * Pixi uploads an HTMLText's raster when its SVG image has loaded, not in
+ * the frame that started it, and Chrome can deliver several of those loads
+ * in one task: a batch per frame alone still stacked ~250 ms of uploads into
+ * one task behind the commit. So the next batch waits for the last one's
+ * rasters to land — up to this many frames, for a text that is never
+ * rendered (hidden) and so never lands.
+ */
+const TEXT_RESTAGE_MAX_WAIT_FRAMES = 6
 
 /**
  * Make an HTMLText rasterise again on the next render, though its style key
@@ -98,6 +212,8 @@ export class SceneGraph {
    * Plněna při addObject/applyChanges.added, mazána při removeObject/applyChanges.removed.
    */
   private readonly nodeTypes = new Map<string, SlideObjectType>()
+  /** Text being edited inline, drawn faded under the editing overlay (setTextNodeFaded). */
+  private readonly fadedText = new Set<string>()
   /**
    * Reverse lookup Container → objectId, kept in sync with `nodes`.
    * Used by hitTest to walk root.children (visual z-order is the source
@@ -147,6 +263,25 @@ export class SceneGraph {
    */
   private scheduler: RenderScheduler | null = null
 
+  /** Hands a zoom's new resolution to the texts, a batch per frame (restageTextResolution). */
+  private readonly textStager = new BatchStager({
+    maxJobs: TEXT_RESTAGE_MAX_PER_FRAME,
+    budget: () => this.nextRestageBudget(),
+    maxWaitFrames: TEXT_RESTAGE_MAX_WAIT_FRAMES,
+    idleTimeout: TEXT_RESTAGE_IDLE_TIMEOUT_MS,
+    onBatch: () => this.markDirty(),
+  })
+  /** The restage's pixel budget, kept from one zoom to the next (it learns this machine). */
+  private readonly restageBudget = new AdaptiveBudget(
+    TEXT_RESTAGE_PX_PER_FRAME,
+    TEXT_RESTAGE_MIN_PX,
+    TEXT_RESTAGE_MAX_PX,
+  )
+  /** The page's long tasks; null where the browser reports none (the budget stays fixed). */
+  private readonly longTasks = LongTaskWatch.create()
+  /** When the current staging's last batch began (null before its first). */
+  private lastRestageBatchAt: number | null = null
+
   /** Ends the colour-resolver subscription (destroy). */
   private readonly unsubscribeColourResolver: () => void
   private readonly unsubscribeFontChanges: () => void
@@ -156,11 +291,29 @@ export class SceneGraph {
   /** `onTextLayout` listeners: a text box of this scene drawn at a new height or type scale. */
   private readonly textLayoutListeners = new Set<(id: string, layout: TextBoxLayout) => void>()
 
+  /**
+   * The slide this scene graph holds, and the deck store's objects array its
+   * nodes were built from (`objects`: the version; `edited` once a change set
+   * was applied to them since). Canvas.tsx records it when a slide's objects
+   * are first emitted; `swapSlideScene` when a prepared scene comes in. A
+   * slide's first emission for a slide already held at its current version
+   * has nothing to do (Canvas.tsx), and the removal emitted for a slide no
+   * longer held is stale.
+   */
+  private held: {
+    slideId: string
+    objects: readonly SlideObject[] | null
+    edited: boolean
+  } | null = null
+  /** swapSlideScene switches the rendering surface for a scene painted on it already. */
+  private ignoreColourChanges = false
+
   constructor(app: Application) {
     this.app = app
     this.root = new Container()
     this.app.stage.addChild(this.root)
     this.unsubscribeColourResolver = subscribeColourResolver(({ prev, next }) => {
+      if (this.ignoreColourChanges) return
       this.repaintTokenColours(prev, next)
     })
     // A face installed (or removed) after text in its family was rasterised:
@@ -297,22 +450,15 @@ export class SceneGraph {
   }
 
   private applyOutsideFade(node: SceneNode): void {
-    const w = this.slideBoundsW
-    const h = this.slideBoundsH
     // Respect the object's authored opacity — outside-fade multiplies
     // on top of it so tuning opacity in the Inspector still does what
     // it says. Objects without an opacity field default to 1.
-    const baseAlpha =
-      typeof (node.data as { opacity?: number }).opacity === 'number'
-        ? (node.data as { opacity: number }).opacity
-        : 1
-    if (w === 0 || h === 0) {
-      node.container.alpha = baseAlpha
-      return
-    }
-    const { x, y, width, height } = node.data
-    const outside = x + width <= 0 || x >= w || y + height <= 0 || y >= h
-    node.container.alpha = outside ? baseAlpha * 0.35 : baseAlpha
+    node.container.alpha = outsideFadeAlpha(node.data, this.slideBoundsW, this.slideBoundsH)
+  }
+
+  /** The artboard size the outside fade is computed against (0 × 0: none set). */
+  getSlideBounds(): { width: number; height: number } {
+    return { width: this.slideBoundsW, height: this.slideBoundsH }
   }
 
   /**
@@ -332,6 +478,7 @@ export class SceneGraph {
       return
     }
 
+    perfCountFor('sg.mount', data.type)
     const container = renderer.mount(data)
     this.root.addChild(container)
     const node = { container, data }
@@ -358,6 +505,7 @@ export class SceneGraph {
       return
     }
 
+    perfCountFor('sg.update', next.type)
     renderer.update(node.container, node.data, next)
     node.data = next
     this.applyOutsideFade(node)
@@ -372,6 +520,7 @@ export class SceneGraph {
     if (node === undefined) return
 
     const renderer = getRenderer(node.data.type)
+    perfCountFor('sg.destroy', node.data.type)
     renderer?.destroy(node.container)
 
     if (!node.container.destroyed) {
@@ -475,6 +624,7 @@ export class SceneGraph {
         continue
       }
 
+      perfCountFor('sg.update', type)
       if (renderer.applyPatch !== undefined) {
         // Chirurgický patch — renderer ví co se přesně změnilo
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- patch je Partial<SlideObject>, renderer akceptuje Partial<T extends SlideObject>
@@ -635,7 +785,14 @@ export class SceneGraph {
    *
    * No-op when the id is unknown or its container has no text child.
    */
-  setTextNodeFaded(id: string, faded: boolean): void {
+  setTextNodeFaded(id: string, faded: boolean, silent = false): void {
+    if (!silent) {
+      if (faded) this.fadedText.add(id)
+      else this.fadedText.delete(id)
+    }
+    const dirty = (): void => {
+      if (!silent) this.markDirty()
+    }
     // M29 — table cell ids are encoded as `${tableId}#${r},${c}`. The
     // cell isn't a slide-object so we look up the table's container
     // and let `setTableCellFaded` resolve which HTMLText to fade by
@@ -649,7 +806,7 @@ export class SceneGraph {
         const yText = this._cellYTextForId(tableId, id.slice(hashIdx + 1))
         if (yText !== null) {
           setTableCellFaded(tableContainer, yText, faded)
-          this.markDirty()
+          dirty()
           return
         }
       }
@@ -664,7 +821,23 @@ export class SceneGraph {
       { alpha: number } | undefined
     if (textChild === undefined) return
     textChild.alpha = faded ? 0 : 1
-    this.markDirty()
+    dirty()
+  }
+
+  /**
+   * Run `fn` (synchronously) with every text that is being edited drawn: the
+   * contenteditable overlay is what the user sees meanwhile, the Pixi node is
+   * faded, and a picture of the slide taken then would miss that text.
+   */
+  withTextUnfaded<T>(fn: () => T): T {
+    if (this.fadedText.size === 0) return fn()
+    const ids = [...this.fadedText]
+    for (const id of ids) this.setTextNodeFaded(id, false, true)
+    try {
+      return fn()
+    } finally {
+      for (const id of ids) this.setTextNodeFaded(id, true, true)
+    }
   }
 
   /** Resolve a table cell's Y.Text from the current snapshot. Used
@@ -782,19 +955,15 @@ export class SceneGraph {
 
     // Text that is not a top-level text object — table cells, the leaves of
     // component instances — is drawn by the same HTMLText: every one whose
-    // families (the box's and its runs', textRenderer.htmlTextFontFamilies)
+    // families (the box's, its runs' and levels', textRenderer.htmlTextFaceRequest)
     // include this one rasterises again, now with the face.
     const walk = (c: Container): void => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const t = c as any
       if (t.anchor !== undefined && '_didTextUpdate' in t && !handled.has(t)) {
-        const families: unknown = t.style?.fontFamily
-        const list = Array.isArray(families)
-          ? families
-          : typeof families === 'string'
-            ? [families]
-            : []
-        if (list.includes(family)) {
+        // Its keys follow the faces there are now (a face that landed
+        // after it was styled is embedded from this raster on).
+        if (refreshHtmlTextFontKeys(t, family)) {
           invalidateHtmlText(t, rendererUid)
           touched++
         }
@@ -828,35 +997,161 @@ export class SceneGraph {
   }
 
   /**
-   * Force every HTMLText node in the scene to re-rasterize at the
-   * current renderer resolution. Called after a zoom-driven resolution
-   * change — Pixi's HTMLTextPipe detects the resolution mismatch and
-   * dispatches an async _updateGpuText, but our
-   * wireRedrawOnAsyncTextureUpdate catchup only fires on text/style
-   * changes, not resolution-only changes. This method resets each
-   * node's GPU cache key and catchup guard so the async texture gets
-   * follow-up frames to land into.
+   * Every text node of the scene — top-level texts, table cells, the leaves
+   * of component instances — with the slide object it is drawn for (the
+   * root's child it sits under; undefined for one outside any object).
    */
-  forceTextResolutionRefresh(): void {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rendererUid = (this.app.renderer as any).uid as number | undefined
-    let touched = 0
-
-    const refreshNode = (c: Container): void => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const node = c as any
-      // HTMLText nodes have .anchor (sprites) + ._didTextUpdate (text)
+  private forEachText(fn: (text: ResolutionText, ownerId: string | undefined) => void): void {
+    const walk = (c: Container, ownerId: string | undefined): void => {
+      const node = c as unknown as Partial<ResolutionText> & { anchor?: unknown }
+      // Text nodes (Pixi's AbstractText) are the ones with an anchor and the
+      // text-update flag; sprites have the anchor only.
       if (node.anchor !== undefined && '_didTextUpdate' in node) {
-        invalidateHtmlText(node, rendererUid)
-        touched++
+        fn(node as ResolutionText, ownerId)
       }
       for (const child of c.children) {
-        if (child instanceof Container) refreshNode(child)
+        if (child instanceof Container) walk(child, ownerId ?? this.containerToId.get(child))
       }
     }
+    walk(this.root, undefined)
+  }
 
-    refreshNode(this.root)
-    if (touched > 0) this.markDirty()
+  /**
+   * Step 1 of a zoom's resolution change (Canvas.tsx; plan
+   * canvas-performance step 3): give every text that follows the renderer's
+   * resolution the one it was drawn at, explicitly. Pixi re-rasterises every
+   * auto-resolution text the moment `renderer.resolution` changes — all of
+   * them in one frame; a text with its own resolution it leaves alone, so
+   * `restageTextResolution` can hand the new value out a few at a time.
+   * Pinning to the value drawn at keeps the text's style key: nothing
+   * rasterises again here. A text not drawn yet is left to follow the
+   * renderer (it will be drawn once, at the new value). Texts stay pinned
+   * afterwards: Canvas.tsx is the only writer of the resolution and pins and
+   * restages on every change. Texts mounted later follow the renderer, which
+   * by then has the committed value.
+   */
+  pinTextResolution(): void {
+    this.forEachText((text) => {
+      if (text._autoResolution && text._resolution !== null) text.resolution = text._resolution
+    })
+  }
+
+  /**
+   * Step 2, after `renderer.resolution` changed to `resolution`: re-rasterise
+   * the scene's texts at it. The texts meeting `visibleRect` (stage space,
+   * CSS pixels of the canvas, already widened by the caller) go a batch per
+   * animation frame (`TEXT_RESTAGE_MAX_PER_FRAME` texts, and the texture
+   * pixels this machine uploads in `TEXT_RESTAGE_UPLOAD_MS`); the rest
+   * follow nearest first, a batch per idle callback, so they give way to
+   * whatever the person does next. Without a rect every text goes in frames.
+   * A hidden text takes its new resolution without a place in a batch: it
+   * rasterises when it is shown. A call before the previous staging has
+   * finished replaces it, and texts that already reached `resolution` are
+   * skipped — finished work is kept. Each change of a text's resolution
+   * moves its style key, so the async-raster catch-up (textRenderer
+   * `wireRedrawOnAsyncTextureUpdate`) follows it with frames of its own —
+   * and lays the text out again if its measured size moved.
+   */
+  restageTextResolution(resolution: number, visibleRect: Rect | null): void {
+    const texts: Array<{ text: ResolutionText; ownerId: string | undefined }> = []
+    this.forEachText((text, ownerId) => {
+      if (!text._autoResolution && text._resolution !== resolution) texts.push({ text, ownerId })
+    })
+    perfCount('text.restage')
+    perfCount('text.restage.texts', texts.length)
+    this.lastRestageBatchAt = null
+    // The canvas was just resized (its backbuffer is empty): draw it again
+    // even when no text needs a new raster.
+    this.markDirty()
+    const boxes = new Map<string, Rect | null>()
+    const boxOf = ({ ownerId }: { ownerId: string | undefined }): Rect | null => {
+      if (ownerId === undefined) return null
+      let box = boxes.get(ownerId)
+      if (box === undefined) {
+        const world = this.getBounds(ownerId)?.world
+        box =
+          world === undefined
+            ? null
+            : { ...world, x: world.x + this.slideOriginX, y: world.y + this.slideOriginY }
+        boxes.set(ownerId, box)
+      }
+      return box
+    }
+    const rendererUid = (this.app.renderer as unknown as { uid: number }).uid
+    // The pixels the new raster will have: the current texture's, scaled by
+    // the change. A text with no texture yet counts as a full share.
+    const rasterPixels = (text: ResolutionText): number => {
+      const source = text._gpuData?.[rendererUid]?.texture?.source
+      const from = text._resolution ?? resolution
+      const px = source === undefined ? 0 : source.pixelWidth * source.pixelHeight
+      if (px <= 1 || from <= 0) return TEXT_RESTAGE_PX_PER_FRAME / TEXT_RESTAGE_MAX_PER_FRAME
+      return px * (resolution / from) ** 2
+    }
+    // Landed: the pipe holds a texture for the text's current key and none is in flight.
+    const landed = (text: ResolutionText): boolean => {
+      if (text.destroyed) return true
+      const gpu = text._gpuData?.[rendererUid]
+      return gpu !== undefined && gpu.generatingTexture !== true && gpu.currentKey === text.styleKey
+    }
+    const ordered = stagingOrder(texts, boxOf, visibleRect)
+    const onScreen =
+      visibleRect === null
+        ? ordered.length
+        : ordered.findIndex((item) => {
+            const box = boxOf(item)
+            return box === null || rectDistance(box, visibleRect) > 0
+          })
+    this.textStager.stage(
+      ordered.map(({ text }) => () => {
+        if (text.destroyed || text._autoResolution || text._resolution === resolution) return null
+        if (!text.worldVisible) {
+          // Nothing is drawn for it, so nothing rasterises now: no place in a batch.
+          text.resolution = resolution
+          return null
+        }
+        const cost = rasterPixels(text)
+        text.resolution = resolution
+        return { cost, settled: () => landed(text) }
+      }),
+      { deferFrom: onScreen === -1 ? ordered.length : onScreen },
+    )
+  }
+
+  /**
+   * The pixels the next batch of a staging may start: the budget, halved when
+   * a long task began since the previous batch of this staging (its rasters
+   * landing), grown when none did. The first batch of a staging takes the
+   * budget as it stands — the commit before it is a long task of its own.
+   */
+  private nextRestageBudget(): number {
+    if (this.longTasks === null) return TEXT_RESTAGE_PX_PER_FRAME
+    const now = performance.now()
+    const since = this.lastRestageBatchAt
+    this.lastRestageBatchAt = now
+    if (since === null) return this.restageBudget.value
+    const longTask = this.longTasks.since(since)
+    if (longTask) perfCount('text.restage.shrunk')
+    return this.restageBudget.next(longTask)
+  }
+
+  /**
+   * A zoom gesture is under way (Canvas.tsx): start no more rasters for the
+   * resolution it is about to replace. What is left stays queued — the
+   * next commit replaces it, or `resumeTextRestage` goes on with it when the
+   * gesture ends at the same resolution.
+   */
+  pauseTextRestage(): void {
+    this.textStager.pause()
+  }
+
+  /** Go on with a staging `pauseTextRestage` held (the gesture ended where it started). */
+  resumeTextRestage(): void {
+    this.textStager.resume()
+  }
+
+  /** Texts still waiting for the resolution of the last zoom (the e2e probes read it). */
+  get pendingTextRestage(): number {
+    return this.textStager.pending
   }
 
   /**
@@ -876,6 +1171,101 @@ export class SceneGraph {
       this.markDirty()
     }
     return this.backgroundContainer
+  }
+
+  /** The slide whose objects this scene graph holds (null: none recorded). */
+  get heldSlideId(): string | null {
+    return this.held?.slideId ?? null
+  }
+
+  /**
+   * Record which slide the nodes belong to and the deck store objects array
+   * they show (null: not known). Called by Canvas.tsx with a slide's first
+   * emission, and with null when its objects have been removed.
+   */
+  holdSlide(slideId: string | null, objects: readonly SlideObject[] | null = null): void {
+    this.held = slideId === null ? null : { slideId, objects, edited: false }
+  }
+
+  /** A change set was applied to the held slide: its nodes no longer match the version recorded. */
+  markHeldEdited(): void {
+    if (this.held !== null) this.held.edited = true
+  }
+
+  /** Whether the nodes are slide `slideId` at the deck store's `objects` array, unedited. */
+  holdsSlideAt(slideId: string, objects: readonly SlideObject[] | undefined): boolean {
+    const h = this.held
+    return (
+      h !== null &&
+      h.slideId === slideId &&
+      !h.edited &&
+      h.objects !== null &&
+      h.objects === objects
+    )
+  }
+
+  /**
+   * Show `next` — a slide scene built off stage (renderer/presentSlides.ts) —
+   * instead of the current one, and hand the current one back intact: its
+   * root taken off the stage, its nodes neither destroyed nor touched, so it
+   * can be shown again without mounting or rasterising anything. Nothing is
+   * drawn until the next frame, which draws `next` whole.
+   *
+   * `next.root` may already be on the stage (a transition drew it next to the
+   * outgoing root); otherwise it is added. Node alphas are left as they are:
+   * the builder gave them the outside fade (`outsideFadeAlpha`), and a build
+   * animation may have set its first state on them since. The nodes are
+   * repainted where the colour resolver changed since they were painted, as
+   * every node of this scene graph is (`repaintTokenColours`).
+   */
+  swapSlideScene(next: SlideScene): SlideScene {
+    const held = this.held
+    const outgoing: SlideScene = {
+      slideId: held?.slideId ?? '',
+      root: this.root,
+      background:
+        this.backgroundContainer !== null &&
+        !this.backgroundContainer.destroyed &&
+        this.backgroundContainer.parent === this.root
+          ? this.backgroundContainer
+          : null,
+      nodes: [...this.nodes].map(([id, n]) => ({ id, container: n.container, data: n.data })),
+      // Every mounted node is painted with the installed resolver (repaintTokenColours).
+      paintedWith: getColourResolver(),
+      objects: held !== null && !held.edited ? held.objects : null,
+    }
+    this.textStager.cancel()
+    if (this.root.parent !== null) this.root.parent.removeChild(this.root)
+    this.nodes.clear()
+    this.nodeTypes.clear()
+    this.containerToId.clear()
+    this.fadedText.clear()
+
+    this.root = next.root
+    this.root.position.set(this.slideOriginX, this.slideOriginY)
+    if (next.root.parent === null) this.app.stage.addChild(next.root)
+    this.backgroundContainer = next.background
+    for (const entry of next.nodes) {
+      this.nodes.set(entry.id, { container: entry.container, data: entry.data })
+      this.nodeTypes.set(entry.id, entry.data.type)
+      this.containerToId.set(entry.container, entry.id)
+    }
+    this.held = { slideId: next.slideId, objects: next.objects, edited: false }
+    // The incoming slide's surface becomes the canvas's now — before the
+    // canvas's own effect would switch it a render later, after this scene
+    // had been repainted for the surface it leaves. Its nodes were painted
+    // on it already: the change is nothing to repaint here.
+    if ('surface' in next) {
+      this.ignoreColourChanges = true
+      try {
+        setRenderingSurface(next.surface)
+      } finally {
+        this.ignoreColourChanges = false
+      }
+    }
+    this.repaintTokenColours(next.paintedWith, getColourResolver())
+    this.markDirty()
+    return outgoing
   }
 
   /**
@@ -953,6 +1343,7 @@ export class SceneGraph {
       this.containerToId.set(entry.container, entry.id)
       this.applyOutsideFade(node)
     }
+    this.held = null
     this.repaintTokenColours(paintedWith, getColourResolver())
     this.markDirty()
   }
@@ -970,6 +1361,8 @@ export class SceneGraph {
    * proper error handling, then the node tree is torn down.
    */
   destroy(): void {
+    this.textStager.cancel()
+    this.longTasks?.disconnect()
     this.unsubscribeColourResolver()
     this.unsubscribeFontChanges()
     this.unsubscribeTextLayout()

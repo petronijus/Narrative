@@ -248,3 +248,32 @@ needed now.
 - **The Hocuspocus lifecycle settings become load-bearing for revert** as
   well as for persistence; the lifecycle test that enforces
   `unloadImmediately: false` now protects both.
+
+## Amendment (2026-10-18): agent writes store on the debounce, batches on a kept fork
+
+Measured with `just perf-commands` (`apps/server/perf/commands.ts`, a
+100-slide deck, `docs/plans/performance.md` → Log, "S3/B4/S2"): every agent
+command waited for a full snapshot store of the deck (about 11 ms of a
+16 ms command; 200 commands wrote 46 MB), and every atomic batch copied
+the whole deck to fork it.
+
+- **Durability.** The agent host's lease no longer stores after each write
+  (`agent/documents.ts`, `hocuspocus/directWrite.ts` `writeDirect`): the
+  write is applied to the live document and broadcast, and the sync
+  server's debounce stores it, as it stores people's edits (2 s after the
+  last change, at most 10 s after the first unstored one). When a command
+  returns, its change is live and its op is in `agent_ops`. The document is
+  stored at once, awaited, when the run closes or is replaced and after a
+  revert (`services/runs.ts`), when the agent host disconnects, and on
+  graceful shutdown. A crash loses at most the debounce window of agent
+  writes — the window people's edits already had; their ops stay in
+  `agent_ops`, and the revert history was in memory anyway.
+- **Atomic batches** (decision 6, "Atomicity costs a document copy per
+  batch") run on a fork the server host keeps per live document
+  (`packages/commands/src/batchForks.ts`): made on the first batch, kept in
+  step by replaying the live document's updates, dropped when a batch fails
+  (all-or-nothing is unchanged), after a minute idle, and past its memory
+  caps. A batch's change is the fork's own update. The fork writes under
+  a client id of its own: the old fork borrowed the live document's id, and
+  Yjs gave the fork a new random id on every copy, so every batch had added
+  a client to the deck. The editor (no kept fork) still copies per batch.

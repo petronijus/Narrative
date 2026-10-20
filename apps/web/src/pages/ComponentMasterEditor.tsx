@@ -27,6 +27,7 @@ import { Loader2 } from 'lucide-react'
 import type * as Y from 'yjs'
 import { useApi } from '../api/client.js'
 import { useSlideThumbnails } from '../state/useSlideThumbnails.js'
+import { thumbnailDataUrl } from '../renderer/thumbnailImages.js'
 import {
   acquireComponentDoc,
   releaseComponentDoc,
@@ -51,6 +52,8 @@ import { MediaUploadProvider } from '../state/useMediaUpload.js'
 import { FolderDocProvider, useFolderTokensSettled } from '../state/FolderDocProvider.js'
 import { FolderTokensBridge } from '../components/FolderTokensBridge.js'
 import { useFolderSummary } from '../state/folderAccess.js'
+import { preloadEditorParts } from '../ui/lazyEditorParts.js'
+import { markEditorCanvasReady } from '../ui/editorReady.js'
 
 export function ComponentMasterEditor() {
   const { folderId, componentId } = useParams<{ folderId: string; componentId: string }>()
@@ -61,7 +64,10 @@ export function ComponentMasterEditor() {
 
   const handleCanvasReady = useCallback((instance: CanvasInstance | null) => {
     setCanvasInstance(instance)
+    if (instance !== null) markEditorCanvasReady()
   }, [])
+  // The editor's dialogs and overlays (L2, performance.md), loaded when idle.
+  useEffect(() => preloadEditorParts(), [])
 
   useEffect(() => {
     if (componentId === undefined || componentId === '') return
@@ -184,11 +190,14 @@ function ComponentThumbnailUploader({ componentId }: { componentId: string }) {
       if (lastUploadedRef.current === thumb) return
       lastUploadedRef.current = thumb
       pendingRef.current = null
-      apiRef.current.uploadComponentThumbnail(componentId, thumb).catch((err: unknown) => {
-        // Non-fatal — drop the marker so a future render can retry.
-        lastUploadedRef.current = null
-        console.warn('[component-thumb] PUT failed', err)
-      })
+      // The thumbnail is an object URL; the API takes the PNG as a data URL.
+      thumbnailDataUrl(thumb)
+        .then((dataUrl) => apiRef.current.uploadComponentThumbnail(componentId, dataUrl))
+        .catch((err: unknown) => {
+          // Non-fatal — drop the marker so a future render can retry.
+          lastUploadedRef.current = null
+          console.warn('[component-thumb] PUT failed', err)
+        })
     }, 1500)
   }, [componentId, masterThumb, tokensFinal])
 

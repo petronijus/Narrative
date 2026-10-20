@@ -6,14 +6,13 @@
  * Pixi.js does not initialise in jsdom (no real WebGL). We stub:
  *   - Application.init() — resolves immediately
  *   - app.renderer.render() — no-op
- *   - app.renderer.extract.base64() — returns a deterministic PNG data URL stub
+ *   - app.renderer.extract.canvas() — a canvas whose toBlob hands back a stub PNG blob
  *   - Container, Graphics — lightweight mocks (same pattern as SceneGraph.test.ts)
  *
  * Test scope: API shape, lifecycle (destroy → reject), serialisation queue,
  * empty objects array. We do NOT assert pixel content — that requires a real GPU.
  *
- * The stub extract value is 'data:image/png;base64,STUB' to satisfy the
- * "starts with data:image/png;base64," assertions without a real render.
+ * The stub blob is an `image/png` Blob, so the result can be checked without a real render.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -58,7 +57,10 @@ const { MockContainer, MockGraphics, mockExtract, mockRenderer, mockApp } = vi.h
   }
 
   const mockExtract = {
-    base64: vi.fn().mockReturnValue('data:image/png;base64,STUB'),
+    canvas: vi.fn(() => ({
+      toBlob: (done: (blob: Blob | null) => void, type: string) =>
+        done(new Blob(['STUB'], { type })),
+    })),
   }
 
   const mockRenderer = {
@@ -112,8 +114,6 @@ vi.mock('./objectRenderers/index.js', () => ({
 import { createThumbnailRenderer } from './thumbnails.js'
 import type { SlideObject } from '@narrative/shared'
 
-const STUB_DATA_URL = 'data:image/png;base64,STUB'
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -143,7 +143,6 @@ describe('createThumbnailRenderer', () => {
     mockApp.stage.children = []
     mockApp.stage.destroyed = false
     mockApp.init.mockResolvedValue(undefined)
-    mockExtract.base64.mockReturnValue(STUB_DATA_URL)
   })
 
   it('returns a ThumbnailRenderer with renderSlide and destroy methods', async () => {
@@ -155,19 +154,19 @@ describe('createThumbnailRenderer', () => {
     renderer.destroy()
   })
 
-  it('smoke: renders a slide with 2 rectangles and returns a PNG data URL', async () => {
+  it('smoke: renders a slide with 2 rectangles and returns a PNG blob', async () => {
     const renderer = await createThumbnailRenderer({ width: 200 })
-    const dataUrl = await renderer.renderSlide([makeRect('a'), makeRect('b')])
+    const png = await renderer.renderSlide([makeRect('a'), makeRect('b')])
 
-    expect(dataUrl).toMatch(/^data:image\/png;base64,/)
+    expect(png.type).toBe('image/png')
     renderer.destroy()
   })
 
-  it('renders empty objects array and returns a valid data URL', async () => {
+  it('renders empty objects array and returns a PNG blob', async () => {
     const renderer = await createThumbnailRenderer()
-    const dataUrl = await renderer.renderSlide([])
+    const png = await renderer.renderSlide([])
 
-    expect(dataUrl).toMatch(/^data:image\/png;base64,/)
+    expect(png.type).toBe('image/png')
     renderer.destroy()
   })
 
@@ -179,11 +178,11 @@ describe('createThumbnailRenderer', () => {
     renderer.destroy()
   })
 
-  it('calls app.renderer.extract.base64() to produce the data URL', async () => {
+  it('reads the frame back once (extract.canvas) to encode the PNG', async () => {
     const renderer = await createThumbnailRenderer()
     await renderer.renderSlide([makeRect('x')])
 
-    expect(mockExtract.base64).toHaveBeenCalledTimes(1)
+    expect(mockExtract.canvas).toHaveBeenCalledTimes(1)
     renderer.destroy()
   })
 
@@ -202,8 +201,8 @@ describe('createThumbnailRenderer', () => {
     } as unknown as SlideObject
 
     // Should not throw — unknown types are silently skipped.
-    const dataUrl = await renderer.renderSlide([unknownObj])
-    expect(dataUrl).toMatch(/^data:image\/png;base64,/)
+    const png = await renderer.renderSlide([unknownObj])
+    expect(png.type).toBe('image/png')
     renderer.destroy()
   })
 

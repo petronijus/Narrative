@@ -27,9 +27,10 @@
  * So every object under `videos/<id>/` of a row that exists stays, and so
  * does every object younger than the grace window (`sweepGraceMs`, 15
  * minutes — far longer than any upload of a video's outputs or a copy in
- * flight takes). A sweep of an owner that is gone (a deleted deck or folder)
- * runs once more after the window (`sweepAgainAfterGrace`), for what was too
- * young the first time and what a transcode finished meanwhile.
+ * flight takes). A sweep of an owner that is gone (a deleted deck, component
+ * or folder) runs once more after the window, for what was too young the
+ * first time and what a transcode finished meanwhile: the delete schedules it
+ * in the database (media/ownerSweeps.ts), so a restart does not forget it.
  *
  * Neither the prefix sweep nor `purgeUnreferencedKeys` deletes a key that a
  * remaining media row still names (`keysStillReferenced`): several rows can
@@ -86,23 +87,6 @@ export function sweepGraceMs(): number {
   const raw = process.env['MEDIA_SWEEP_GRACE_MS']
   const value = raw === undefined || raw === '' ? Number.NaN : Number(raw)
   return Number.isFinite(value) && value >= 0 ? value : DEFAULT_SWEEP_GRACE_MS
-}
-
-/**
- * Run `sweep` once more after the grace window (and a minute), off any
- * request: for the prefix of an owner that is gone, what was too young to
- * sweep the first time — a copy or a transcode that was still writing. In
- * process and best effort (a restart forgets it); never throws.
- */
-export function sweepAgainAfterGrace(
-  sweep: () => Promise<unknown>,
-  log: MinimalLogger,
-  what: Record<string, unknown>,
-): void {
-  const timer = setTimeout(() => {
-    sweep().catch((err: unknown) => log.warn({ err, ...what }, 'the second prefix sweep failed'))
-  }, sweepGraceMs() + 60_000)
-  timer.unref()
 }
 
 export async function purgeDeckBucketPrefix(
@@ -372,6 +356,7 @@ export async function keysStillReferenced(
       playbackKey: mediaAssets.playbackKey,
       posterKey: mediaAssets.posterKey,
       thumbnailKey: mediaAssets.thumbnailKey,
+      presentPlaybackKey: mediaAssets.presentPlaybackKey,
     })
     .from(mediaAssets)
     .where(
@@ -380,11 +365,18 @@ export async function keysStillReferenced(
         inArray(mediaAssets.playbackKey, wanted),
         inArray(mediaAssets.posterKey, wanted),
         inArray(mediaAssets.thumbnailKey, wanted),
+        inArray(mediaAssets.presentPlaybackKey, wanted),
       ),
     )
   const named = new Set<string>()
   for (const r of rows) {
-    for (const k of [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey]) {
+    for (const k of [
+      r.storageKey,
+      r.playbackKey,
+      r.posterKey,
+      r.thumbnailKey,
+      r.presentPlaybackKey,
+    ]) {
       if (typeof k === 'string' && k !== '') named.add(k)
     }
   }

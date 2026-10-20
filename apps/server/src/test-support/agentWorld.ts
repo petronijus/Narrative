@@ -39,6 +39,7 @@ import { createMemoryRunStore, type MemoryRunStore } from '../agent/runStore.js'
 import { createFolderFontsReader } from '../agent/folderFonts.js'
 import { createFolderTokensReader, type FolderTokensSources } from '../agent/folderTokens.js'
 import { createFolderStylePackReader } from '../agent/folderStylePack.js'
+import { liveDocumentVersion } from '../agent/folderReads.js'
 import { createAgentRuntime, type AgentRuntime } from '../agent/runtime.js'
 import type { ConfirmationLookups } from '../agent/confirmationSummary.js'
 import { awarenessOwnershipExtension } from '../hocuspocus/awarenessOwnership.js'
@@ -113,6 +114,8 @@ export interface AgentWorld {
   principalKeys: AgentPrincipalKeys
   store: MemoryRunStore
   persistence: MemoryPersistence
+  /** How many times a folder reader read a folder document (agent/folderReads.ts caches). */
+  readonly folderDocumentReads: number
   roles: Map<string, Role>
   /**
    * Titles the confirmation summaries show, by deck / folder / component id
@@ -163,6 +166,8 @@ export interface AgentWorldOptions {
   presenceIdleMs?: number
   /** Hocuspocus store debounce (production: 2000). */
   debounce?: number
+  /** Hocuspocus store debounce cap (production: 10 000). */
+  maxDebounce?: number
   now?: () => Date
   /** Replace the default command registry (e.g. to add a fake irreversible command). */
   registry?: CommandRegistry
@@ -193,7 +198,7 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     // The production lifecycle settings (hocuspocus/index.ts), with a short debounce.
     unloadImmediately: false,
     debounce: opts.debounce ?? 20,
-    maxDebounce: 200,
+    maxDebounce: opts.maxDebounce ?? 200,
     // Production extensions besides persistence (hocuspocus/index.ts).
     extensions: [
       persistence,
@@ -258,9 +263,27 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     const id = target.deckId ?? target.componentId
     return id === undefined ? null : (folderOfTarget.get(id) ?? null)
   }
+  // A stored snapshot's version is its identity: every store (and setFolder)
+  // puts a new array in the map, as every database store inserts a new row.
+  const snapshotIds = new WeakMap<Uint8Array, number>()
+  let nextSnapshotId = 0
+  let folderDocumentReads = 0
   const folderSources: FolderTokensSources = {
     folderOf: folderOfFixture,
+    async version(folderId) {
+      const live = hocuspocus.documents.get(`folder:${folderId}`)
+      if (live !== undefined) return liveDocumentVersion(live)
+      const stored = persistence.snapshots.get(`folder:${folderId}`)
+      if (stored === undefined) return 'stored:none'
+      let id = snapshotIds.get(stored)
+      if (id === undefined) {
+        id = nextSnapshotId++
+        snapshotIds.set(stored, id)
+      }
+      return `stored:${id}`
+    },
     async readFolder(folderId) {
+      folderDocumentReads += 1
       const doc = new Y.Doc()
       const live = hocuspocus.documents.get(`folder:${folderId}`)
       const state =
@@ -317,6 +340,9 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     principalKeys,
     store,
     persistence,
+    get folderDocumentReads() {
+      return folderDocumentReads
+    },
     roles,
     titles,
     grant(id, userId, role) {

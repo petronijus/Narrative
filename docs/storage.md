@@ -91,11 +91,20 @@ the cascade. Two rules keep files that are still in use:
   `videos/<id>/` of an existing row stays, and so does every object younger
   than the **grace window of 15 minutes** (`MEDIA_SWEEP_GRACE_MS` overrides
   it). When the owner itself is gone (a deleted deck, component or folder),
-  the sweep runs once more after the window, in process and best effort.
+  the sweep runs once more a minute after the window: the delete writes a
+  `media_owner_sweeps` row in its own transaction (migration 0040,
+  `media/ownerSweeps.ts`), every server process looks for due rows each
+  minute, and a row goes once its sweep ended without an error — a failed
+  one is tried again (5 minutes doubling, 6 hours at most, 8 tries, then a
+  warning). A row is taken by moving its due time 10 minutes forward
+  (`FOR UPDATE SKIP LOCKED`), so two processes never sweep the same owner at
+  once, and a row whose owner exists is dropped unswept. Until 2026-10-20
+  this second sweep was an in-process timer that every restart forgot: the
+  dev bucket had collected 5.8 GiB under 26 deleted decks.
 
 Object versioning is NOT enabled. Deletes are hard-deletes. There is no
-background garbage collection: what a failed purge leaves stays until its
-owner's prefix is swept again.
+background garbage collection of prefixes no deletion scheduled: what a
+purge that gave up leaves stays until its owner's prefix is swept again.
 
 ## Access patterns
 
@@ -215,6 +224,23 @@ To run manually:
 docker compose --env-file ../.env up minio-init
 ```
 
+### Incomplete uploads
+
+The server writes some objects as multipart uploads: a `.pptx` exported
+into the bucket streams through `apps/server/src/media/multipartUpload.ts`
+(a part in flight at a time), and the tus store uses them for resumable
+uploads. A failed write aborts its upload — also when it fails while the
+upload is still being created, or with a part on its way — so it leaves no
+parts behind. What a killed process could not abort, MinIO removes itself:
+`MINIO_API_STALE_UPLOADS_EXPIRY=24h`, checked every
+`MINIO_API_STALE_UPLOADS_CLEANUP_INTERVAL=6h` (the `minio` service in
+`infra/docker-compose.yml`; MinIO's defaults, pinned there). The S3
+lifecycle rule for this (`AbortIncompleteMultipartUpload`) is not an option:
+MinIO refuses it ("did not validate against our published schema", tried on
+the pinned image 2026-10-19), and `mc ilm rule add` has no flag for it.
+24 h is also how long a tus upload stays resumable. To check:
+`mc admin config get <alias> api` lists both, with the environment override.
+
 ### Backup
 
 MinIO data is stored on the ZFS dataset (`MINIO_DATA_PATH`). ZFS snapshots cover it automatically as part of the pre-deploy snapshot (`deploy.sh` → `zfs snapshot`).
@@ -250,13 +276,39 @@ tus upload completes (apps/server/src/media/tus.ts → enqueueVideoTranscode)
   → BullMQ job on media-redis (queue video-transcode)
   → video-worker: ffprobe, then playback.mp4 at source resolution —
       h264 / vp9 / av1 / vp8: stream copy; anything else (ProRes, HEVC, …): libx264 + aac
-  → poster.jpg and thumb.jpg (400 px) at the 1 s mark
+  → poster.jpg and thumb.jpg (400 px) at the 1 s mark, on the row at once
   → outputs to MinIO under <prefix>/videos/<assetId>/
   → the media_assets row gets the keys, duration, size, transcode_status=done
+  → a source larger than 1920×1080 (as displayed): present.mp4 fitted into
+      1920×1080 (libx264), after the playback; its key and size on the row
+      (present_playback_key, present_width/height, migration 0039)
   → the editor reads GET /api/media/:assetId/video-info for the playback URL
+      (and `presentPlayback`, which present mode plays when the screen shows
+      no more pixels than it has: apps/web/src/renderer/videoRendition.ts)
 ```
 
 A failed job is retried three times, then the row is marked `failed`.
+
+**present.mp4 comes minutes after `done`.** Two consequences, both handled
+or accepted on purpose:
+
+- _The asset deleted meanwhile._ The rendition is recorded with an update
+  that reports the rows it changed (`updatePresentRendition` in
+  `apps/video-worker/src/assets.ts`); none — the row is gone, and its deletion
+  read the keys before this file existed — and the worker deletes the
+  `present.mp4` it just uploaded. The other way round (recorded, then
+  deleted) the deletion names it: a single asset's delete purges the keys
+  the `DELETE … RETURNING` hands back (`deleteMediaAsset`), a deck's or a
+  folder's also sweeps the prefix again after a grace period (scheduled in
+  `media_owner_sweeps`).
+- _The video copied meanwhile_ (deck insert, `deck.insertFrom`, a
+  component placed into another owner: `services/deckInsert.ts`). The copy
+  takes the files the row names when it is copied; a `done` row without
+  `present_playback_key` yet gives a copy with none, and nothing adds one
+  later — no link from a copy back to its source is kept, and there is no
+  rendition-only job. Accepted: the copy plays everywhere from its
+  `playback.mp4` at full resolution (present mode just does not get the
+  lighter file for it), and a fresh upload of the video gets both.
 
 `<prefix>` is the owner's namespace, `decks/<deckId>` or
 `components/<componentId>` (bucket layout above; a folder's videos keep the

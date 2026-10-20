@@ -23,6 +23,7 @@
  */
 
 import { MAX_RENDER_SLIDES } from '../commands/render.js'
+import { MAX_LIST_PAGE_SIZE } from '../services/common.js'
 import type { RenderSlideRef } from '../services/render.js'
 import type { AgentRunService } from '../services/runs.js'
 import * as Y from 'yjs'
@@ -386,6 +387,15 @@ export function createDomainFakes(
     if (f === undefined) throw notFound('folder', id)
     return f
   }
+  /** The decks `list` answers, in its order: created first, then id. */
+  const listedInOrder = (folderId: string | undefined): DeckWithRole[] =>
+    [...decks.values()]
+      .filter((d) => folderId === undefined || d.folderId === folderId)
+      .sort((a, b) =>
+        a.createdAt === b.createdAt
+          ? a.id.localeCompare(b.id)
+          : a.createdAt.localeCompare(b.createdAt),
+      )
   const requireComponent = (id: string, folderId?: string) => {
     const c = components.get(id)
     if (c === undefined || (folderId !== undefined && c.folderId !== folderId)) {
@@ -445,6 +455,7 @@ export function createDomainFakes(
   const rComponents = recorder('components')
   const rPptx = recorder('pptx')
   const rRender = recorder('render')
+  const pdfJobs = new Map<string, { deckId: string; pages: number; delivery: 'url' | 'base64' }>()
   const pickRenderSlides = (deckId: string, refs: RenderSlideRef[] | 'all') => {
     requireDeck(deckId)
     return pickFixtureSlides(deckId === world.deckId, refs)
@@ -471,9 +482,31 @@ export function createDomainFakes(
       async list(args) {
         rDecks('list', args)
         if (args.folderId !== undefined) requireFolder(args.folderId)
-        return [...decks.values()].filter(
-          (d) => args.folderId === undefined || d.folderId === args.folderId,
-        )
+        return listedInOrder(args.folderId)
+      },
+      async listRecordsPage(args) {
+        rDecks('listRecordsPage', args)
+        if (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > MAX_LIST_PAGE_SIZE)
+          throw new CommandError(
+            'invalid_input',
+            `limit must be an integer from 1 to ${MAX_LIST_PAGE_SIZE}`,
+          )
+        if (args.folderId !== undefined) requireFolder(args.folderId)
+        // Keyset: created ascending, then id ascending (as the real service).
+        const after = (d: DeckWithRole): boolean =>
+          args.after === undefined ||
+          d.createdAt > args.after.key ||
+          (d.createdAt === args.after.key && d.id > args.after.id)
+        const matching = listedInOrder(args.folderId).filter(after)
+        const page = matching.slice(0, args.limit)
+        const last = page[page.length - 1]
+        return {
+          decks: page,
+          next:
+            matching.length > args.limit && last !== undefined
+              ? { key: last.createdAt, id: last.id }
+              : null,
+        }
       },
       async listPage(args) {
         rDecks('listPage', args)
@@ -959,6 +992,7 @@ export function createDomainFakes(
           posterUrl: 'https://img.test/poster.jpg',
           thumbnailUrl: 'https://img.test/thumb.jpg',
           playbackUrl: 'https://storage.test/playback.mp4',
+          presentPlayback: null,
           transcodeError: null,
         }
       },
@@ -1231,25 +1265,51 @@ export function createDomainFakes(
               failedFonts: [],
             }
       },
-      async exportPdf(args) {
-        rRender('exportPdf', args)
+      async startPdfExport(args) {
+        rRender('startPdfExport', args)
         // The fixture deck skips none of its slides; a PDF is a page per slide asked for.
         const chosen = pickRenderSlides(args.deckId, args.slides)
+        const jobId = `pdf_fixture_${pdfJobs.size + 1}`
+        pdfJobs.set(jobId, { deckId: args.deckId, pages: chosen.length, delivery: args.delivery })
+        return { jobId, status: 'queued', done: 0, total: chosen.length }
+      },
+      async pdfExportStatus(args) {
+        rRender('pdfExportStatus', args)
+        // `pdf_8f2k1c`: a finished job of the world's deck (the command's example).
+        const job =
+          pdfJobs.get(args.jobId) ??
+          (args.jobId === 'pdf_8f2k1c'
+            ? {
+                deckId: world.deckId,
+                pages: pickRenderSlides(world.deckId, 'all').length,
+                delivery: 'url' as const,
+              }
+            : undefined)
+        if (job === undefined || job.deckId !== args.deckId)
+          throw new CommandError('not_found', `No such PDF export '${args.jobId}'`)
         const base = {
-          pages: chosen.length,
+          filename: 'Fixture deck.pdf',
+          pages: job.pages,
           leftOut: 0,
-          sizeBytes: 2048 * chosen.length,
+          sizeBytes: 2048 * job.pages,
           failedLoads: 0,
           failedFonts: [],
         }
-        return args.delivery === 'base64'
-          ? { ...base, delivery: 'base64', base64: 'JVBERi0xLjQK' }
-          : {
-              ...base,
-              delivery: 'url',
-              url: 'https://storage.test/exports/deck.pdf?X-Amz-Signature=fixture',
-              expiresAt: T0,
-            }
+        return {
+          jobId: args.jobId,
+          status: 'done',
+          done: job.pages,
+          total: job.pages,
+          result:
+            job.delivery === 'base64'
+              ? { ...base, delivery: 'base64', base64: 'JVBERi0xLjQK' }
+              : {
+                  ...base,
+                  delivery: 'url',
+                  url: 'https://storage.test/exports/deck.pdf?X-Amz-Signature=fixture',
+                  expiresAt: T0,
+                },
+        }
       },
       async refreshThumbnail(args) {
         rRender('refreshThumbnail', args)

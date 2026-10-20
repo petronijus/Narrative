@@ -60,7 +60,7 @@ async function sampleThumbnailPixel(
   return page.evaluate(
     async ({ slideX, slideY }) => {
       const img = Array.from(document.querySelectorAll('img')).find(
-        (el) => el.src.startsWith('data:image/png') && el.naturalWidth > 100,
+        (el) => el.src.startsWith('blob:') && el.naturalWidth > 100,
       ) as HTMLImageElement | undefined
       if (img === undefined) return null
       return new Promise<{ r: number; g: number; b: number }>((resolve, reject) => {
@@ -90,23 +90,29 @@ async function sampleThumbnailPixel(
   )
 }
 
+type Rgb = { r: number; g: number; b: number }
+
 /**
- * Wait until a slide thumbnail exists and can be sampled, then return the
- * pixel. Thumbnails are rendered on a debounce after the scene changes, so a
- * fixed `waitForTimeout` either flakes or slows every test down; polling ends
- * as soon as the PNG is there.
+ * Wait until the slide thumbnail shows `painted` at a point, then return that
+ * pixel. A thumbnail lands well after the edit that changed the slide: the
+ * edit debounce (500 ms, renderer/thumbnailStore.ts), the scene settling and
+ * the first read-back from the editor's canvas (~300 ms of synchronous
+ * `readPixels` in Chromium) — about a second from `addRect`. A fixed wait
+ * shorter than that sampled the empty slide's picture; one longer than that
+ * slows every test down and still flakes on a busy machine.
  */
-async function sampleThumbnailPixelWhenReady(
+async function sampleThumbnailPixelWhen(
   page: Page,
   slideX: number,
   slideY: number,
-): Promise<{ r: number; g: number; b: number }> {
-  let sample: { r: number; g: number; b: number } | null = null
+  painted: (p: Rgb) => boolean,
+): Promise<Rgb> {
+  let sample: Rgb | null = null
   await expect
     .poll(
       async () => {
         sample = await sampleThumbnailPixel(page, slideX, slideY)
-        return sample !== null
+        return sample !== null && painted(sample)
       },
       { timeout: 15_000 },
     )
@@ -146,15 +152,14 @@ test.describe('Renderer — sampled thumbnail regressions', () => {
         { timeout: 5000 },
       )
       .toBe(true)
-    await page.waitForTimeout(800) // thumbnail debounce
 
-    // Inside the rect (centre): should be green-ish.
-    const inside = await sampleThumbnailPixel(page, 500, 350)
-    expect(inside).not.toBeNull()
-    expect(inside!.g).toBeGreaterThan(120)
-    expect(inside!.r).toBeLessThan(120)
+    // Inside the rect (centre): green-ish, once the thumbnail shows the rect.
+    const inside = await sampleThumbnailPixelWhen(page, 500, 350, (p) => p.g > 120 && p.r < 120)
+    expect(inside.g).toBeGreaterThan(120)
+    expect(inside.r).toBeLessThan(120)
 
-    // Outside the rect (top-left corner of slide): should be near-white bg.
+    // Outside the rect (top-left corner of slide), in that same picture:
+    // should be near-white bg.
     const outside = await sampleThumbnailPixel(page, 50, 50)
     expect(outside).not.toBeNull()
     expect(outside!.r).toBeGreaterThan(220)
@@ -181,19 +186,22 @@ test.describe('Renderer — sampled thumbnail regressions', () => {
         { timeout: 5000 },
       )
       .toBe(true)
-    await page.waitForTimeout(800)
 
-    // Centre overlap should be blue (top wins).
+    // Once the thumbnail shows the rects: the bottom rect's edge is red...
+    const bottomOnly = await sampleThumbnailPixelWhen(
+      page,
+      200,
+      350,
+      (p) => p.r > 180 && p.g < 80 && p.b < 80,
+    )
+    expect(bottomOnly.r).toBeGreaterThan(180)
+    expect(bottomOnly.b).toBeLessThan(80)
+
+    // ...and the centre overlap, in that same picture, is blue (top wins).
     const overlap = await sampleThumbnailPixel(page, 600, 350)
     expect(overlap).not.toBeNull()
     expect(overlap!.b).toBeGreaterThan(180)
     expect(overlap!.r).toBeLessThan(80)
-
-    // Edge of bottom rect (no overlap with top): should still be red.
-    const bottomOnly = await sampleThumbnailPixel(page, 200, 350)
-    expect(bottomOnly).not.toBeNull()
-    expect(bottomOnly!.r).toBeGreaterThan(180)
-    expect(bottomOnly!.b).toBeLessThan(80)
   })
 
   test('updating fill colour repaints the thumbnail', async ({ page }) => {
@@ -219,16 +227,21 @@ test.describe('Renderer — sampled thumbnail regressions', () => {
       )
       .toBe(true)
 
-    const beforeRecolour = await sampleThumbnailPixelWhenReady(page, 500, 350)
+    // Red, not merely "a picture": the empty slide's white one would pass r > 180.
+    const beforeRecolour = await sampleThumbnailPixelWhen(
+      page,
+      500,
+      350,
+      (p) => p.r > 180 && p.g < 120 && p.b < 120,
+    )
     expect(beforeRecolour.r).toBeGreaterThan(180)
 
     // Recolour to blue.
     await page.evaluate(() => {
       window.__narrative_test_api!.updateObject('rv-recolour', { fill: 0x0000ff })
     })
-    await page.waitForTimeout(900) // thumbnail debounce window
 
-    const afterRecolour = await sampleThumbnailPixelWhenReady(page, 500, 350)
+    const afterRecolour = await sampleThumbnailPixelWhen(page, 500, 350, (p) => p.b > 180)
     expect(afterRecolour.b).toBeGreaterThan(180)
     expect(afterRecolour.r).toBeLessThan(120)
   })
@@ -317,7 +330,7 @@ test.describe('Renderer — one page, several Pixi applications', () => {
         .toBe(true)
       // Let the canvas and the sidebar thumbnail settle, so the canvas's
       // draw batches have been through Pixi's pool.
-      const pink = await sampleThumbnailPixelWhenReady(page, 900, 500)
+      const pink = await sampleThumbnailPixelWhen(page, 900, 500, (p) => p.r > 200 && p.g < 100)
       expect(pink.r).toBeGreaterThan(200)
       await page.waitForTimeout(1000)
 

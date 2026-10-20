@@ -42,6 +42,13 @@ export interface VideoTranscodeResult {
   durationSec: number
   width: number
   height: number
+  /**
+   * <owner prefix>/videos/<assetId>/present.mp4: the playback fitted into
+   * 1920×1080, for a source larger than that (present mode at 1080p or less).
+   */
+  presentKey?: string
+  presentWidth?: number
+  presentHeight?: number
 }
 
 const BASE64URL_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'

@@ -393,6 +393,19 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     const playbackUrl = asset.playbackKey
       ? await presignGetUrl(asset.playbackKey, VIDEO_PLAYBACK_URL_TTL_SEC)
       : null
+    // The 1080p rendition of a larger video (P3): present mode picks it when
+    // the slide is shown at 1080p or less; null when there is none.
+    const presentPlayback =
+      asset.playbackKey !== null &&
+      asset.presentPlaybackKey !== null &&
+      asset.presentWidth !== null &&
+      asset.presentHeight !== null
+        ? {
+            url: await presignGetUrl(asset.presentPlaybackKey, VIDEO_PLAYBACK_URL_TTL_SEC),
+            width: asset.presentWidth,
+            height: asset.presentHeight,
+          }
+        : null
 
     return {
       assetId: asset.id,
@@ -403,6 +416,7 @@ export function createMediaService(deps: ServiceDeps): MediaService {
       posterUrl,
       thumbnailUrl,
       playbackUrl,
+      presentPlayback,
       transcodeError: asset.transcodeError ?? null,
     }
   }
@@ -548,11 +562,15 @@ export function createMediaService(deps: ServiceDeps): MediaService {
       await requireDeckRole(asset.deckId, args.userId, null, 'owner')
     }
 
-    const keys = [asset.storageKey, asset.playbackKey, asset.posterKey, asset.thumbnailKey].filter(
-      (k): k is string => typeof k === 'string' && k !== '',
-    )
-    await deleteMediaAsset(db, asset.id)
-    await purgeUnreferencedKeys(db, keys, deps.log)
+    const keys = [
+      asset.storageKey,
+      asset.playbackKey,
+      asset.posterKey,
+      asset.thumbnailKey,
+      asset.presentPlaybackKey,
+    ].filter((k): k is string => typeof k === 'string' && k !== '')
+    const deletedKeys = await deleteMediaAsset(db, asset.id)
+    await purgeUnreferencedKeys(db, [...new Set([...keys, ...deletedKeys])], deps.log)
     return { outcome: 'deleted' }
   }
 

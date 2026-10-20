@@ -13,14 +13,16 @@
  * "system" entries map to OS-native faces both DOM and Pixi can see).
  *
  * Fix: ship Inter as a self-hosted webfont, register it both in
- * `document.fonts` (so the DOM textarea uses it) AND in Pixi's Cache
- * under `${family}-and-url` (so HTMLText.getFontCss embeds it into
- * the SVG). With both layers seeing the SAME glyph file, metrics
- * match and the caret lands where the user expects.
+ * `document.fonts` (so the DOM textarea uses it) AND as HTMLText faces
+ * (renderer/fontChanges.ts, which hands them to Pixi once the renderer
+ * loads), from the same downloaded bytes. With both layers seeing the SAME
+ * glyph file, metrics match and the caret lands where the user expects.
+ * Registered as faces like a folder font's, a text embeds only the file it
+ * draws with: upright text no longer carries the italic file (~70 kB of
+ * base64 per raster; docs/plans/performance.md → E2).
  */
 
-import { Cache } from 'pixi.js'
-import { announceFontFamilyChanged } from '../renderer/fontChanges.js'
+import { setHtmlTextFace } from '../renderer/fontChanges.js'
 // `?url` returns the public URL to the asset Vite emits at build time.
 import interLatinNormalUrl from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url'
 import interLatinItalicUrl from '@fontsource-variable/inter/files/inter-latin-wght-italic.woff2?url'
@@ -35,35 +37,38 @@ export async function registerBundledFonts(): Promise<void> {
   const family = 'Inter'
 
   // Variable fonts cover the full 100..900 weight axis from one file,
-  // so a single FontFace per style is enough.
-  const normal = new FontFace(family, `url(${interLatinNormalUrl})`, {
-    weight: '100 900',
-    style: 'normal',
-    display: 'swap',
-  })
-  const italic = new FontFace(family, `url(${interLatinItalicUrl})`, {
-    weight: '100 900',
-    style: 'italic',
-    display: 'swap',
-  })
+  // so a single face per style is enough. One download per file: the
+  // FontFace and the HTMLText face are made from the same bytes (a FontFace
+  // from bytes is no fetch, so font-src does not apply; the download is the
+  // app's own static file, connect-src 'self').
+  const files = [
+    { url: interLatinNormalUrl, style: 'normal' },
+    { url: interLatinItalicUrl, style: 'italic' },
+  ] as const
+  let loaded: { style: 'normal' | 'italic'; bytes: ArrayBuffer; face: FontFace }[]
   try {
-    await Promise.all([normal.load(), italic.load()])
-    document.fonts.add(normal)
-    document.fonts.add(italic)
+    loaded = await Promise.all(
+      files.map(async ({ url, style }) => {
+        const response = await fetch(url)
+        if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`)
+        const bytes = await response.arrayBuffer()
+        const face = new FontFace(family, bytes, { weight: '100 900', style, display: 'swap' })
+        await face.load()
+        return { style, bytes, face }
+      }),
+    )
   } catch (err) {
     console.warn('[bundledFonts] Inter load failed', err)
     return
   }
+  for (const { face } of loaded) document.fonts.add(face)
 
-  Cache.set(`${family}-and-url`, {
-    entries: [
-      { url: interLatinNormalUrl, faces: [{ weight: '100 900', style: 'normal' }] },
-      { url: interLatinItalicUrl, faces: [{ weight: '100 900', style: 'italic' }] },
-    ],
-  })
-
-  // Text that rasterised before the face and its Cache entry landed shows
-  // the fallback: every canvas redraws its Inter text now
-  // (renderer/fontChanges.ts); a canvas created later finds the entry.
-  announceFontFamilyChanged(family)
+  // Pixi gets the faces through the font registry once the renderer loads
+  // (renderer/pixiFontSink.ts): importing Pixi here put its vendor chunk on
+  // every route, login included. Registering announces the family: text
+  // that rasterised before the faces landed is redrawn on every canvas
+  // (renderer/fontChanges.ts); a canvas created later finds them.
+  for (const { style, bytes } of loaded) {
+    setHtmlTextFace({ key: `bundled:inter:${style}`, family, weight: '100 900', style, bytes })
+  }
 }

@@ -60,6 +60,36 @@ export type PdfExportResult = {
 )
 
 /**
+ * A deck PDF export run as a job (docs/plans/performance.md, R1): no request
+ * waits for the file. `queued` and `running` report pages rendered of the
+ * file's total; `done` carries the result (its link made fresh for whoever
+ * reads it); `failed` what the export would have answered.
+ */
+export type PdfExportJobStatus =
+  | {
+      jobId: string
+      status: 'queued' | 'running'
+      /** Pages rendered so far. */
+      done: number
+      /** Pages the file will have (0 until the job has read the deck). */
+      total: number
+    }
+  | {
+      jobId: string
+      status: 'done'
+      done: number
+      total: number
+      result: PdfExportResult & { filename: string }
+    }
+  | {
+      jobId: string
+      status: 'failed'
+      done: number
+      total: number
+      error: { code: string; status: number; message: string }
+    }
+
+/**
  * What `query.render` looks at: a slide, a region of one (slide px), a sheet
  * of slides, or a slide before and after the agent run `runId` changed it.
  */
@@ -128,17 +158,29 @@ export interface RenderService {
     delivery: 'url' | 'base64'
   }): Promise<PngExportResult>
   /**
-   * The slides of the live deck as one PDF, a page each (any reader of the
+   * Start a PDF of the live deck's slides, a page each (any reader of the
    * deck), at most MAX_PDF_SLIDES; skipped slides are left out unless
-   * `includeSkipped`. The file is the rendered PNGs as JPEGs (a raster PDF).
+   * `includeSkipped`. The file is the rendered slides as JPEGs (a raster
+   * PDF). Checks the request (access, the slides, the caller's share of the
+   * queue) before it answers; the job then runs on the server.
    */
-  exportPdf(args: {
+  startPdfExport(args: {
     userId: string
     deckId: string
     slides: RenderSlideRef[] | 'all'
     includeSkipped: boolean
     delivery: 'url' | 'base64'
-  }): Promise<PdfExportResult>
+  }): Promise<PdfExportJobStatus>
+  /**
+   * A PDF export job of the caller's on this deck (not_found otherwise),
+   * waiting up to `waitMs` for it to finish (0: as it is now).
+   */
+  pdfExportStatus(args: {
+    userId: string
+    deckId: string
+    jobId: string
+    waitMs?: number
+  }): Promise<PdfExportJobStatus>
   /**
    * A picture of the live deck for the model to look at (any reader of the
    * deck): a slide, a region at full resolution, or a numbered sheet.

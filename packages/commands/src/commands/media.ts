@@ -124,6 +124,10 @@ export const mediaStatus = defineCommand({
     posterUrl: z.string().nullable(),
     thumbnailUrl: z.string().nullable(),
     playbackUrl: z.string().nullable(),
+    presentPlayback: z
+      .object({ url: z.string(), width: z.number(), height: z.number() })
+      .nullable()
+      .describe('The playback fitted into 1920×1080, for a larger video'),
     transcodeError: z.string().nullable(),
   }),
   role: 'viewer',

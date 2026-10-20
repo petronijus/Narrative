@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import sharp from 'sharp'
 import {
   MAX_STORED_IMAGE_PIXELS,
   MAX_STORED_IMAGE_SIDE,
+  OVERSIZE_PIXEL_BUDGET,
+  decodeWeight,
   downscaleForStorage,
+  oversizeDecodes,
   exceedsStoredImageLimits,
   fitWithinStoredImageLimits,
 } from './storedImageLimits.js'
@@ -90,5 +93,50 @@ describe('downscaleForStorage', () => {
     expect(out!.height).toBe(MAX_STORED_IMAGE_SIDE)
     expect(out!.width).toBeLessThan(out!.height)
     expect((await sharp(out!.bytes).metadata()).orientation ?? 1).toBe(1)
+  })
+})
+
+describe('the process-wide oversize budget', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('holds every downscale, from any caller, behind the one shared budget', async () => {
+    const oversize = await solid(MAX_STORED_IMAGE_SIDE + 1000, 20, 'png')
+    // Another import (or a tus upload) holds the whole budget.
+    let release!: () => void
+    const held = oversizeDecodes.run(
+      OVERSIZE_PIXEL_BUDGET,
+      () => new Promise<void>((r) => (release = r)),
+    )
+    let done = false
+    const pending = downscaleForStorage(oversize, 'image/png').then((out) => {
+      done = true
+      return out
+    })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(done).toBe(false)
+    release()
+    await held
+    const out = await pending
+    expect(out!.width).toBe(MAX_STORED_IMAGE_SIDE)
+  })
+
+  it("weighs a decode by sharp's own header reading, not by a separate prober", async () => {
+    const run = vi.spyOn(oversizeDecodes, 'run')
+    const width = MAX_STORED_IMAGE_SIDE + 1000
+    await downscaleForStorage(await solid(width, 20, 'png'), 'image/png')
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(run.mock.calls[0]![0]).toBe(width * 20)
+  })
+
+  it('does not touch the budget for an image within the limits', async () => {
+    const run = vi.spyOn(oversizeDecodes, 'run')
+    await downscaleForStorage(await solid(800, 600, 'png'), 'image/png')
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('takes the whole budget when the header size is unknown', () => {
+    expect(decodeWeight({ width: 100, height: 200 })).toBe(20_000)
+    expect(decodeWeight({})).toBe(OVERSIZE_PIXEL_BUDGET)
+    expect(decodeWeight({ width: 0, height: 10 })).toBe(OVERSIZE_PIXEL_BUDGET)
   })
 })

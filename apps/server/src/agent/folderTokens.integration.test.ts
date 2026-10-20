@@ -14,7 +14,8 @@ import * as Y from 'yjs'
 import { db, pool } from '../db/client.js'
 import { components, decks, folderUpdates, folders, users } from '../db/schema.js'
 import { quietLog } from '../test-support/agentWorld.js'
-import { createDbFolderTokensReader } from './folderTokens.js'
+import { createDbFolderTokensReader, folderDocumentVersion } from './folderTokens.js'
+import { createFolderReadScope, FolderDocumentCache } from './folderReads.js'
 
 const suffix = nanoid(8)
 const userSub = `it-user-${suffix}`
@@ -72,5 +73,35 @@ describe('createDbFolderTokensReader', () => {
   it('answers null for a folder without tokens and an unknown target', async () => {
     expect(await read({ folderId: emptyFolderId })).toBeNull()
     expect(await read({ deckId: `missing-${suffix}` })).toBeNull()
+  })
+
+  it("keeps a run's snapshot until the folder stores a new row (agent/folderReads.ts)", async () => {
+    const deps = { db, hocuspocus: () => null }
+    expect(await folderDocumentVersion(deps, emptyFolderId)).toBe('stored:none')
+    const before = await folderDocumentVersion(deps, folderId)
+    expect(before).toMatch(/^stored:\d+$/)
+    expect(await folderDocumentVersion(deps, folderId)).toBe(before)
+
+    const cache = new FolderDocumentCache()
+    const cached = (): ReturnType<typeof read> => read({ deckId }, createFolderReadScope(cache))
+    expect(await cached()).toEqual(expected)
+
+    // A store of the folder document inserts a newer row: a new version.
+    // (The document edited is the stored one, as the sync server's would be.)
+    const doc = new Y.Doc()
+    for (const stored of await db
+      .select({ update: folderUpdates.update })
+      .from(folderUpdates)
+      .where(eq(folderUpdates.folderId, folderId)))
+      Y.applyUpdate(doc, stored.update)
+    const ink = (doc.getMap('tokens').get('colors') as Y.Map<Y.Map<unknown>>).get('ink')!
+    ink.set('value', '#333333')
+    const [row] = await db
+      .insert(folderUpdates)
+      .values({ folderId, update: Y.encodeStateAsUpdate(doc) })
+      .returning({ id: folderUpdates.id })
+    doc.destroy()
+    expect(await folderDocumentVersion(deps, folderId)).toBe(`stored:${row!.id}`)
+    expect((await cached())?.colors['ink']?.value).toBe('#333333')
   })
 })

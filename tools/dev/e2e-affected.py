@@ -48,6 +48,7 @@ RENDER = [
     "render-export",
     "inspector-flows",
     "canvas-sharpness-final",
+    "text-align-reraster",
     "htmltext-live-update",
     "htmltext-texture-isolation",
     "text-glyph-overhang",
@@ -103,7 +104,7 @@ COMPONENTS = [
 MEDIA = ["image-upload", "component-master-upload", "upload-crash-repro", "agent-upload-session"]
 PPTX = ["pptx-drop-import", "pptx-drop-into-panel", "pptx-import-fidelity", "pptx-roundtrip"]
 AGENT = ["agent-activity", "agent-confirm", "agent-upload-session", "mcp-oauth-consent"]
-PRESENT = ["present-layout", "slide-transition", "animation-commands"]
+PRESENT = ["present-layout", "present-smooth", "slide-transition", "animation-commands"]
 INSPECTOR = [
     "inspector-flows",
     "inspector-appearance-commands",
@@ -115,7 +116,6 @@ CANVAS_TOOLS = [
     "guides",
     "path-editing",
     "fit-to-screen",
-    "zoom-text-probe",
     "object-clipboard",
     "object-context-menu",
     "layer-reorder",
@@ -128,9 +128,21 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/public/*", SMOKE),
     ("apps/web/src/index.css", SMOKE),
     ("apps/web/src/styles/*", SMOKE),
+    # The dev server, the build and `vite preview` (just perf --mode prod).
+    ("apps/web/vite.config.ts", SMOKE),
+    # Selection state, and the selection hooks the specs and perf scenarios use.
+    ("apps/web/src/state/SelectionContext.tsx", ["keyboard-shortcuts", "inspector-flows", "layers-panel"]),
     # ── web: renderer and canvas ──────────────────────────────────────────
     ("apps/web/src/renderer/playTransition*", PRESENT),
+    # Present mode's prepared slides and pooled videos (ADR 0016).
+    ("apps/web/src/renderer/present*", PRESENT),
+    # What a complete picture of the deck waits for: present mode and the render page.
+    ("apps/web/src/state/useDeckInputs.ts", PRESENT + ["render-page", "render-export"]),
     ("apps/web/src/renderer/*", RENDER),
+    # Which slide a change set belongs to: the canvas (and present mode's scene swaps).
+    ("apps/web/src/state/useSlideObjectChanges.ts", RENDER + PRESENT),
+    # Animation targets: present mode's builds and the editor's timeline preview.
+    ("apps/web/src/animation/*", PRESENT),
     ("apps/web/src/components/FolderTokensBridge.tsx", RENDER),
     ("apps/web/src/components/PresentLayout.tsx", PRESENT),
     ("apps/web/src/components/presentStartSlide.ts", PRESENT),
@@ -154,8 +166,11 @@ AREAS: list[tuple[str, list[str]]] = [
     # Pointer → slide coordinates: the canvas tools and a file dropped on the canvas.
     ("apps/web/src/lib/canvasCoords.ts", CANVAS_TOOLS + MEDIA + ["keyboard-shortcuts"]),
     ("apps/web/src/lib/endpoints.ts", SMOKE + SYNC + ["render-page"]),
+    ("apps/web/src/lib/tusClient.ts", MEDIA + PPTX),
     ("apps/web/src/lib/shareToken.ts", ACCESS + TOKENS + MEDIA + ["render-page"]),
-    ("apps/web/src/ui/PresenterOverlay.tsx", PRESENT),
+    ("apps/web/src/ui/PresenterOverlay.tsx", PRESENT + ["notes-panel"]),
+    ("apps/web/src/ui/PresenterNotes.tsx", PRESENT + ["notes-panel"]),
+    ("apps/web/src/ui/presenterNotesStyle.ts", ["notes-panel"]),
     ("apps/web/src/components/EditorLayout.tsx", RENDER + CANVAS_TOOLS + ["keyboard-shortcuts"]),
     ("apps/web/src/components/DeckShell.tsx", RENDER + SYNC),
     ("apps/web/src/pages/DeckEditor.tsx", RENDER + SYNC),
@@ -165,7 +180,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/ui/Rulers.tsx", ["guides"]),
     ("apps/web/src/ui/PathPointsOverlay.tsx", ["path-editing"]),
     ("apps/web/src/ui/LineEndpointHandles.tsx", ["path-editing"]),
-    ("apps/web/src/ui/ZoomControl.tsx", ["fit-to-screen", "zoom-text-probe"]),
+    ("apps/web/src/ui/ZoomControl.tsx", ["fit-to-screen", "canvas-sharpness-final"]),
     ("apps/web/src/ui/EditorContextMenu.tsx", ["object-context-menu"]),
     # Cut, shared by the context menu and the Mod+X shortcut.
     ("apps/web/src/state/cutSelection.ts", ["object-context-menu", "keyboard-shortcuts"]),
@@ -176,7 +191,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/ui/useTextLayoutTick.ts", CANVAS_TOOLS + ["text-autofit"]),
     ("apps/web/src/ui/textEditDom.ts", TEXT),
     ("apps/web/src/ui/Font*", TEXT + ["folder-font-preview"]),
-    ("apps/web/src/ui/SlideNotesPanel.tsx", ["text-edit-commands"]),
+    ("apps/web/src/ui/SlideNotes*", ["notes-panel", "text-edit-commands"]),
+    ("apps/web/src/ui/slideNotesShared.ts", ["notes-panel"]),
     ("apps/web/src/ui/Inspector.tsx", INSPECTOR),
     ("apps/web/src/ui/ColorInput.tsx", INSPECTOR + TOKENS),
     ("apps/web/src/ui/TokenColorInput.tsx", INSPECTOR + TOKENS),
@@ -213,6 +229,15 @@ AREAS: list[tuple[str, list[str]]] = [
     # Around every route: a broken boundary or lazy wrapper blanks the app.
     ("apps/web/src/ui/RouteErrorBoundary.tsx", SMOKE + ["route-load-failure"]),
     ("apps/web/src/ui/lazyRoute.tsx", SMOKE + ["route-load-failure"]),
+    # The route table and its boot / idle preloads (L1); the lazy parts (L2).
+    ("apps/web/src/routePages.ts", SMOKE + ["route-load-failure"]),
+    ("apps/web/src/ui/routePaths.ts", ACCESS),
+    ("apps/web/src/ui/lazyPart.tsx", SMOKE + ["route-load-failure", "notes-panel"]),
+    (
+        "apps/web/src/ui/lazyEditorParts.tsx",
+        CANVAS_TOOLS + MEDIA + COMPONENTS + ACCESS + ["table-commands", "keyboard-shortcuts"],
+    ),
+    ("apps/web/src/ui/componentDrag.ts", COMPONENTS),
     ("apps/web/src/ui/ThemeToggle.tsx", []),
     ("apps/web/src/ui/UserMenu.tsx", ACCESS),
     ("apps/web/src/ui/handleVisuals.tsx", CANVAS_TOOLS),
@@ -269,7 +294,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/state/SnappingContext.tsx", ["guides"]),
     ("apps/web/src/state/RulersContext.tsx", ["guides"]),
     ("apps/web/src/state/useDeckGuides.ts", ["guides"]),
-    ("apps/web/src/state/useZoomLevel.ts", ["fit-to-screen", "zoom-text-probe"]),
+    ("apps/web/src/state/useZoomLevel.ts", ["fit-to-screen", "canvas-sharpness-final"]),
     ("apps/web/src/state/PerfHudContext.tsx", ["idle-cpu-measurement"]),
     ("apps/web/src/state/testApi*", ["*"]),
     ("apps/web/src/state/useCommand.ts", ["*"]),
@@ -324,6 +349,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/media/opentype.d.ts", ["folder-font-preview"]),
     ("apps/server/src/services/media*", MEDIA),
     ("apps/server/src/pptx/*", PPTX),
+    # The bounded-parallelism helper; the PowerPoint import and export are its users.
+    ("apps/server/src/lib/concurrency.ts", PPTX),
     ("apps/server/src/services/pptx.ts", PPTX),
     ("apps/server/src/routes/pptx*", PPTX),
     ("apps/server/src/mcp/*", AGENT),
@@ -366,6 +393,16 @@ AREAS: list[tuple[str, list[str]]] = [
     # The service interfaces are types only; their server implementations
     # are mapped above and typecheck covers the rest.
     ("packages/commands/src/services/*", []),
+    # The perf harness core (docs/plans/perf-harness.md): its own unit tests,
+    # and the layer I driver in apps/web/e2e/perf, which `just perf` runs
+    # (PERF_RUN=1) — the e2e suite skips those specs.
+    ("packages/perf/src/*", []),
+    # The in-page harness: activation runs on every page at boot (counters in
+    # dev, the chunk only with ?perf=1); the rest is the harness chunk, which
+    # only `just perf` loads.
+    ("apps/web/src/perf/activation.ts", SMOKE),
+    ("apps/web/src/perf/*", []),
+    ("apps/web/src/renderer/perfProbes.ts", []),
     # Everything reaches these: the whole suite, on purpose.
     ("packages/commands/src/*", ["*"]),
     ("packages/slide-model/src/*", ["*"]),
@@ -397,6 +434,8 @@ NO_E2E = [
     "apps/server/drizzle/*",
     # Ops scripts run by hand on the server, never in a browser.
     "apps/server/src/scripts/*",
+    # Performance drivers (`just perf-pptx`), run by hand against the services.
+    "apps/server/perf/*",
 ]
 
 SOURCE = ["apps/*/src/*", "packages/*/src/*", "apps/web/index.html", "apps/web/vite.config.ts"]
@@ -426,6 +465,9 @@ def affected(files: list[str]) -> tuple[set[str], list[str], list[str]]:
     whole: list[str] = []
     unclaimed: list[str] = []
     for f in files:
+        # The perf scenarios run through `just perf`, not the e2e suite.
+        if f.startswith("apps/web/e2e/perf/"):
+            continue
         if f.startswith("apps/web/e2e/"):
             if f.endswith(".spec.ts"):
                 specs.add(Path(f).name.removesuffix(".spec.ts"))

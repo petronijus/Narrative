@@ -31,6 +31,34 @@ export async function updateTranscodeStatus(
 }
 
 /**
+ * The poster and thumbnail of a video still being transcoded (and what the
+ * probe read): written as soon as they are in the bucket, before the
+ * playback is — the status stays as it is.
+ */
+export async function updateVideoStills(
+  db: Database,
+  id: string,
+  stills: {
+    posterKey: string
+    thumbnailKey: string
+    durationSec: number
+    width: number
+    height: number
+  },
+): Promise<void> {
+  await db
+    .update(mediaAssets)
+    .set({
+      posterKey: stills.posterKey,
+      thumbnailKey: stills.thumbnailKey,
+      durationSec: Math.round(stills.durationSec),
+      width: stills.width,
+      height: stills.height,
+    })
+    .where(eq(mediaAssets.id, id))
+}
+
+/**
  * Atomically sets all ffmpeg output keys and marks transcode_status = 'done'.
  * Called by the worker on successful transcode completion.
  */
@@ -59,4 +87,27 @@ export async function updateVideoAssetOutputs(
       transcodeError: null,
     })
     .where(eq(mediaAssets.id, id))
+}
+
+/**
+ * The 1080p playback rendition of a video larger than 1080p (present.mp4):
+ * written after the video is done, its size as encoded. The status is left
+ * as it is. False when no row took it: the asset was deleted meanwhile, and
+ * its deletion could not have named this file (the caller removes it).
+ */
+export async function updatePresentRendition(
+  db: Database,
+  id: string,
+  rendition: { presentKey: string; width: number; height: number },
+): Promise<boolean> {
+  const updated = await db
+    .update(mediaAssets)
+    .set({
+      presentPlaybackKey: rendition.presentKey,
+      presentWidth: rendition.width,
+      presentHeight: rendition.height,
+    })
+    .where(eq(mediaAssets.id, id))
+    .returning({ id: mediaAssets.id })
+  return updated.length > 0
 }

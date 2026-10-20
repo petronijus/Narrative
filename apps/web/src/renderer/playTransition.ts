@@ -3,42 +3,38 @@
  *
  * Slide transition orchestrator used by present mode.
  *
- * Today SceneGraph renders a single "active" slide. To run a transition we
- * need BOTH the outgoing and incoming slide painted on stage simultaneously:
+ * SceneGraph renders a single "active" slide. To run a transition both the
+ * outgoing and the incoming slide are on stage at once:
  *
- *   1. `outgoing` = SceneGraph's current root (already on screen, holds the
- *      outgoing slide's per-object Containers).
- *   2. `incoming` = a fresh Container we build here by mounting each of the
- *      incoming slide's objects via the renderer registry. Added to the stage
- *      as a sibling of `outgoing`.
- *   3. `runSlideTransition()` from `@narrative/animation` animates them via
- *      GSAP timeline — proxy pattern for Pixi targets, no direct mutation.
- *   4. On completion, `sceneGraph.adoptSlideRoot()` hands the incoming root
- *      over to SceneGraph — the outgoing root + its children are destroyed,
- *      and SceneGraph's internal bookkeeping is rewired to match the new
- *      on-stage content. No flash because nothing re-mounts.
+ *   1. `outgoing` = SceneGraph's current root (already on screen).
+ *   2. `incoming` = a slide scene prepared off stage (renderer/presentSlides.ts):
+ *      every object mounted, every picture uploaded, every text rasterised —
+ *      nothing is mounted at click time. Its root is added to the stage as a
+ *      sibling of `outgoing`.
+ *   3. `compileSlideTransition()` from `@narrative/animation` animates them via
+ *      a GSAP timeline — proxy pattern for Pixi targets, no direct mutation.
+ *   4. On completion, `sceneGraph.swapSlideScene()` makes the incoming scene
+ *      the scene graph's own and hands the outgoing one back intact
+ *      (`onSwapped`), for the slide cache to keep or destroy. No flash: nothing
+ *      re-mounts, and the frame that draws the swap draws what the last frame
+ *      of the transition showed.
  *
  * Magic Move (`transition.kind === 'magic'`): in addition to the root-level
- * crossfade, pair up the outgoing and incoming Containers by object id and
- * pass them as `magicPairs` so the transition can morph each matched object
+ * crossfade, pair up the outgoing and incoming Containers by object name or id
+ * and pass them as `magicPairs` so the transition can morph each matched object
  * from its outgoing transform to its incoming transform.
  */
 
-import { Container } from 'pixi.js'
-import type { SlideBackground, SlideObject, SlideTransition } from '@narrative/shared'
+import type { SlideTransition } from '@narrative/shared'
 import {
   compileSlideTransition,
   type CompiledTransition,
   type MagicMoveObjectPair,
 } from '@narrative/animation'
-import { getRenderer } from './objectRenderers/index.js'
+import type { Container } from 'pixi.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
-import type { SceneGraph } from './SceneGraph.js'
+import type { SceneGraph, SlideScene } from './SceneGraph.js'
 import { getDefaultRenderScheduler } from './RenderScheduler.js'
-import { applyBackground } from './ArtboardBackground.js'
-import { getDefaultImageUrlResolver } from './imageUrl.js'
-import { getDefaultResourceManager } from './ResourceManager.js'
-import { getColourResolver } from './colourResolver.js'
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -46,56 +42,50 @@ import { getColourResolver } from './colourResolver.js'
 
 export interface PlayTransitionArgs {
   sceneGraph: SceneGraph
-  /** Parsed objects of the incoming slide (plain snapshot from Y.Doc). */
-  incomingObjects: SlideObject[]
+  /** The incoming slide, prepared off stage and not on the stage yet. */
+  incoming: SlideScene
   /** Transition config — kind, durationMs, direction. */
   transition: SlideTransition
   /**
-   * Incoming slide's artboard background. When set, the transition
-   * paints it onto a dedicated container inside `incomingRoot` so the
-   * GSAP timeline animates it together with the slide's objects. Without
-   * this, the OLD slide's background container (which still sits as
-   * child 0 of the outgoing root) stays visible until adoptSlideRoot
-   * runs at `onComplete` — causing a noticeable "background snaps,
-   * objects faded" desync.
-   *
-   * Undefined means "no incoming background to paint" — the post-
-   * adoption `applyBackground` call in Canvas.tsx will populate the
-   * fresh SceneGraph.backgroundContainer in that case.
+   * The transition ended and the scene graph shows `incoming` now; `outgoing`
+   * is the scene it took off the stage (SceneGraph.swapSlideScene).
    */
-  incomingBackground?: SlideBackground
+  onSwapped?: (outgoing: SlideScene) => void
 }
 
 export interface PlayTransitionResult {
-  /** Destroys the incoming root if the caller aborts mid-transition. */
-  abort(): void
-  /** Resolves when the GSAP timeline finishes and the adoption step runs. */
+  /**
+   * Stop before the end: the incoming scene comes off the stage untouched
+   * otherwise (returned, for the caller to keep — its containers may be
+   * mid-tween), the outgoing root gets its transform back, nothing is swapped.
+   * Null once the transition has ended (or was aborted already).
+   */
+  abort(): SlideScene | null
+  /** Resolves when the timeline ends and the swap has run, or right after an abort. */
   done: Promise<void>
 }
 
 /**
- * Start a slide transition. Returns immediately with a handle; the actual
- * animation + adoption happens async inside `done`.
+ * Start a slide transition. Returns immediately with a handle; the animation
+ * and the swap happen asynchronously.
  *
- * Caller is expected to gate UI interactions on `done`; while the transition
- * is running the SceneGraph's root reference is still the OUTGOING slide —
+ * While the transition runs the SceneGraph's root is still the OUTGOING slide —
  * any Y.Doc mutation applied through SceneGraph in that window targets the
  * outgoing slide's nodes. Present mode doesn't edit, so that's a non-issue.
  */
 export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
-  const { sceneGraph, incomingObjects, transition, incomingBackground } = args
+  const { sceneGraph, incoming, transition, onSwapped } = args
 
   const outgoingRoot = sceneGraph.getRoot()
   const app = sceneGraph.getApp()
 
   // Snapshot the outgoing root's baseline transform BEFORE the timeline mutates
   // it. The transition tweens this root (slide/push/fade/zoom all animate
-  // position / scale / rotation / alpha), and on abort the incoming root is
-  // destroyed while the OUTGOING root stays as the SceneGraph root — so without
-  // restoring this baseline a mid-flight abort (spam arrow keys) leaves the
-  // surviving slide frozen offset/dimmed. We restore to the captured values,
-  // NOT to identity, because the slide root carries a legitimate viewport-fit
-  // transform that identity would clobber.
+  // position / scale / rotation / alpha), and on abort the OUTGOING root stays
+  // as the SceneGraph root — so without restoring this baseline a mid-flight
+  // abort (spam arrow keys) leaves the surviving slide frozen offset/dimmed. We
+  // restore to the captured values, NOT to identity, because the slide root
+  // carries a legitimate viewport-fit transform that identity would clobber.
   const outgoingBaseline = {
     x: outgoingRoot.x,
     y: outgoingRoot.y,
@@ -107,64 +97,8 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
     pivotY: outgoingRoot.pivot.y,
   }
 
-  // Build the incoming root off-stage, mount each slide object via the
-  // registered renderer (same code path SceneGraph.addObject uses).
-  const incomingRoot = new Container()
-
-  // Background goes in FIRST so it sits at child index 0 — same z-order
-  // convention as SceneGraph.ensureBackgroundContainer for the outgoing
-  // root. The GSAP timeline animates incomingRoot as a whole, so the
-  // background fades / slides / morphs in lock-step with the objects.
-  // Without this, the new slide's background only appears at
-  // onComplete (after adoptSlideRoot runs Canvas's applyBackground
-  // effect), producing the "background lags the transition" symptom.
-  let incomingBgContainer: Container | undefined
-  if (incomingBackground !== undefined) {
-    incomingBgContainer = new Container()
-    incomingBgContainer.eventMode = 'none'
-    incomingRoot.addChild(incomingBgContainer)
-    const resolver = (() => {
-      try {
-        return getDefaultImageUrlResolver()
-      } catch {
-        return null
-      }
-    })()
-    const rm = (() => {
-      try {
-        return getDefaultResourceManager()
-      } catch {
-        return null
-      }
-    })()
-    void applyBackground({
-      container: incomingBgContainer,
-      background: incomingBackground,
-      width: SLIDE_WIDTH,
-      height: SLIDE_HEIGHT,
-      ...(resolver !== null
-        ? { resolveAssetUrl: (assetId) => resolver({ assetId, variant: 'display' }) }
-        : {}),
-      ...(rm !== null
-        ? {
-            acquireTexture: (url) => rm.acquireTexture(url),
-            releaseTexture: (url) => rm.releaseTexture(url),
-          }
-        : {}),
-    })
-  }
-
-  const incomingNodes: Array<{ id: string; container: Container; data: SlideObject }> = []
-  // The colour resolver these nodes are painted with; if the folder's tokens
-  // change before the transition ends, adoptSlideRoot repaints them.
-  const paintedWith = getColourResolver()
-  for (const obj of incomingObjects) {
-    const renderer = getRenderer(obj.type)
-    if (renderer === undefined) continue
-    const container = renderer.mount(obj)
-    incomingRoot.addChild(container)
-    incomingNodes.push({ id: obj.id, container, data: obj })
-  }
+  const incomingRoot: Container = incoming.root
+  const incomingNodes = incoming.nodes
 
   // Magic Move pairing — first match by author-supplied `name` (so users
   // can deliberately bridge two objects across slides without sharing a
@@ -210,13 +144,26 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
     }
   }
 
+  // A Magic Move fades the outgoing slide's objects themselves (matched ones
+  // hand over to their incoming twin, unmatched ones fade out): their alphas,
+  // to give them back on an abort, which leaves the outgoing slide on stage.
+  const outgoingAlpha = new Map<Container, number>()
+  if (magicPairs !== undefined)
+    for (const id of sceneGraph.getMountedIds()) {
+      const c = sceneGraph.getContainer(id)
+      if (c !== undefined) outgoingAlpha.set(c, c.alpha)
+    }
+
   // Parent incoming on the same stage so it renders concurrently with outgoing.
   app.stage.addChild(incomingRoot)
 
   let aborted = false
+  let ended = false
   let compiled: CompiledTransition | undefined
 
+  let resolveDone: () => void = () => undefined
   const done = new Promise<void>((resolve) => {
+    resolveDone = resolve
     try {
       compiled = compileSlideTransition(
         {
@@ -229,6 +176,9 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
       )
     } catch (err) {
       console.error('[playTransition] compileSlideTransition threw', err)
+      // No animation: show the incoming slide at once.
+      ended = true
+      onSwapped?.(sceneGraph.swapSlideScene(incoming))
       resolve()
       return
     }
@@ -251,13 +201,10 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
         resolve()
         return
       }
-      // Adopt incoming as the new SceneGraph root. Destroys outgoing root +
-      // children, clears node bookkeeping, installs incoming + its node map.
-      // Pass the bgContainer we built so SceneGraph rebinds to it instead
-      // of nulling — that keeps subsequent Canvas applyBackground calls
-      // (when the slide-change effect re-runs) operating on the already-
-      // painted, transition-survived container.
-      sceneGraph.adoptSlideRoot(incomingRoot, incomingNodes, incomingBgContainer, paintedWith)
+      ended = true
+      // The incoming scene becomes the scene graph's own; the outgoing one
+      // comes back intact for the caller (the slide cache) to keep or destroy.
+      onSwapped?.(sceneGraph.swapSlideScene(incoming))
       resolve()
     })
 
@@ -266,17 +213,18 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
     } catch (err) {
       console.error('[playTransition] timeline.play threw', err)
       dispose()
+      ended = true
+      onSwapped?.(sceneGraph.swapSlideScene(incoming))
       resolve()
     }
   })
 
   return {
-    abort(): void {
-      if (aborted) return
+    abort(): SlideScene | null {
+      if (aborted || ended) return null
       aborted = true
       // Kill the GSAP timeline so no further onUpdate callbacks fire against
-      // the outgoing scene — the caller is about to swap activeSlideId and
-      // the reconciler will destroy the containers we were tweening.
+      // either scene.
       if (compiled !== undefined) {
         compiled.timeline.kill()
         compiled.dispose()
@@ -290,29 +238,15 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
         outgoingRoot.rotation = outgoingBaseline.rotation
         outgoingRoot.alpha = outgoingBaseline.alpha
         outgoingRoot.pivot.set(outgoingBaseline.pivotX, outgoingBaseline.pivotY)
-        getDefaultRenderScheduler()?.markDirty()
       }
-      // P12g: route every incoming node through its renderer's
-      // destroy hook BEFORE destroying the root. A bare
-      // `incomingRoot.destroy({ children: true })` bypasses
-      // renderer-side cleanup — most importantly,
-      // videoRenderer.destroy()'s `stopPolling()` and texture release.
-      // Without this, every aborted transition with a pending video
-      // poster left a 5 s setInterval timer firing against a destroyed
-      // container.
-      for (const node of incomingNodes) {
-        const renderer = getRenderer(node.data.type)
-        if (renderer !== undefined && !node.container.destroyed) {
-          try {
-            renderer.destroy(node.container)
-          } catch (err) {
-            console.error('[playTransition] renderer.destroy threw on abort', err)
-          }
-        }
-      }
-      if (!incomingRoot.destroyed) {
-        incomingRoot.destroy({ children: true })
-      }
+      // A Magic Move faded the outgoing slide's objects: the scene graph's
+      // own nodes, shown again now.
+      for (const [c, alpha] of outgoingAlpha) if (!c.destroyed) c.alpha = alpha
+      getDefaultRenderScheduler()?.markDirty()
+      // The incoming scene is the caller's again (its cache restores it).
+      if (incomingRoot.parent !== null) incomingRoot.parent.removeChild(incomingRoot)
+      resolveDone()
+      return incoming
     },
     done,
   }

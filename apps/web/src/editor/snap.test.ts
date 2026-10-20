@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { computeSnap, snapsThisFrame } from './snap'
+import { computeSnap, sameSnapGuides, snapsThisFrame } from './snap'
 import type { OtherObjectBounds } from './snap'
 
 // ---------------------------------------------------------------------------
@@ -252,5 +252,28 @@ describe('snapsThisFrame — the held modifier inverts the preference', () => {
   it('snapping off: free until the modifier is held', () => {
     expect(snapsThisFrame(false, false)).toBe(false)
     expect(snapsThisFrame(false, true)).toBe(true)
+  })
+})
+
+describe('sameSnapGuides', () => {
+  const guide = (position: number, end = 100) =>
+    ({ kind: 'vertical', position, range: { start: 0, end } }) as const
+
+  it('treats two empty lists, and a list with itself, as the same', () => {
+    expect(sameSnapGuides([], [])).toBe(true)
+    const list = [guide(10)]
+    expect(sameSnapGuides(list, list)).toBe(true)
+  })
+
+  it('compares guides by value, in order', () => {
+    expect(sameSnapGuides([guide(10), guide(20)], [guide(10), guide(20)])).toBe(true)
+    expect(sameSnapGuides([guide(10), guide(20)], [guide(20), guide(10)])).toBe(false)
+  })
+
+  it('sees a moved, resized, re-oriented or missing guide', () => {
+    expect(sameSnapGuides([guide(10)], [guide(11)])).toBe(false)
+    expect(sameSnapGuides([guide(10)], [guide(10, 120)])).toBe(false)
+    expect(sameSnapGuides([guide(10)], [{ ...guide(10), kind: 'horizontal' }])).toBe(false)
+    expect(sameSnapGuides([guide(10)], [])).toBe(false)
   })
 })

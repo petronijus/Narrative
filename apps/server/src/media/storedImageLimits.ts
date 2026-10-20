@@ -22,6 +22,23 @@
  */
 
 import sharp, { type Metadata, type Sharp } from 'sharp'
+import { WeightedSemaphore } from '../lib/concurrency.js'
+
+/**
+ * Pixels of oversize pictures being downscaled at once, in the whole process.
+ * Decoding and re-encoding one costs a few bytes per pixel, and six of them
+ * at once (a deck of 96, 75, 47, 46 and 46 MP photos) took the peak RSS from
+ * 1.1 GB to 2 GB; under this budget two 46 MP pictures still share, a 96 MP
+ * one runs alone, and the small pictures keep every lane meanwhile.
+ */
+export const OVERSIZE_PIXEL_BUDGET = 100_000_000
+
+/**
+ * The one budget every downscale waits on: all PowerPoint imports and every
+ * tus upload finalise share it, so N concurrent imports cannot hold N budgets'
+ * worth of decoded pixels. Module-level on purpose — one per process.
+ */
+export const oversizeDecodes = new WeightedSemaphore(OVERSIZE_PIXEL_BUDGET)
 
 /** Pixel budget for a stored raster: a margin below imgproxy's 50 MP. */
 export const MAX_STORED_IMAGE_PIXELS = 40_000_000
@@ -82,6 +99,11 @@ export interface DownscaledImage {
  * EXIF orientation is applied to the pixels (the output carries none), so
  * the returned width/height are the image as displayed. The ICC profile is
  * kept so colour does not shift.
+ *
+ * The decode waits its turn on `oversizeDecodes`, weighed by the size sharp
+ * itself reads from the header — the size libvips will decode, whatever a
+ * separate prober said or failed to say. A header whose size is not a
+ * finite positive number takes the whole budget.
  */
 export async function downscaleForStorage(
   input: Buffer,
@@ -93,10 +115,20 @@ export async function downscaleForStorage(
   // than we would ever serve. `sequentialRead` lets libvips stream the decode
   // through the resize instead of materialising the full-size bitmap.
   const image = sharp(input, { limitInputPixels: false, sequentialRead: true })
-  const { width, height } = orientedSize(await image.metadata())
+  // Header only: nothing is decoded before the budget is held.
+  const meta = await image.metadata()
+  const { width, height } = orientedSize(meta)
   if (width === undefined || height === undefined) return null
   if (!exceedsStoredImageLimits(width, height)) return null
-  return encode(image, mime, fitWithinStoredImageLimits(width, height))
+  return oversizeDecodes.run(decodeWeight(meta), () =>
+    encode(image, mime, fitWithinStoredImageLimits(width, height)),
+  )
+}
+
+/** Pixels the decode of this header holds; the whole budget when unknown. */
+export function decodeWeight(meta: { width?: number; height?: number }): number {
+  const pixels = (meta.width ?? NaN) * (meta.height ?? NaN)
+  return Number.isFinite(pixels) && pixels > 0 ? pixels : OVERSIZE_PIXEL_BUDGET
 }
 
 function orientedSize(meta: Metadata): { width?: number; height?: number } {
@@ -125,7 +157,11 @@ async function encode(
       break
     case 'image/jpeg':
     case 'image/jpg':
-      out = out.jpeg({ quality: 90, mozjpeg: true, chromaSubsampling: '4:4:4' })
+      // libjpeg-turbo with optimised Huffman tables, not mozjpeg: on a 54 MP
+      // photo mozjpeg took 15.7 s against 2.5 s for a file only 4.6 % smaller
+      // (2026-10-18, docs/plans/performance.md → Log, X1), and this runs on
+      // every oversized upload and PPTX import.
+      out = out.jpeg({ quality: 90, optimiseCoding: true, chromaSubsampling: '4:4:4' })
       break
     case 'image/webp':
       out = out.webp({ quality: 90 })

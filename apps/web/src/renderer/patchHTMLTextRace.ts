@@ -44,7 +44,9 @@
  * deterministic regardless of how many nodes are dirty in one frame.
  */
 
-import type { Renderer } from 'pixi.js'
+import { extractFontFamilies, getFontCss, isSafari } from 'pixi.js'
+import type { HTMLTextStyle, Renderer } from 'pixi.js'
+import { perfCount, perfCountersOn } from '@narrative/shared'
 import { markRenderDirty } from './RenderScheduler.js'
 
 const PATCHED = Symbol('narrativeHtmlTextPatched')
@@ -63,10 +65,45 @@ interface TextureLike {
   }
 }
 
+/**
+ * What a raster embeds (docs/plans/performance.md → E2): the kB of
+ * `@font-face` CSS Pixi puts into its SVG — the same `getFontCss` call
+ * `_buildTexturePromise` makes, memoised per family, so counting adds no
+ * fetch — and whether the raster waits Pixi's fixed 100 ms first (WebKit,
+ * `isSafari()` with any family named; W1). Only while the harness counts.
+ */
+async function countEmbeddedFonts(
+  options: unknown,
+  fontKb: string,
+  safariDelay: string,
+): Promise<void> {
+  // The HTMLText itself, or `getTexturePromise`'s options: both carry these two.
+  const o = options as { text?: unknown; style?: HTMLTextStyle }
+  if (typeof o.text !== 'string' || o.style === undefined) return
+  const families = extractFontFamilies(o.text, o.style)
+  if (isSafari() && families.length > 0) perfCount(safariDelay)
+  try {
+    const css = await getFontCss(families)
+    perfCount(fontKb, Math.round(css.length / 1024))
+  } catch {
+    /* the raster reports its own failure */
+  }
+}
+
 export function patchHTMLTextRace(
   renderer: Renderer,
-  opts: { wakeRenderScheduler: boolean } = { wakeRenderScheduler: false },
+  opts: {
+    wakeRenderScheduler: boolean
+    /** Prefix of the perf counters (docs/plans/perf-harness.md): `text` on the editor canvas, `thumb.text` offscreen. */
+    counters?: 'text' | 'thumb.text'
+  } = { wakeRenderScheduler: false },
 ): void {
+  const counters = opts.counters ?? 'thumb.text'
+  const started = `${counters}.raster.started`
+  const finished = `${counters}.raster.finished`
+  const kpx = `${counters}.raster.kpx`
+  const fontKb = `${counters}.raster.fontKb`
+  const safariDelay = `${counters}.raster.safariDelay`
   // TEMP: regression-test bypass — set window.__disableHtmlTextRacePatch
   // before app init to skip this patch and confirm the test catches
   // the underlying Pixi race. Production never sets this.
@@ -85,7 +122,10 @@ export function patchHTMLTextRace(
 
   const original = system._buildTexturePromise.bind(system)
   system._buildTexturePromise = async function (options: unknown): Promise<unknown> {
+    perfCount(started)
+    if (perfCountersOn()) void countEmbeddedFonts(options, fontKb, safariDelay)
     const texture = (await original(options)) as TextureLike | undefined
+    perfCount(finished)
     if (texture === undefined || texture === null) return texture
     const src = texture.source
     if (src === undefined || src === null) return texture
@@ -96,6 +136,7 @@ export function patchHTMLTextRace(
     const w = resource.naturalWidth
     const h = resource.naturalHeight
     if (w === 0 || h === 0) return texture
+    perfCount(kpx, Math.round((w * h) / 1000))
 
     // Detach: copy the pooled <img>'s pixels to an independent
     // <canvas> and rebind the texture to it. The canvas is held only

@@ -14,7 +14,8 @@
  *     and rewritten in place (or rejected when nothing usable survives); a
  *     declared raster whose magic bytes disagree is rejected; dimensions are
  *     probed; a raster above imgproxy's source limits is downscaled in its own
- *     format under the same key.
+ *     format under the same key; once it is an asset, its `preview` and
+ *     `display` variants are encoded in the background (imgproxyWarm.ts).
  *
  * A rejected upload never produces a `media_assets` row, and rejected image
  * bytes are deleted from the bucket.
@@ -36,6 +37,7 @@ import {
 } from './storedImageLimits.js'
 import { classifyUpload, isFontUpload, maxUploadBytes, tooLargeMessage } from './uploadPolicy.js'
 import { MEDIA_BUCKET } from './s3Client.js'
+import { warmImageVariants } from './imgproxyWarm.js'
 import type { MediaOwner } from './mediaOwner.js'
 import { subsystemLogger } from '../observability/logger.js'
 
@@ -483,6 +485,10 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
     log.error({ err }, 'createMediaAsset failed')
     throw new UploadRejected(500, 'Failed to persist media asset metadata')
   }
+
+  // Its `preview` and `display` encodes start now, in the background, so the
+  // person who places it on a slide does not wait for them (imgproxyWarm.ts).
+  warmImageVariants(storageKey)
 
   return {
     kind: 'image',

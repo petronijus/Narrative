@@ -1,23 +1,23 @@
 {
   "name": "@narrative/web",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src e2e",
+    "build": "vite build && node scripts/precompress.mjs",
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc/tsbuildinfo",
+    "lint": "eslint --cache --cache-strategy content --cache-location node_modules/.cache/eslint/ src e2e",
     "test": "node ../../node_modules/vitest/vitest.mjs run",
     "test:e2e": "playwright test",
     "preview": "vite preview",
-    "size": "size-limit"
+    "size": "size-limit && node scripts/routeSizes.mjs"
   },
   "size-limit": [
     {
-      "name": "main app chunk (volatile, busts on every deploy)",
+      "name": "entry chunk (volatile, busts on every deploy; every route loads it, login included)",
       "path": "dist/assets/index-*.js",
-      "limit": "210 KB",
+      "limit": "40 KB",
       "gzip": true
     },
     {
@@ -33,7 +33,7 @@
       "gzip": true
     },
     {
-      "name": "Tiptap + ProseMirror vendor chunk",
+      "name": "Tiptap + ProseMirror vendor chunk (the notes editors, loaded after first paint)",
       "path": "dist/assets/vendor-tiptap-*.js",
       "limit": "137 KB",
       "gzip": true
@@ -48,22 +48,6 @@
       "name": "GSAP vendor chunk",
       "path": "dist/assets/vendor-gsap-*.js",
       "limit": "32 KB",
-      "gzip": true
-    },
-    {
-      "name": "Total first-paint payload",
-      "path": [
-        "dist/assets/index-*.js",
-        "dist/assets/vendor-pixi-*.js",
-        "dist/assets/vendor-react-*.js",
-        "dist/assets/vendor-tiptap-*.js",
-        "dist/assets/vendor-yjs-*.js",
-        "dist/assets/vendor-gsap-*.js",
-        "dist/assets/vendor-radix-*.js",
-        "dist/assets/vendor-*.js",
-        "!dist/assets/vendor-sentry-*.js"
-      ],
-      "limit": "800 KB",
       "gzip": true
     }
   ],
@@ -91,7 +75,6 @@
     "@tiptap/starter-kit": "^3.32.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "idb": "^8.0.4",
     "lucide-react": "^1.56.0",
     "nanoid": "^6.0.2",
     "pixi-filters": "^6.1.5",
@@ -107,6 +90,7 @@
     "yjs": "^13.6.33"
   },
   "devDependencies": {
+    "@narrative/perf": "workspace:*",
     "@playwright/test": "^1.64.0",
     "@size-limit/file": "^14.2.0",
     "@tailwindcss/vite": "^4.3.3",

@@ -12,6 +12,7 @@
 
 import { createServer, type Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { WebSocketServer } from 'ws'
 import type { Browser } from 'playwright-core'
 import type { RenderLookJob } from '@narrative/shared'
 import { BrowserHolder } from './browser.js'
@@ -73,13 +74,69 @@ const FROZEN = `<!doctype html><html><body><script>
   }
 </script></body></html>`
 
+/**
+ * A page that records what the document before it left behind — everything
+ * a page can keep across a navigation in its tab or its context: storage,
+ * cookies, IndexedDB, Cache Storage, `window.name`, the session history and
+ * the Navigation API's entries (which name earlier URLs, tokens and all) —
+ * then leaves all of that behind itself, marked with its own token, and
+ * holds a WebSocket open like the real page's sync connection. Its look
+ * reports what it found (as the overflow's object id).
+ */
+const ISOLATION_PAGE = `<!doctype html><html><body><script>
+  window.__narrativeRender = { status: 'ready', slideId: 's1', slideIndex: 0, failedLoads: 0 }
+  const deckId = location.pathname.split('/')[2]
+  const token = new URLSearchParams(location.search).get('share_token')
+  window.__seen = (async () => {
+    const out = {
+      local: Object.keys(localStorage),
+      session: Object.keys(sessionStorage),
+      cookie: document.cookie,
+      idb: (await indexedDB.databases()).map((d) => d.name),
+      caches: await caches.keys(),
+      name: window.name,
+      history: history.length,
+      entries: window.navigation ? navigation.entries().map((e) => e.url) : [],
+    }
+    localStorage.setItem('secret', token)
+    sessionStorage.setItem('secret', token)
+    document.cookie = 'secret=' + token + '; path=/; max-age=3600; secure'
+    await new Promise((resolve, reject) => {
+      const open = indexedDB.open('secret-' + token)
+      open.onsuccess = () => { open.result.close(); resolve() }
+      open.onerror = () => reject(open.error)
+    })
+    await (await caches.open('secret-' + token)).put('/secret', new Response(token))
+    window.name = 'secret-' + token
+    return out
+  })()
+  window.__socket = new WebSocket('wss://narrative.test/ws/' + deckId)
+  window.__narrativeRenderLook = async (spec) => {
+    const seen = await window.__seen
+    return { ok: true, value: { base64: '${PNG_BASE64}', width: 1, height: 1,
+      slides: [{ slideId: spec.slideId, index: 0, failedLoads: 0 }], failedFonts: [],
+      overflow: [{ slideId: spec.slideId, objectId: JSON.stringify(seen), boxHeight: 1, textHeight: 2 }] } }
+  }
+</script></body></html>`
+
 let server: Server
 let upstream = ''
+interface DeckLog {
+  opened: string[]
+  /** When each page load of the deck reached the server. */
+  openedAt: number[]
+  uploads: number
+  socketOpenedAt: number | null
+  socketClosedAt: number | null
+}
 /** Per deck: the pages opened, in order ('live' or 'frozen'), and the pictures uploaded. */
-const decks = new Map<string, { opened: string[]; uploads: number }>()
-function deck(deckId: string): { opened: string[]; uploads: number } {
+const decks = new Map<string, DeckLog>()
+function deck(deckId: string): DeckLog {
   let entry = decks.get(deckId)
-  if (entry === undefined) decks.set(deckId, (entry = { opened: [], uploads: 0 }))
+  if (entry === undefined) {
+    entry = { opened: [], openedAt: [], uploads: 0, socketOpenedAt: null, socketClosedAt: null }
+    decks.set(deckId, entry)
+  }
   return entry
 }
 const pageLoads = (deckId: string): number => deck(deckId).opened.length
@@ -101,8 +158,9 @@ beforeAll(async () => {
       if (page !== null) {
         const frozen = url.searchParams.get('frozen') === '1'
         deck(page[1]!).opened.push(frozen ? 'frozen' : 'live')
+        deck(page[1]!).openedAt.push(Date.now())
         res.writeHead(200, { 'content-type': 'text/html' })
-        res.end(frozen ? FROZEN : PAGE)
+        res.end(frozen ? FROZEN : page[1]!.startsWith('iso-') ? ISOLATION_PAGE : PAGE)
       } else if (req.method === 'GET' && req.url?.startsWith('/storage/before/')) {
         // A compare's stored "before" state (here: its name).
         res.writeHead(200, { 'content-type': 'application/octet-stream' })
@@ -116,6 +174,13 @@ beforeAll(async () => {
         res.end()
       }
     })
+  })
+  // The pages' sync connections: when each deck's opened and closed.
+  new WebSocketServer({ server }).on('connection', (socket, req) => {
+    const deckId = /^\/ws\/([^/?]+)/.exec(req.url ?? '')?.[1]
+    if (deckId === undefined) return socket.close()
+    deck(deckId).socketOpenedAt = Date.now()
+    socket.on('close', () => (deck(deckId).socketClosedAt = Date.now()))
   })
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
   upstream = `http://127.0.0.1:${(server.address() as { port: number }).port}`
@@ -133,6 +198,18 @@ afterAll(async () => {
   server.close()
 }, BROWSER_TIMEOUT_MS)
 
+const configOf = (warmPages: number): RenderWorkerConfig => ({
+  redisUrl: 'redis://unused',
+  appOrigin: APP,
+  upstream,
+  idleMs: 60_000,
+  concurrency: 1,
+  pageReserveBytes: 0,
+  warmPages,
+  chromeExecutable: null,
+  requireSandbox: false,
+})
+
 const job = (deckId: string, token: string, slideId: string): RenderLookJob => ({
   kind: 'look',
   page: { kind: 'deck', deckId },
@@ -149,15 +226,7 @@ describe('renderJob and the session page', () => {
     'reuses the page of a session, closes it after a failed job, and keeps sessions apart',
     async (ctx) => {
       if (browser === null) ctx.skip()
-      const config: RenderWorkerConfig = {
-        redisUrl: 'redis://unused',
-        appOrigin: APP,
-        upstream,
-        idleMs: 60_000,
-        warmPages: 2,
-        chromeExecutable: null,
-        requireSandbox: false,
-      }
+      const config = configOf(2)
       const warm = new WarmPages({ max: 2, idleMs: 60_000, log: () => undefined })
       const deps = { config, log: () => undefined, warm }
       const d = 'd-session'
@@ -171,20 +240,22 @@ describe('renderJob and the session page', () => {
         // The session's next job: the same page, no load.
         await renderJob(browser!, job(d, 'nrr_a', 's2'), deps)
         expect([pageLoads(d), deck(d).uploads, warm.size]).toEqual([1, 2, 1])
-        // Another session never gets that page.
+        // Another session never gets that page as it is: it takes it as a
+        // spare, recycled — the render page loaded again, for its own token.
         await renderJob(browser!, job(d, 'nrr_b', 's1'), deps)
-        expect([pageLoads(d), warm.size]).toEqual([2, 2])
-        // A failed job closes its page; the session's next job opens a new one.
+        expect([pageLoads(d), warm.size]).toEqual([2, 1])
+        // A failed job closes its page (here the recycled spare it took).
         await expect(renderJob(browser!, job(d, 'nrr_a', 'bad'), deps)).rejects.toMatchObject({
           reason: 'not-settled',
         })
-        expect(warm.size).toBe(1)
+        expect([pageLoads(d), warm.size]).toEqual([3, 0])
         await renderJob(browser!, job(d, 'nrr_a', 's1'), deps)
-        expect(pageLoads(d)).toBe(3)
-        // Background work closes its page: the people's warm pages stay as they were.
-        const before = warm.size
+        expect([pageLoads(d), warm.size]).toEqual([4, 1])
+        // Background work takes no spare and closes its page: the people's
+        // warm pages stay as they were.
         await renderJob(browser!, { ...job(d, 'nrr_c', 's1'), keepPage: false }, deps)
-        expect([pageLoads(d), warm.size]).toEqual([4, before])
+        expect([pageLoads(d), warm.size]).toEqual([5, 1])
+        expect(warm.take('nrr_a', `deck:${d}`)).toBeDefined()
       } finally {
         warm.closeAll('test')
       }
@@ -196,15 +267,7 @@ describe('renderJob and the session page', () => {
     'draws a compare’s "before" on a frozen page first, closes it, and hands the picture to the live page',
     async (ctx) => {
       if (browser === null) ctx.skip()
-      const config: RenderWorkerConfig = {
-        redisUrl: 'redis://unused',
-        appOrigin: APP,
-        upstream,
-        idleMs: 60_000,
-        warmPages: 1,
-        chromeExecutable: null,
-        requireSandbox: false,
-      }
+      const config = configOf(1)
       const warm = new WarmPages({ max: 1, idleMs: 60_000, log: () => undefined })
       const deps = { config, log: () => undefined, warm }
       const d = 'd-compare'
@@ -241,21 +304,81 @@ describe('renderJob and the session page', () => {
       const d = 'd-late'
       const late = { ...job(d, 'nrr_c', 's1'), deadline: Date.now() - 1 }
       const error = await renderJob(browser!, late, {
-        config: {
-          redisUrl: 'redis://unused',
-          appOrigin: APP,
-          upstream,
-          idleMs: 60_000,
-          warmPages: 1,
-          chromeExecutable: null,
-          requireSandbox: false,
-        },
+        config: configOf(1),
         log: () => undefined,
         warm,
       }).catch((err: unknown) => err)
       expect(error).toBeInstanceOf(RenderJobError)
       expect((error as RenderJobError).reason).toBe('late')
       expect(pageLoads(d)).toBe(0)
+    },
+    BROWSER_TIMEOUT_MS,
+  )
+})
+
+describe('a recycled page', () => {
+  it(
+    "carries nothing of the deck or token before it into another deck's job",
+    async (ctx) => {
+      if (browser === null) ctx.skip()
+      const logs: string[] = []
+      const warm = new WarmPages({ max: 1, idleMs: 60_000, log: () => undefined })
+      const deps = { config: configOf(1), log: (m: string) => logs.push(m), warm }
+      const seenBy = (result: Awaited<ReturnType<typeof renderJob>>) => {
+        if (result.kind !== 'look') throw new Error('not a look')
+        return JSON.parse(result.look.overflow[0]!.objectId) as {
+          local: string[]
+          session: string[]
+          cookie: string
+          idb: string[]
+          caches: string[]
+          name: string
+          history: number
+          entries: string[]
+        }
+      }
+      const nothing = {
+        local: [],
+        session: [],
+        cookie: '',
+        idb: [],
+        caches: [],
+        name: '',
+        // A new tab's initial about:blank and the render page: a fresh page's.
+        history: 2,
+      }
+      try {
+        // Deck A's page leaves its token in every place a page can keep it.
+        const a = seenBy(await renderJob(browser!, job('iso-a', 'nrr_iso_a', 's1'), deps))
+        expect(a).toMatchObject(nothing)
+        expect(deck('iso-a').socketOpenedAt).not.toBeNull()
+        expect(warm.size).toBe(1)
+
+        // Deck B, another session, gets A's idle page recycled…
+        const b = seenBy(await renderJob(browser!, job('iso-b', 'nrr_iso_b', 's1'), deps))
+        expect(logs.some((m) => m.startsWith('deck:iso-b: recycled page'))).toBe(true)
+        // …and finds none of it: no storage, cookie, database, cache, window
+        // name, and no session history naming A's URL (its token).
+        expect(b).toMatchObject(nothing)
+        expect(b.entries.every((url) => url.includes('nrr_iso_b'))).toBe(true)
+        expect(JSON.stringify(b)).not.toContain('nrr_iso_a')
+        // A's document — its sync connection — was gone before B's page loaded.
+        const closedAt = deck('iso-a').socketClosedAt
+        expect(closedAt).not.toBeNull()
+        expect(closedAt!).toBeLessThanOrEqual(deck('iso-b').openedAt[0]!)
+        // One tab in the kept context: A's was closed.
+        const kept = warm.take('nrr_iso_b', 'deck:iso-b')
+        expect(kept?.context.pages()).toHaveLength(1)
+        if (kept !== undefined) warm.keep('nrr_iso_b', kept)
+
+        // And A's session gets B's page back only recycled again, seeing
+        // nothing of B either.
+        const again = seenBy(await renderJob(browser!, job('iso-a', 'nrr_iso_a2', 's1'), deps))
+        expect(again).toMatchObject(nothing)
+        expect(JSON.stringify(again)).not.toContain('nrr_iso_b')
+      } finally {
+        warm.closeAll('test')
+      }
     },
     BROWSER_TIMEOUT_MS,
   )

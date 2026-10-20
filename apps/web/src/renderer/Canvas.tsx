@@ -26,8 +26,10 @@ import { SceneGraph } from './SceneGraph'
 import { ResourceManager, setDefaultResourceManager } from './ResourceManager'
 import { OverlayCompositor } from './overlay/OverlayCompositor'
 import { RenderScheduler, setDefaultRenderScheduler } from './RenderScheduler'
+import { pendingRenderWork } from './renderWork.js'
 import { installPixiBindGroupPatch } from './pixiBindGroupPatch.js'
 import { patchHTMLTextRace } from './patchHTMLTextRace.js'
+import { registerPerfCanvas, whenPerfHarnessReady } from '../perf/activation.js'
 import { destroyPixiApplication } from './pixiApplication.js'
 
 // Install the BindGroup crash workaround once at module load. See the
@@ -39,9 +41,9 @@ import {
   getDefaultImageUrlResolver,
 } from './imageUrl.js'
 import { createVideoInfoResolver, setDefaultVideoInfoResolver } from './videoInfo.js'
-import { useSlideObjectChanges } from '../state/useSlideObjectChanges'
+import { useSlideObjectChanges, type SlideObjectChangeInfo } from '../state/useSlideObjectChanges'
 import { useSlideBackground } from '../state/useSlideBackground.js'
-import { useSlides } from '../state/useSlides.js'
+import { useDeckSelector, useDeckStore } from '../state/useDeckStore.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { computeSlideNumber } from '@narrative/shared'
 import { setRenderingSlideNumber } from './slideNumberContext.js'
@@ -52,6 +54,45 @@ import { disposeComponentDocCache } from '../state/componentDocCache.js'
 import { markFirstPaint, markPixiReady } from '../state/loadTimings.js'
 import type { ObjectChangeSet } from '@narrative/slide-model'
 import type { CanvasInstance } from './CanvasInstanceContext.js'
+import { whenIdle, widenRect, type Rect } from './textResolutionStaging.js'
+
+/**
+ * The part of the canvas the window shows, in the canvas's own CSS pixels
+ * (Pixi's stage space), widened by 25 % so text just off screen comes next.
+ * The editor scales the canvas with a CSS transform (the zoom), so the
+ * on-screen box is mapped back through the canvas's layout width. Null when
+ * the canvas is not laid out or entirely off screen.
+ */
+function visibleCanvasRect(canvas: HTMLCanvasElement): Rect | null {
+  const box = canvas.getBoundingClientRect()
+  if (box.width <= 0 || box.height <= 0 || canvas.clientWidth <= 0) return null
+  const left = Math.max(box.left, 0)
+  const top = Math.max(box.top, 0)
+  const right = Math.min(box.right, window.innerWidth)
+  const bottom = Math.min(box.bottom, window.innerHeight)
+  if (right <= left || bottom <= top) return null
+  const kx = canvas.clientWidth / box.width
+  const ky = canvas.clientHeight / box.height
+  return widenRect(
+    {
+      x: (left - box.left) * kx,
+      y: (top - box.top) * ky,
+      width: (right - left) * kx,
+      height: (bottom - top) * ky,
+    },
+    0.25,
+  )
+}
+
+/**
+ * A zoom commits once neither the zoom nor wheel / pinch input changed for
+ * this long. Was 150 ms after the last zoom change; on a busy main thread
+ * the steps of one wheel gesture arrived up to ~150 ms apart (M3 Pro at
+ * load 20–40, 2026-10-18), and a commit between two of them — 100+ ms of
+ * backbuffer reallocation, then every text re-rasterised — landed in the
+ * middle of the gesture, for a resolution the next step replaced.
+ */
+const ZOOM_COMMIT_QUIET_MS = 300
 
 export interface CanvasProps {
   /**
@@ -91,6 +132,16 @@ export interface CanvasProps {
    * every frame queued before it. Fixed for the canvas's lifetime.
    */
   onScreen?: boolean
+  /**
+   * false: Pixi's garbage collector stays off (`gcActive`), so nothing
+   * uploaded is unloaded behind the renderer's back. Present mode keeps
+   * slides prepared off stage (renderer/presentSlides.ts) for minutes at a
+   * time; with the collector on, whatever was not drawn for a minute — the
+   * next slide's text rasters, its pictures — would be unloaded and
+   * rasterised or uploaded again the moment it is shown. What stays resident
+   * is then the ResourceManager's to budget. Fixed for the canvas's lifetime.
+   */
+  gc?: boolean
 }
 
 export function Canvas({
@@ -99,14 +150,21 @@ export function Canvas({
   artboardSize,
   zoom = 1,
   onScreen = true,
+  gc = true,
 }: CanvasProps = {}) {
   // Read once: the canvas is set up for one way of drawing.
   const onScreenRef = useRef(onScreen)
+  const gcRef = useRef(gc)
   const containerRef = useRef<HTMLDivElement>(null)
   const overlayRootRef = useRef<HTMLDivElement>(null)
 
+  /** `performance.now()` of the last wheel / pinch input (the zoom commit waits for it to stop). */
+  const lastZoomInputAt = useRef(-Infinity)
+
   /** Pending changes from before Pixi is ready. Buffer and flush once instance exists. */
-  const pendingChangesRef = useRef<ObjectChangeSet[]>([])
+  const pendingChangesRef = useRef<
+    Array<{ changes: ObjectChangeSet; info: SlideObjectChangeInfo }>
+  >([])
 
   /**
    * Always points at the latest artboardSize so the async Pixi init can
@@ -159,6 +217,10 @@ export function Canvas({
     setDefaultResourceManager(resourceManager)
 
     const initPixi = async () => {
+      // With `?perf=1` the harness chunk installs its GL counters before the
+      // context exists (perf/activation.ts); otherwise this resolves at once.
+      await whenPerfHarnessReady()
+      if (cancelled) return
       app = new Application()
 
       await app.init({
@@ -183,6 +245,7 @@ export function Canvas({
         // pixi.js 8.18.x.
         preference: 'webgl',
         antialias: true,
+        gcActive: gcRef.current,
       })
 
       if (cancelled) {
@@ -200,7 +263,7 @@ export function Canvas({
       // other's content (or a totally unrelated text node's content)
       // for a frame after any rasterise event. Must run AFTER
       // `app.init()` so `app.renderer.htmlText` exists.
-      patchHTMLTextRace(app.renderer, { wakeRenderScheduler: true })
+      patchHTMLTextRace(app.renderer, { wakeRenderScheduler: true, counters: 'text' })
 
       containerEl.appendChild(app.canvas)
 
@@ -240,6 +303,7 @@ export function Canvas({
       compositor.setRenderScheduler(scheduler)
 
       instanceRef.current = { app, sceneGraph, resourceManager, compositor, scheduler }
+      registerPerfCanvas({ app, sceneGraph, scheduler, pendingLoads: pendingRenderWork })
       markPixiReady()
       setPixiReady(true)
 
@@ -270,7 +334,7 @@ export function Canvas({
       // Flush pending changes co přišly před initem (např. initial emission
       // z useSlideObjectChanges subscribe synchronně po subscribe).
       for (const pending of pendingChangesRef.current) {
-        sceneGraph.applyChanges(pending)
+        applySlideChangesRef.current(sceneGraph, pending.changes, pending.info)
       }
       pendingChangesRef.current = []
 
@@ -307,6 +371,7 @@ export function Canvas({
         // (e.g. VideoOverlay holds sceneGraph/compositor and would leak DOM
         // elements against a torn-down Pixi app otherwise).
         onReady?.(null)
+        registerPerfCanvas(null)
 
         // Stop the Pixi ticker FIRST so a rAF callback that's already
         // been scheduled for the next frame can't fire against our
@@ -366,10 +431,12 @@ export function Canvas({
   // the global. The follow-up effect refreshes already-mounted text nodes
   // when the value changes (e.g. after a slide reorder where the active
   // slide stays the same).
-  const slides = useSlides()
+  // Both are selected from the deck store (a number, a string): an object
+  // edit does not re-render the canvas (performance.md → E1).
   const { activeSlideId } = useActiveSlide()
-  const currentSlideNumber =
-    activeSlideId !== null ? computeSlideNumber(slides, activeSlideId) : undefined
+  const currentSlideNumber = useDeckSelector((store) =>
+    activeSlideId !== null ? computeSlideNumber(store.getSlides(), activeSlideId) : undefined,
+  )
   setRenderingSlideNumber(currentSlideNumber)
   useEffect(() => {
     const instance = instanceRef.current
@@ -378,7 +445,9 @@ export function Canvas({
   }, [currentSlideNumber, pixiReady])
   // The active slide's surface (its layout's, A4.2d): its colour tokens
   // resolve on it; a change repaints what it affects.
-  const surface = slides.find((s) => s.id === activeSlideId)?.layout?.surface
+  const surface = useDeckSelector((store) =>
+    activeSlideId !== null ? store.getSlide(activeSlideId)?.layout?.surface : undefined,
+  )
   useEffect(() => {
     setRenderingSurface(surface)
   }, [surface])
@@ -389,14 +458,50 @@ export function Canvas({
   // Reaktivita na Y.Doc přes incremental changes (M3).
   // Initial state přichází synchronně jako první emise (added = current).
   // Batching per rAF v subscribeToObjectChanges — tento callback se volá 1× per tick.
-  useSlideObjectChanges((changes) => {
+  //
+  // The scene graph also learns which slide it holds. Present mode swaps
+  // whole prepared slides in (SceneGraph.swapSlideScene) before the active
+  // slide changes, so the removal emitted for the slide it left is stale by
+  // then, and the first emission of the slide it swapped in has nothing to
+  // do — as long as the deck store still has that slide at the version the
+  // scene was built from; otherwise it is applied as updates (addObject of a
+  // mounted id updates it).
+  const deckStore = useDeckStore()
+  const applySlideChanges = (
+    sceneGraph: SceneGraph,
+    changes: ObjectChangeSet,
+    info: SlideObjectChangeInfo,
+  ): void => {
+    if (info.kind === 'leave') {
+      const held = sceneGraph.heldSlideId
+      if (held !== null && held !== info.slideId) return
+      sceneGraph.applyChanges(changes)
+      sceneGraph.holdSlide(null)
+      return
+    }
+    if (info.kind === 'initial') {
+      const objects = deckStore.getSlide(info.slideId)?.objects
+      if (sceneGraph.holdsSlideAt(info.slideId, objects)) return
+      sceneGraph.applyChanges(changes)
+      sceneGraph.holdSlide(info.slideId, objects ?? null)
+      return
+    }
+    sceneGraph.applyChanges(changes)
+    sceneGraph.markHeldEdited()
+  }
+  // The init's flush of buffered changes runs later: it reads the latest.
+  const applySlideChangesRef = useRef(applySlideChanges)
+  useEffect(() => {
+    applySlideChangesRef.current = applySlideChanges
+  })
+  useSlideObjectChanges((changes, info) => {
     const instance = instanceRef.current
     if (instance === null) {
       // Pixi ještě neinicializován — buffer a flush v init
-      pendingChangesRef.current.push(changes)
+      pendingChangesRef.current.push({ changes, info })
       return
     }
-    instance.sceneGraph.applyChanges(changes)
+    applySlideChanges(instance.sceneGraph, changes, info)
   })
 
   // P2: paint the artboard background on every slide-background change.
@@ -458,13 +563,31 @@ export function Canvas({
   // gets full sharpness (resolution=2), while a 2× HiDPI display
   // caps at ~2.2× instead of the 4× that would OOM.
   //
-  // Debounced by 150 ms so rapid mousewheel zoom only commits the
-  // resolution change once after the zoom stabilizes. This avoids
-  // Pixi's HTMLTextPipe generatingTexture race where mid-flight
-  // rasterizations silently skip new resolution changes.
+  // Committed once the gesture is over: `ZOOM_COMMIT_QUIET_MS` after the last
+  // zoom change AND the last wheel / pinch input (a zoom resting at its clamp while the
+  // wheel still turns is the same gesture — committing there resized the
+  // backbuffer and re-rasterised every text for a resolution the next wheel
+  // step replaced), and then from an idle callback: on a busy main thread
+  // the timer can fire while wheel events of the same gesture are still
+  // queued, and each of them (a new zoom → this effect's cleanup) must get
+  // to cancel the commit first. A commit is the expensive part — the
+  // backbuffer reallocation alone is ~110 ms at the 25 Mpx cap with MSAA
+  // (M3 Pro, 2026-10-18) — so one per gesture, and none for a gesture that
+  // ends where it started.
+  //
+  // The commit does not let Pixi re-rasterise every text in one frame (its
+  // `resolutionChange` runner would): texts are pinned to the resolution
+  // they were drawn at, the renderer's changes, and the new one is handed to
+  // the texts a batch per frame, those on screen first, the rest when idle
+  // (SceneGraph.pinTextResolution / restageTextResolution; plan
+  // canvas-performance step 3). While a gesture is under way the previous
+  // commit's staging is paused.
   useEffect(() => {
     const instance = instanceRef.current
     if (instance === null) return
+    // The zoom moved: rasters for the committed resolution may be about to
+    // be replaced. The commit below replaces the staging, or resumes it.
+    instance.sceneGraph.pauseTextRestage()
 
     const dpr = window.devicePixelRatio || 1
     const container = containerRef.current
@@ -474,25 +597,80 @@ export function Canvas({
     const pixelCap = Math.sqrt(maxPixels / (cw * ch))
     const effectiveRes = Math.min(pixelCap, dpr * Math.max(1, zoom))
 
-    const debounceTimer = setTimeout(() => {
+    let cancelIdle: (() => void) | null = null
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    /** Commit `delay` ms from now, or later while zoom input keeps coming. */
+    const arm = (delay: number): void => {
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        const quiet = performance.now() - lastZoomInputAt.current
+        if (quiet < ZOOM_COMMIT_QUIET_MS) {
+          arm(ZOOM_COMMIT_QUIET_MS - quiet)
+          return
+        }
+        // 500 ms at the latest: a main thread that never idles still gets sharp text.
+        cancelIdle = whenIdle(commit, 500)
+      }, delay)
+    }
+
+    const commit = (): void => {
+      cancelIdle = null
       const inst = instanceRef.current
       if (inst === null || !onScreenRef.current) return
+      // Input that arrived while the idle callback waited: still the gesture.
+      const quiet = performance.now() - lastZoomInputAt.current
+      if (quiet < ZOOM_COMMIT_QUIET_MS) {
+        arm(ZOOM_COMMIT_QUIET_MS - quiet)
+        return
+      }
       const renderer = inst.app.renderer
-      if (Math.abs(renderer.resolution - effectiveRes) < 0.01) return
+      if (Math.abs(renderer.resolution - effectiveRes) < 0.01) {
+        inst.sceneGraph.resumeTextRestage()
+        return
+      }
+      inst.sceneGraph.pinTextResolution()
       renderer.resolution = effectiveRes
       if (container !== null && cw > 0 && ch > 0) {
         renderer.resize(cw, ch)
       }
-      // Force all HTMLText nodes to re-rasterize at the new resolution.
-      // Pixi's async text pipeline + our wireRedrawOnAsyncTextureUpdate
-      // don't cover resolution-only changes — this resets each node's
-      // GPU cache key and catchup guard so the re-rasterization gets
-      // scheduled with follow-up render frames.
-      inst.sceneGraph.forceTextResolutionRefresh()
-    }, 150)
+      inst.sceneGraph.restageTextResolution(effectiveRes, visibleCanvasRect(inst.app.canvas))
+    }
 
-    return () => clearTimeout(debounceTimer)
+    arm(ZOOM_COMMIT_QUIET_MS)
+
+    return () => {
+      if (debounceTimer !== null) clearTimeout(debounceTimer)
+      cancelIdle?.()
+    }
   }, [zoom, pixiReady])
+
+  // When the last zoom input arrived (the zoom commit above waits for it to
+  // stop): a wheel with Ctrl/Cmd (Chrome's trackpad pinch is one too) or
+  // Safari's pinch, anywhere, and a plain wheel over the canvas — it scrolls
+  // the editor, and the commit waits for that rather than resize the
+  // backbuffer mid-scroll.
+  useEffect(() => {
+    const note = (): void => {
+      lastZoomInputAt.current = performance.now()
+    }
+    const onWheel = (e: WheelEvent): void => {
+      const container = containerRef.current
+      if (
+        e.ctrlKey ||
+        e.metaKey ||
+        (container !== null && e.target instanceof Node && container.contains(e.target))
+      ) {
+        note()
+      }
+    }
+    const opts: AddEventListenerOptions = { capture: true, passive: true }
+    window.addEventListener('wheel', onWheel, opts)
+    window.addEventListener('gesturechange', note, opts)
+    return () => {
+      window.removeEventListener('wheel', onWheel, opts)
+      window.removeEventListener('gesturechange', note, opts)
+    }
+  }, [])
 
   // ResizeObserver — reaguje na změnu velikosti parent kontejneru.
   // Uses clientWidth/clientHeight (CSS-transform-independent) so the

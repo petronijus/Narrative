@@ -139,9 +139,35 @@ export interface MoveDecksResult {
   media: MovedDeckMedia[]
 }
 
+export interface DeckRecordsPageArgs {
+  userId: string
+  /** Only decks in this folder (as in `list`). */
+  folderId?: string | undefined
+  /** Page size, 1 to MAX_LIST_PAGE_SIZE. */
+  limit: number
+  /** Continue after this position (a previous page's `next`). */
+  after?: ListKeyset | undefined
+}
+
+export interface DeckRecordsPage {
+  /** `list`'s records in `list`'s order: created first, then id. */
+  decks: DeckWithRole[]
+  /** Where the next page starts; null when this page is the last. */
+  next: ListKeyset | null
+}
+
 export interface DeckService {
-  /** Decks the user can open, optionally only those in one of the user's folders. */
+  /**
+   * Decks the user can open, optionally only those in one of the user's
+   * folders; oldest first (created, then id).
+   */
   list(args: { userId: string; folderId?: string | undefined }): Promise<DeckWithRole[]>
+  /**
+   * `list` keyset-paged: the same records in the same order, so the pages
+   * put together are `list` (GET /decks?limit=&cursor=, for a deck grid
+   * that should not wait for a folder of hundreds of decks).
+   */
+  listRecordsPage(args: DeckRecordsPageArgs): Promise<DeckRecordsPage>
   /**
    * The same decks as `list`, as lean items, filtered, sorted by last change
    * (newest first) and keyset-paged — for callers that cannot take the whole

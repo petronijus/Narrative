@@ -1,6 +1,6 @@
 {
   "name": "narrative",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.11.2",
@@ -15,8 +15,8 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
-    "size": "pnpm --filter web build && pnpm --filter web size",
-    "lighthouse": "pnpm --filter web build && lhci autorun --config=.lighthouserc.json",
+    "size": "NARRATIVE_BUILD_MANIFEST=1 pnpm --filter web build && pnpm --filter web size",
+    "lighthouse": "pnpm --silent --filter @narrative/perf run perf lighthouse",
     "format": "tools/dev/format.sh --all",
     "capabilities": "pnpm --filter @narrative/commands capabilities",
     "load:all": "node tests/load/runAll.mjs",

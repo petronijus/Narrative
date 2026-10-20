@@ -7,23 +7,48 @@
  *   - Left  — current slide's speaker notes (plain text preview from
  *             useSlideNotes; keeps the rich-text formatting as newlines +
  *             list markers so you can glance at them during a talk).
- *   - Mid   — next slide preview via useSlideThumbnails.
+ *   - Mid   — next slide preview via useSlideThumbnails. Every presentable
+ *             slide's picture is asked for from the start, shown or not
+ *             (performance.md → D): present mode waits for them before its
+ *             first slide (`onThumbnails`), so an advance only swaps an
+ *             <img> — it used to render the next slide offscreen (a Pixi
+ *             application of its own, a PNG encode) on every advance.
  *   - Right — elapsed timer from the moment the overlay was mounted.
  *
  * Toggled by a prop from PresentLayout (keyboard 'N' in parent).
+ *
+ * The notes' read-only Tiptap view is `PresenterNotes.tsx`, a chunk of its
+ * own (docs/plans/performance.md → L1): present mode's first paint does not
+ * wait for Tiptap; until it arrives the notes show as plain text in the same
+ * box.
  *
  * When visible, the overlay takes the bottom third of the viewport.
  * PresentLayout shrinks the canvas area above it via a sibling flex
  * relationship — we don't need to touch the canvas here.
  */
 
-import { useEffect, useRef, useState } from 'react'
-import { EditorContent, useEditor } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
-import Collaboration from '@tiptap/extension-collaboration'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSlides } from '../state/useSlides.js'
 import { useSlideNotes } from '../state/useSlideNotes.js'
 import { useSlideThumbnails } from '../state/useSlideThumbnails.js'
+import { lazyPart, preloadWhenIdle } from './lazyPart.js'
+import { PRESENTER_NOTES_CLASS, type PresenterNotesProps } from './presenterNotesStyle.js'
+
+/** The notes as plain text in the notes box, while the rich view's code loads. */
+function PresenterNotesStandIn({ text }: PresenterNotesProps) {
+  return (
+    <div className={PRESENTER_NOTES_CLASS} aria-label="Speaker notes (read-only)" aria-busy="true">
+      {text}
+    </div>
+  )
+}
+
+/** The read-only rich notes (Tiptap): loaded with present mode, after its first paint. */
+const PresenterNotes = lazyPart(
+  () => import('./PresenterNotes.js'),
+  (m) => m.PresenterNotes,
+  PresenterNotesStandIn,
+)
 
 interface PresenterOverlayProps {
   activeSlideId: string | null
@@ -34,19 +59,9 @@ interface PresenterOverlayProps {
    * column grows, typography scales up, thumbnail column gets bigger.
    */
   fullscreen?: boolean
+  /** How many of the presentable slides have their picture, of how many (after each change). */
+  onThumbnails?: (ready: number, total: number) => void
 }
-
-const NOTES_READONLY_CLASS = [
-  'tiptap-notes-preview prose prose-invert prose-sm max-w-none',
-  'flex-1 overflow-auto whitespace-pre-wrap break-words rounded border border-gray-800 bg-gray-900/60 p-2',
-  'text-gray-100 leading-snug',
-  '[&_p]:my-1 [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-xs',
-  '[&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4',
-  '[&_blockquote]:border-l-2 [&_blockquote]:border-gray-700 [&_blockquote]:pl-2 [&_blockquote]:italic',
-  '[&_code]:rounded [&_code]:bg-gray-800 [&_code]:px-1',
-  '[&_strong]:font-semibold',
-  '[&_em]:italic',
-].join(' ')
 
 function formatElapsed(ms: number): string {
   const totalSec = Math.floor(ms / 1000)
@@ -61,44 +76,37 @@ export function PresenterOverlay({
   activeSlideId,
   visible,
   fullscreen = false,
+  onThumbnails,
 }: PresenterOverlayProps) {
   const slides = useSlides()
   const { fragment: notesFragment, text: notesText } = useSlideNotes()
 
-  // Read-only Tiptap — renders the same rich text the editor produced
-  // (headings, lists, bold / italic) without the XML-ish serialisation
-  // that a plain text preview would show.
-  const notesEditor = useEditor(
-    {
-      extensions: [
-        StarterKit.configure({ undoRedo: false }),
-        ...(notesFragment !== null ? [Collaboration.configure({ fragment: notesFragment })] : []),
-      ],
-      editable: false,
-      editorProps: {
-        attributes: {
-          class: NOTES_READONLY_CLASS,
-          'aria-label': 'Speaker notes (read-only)',
-        },
-      },
-    },
-    [notesFragment],
-  )
-
   // P3: present-mode navigation (and the counter) ignores skipped slides.
-  const presentable = slides.filter((s) => s.skipped !== true)
+  // Memoised on the slide ids: the picture request must not change with an edit.
+  const presentableKey = slides
+    .filter((s) => s.skipped !== true)
+    .map((s) => s.id)
+    .join('\n')
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- recomputed when the presentable ids change
+  const presentable = useMemo(() => slides.filter((s) => s.skipped !== true), [presentableKey])
   const activeIdx = presentable.findIndex((s) => s.id === activeSlideId)
   const nextSlide =
     activeIdx >= 0 && activeIdx < presentable.length - 1
       ? (presentable[activeIdx + 1] ?? null)
       : null
 
-  // Only thumbnail the next slide (and the current one so the renderer keeps
-  // it warm). Limiting the set keeps the background renderer's work bounded.
-  const requestedIds: string[] = []
-  if (activeSlideId !== null) requestedIds.push(activeSlideId)
-  if (nextSlide !== null) requestedIds.push(nextSlide.id)
+  // Every presentable slide's picture, rendered while the presentation is
+  // prepared: the set does not change with the slide shown, so an advance
+  // renders nothing (the store renders a slide again only when it changes).
+  const requestedIds = useMemo(() => presentable.map((s) => s.id), [presentable])
   const thumbnails = useSlideThumbnails(requestedIds)
+  const readyCount = requestedIds.filter((id) => thumbnails.has(id)).length
+  useEffect(() => {
+    onThumbnails?.(readyCount, requestedIds.length)
+  }, [onThumbnails, readyCount, requestedIds.length])
+
+  // The rich notes' code, ready before the presenter opens the view ('N').
+  useEffect(() => preloadWhenIdle([PresenterNotes]), [])
 
   // Timer — reset each time the overlay is opened (visible: false → true).
   const startedAtRef = useRef<number | null>(null)
@@ -149,7 +157,7 @@ export function PresenterOverlay({
             <em className="text-[11px] text-gray-600">No notes.</em>
           </div>
         ) : (
-          <EditorContent editor={notesEditor} />
+          <PresenterNotes fragment={notesFragment} text={notesText} />
         )}
       </div>
 

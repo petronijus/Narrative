@@ -98,6 +98,34 @@ large deck, macOS and Windows (the MacBook and the Windows VM).
   shell's navigation does. Not yet run end to end against Google (needs a
   person at the browser).
 
+## 4a. On the MacBook (2026-10-16)
+
+The prototype signs in against production (0.15.0) — the whole system-browser
+flow works on macOS. But the editor is **very slow** there: zoom is not
+smooth at all, dragging stutters. Petr's first impression; not measured yet.
+
+On Linux, the zoom-drag probe (since 2026-10-18 the benches
+`viewport.zoom.wheel.light` / `transform.move.rect.light` of
+`e2e/perf/light-slide.spec.ts`) measured
+the zoom gesture: frames over 50 ms 25 of 66 in WebKit, 6 of 139 in
+Chromium (p90 130 ms vs 50 ms). The drag numbers there say little (both
+engines draw in software in that setup, and Playwright paces the moves).
+
+Open, on the Mac:
+
+1. The same deck in **Safari**: as slow? Then it is the editor in WebKit,
+   not Tauri — fixable in the editor, and it would help Safari users too.
+   As smooth as Chrome? Then it is Tauri's WKWebView setup.
+2. `just perf viewport.zoom.wheel.light --browser webkit` (native WebKit on
+   macOS, Low Power Mode off) against the same without `--browser`.
+3. Safari Web Inspector → Timelines while zooming and dragging: whether the
+   time goes to JavaScript (React re-renders, text rasterisation — Pixi's
+   HTMLText rasterises through SVG, which is slow in Safari), layout or
+   painting.
+
+Until this is understood, Tauri is **not** a better shell on macOS: the
+download is smaller, but the editor — the whole product — runs worse.
+
 ## 5. What a port would take
 
 The Electron shell's main process (≈ 40 files in `apps/desktop/src/main`) in
@@ -110,10 +138,10 @@ Weeks, not days.
 
 ## 6. Recommendation
 
-Tauri is viable: the e2e suite shows no editor bug particular to WebKit,
-and the app is 15× smaller to download with ~15% less memory.
-The cost is a rewrite of the shell in Rust, WebKit's per-platform differences
-to test on every release, and the NVIDIA/Wayland quirk on Linux.
-
-Next: try the prototype on the MacBook (WKWebView is the engine that matters
-most; README.md → macOS), then decide.
+Not decided. On Linux the editor works in WebKit and the app is 15× smaller
+to download with ~15% less memory; on the Mac — the platform that matters
+most — the editor is too slow in the prototype to use. Section 4a lists what
+to find out first. If Safari is equally slow, the editor needs WebKit
+performance work whatever the shell (worth it for Safari users anyway), and
+Tauri stays an option once that is done; if only the Tauri window is slow,
+look at its WKWebView setup. Until then Electron (D0) stays the shell.

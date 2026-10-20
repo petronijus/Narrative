@@ -144,6 +144,14 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * (description trimmed once before measuring): 199,927 bytes in link mode,
  * 146 tools. Back at the budget A5.0 started from: A5 spent the room it
  * made. The next room is the table and path tool merges D4 put after A5.
+ * R1 async PDF (2026-10-19): no raise. deck.exportPdf became a job (its
+ * `jobId` input waits for one already running, instead of a second tool);
+ * its description trimmed to fit: link mode back under 200,000.
+ * R1 review (2026-10-19): no raise. deck.exportPdf refuses `jobId` with
+ * anything beside it (its defaults said in the descriptions instead of
+ * schema defaults, so a given value can be told from an omitted one) and
+ * names `queued`; delivery's default left to the description: under
+ * 200,000 in link mode.
  */
 export const TOOL_LIST_BUDGET_BYTES = 200_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */

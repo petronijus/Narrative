@@ -12,6 +12,7 @@ import type { DeckMutationContext } from '@narrative/slide-model'
 import type { AnyCommandDef, CommandRegistry } from './registry.js'
 import { CommandError, issuesFromZod } from './errors.js'
 import { ROLE_RANK, requiredRole, type CommandContext, type CommandInvocation } from './types.js'
+import { runOnOneOffFork } from './batchForks.js'
 
 interface Prepared {
   def: AnyCommandDef
@@ -364,12 +365,15 @@ export function runGroup<T>(
  *
  * `atomic: true` (default): every input is validated first; the ops then
  * run on a FORK of the deck document, and only if all of them succeed is
- * the fork's delta applied to the live document — in one transaction with
+ * the fork's change applied to the live document — in one transaction with
  * `ctx.origin`, so it is one undo step and one update on the wire. A
- * failure anywhere leaves the live document untouched. The fork reuses the
- * live document's clientID so its clock simply continues the live one; the
- * whole batch is synchronous, so nothing can interleave between fork and
- * apply, and a failed fork is discarded before its clock is ever published.
+ * failure anywhere leaves the live document untouched. The fork is the
+ * host's kept one when `ctx.batchForks` is set (the server host: kept in
+ * step with the live document, so a batch does not copy the whole deck),
+ * else a one-off copy (batchForks.ts). Either way it writes under a client
+ * id of its own; the whole batch is synchronous, so nothing can interleave
+ * between fork and apply, and a failed fork is discarded before anything
+ * it wrote is published.
  *
  * `atomic: false`: ops run in order in one live transaction; a failing op is
  * reported and skipped, earlier ops stay applied.
@@ -417,32 +421,28 @@ export function runBatch(
     return { results }
   }
 
-  const stateVector = Y.encodeStateVector(live.doc)
-  const fork = new Y.Doc({ gc: live.doc.gc })
-  fork.clientID = live.doc.clientID
-  Y.applyUpdate(fork, Y.encodeStateAsUpdate(live.doc))
-  const forkDeck: DeckMutationContext = {
-    doc: fork,
-    slides: fork.getArray<Y.Map<unknown>>('slides'),
-  }
-  const forkCtx: CommandContext = { ...ctx, deck: forkDeck }
-  const results: unknown[] = []
-  try {
-    fork.transact(() => {
-      prepared.forEach(({ def, input }, i) => {
-        try {
-          results.push(executeSync(def, forkCtx, input))
-        } catch (e) {
-          throw e instanceof CommandError
-            ? e.withOpIndex(i)
-            : new CommandError('failed', String(e), { cause: e, opIndex: i })
-        }
-      })
+  const runOps = (fork: Y.Doc): unknown[] => {
+    const forkDeck: DeckMutationContext = {
+      doc: fork,
+      slides: fork.getArray<Y.Map<unknown>>('slides'),
+    }
+    const forkCtx: CommandContext = { ...ctx, deck: forkDeck }
+    return prepared.map(({ def, input }, i) => {
+      try {
+        return executeSync(def, forkCtx, input)
+      } catch (e) {
+        throw e instanceof CommandError
+          ? e.withOpIndex(i)
+          : new CommandError('failed', String(e), { cause: e, opIndex: i })
+      }
     })
-    const delta = Y.encodeStateAsUpdate(fork, stateVector)
-    Y.applyUpdate(live.doc, delta, ctx.origin)
-  } finally {
-    fork.destroy()
   }
+  // The host's kept fork when it has one (batchForks.ts), else a one-off copy.
+  const { value: results, update } =
+    ctx.batchForks === undefined
+      ? runOnOneOffFork(live.doc, runOps)
+      : ctx.batchForks.run(live.doc, runOps)
+  // Every op succeeded: the fork's change, as one transaction with ctx.origin.
+  if (update !== null) Y.applyUpdate(live.doc, update, ctx.origin)
   return { results }
 }

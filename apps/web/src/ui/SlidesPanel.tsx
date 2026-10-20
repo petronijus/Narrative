@@ -31,7 +31,8 @@ import {
   useMemo,
   type ReactElement,
 } from 'react'
-import { useSlides } from '../state/useSlides.js'
+import { useSlidesSelector } from '../state/useSlides.js'
+import { sameArray } from '../state/useDeckStore.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import {
   closeBrowserSlideExport,
@@ -40,7 +41,10 @@ import {
 } from '../state/browserSlideExport.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSelection } from '../state/SelectionContext.js'
-import { useSlideThumbnails } from '../state/useSlideThumbnails.js'
+import { useSlideThumbnailStore, useThumbnailUrl } from '../state/useSlideThumbnails.js'
+import type { ThumbnailStore } from '../renderer/thumbnailStore.js'
+import { thumbnailDataUrl } from '../renderer/thumbnailImages.js'
+import { useVisibleSlideRows } from './useVisibleSlideRows.js'
 import { setDeckThumbnail } from '../state/deckThumbnailCache.js'
 import { ApiError, useApi } from '../api/client.js'
 import { useParams } from 'react-router-dom'
@@ -88,7 +92,25 @@ const DRAG_CLICK_THRESHOLD_PX = 4
 // Outline helpers
 // ---------------------------------------------------------------------------
 
-function slideIndent(s: Slide): number {
+/**
+ * What the panel shows of a slide. Selected from the deck store as such, so
+ * an edit inside a slide — every pointer move of a drag, every keystroke —
+ * re-renders neither the panel nor its rows (the thumbnail is the
+ * thumbnail hook's: it watches the objects itself).
+ */
+type PanelSlide = Pick<Slide, 'id' | 'name' | 'skipped' | 'indent' | 'collapsed'>
+
+function samePanelSlide(a: PanelSlide, b: Slide | PanelSlide): boolean {
+  return (
+    a.id === b.id &&
+    a.name === b.name &&
+    a.skipped === b.skipped &&
+    a.indent === b.indent &&
+    a.collapsed === b.collapsed
+  )
+}
+
+function slideIndent(s: PanelSlide): number {
   return s.indent ?? 0
 }
 
@@ -97,7 +119,7 @@ function slideIndent(s: Slide): number {
  * that belongs to its outline subtree (consecutive slides with a deeper
  * indent).
  */
-function subtreeIds(slides: Slide[], fromIndex: number): string[] {
+function subtreeIds(slides: PanelSlide[], fromIndex: number): string[] {
   const root = slides[fromIndex]
   if (root === undefined) return []
   const out: string[] = [root.id]
@@ -159,7 +181,7 @@ interface DragState {
 // ---------------------------------------------------------------------------
 
 interface SlideItemProps {
-  slide: Slide
+  slide: PanelSlide
   index: number
   indent: number
   hasChildren: boolean
@@ -171,7 +193,8 @@ interface SlideItemProps {
   isDragging: boolean
   dropIndicatorAbove: boolean
   dropIndicatorBelow: boolean
-  thumbnailUrl: string | undefined
+  /** The panel's thumbnails: the row reads its own (and re-renders with it only). */
+  thumbnails: ThumbnailStore
   readOnly?: boolean
   onActivate: (id: string, mods?: ActivateModifiers) => void
   onToggleCollapsed: (id: string) => void
@@ -203,7 +226,7 @@ function SlideItemImpl({
   isDragging,
   dropIndicatorAbove,
   dropIndicatorBelow,
-  thumbnailUrl,
+  thumbnails,
   readOnly = false,
   onActivate,
   onToggleCollapsed,
@@ -218,6 +241,7 @@ function SlideItemImpl({
   onConsumeEditRequest,
 }: SlideItemProps) {
   const labelId = `slide-item-label-${slide.id}`
+  const thumbnailUrl = useThumbnailUrl(thumbnails, slide.id)
   const [editing, setEditing] = useState(false)
   const [draftName, setDraftName] = useState(slide.name ?? '')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -486,16 +510,9 @@ function SlideItemImpl({
  * of its own props changes by shallow comparison — all handler props are
  * `useCallback`-stable and the remaining props are primitives.
  *
- * Caveat: the `slide` prop's identity still churns on every SlidesPanel
- * render because `useSlides` rebuilds the array via `listSlides` (a fresh
- * deep-convert). Change 1 (rAF-coalescing subscribeToSlides) cuts how OFTEN
- * that happens — from once per Yjs transaction to once per frame — but the
- * per-render identity churn of `slide` is a separate follow-up (ref-stable
- * SlideSummary projection / structural memo). This memo still pays off: it
- * skips the rows whose `slide` reference is unchanged within a render pass
- * (e.g. parent re-renders driven by selection/drag/thumbnail state that
- * don't touch `useSlides`), and once the identity-stability follow-up lands
- * the memo becomes fully effective.
+ * The `slide` prop is the panel's view of the slide (`PanelSlide`), which
+ * keeps its identity until the slide's name, skipped, indent or collapsed
+ * flag changes — so an edit inside a slide renders no row.
  */
 const SlideItem = memo(SlideItemImpl)
 
@@ -510,7 +527,31 @@ interface SlidesPanelProps {
 }
 
 export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement {
-  const slides = useSlides()
+  // One view object per slide, kept while its fields are the same: the row
+  // memo below compares it by identity.
+  const viewCache = useRef(new Map<string, PanelSlide>())
+  const slides = useSlidesSelector((all) => {
+    const cache = viewCache.current
+    const next = new Map<string, PanelSlide>()
+    const views = all.map((s) => {
+      const prev = cache.get(s.id)
+      if (prev !== undefined && samePanelSlide(prev, s)) {
+        next.set(s.id, prev)
+        return prev
+      }
+      const view: PanelSlide = {
+        id: s.id,
+        ...(s.name !== undefined ? { name: s.name } : {}),
+        ...(s.skipped !== undefined ? { skipped: s.skipped } : {}),
+        ...(s.indent !== undefined ? { indent: s.indent } : {}),
+        ...(s.collapsed !== undefined ? { collapsed: s.collapsed } : {}),
+      }
+      next.set(s.id, view)
+      return view
+    })
+    viewCache.current = next
+    return views
+  }, sameArray)
   const { activeSlideId, setActiveSlideId } = useActiveSlide()
   const command = useCommand()
   const { clear: clearSelection } = useSelection()
@@ -525,7 +566,9 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   const tokensFinal = !roleLoading && (folderId === null || folderTokensSettled)
 
   const allSlideIds = slides.map((s) => s.id)
-  const thumbnailMap = useSlideThumbnails(allSlideIds)
+  const thumbnails = useSlideThumbnailStore(allSlideIds, { liveActiveSlide: true })
+  // The rows on screen are drawn first, the rest of the deck at idle.
+  useVisibleSlideRows(listRef, thumbnails, allSlideIds.join('|'))
 
   // P13: persist the first-slide thumbnail to localStorage so the home
   // page can show a deck preview without re-opening every deck. The
@@ -533,7 +576,8 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   const { id: deckId } = useParams<{ id: string }>()
   const { deckCtx } = useSlideDoc()
   const firstSlideId = allSlideIds[0]
-  const firstSlideThumb = firstSlideId !== undefined ? thumbnailMap.get(firstSlideId) : undefined
+  // An object URL (renderer/thumbnailImages.ts): the same one for the same picture.
+  const firstSlideThumb = useThumbnailUrl(thumbnails, firstSlideId)
   const api = useApi()
   // Trailing-edge debounce of the server-side upload:
   //   - Each new firstSlideThumb stashes itself into pendingRef.
@@ -552,7 +596,12 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   isViewerRef.current = isViewer
   useEffect(() => {
     if (deckId !== undefined && deckId !== '' && firstSlideThumb !== undefined) {
-      setDeckThumbnail(deckId, firstSlideThumb)
+      // Kept across reloads: as a data URL (an object URL dies with the page).
+      thumbnailDataUrl(firstSlideThumb)
+        .then((dataUrl) => setDeckThumbnail(deckId, dataUrl))
+        .catch(() => {
+          /* Replaced (and revoked) before it was read: the next one is stored. */
+        })
     }
     if (
       deckId === undefined ||
@@ -573,11 +622,13 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       if (lastUploadedRef.current === p.thumb) return
       lastUploadedRef.current = p.thumb
       pendingRef.current = null
-      apiRef.current.uploadDeckThumbnail(p.deckId, p.thumb).catch((err: unknown) => {
-        // Non-fatal — drop the marker so a future render can retry.
-        lastUploadedRef.current = null
-        console.warn('[deck-thumb] PUT failed', err)
-      })
+      thumbnailDataUrl(p.thumb)
+        .then((dataUrl) => apiRef.current.uploadDeckThumbnail(p.deckId, dataUrl))
+        .catch((err: unknown) => {
+          // Non-fatal — drop the marker so a future render can retry.
+          lastUploadedRef.current = null
+          console.warn('[deck-thumb] PUT failed', err)
+        })
     }, 1500)
   }, [deckId, firstSlideThumb, tokensFinal])
 
@@ -1020,7 +1071,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       // slide before `insertAt` (a position in the deck BEFORE the move)
       // that is not itself being moved. slide.move applies the same rule.
       const movingSet = new Set(movingIds)
-      let prev: Slide | undefined
+      let prev: PanelSlide | undefined
       for (let i = Math.min(insertAt, slides.length) - 1; i >= 0; i--) {
         const s = slides[i]
         if (s !== undefined && !movingSet.has(s.id)) {
@@ -1465,7 +1516,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
                       isDragging={isDragging}
                       dropIndicatorAbove={dropIndicatorAbove}
                       dropIndicatorBelow={dropIndicatorBelow}
-                      thumbnailUrl={thumbnailMap.get(slide.id)}
+                      thumbnails={thumbnails}
                       readOnly={isViewer}
                       onActivate={handleActivate}
                       onToggleCollapsed={handleToggleCollapsed}

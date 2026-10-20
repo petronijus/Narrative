@@ -17,7 +17,8 @@
  */
 
 import { trackRenderWork } from './renderWork.js'
-import { Assets, Texture, type TextureSourceOptions } from 'pixi.js'
+import { perfCount } from '@narrative/shared'
+import { Assets, Texture, type TextureSource, type TextureSourceOptions } from 'pixi.js'
 
 interface TextureEntry {
   texture: Texture
@@ -62,8 +63,33 @@ export const UNLOAD_GRACE_MS = 5000
  */
 const PROCEDURAL_LRU_CAP = 128
 
+/**
+ * GPU bytes a texture source occupies: 4 bytes a pixel, a third more with
+ * its mipmap chain. An estimate — what a driver allocates is its own — but
+ * the same one for every scene, which is what a budget needs.
+ */
+export function textureSourceBytes(source: TextureSource): number {
+  const px = Math.max(0, source.pixelWidth) * Math.max(0, source.pixelHeight)
+  return Math.round(px * 4 * (source.autoGenerateMipmaps ? 4 / 3 : 1))
+}
+
+/**
+ * How much the slide scenes prepared ahead in present mode
+ * (renderer/presentSlides.ts) may keep on the GPU, counted over the union of
+ * their textures (a photo two slides show counts once). Browsers do not
+ * report GPU memory; 1 GiB holds a 12-slide deck of distinct 2560-px photos
+ * (~23 MB each with mipmaps) several times over and stays well inside what
+ * integrated GPUs of current laptops give a tab. A bigger deck keeps a window
+ * of slides around the presenter's position resident, the next slides first.
+ */
+export const RESIDENT_SCENE_BUDGET_BYTES = 1024 * 1024 * 1024
+
 export class ResourceManager {
   private readonly textures = new Map<string, UrlTextureEntry>()
+
+  /** Texture sources of each resident scene (admitResident), by the scene's key. */
+  private readonly residentScenes = new Map<string, ReadonlySet<TextureSource>>()
+  private residentBudget = RESIDENT_SCENE_BUDGET_BYTES
 
   /**
    * Unloads in progress, by URL. Pixi's `Assets.unload` is asynchronous and
@@ -130,6 +156,7 @@ export class ResourceManager {
     const unloading = this.unloading.get(url)
     if (unloading !== undefined) await unloading
 
+    perfCount('rm.texture.load')
     let texture: Texture | null = null
     try {
       // Pin the loader explicitly: imgproxy URLs end in `@avif` / `@webp`
@@ -216,6 +243,69 @@ export class ResourceManager {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Resident scenes (present mode)
+  // -------------------------------------------------------------------------
+
+  /** Change the resident budget (tests; a machine known to have less or more). */
+  setResidentBudget(bytes: number): void {
+    this.residentBudget = bytes
+  }
+
+  /** The budget `admitResident` keeps the resident scenes within. */
+  get residentBudgetBytes(): number {
+    return this.residentBudget
+  }
+
+  /** GPU bytes of every resident scene's textures, each source counted once. */
+  get residentBytes(): number {
+    return this.unionBytes(this.residentScenes.values())
+  }
+
+  /** How many scenes are resident. */
+  get residentSceneCount(): number {
+    return this.residentScenes.size
+  }
+
+  /**
+   * Let a slide scene built off stage (renderer/presentSlides.ts) keep
+   * `sources` on the GPU. Admitted when the union of every resident scene's
+   * textures with these stays within the budget, or with `force` (the slide
+   * shown and its neighbours are resident whatever the budget says — showing
+   * them is the point); refused otherwise, and the caller destroys the scene.
+   * Admitting a key again replaces its sources.
+   */
+  admitResident(
+    key: string,
+    sources: ReadonlySet<TextureSource>,
+    opts: { force?: boolean } = {},
+  ): boolean {
+    const others = [...this.residentScenes].filter(([k]) => k !== key).map(([, v]) => v)
+    if (opts.force !== true && this.unionBytes([...others, sources]) > this.residentBudget) {
+      perfCount('rm.resident.refused')
+      return false
+    }
+    this.residentScenes.set(key, sources)
+    return true
+  }
+
+  /** The scene `key` is gone (destroyed, or shown and kept by nobody): its sources no longer count. */
+  releaseResident(key: string): void {
+    this.residentScenes.delete(key)
+  }
+
+  private unionBytes(sets: Iterable<ReadonlySet<TextureSource>>): number {
+    const seen = new Set<TextureSource>()
+    let bytes = 0
+    for (const set of sets)
+      for (const source of set) {
+        if (seen.has(source) || source.destroyed) continue
+        seen.add(source)
+        bytes += textureSourceBytes(source)
+      }
+    return bytes
+  }
+
   /**
    * Zničí všechny spravované textury. Volat při unmount aplikace.
    * Po volání destroyAll() není instance použitelná.
@@ -226,6 +316,7 @@ export class ResourceManager {
       this.unload(url, entry)
     }
     this.textures.clear()
+    this.residentScenes.clear()
     for (const [, entry] of this.procedural) {
       entry.texture.destroy(true)
     }
@@ -279,6 +370,7 @@ export class ResourceManager {
   acquireProcedural(key: string, factory: () => Texture): Texture {
     const existing = this.procedural.get(key)
     if (existing !== undefined) {
+      perfCount('procedural.hit')
       existing.refCount += 1
       // LRU bump: re-insert at the end of iteration order.
       this.procedural.delete(key)
@@ -286,6 +378,7 @@ export class ResourceManager {
       return existing.texture
     }
 
+    perfCount('procedural.created')
     const texture = factory()
     this.procedural.set(key, { texture, refCount: 1 })
     this.evictProceduralIfNeeded()

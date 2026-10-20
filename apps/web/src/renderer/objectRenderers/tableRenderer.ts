@@ -31,7 +31,7 @@
  *                  sit above both fills and text)
  */
 
-import { Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
+import { Container, Graphics, HTMLText } from 'pixi.js'
 import * as Y from 'yjs'
 import type { ObjectRenderer } from './index.js'
 import { getEffectiveBorderSegment, isTokenRef } from '@narrative/shared'
@@ -45,7 +45,7 @@ import type {
 } from '@narrative/shared'
 import {
   buildHtml,
-  buildStyleOpts,
+  createHtmlTextStyle,
   applyHorizontalAlign,
   applyVerticalAlign,
   scheduleAsyncTextureCatchup,
@@ -852,7 +852,7 @@ function mountCellNode(
   const syn = syntheticCellTextObject(cellId, cell, style, innerW, innerH)
 
   const html = buildHtml(syn)
-  const htmlText = new HTMLText({ text: '', style: new HTMLTextStyle(buildStyleOpts(syn)) })
+  const htmlText = new HTMLText({ text: '', style: createHtmlTextStyle(syn) })
   // Per-cell uid prefix avoids Pixi's HTMLText global texture cache
   // collision when two cells happen to carry byte-identical content
   // (same comment as in textRenderer.buildHtmlForNode).
@@ -917,7 +917,7 @@ function updateCellNode(
   if (fingerprint === node.fingerprint) return
 
   node.htmlText.text = `<!--n:${node.htmlText.uid}-->${html}`
-  node.htmlText.style = new HTMLTextStyle(buildStyleOpts(syn))
+  node.htmlText.style = createHtmlTextStyle(syn)
   applyHorizontalAlign(node.htmlText, syn)
   applyVerticalAlign(node.htmlText, syn)
   node.htmlText.x += style.padding.left

@@ -30,6 +30,10 @@ services:
       NODE_ENV: production
       # In prod Caddy sends Origin as DOMAIN
       CORS_ORIGIN: https://${DOMAIN}
+      # A new image's preview and display variants are encoded right after
+      # its upload, through the cache's internal address, so its first viewer
+      # does not wait for them (apps/server/src/media/imgproxyWarm.ts).
+      IMGPROXY_WARM_ENDPOINT: http://imgproxy-cache:80
       # Real client IP for the anonymous rate-limit buckets, the per-IP
       # pre-limit and the WebSocket failed-auth throttle. Every request reaches
       # the server from Caddy's container address, so without this all
@@ -146,6 +150,11 @@ services:
     environment:
       RENDER_APP_ORIGIN: https://${DOMAIN:?DOMAIN env var is required}
       RENDER_UPSTREAM: http://caddy
+      # Two jobs at once (one person's slide beside another's export); the
+      # second opens its page only with 450 MB free in this container
+      # (apps/render-worker/src/memory.ts). Stated so a change is a decision.
+      RENDER_CONCURRENCY: '2'
+      RENDER_PAGE_RESERVE_MB: '450'
     mem_limit: 1200m
     # No swap past the limit: the worst case is a failed render, not a VM
     # swapping under the server and Postgres.

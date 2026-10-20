@@ -74,7 +74,7 @@ test('repro user deck slide 2 drag', async ({ page }) => {
     const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))
     return imgs.map((img) => ({
       slideId: img.closest('[data-slide-id]')?.getAttribute('data-slide-id'),
-      length: img.src.length,
+      src: img.src,
     }))
   })
   console.log('thumbs t0:', t0)
@@ -92,7 +92,7 @@ test('repro user deck slide 2 drag', async ({ page }) => {
     const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))
     return imgs.map((img) => ({
       slideId: img.closest('[data-slide-id]')?.getAttribute('data-slide-id'),
-      length: img.src.length,
+      src: img.src,
     }))
   })
   console.log('thumbs t1 (after slide-1 drag):', t1)
@@ -111,7 +111,7 @@ test('repro user deck slide 2 drag', async ({ page }) => {
     const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))
     return imgs.map((img) => ({
       slideId: img.closest('[data-slide-id]')?.getAttribute('data-slide-id'),
-      length: img.src.length,
+      src: img.src,
     }))
   })
   console.log('thumbs BEFORE drag:', thumbsBefore)
@@ -137,7 +137,7 @@ test('repro user deck slide 2 drag', async ({ page }) => {
     const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))
     return imgs.map((img) => ({
       slideId: img.closest('[data-slide-id]')?.getAttribute('data-slide-id'),
-      length: img.src.length,
+      src: img.src,
     }))
   })
   console.log('thumbs after drag:', thumbs)

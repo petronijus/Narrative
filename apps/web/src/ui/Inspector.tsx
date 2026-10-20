@@ -22,9 +22,11 @@
 
 import { effectiveLineHeightMultiple } from '../lib/fontLineMetrics.js'
 import {
+  memo,
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -77,7 +79,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { TokenColorInput } from './TokenColorInput.js'
-import { TableInspector } from './TableInspector.js'
+import { TableInspector } from './lazyEditorParts.js'
 import { AlignButtonGroup } from './AlignButtonGroup.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
 import { FontWeightSelect } from './FontWeightSelect.js'
@@ -98,10 +100,17 @@ import {
 } from './textListOps.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { triggerOptionsFor } from './animationTriggers.js'
-import { useSlideObjects } from '../state/useSlideObjects.js'
+import {
+  useActiveObjectsCtx,
+  useSlideObject,
+  useSlideObjects,
+  useSlideObjectsNow,
+  useSlideObjectsSelector,
+} from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
-import { useSlides } from '../state/useSlides.js'
+import { useSlidesSelector } from '../state/useSlides.js'
+import * as Y from 'yjs'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { useNavigate } from 'react-router-dom'
@@ -163,7 +172,7 @@ import { isTokenRef, resolveTokenValue } from '@narrative/slide-model'
 import type { TokenRef, ColorTokenSnapshot } from '@narrative/slide-model'
 import { useApi } from '../api/client.js'
 import { promoteSelectionToComponent } from '../state/promoteSelectionToComponent.js'
-import { SlideNumberPromptDialog } from './SlideNumberPromptDialog.js'
+import { SlideNumberPromptDialog } from './lazyEditorParts.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -509,7 +518,8 @@ function NameField({
   onCommit,
 }: {
   obj: SlideObject
-  objects: SlideObject[]
+  /** The slide's objects, or a function reading them when a name is committed. */
+  objects: readonly SlideObject[] | (() => readonly SlideObject[])
   disabled: boolean
   onCommit: (next: string | undefined) => void
 }) {
@@ -538,7 +548,8 @@ function NameField({
       onCommit(undefined)
       return
     }
-    const collides = objects.some((o) => o.id !== obj.id && o.name === trimmed)
+    const siblings = typeof objects === 'function' ? objects() : objects
+    const collides = siblings.some((o) => o.id !== obj.id && o.name === trimmed)
     if (collides) {
       setConflict(true)
       // Revert to last good value after a brief flash so the user sees
@@ -604,7 +615,8 @@ export function IdentitySection({
   children,
 }: {
   obj: SlideObject
-  objects: SlideObject[]
+  /** The slide's objects (name uniqueness), or a function reading them on commit. */
+  objects: readonly SlideObject[] | (() => readonly SlideObject[])
   isViewer: boolean
   patch: (p: SlideObjectPatch<SlideObject>) => void
   children?: React.ReactNode
@@ -735,7 +747,11 @@ export function Section({
 
 export function Inspector() {
   const { selectedIds, selectedId } = useSelection()
-  const { objects, objectsCtx: mutationCtx } = useSlideObjects()
+  // The selected object by id (performance.md → E6): the inspector renders
+  // when that object changes, not when another object on the slide does.
+  const selectedObject = useSlideObject(selectedId)
+  const mutationCtx = useActiveObjectsCtx()
+  const objectsNow = useSlideObjectsNow()
   const { animations } = useAnimations()
   const { role, folderId: deckFolderId } = useDeckRole()
   const isViewer = role === 'viewer'
@@ -821,15 +837,61 @@ export function Inspector() {
     setPromptedSlideNumber(false)
   }, [setPromptedSlideNumber])
 
-  // useSlideObjects emits a fresh array reference on every Y.Doc edit
-  // (including each Y.Text keystroke during inline edit). Memoise the
-  // id lookup so the linear scan only runs when objects or selectedId
-  // actually change. Hoisted above the selection-mode early returns so
-  // hook order stays stable.
-  const obj = useMemo(
-    () => (selectedId === null ? undefined : objects.find((o) => o.id === selectedId)),
-    [objects, selectedId],
+  const obj = selectedId === null ? undefined : selectedObject
+  // The writers read the object through a ref, so they keep their identity
+  // while it changes: the sections below are memoised on it (a drag of the
+  // object re-renders its position fields, not its fill and effects).
+  const objRef = useRef(obj)
+  useLayoutEffect(() => {
+    objRef.current = obj
+  })
+
+  // Plain property writes: `object.update`, where a deleted field
+  // (`undefined`) is sent as `null`, the command's "clear".
+  const patch = useCallback(
+    function patch<T extends SlideObject>(p: SlideObjectPatch<T>) {
+      // M10: viewer role — no mutations
+      if (isViewer) return
+      const target = objRef.current
+      if (target === undefined || activeSlideId === null) return
+      command.tryRun('object.update', {
+        slide: activeSlideId,
+        object: target.id,
+        patch: forCommand(p),
+      })
+    },
+    [isViewer, activeSlideId, command],
   )
+
+  // A text box's Typography section: its typography fields go through
+  // `text.setBoxTypography` (inline formatting that would hide them is
+  // removed, a new family keeps a cut it has, a linked text style records
+  // them as overrides); anything else it writes (stroke, the preset link
+  // of a new style) is a plain `object.update`. One change, one undo step.
+  const patchText = useCallback(
+    (p: SlideObjectPatch<TextObject>) => {
+      if (isViewer) return
+      const target = objRef.current
+      if (target === undefined || activeSlideId === null) return
+      const slide = activeSlideId
+      const fields = forCommand(p)
+      const typography: Record<string, unknown> = {}
+      const rest: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries(fields)) {
+        if ((BOX_TYPOGRAPHY_KEYS as readonly string[]).includes(key)) typography[key] = value
+        else rest[key] = value
+      }
+      const id = target.id
+      command.group((run) => {
+        if (Object.keys(typography).length > 0)
+          run('text.setBoxTypography', { slide, objects: [id], style: typography })
+        if (Object.keys(rest).length > 0) run('object.update', { slide, object: id, patch: rest })
+      })
+    },
+    [isViewer, activeSlideId, command],
+  )
+  const objId = obj?.id
+  const layerIds = useMemo(() => (objId === undefined ? [] : [objId]), [objId])
 
   // Multi-select inspector — align / distribute / layer order.
   if (selectedIds.size > 1) {
@@ -846,39 +908,6 @@ export function Inspector() {
         <p className="text-xs text-muted-foreground/50">Object not found</p>
       </div>
     )
-  }
-
-  // Plain property writes: `object.update`, where a deleted field
-  // (`undefined`) is sent as `null`, the command's "clear".
-  function patch<T extends SlideObject>(p: SlideObjectPatch<T>) {
-    // M10: viewer role — no mutations
-    if (isViewer) return
-    if (obj === undefined || activeSlideId === null) return
-    command.tryRun('object.update', { slide: activeSlideId, object: obj.id, patch: forCommand(p) })
-  }
-
-  // A text box's Typography section: its typography fields go through
-  // `text.setBoxTypography` (inline formatting that would hide them is
-  // removed, a new family keeps a cut it has, a linked text style records
-  // them as overrides); anything else it writes (stroke, the preset link
-  // of a new style) is a plain `object.update`. One change, one undo step.
-  function patchText(p: SlideObjectPatch<TextObject>) {
-    if (isViewer) return
-    if (obj === undefined || activeSlideId === null) return
-    const slide = activeSlideId
-    const fields = forCommand(p)
-    const typography: Record<string, unknown> = {}
-    const rest: Record<string, unknown> = {}
-    for (const [key, value] of Object.entries(fields)) {
-      if ((BOX_TYPOGRAPHY_KEYS as readonly string[]).includes(key)) typography[key] = value
-      else rest[key] = value
-    }
-    const target = obj.id
-    command.group((run) => {
-      if (Object.keys(typography).length > 0)
-        run('text.setBoxTypography', { slide, objects: [target], style: typography })
-      if (Object.keys(rest).length > 0) run('object.update', { slide, object: target, patch: rest })
-    })
   }
 
   // M29 Phase 2 — Table object has its own inspector with row/col +
@@ -904,7 +933,7 @@ export function Inspector() {
           so the state is visible without opening this panel. The
           page-number toggle is text-only and passed as children so the
           shared chrome stays type-agnostic. */}
-      <IdentitySection obj={obj} objects={objects} isViewer={isViewer} patch={patch}>
+      <IdentitySectionMemo obj={obj} objects={objectsNow} isViewer={isViewer} patch={patch}>
         {obj.type === 'text' && (
           <div className="flex items-center gap-2">
             <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Field</span>
@@ -967,7 +996,7 @@ export function Inspector() {
             </button>
           </div>
         )}
-      </IdentitySection>
+      </IdentitySectionMemo>
       <SlideNumberPromptDialog
         open={slideNumberPromptOpen}
         textStyleAvailable={pageNumberStyleAvailable}
@@ -1012,7 +1041,7 @@ export function Inspector() {
         obj.type === 'triangle' ||
         obj.type === 'polygon' ||
         obj.type === 'path') && (
-        <AppearanceSection
+        <AppearanceSectionMemo
           obj={obj}
           patch={
             patch as (
@@ -1027,19 +1056,19 @@ export function Inspector() {
       {/* P5b: Line / Arrow stroke controls. Path uses the full Appearance
           section above (fill + stroke + transparency, no corner radius). */}
       {(obj.type === 'line' || obj.type === 'arrow') && (
-        <LineStrokeSection
+        <LineStrokeSectionMemo
           obj={obj}
           patch={patch as (p: SlideObjectPatch<LineObject | ArrowObject>) => void}
         />
       )}
 
       {/* Text properties */}
-      {obj.type === 'text' && <TypographySection obj={obj} patch={patchText} />}
+      {obj.type === 'text' && <TypographySectionMemo obj={obj} patch={patchText} />}
 
       {/* P8: Video properties — autoplay/loop/muted, volume, fit,
           poster frame override, aspect ratio lock, trim. */}
       {obj.type === 'video' && (
-        <VideoSection obj={obj} patch={patch as (p: SlideObjectPatch<VideoObject>) => void} />
+        <VideoSectionMemo obj={obj} patch={patch as (p: SlideObjectPatch<VideoObject>) => void} />
       )}
 
       {/* P11: Image crop — minimal viable UI (4 number fields + reset).
@@ -1048,7 +1077,7 @@ export function Inspector() {
 
       {/* P5c: Shadow + Blur + Link — every object type. Link was its
           own section pre-redesign; merged into Effects for compactness. */}
-      <EffectsSection obj={obj} patch={patch as (p: SlideObjectPatch<SlideObject>) => void} />
+      <EffectsSectionMemo obj={obj} patch={patch as (p: SlideObjectPatch<SlideObject>) => void} />
 
       {/* P6: Layer order is now embedded at the top of PositionSection
           (see above) for the single-object inspector. The standalone
@@ -1056,7 +1085,7 @@ export function Inspector() {
 
       {/* Animations */}
       {activeSlideId !== null && (
-        <AnimationsSection
+        <AnimationsSectionMemo
           objectId={obj.id}
           animations={animations}
           slideId={activeSlideId}
@@ -1067,10 +1096,58 @@ export function Inspector() {
       {/* P6: Layers panel — full ordered list of slide objects with
           drag-drop reorder. Shown at the bottom so it scrolls
           independently of the focused object's properties. */}
-      {mutationCtx !== null && <LayersPanel activeIds={[obj.id]} readOnly={isViewer} />}
+      {mutationCtx !== null && <LayersPanelMemo activeIds={layerIds} readOnly={isViewer} />}
     </div>
   )
 }
+
+// ---------------------------------------------------------------------------
+// Memoised sections of the single-object inspector (performance.md → E6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Two snapshots of an object that differ at most in where it sits (`x`, `y`).
+ * An object holding a Yjs type (a text's Y.Text, a table's cells) is never
+ * "the same" once its snapshot changed: the deck store rebuilds a snapshot
+ * when anything under the object changed, and a change inside the Y.Text —
+ * a format, a typed word — leaves every field identical by reference.
+ */
+function sameObjectButPosition(a: SlideObject, b: SlideObject): boolean {
+  if (a === b) return true
+  const ra = a as unknown as Record<string, unknown>
+  const rb = b as unknown as Record<string, unknown>
+  const keys = Object.keys(ra)
+  if (keys.length !== Object.keys(rb).length) return false
+  for (const k of keys) {
+    const v = ra[k]
+    if (v instanceof Y.AbstractType) return false
+    if (k === 'x' || k === 'y') continue
+    if (!Object.prototype.hasOwnProperty.call(rb, k) || v !== rb[k]) return false
+  }
+  return true
+}
+
+/**
+ * Props equal but for the object's position: these sections show nothing of
+ * `x` / `y` (PositionSection does, and is not memoised; ImageCropSection reads
+ * the absolute `imageRect`, which moves with the image, and is not either).
+ * Every other prop compares by identity — the writers are stable callbacks.
+ */
+function samePropsButPosition<P extends { obj: SlideObject }>(a: P, b: P): boolean {
+  const ka = Object.keys(a) as Array<keyof P>
+  if (ka.length !== Object.keys(b).length) return false
+  for (const k of ka) if (k !== 'obj' && a[k] !== b[k]) return false
+  return sameObjectButPosition(a.obj, b.obj)
+}
+
+const IdentitySectionMemo = memo(IdentitySection, samePropsButPosition)
+const AppearanceSectionMemo = memo(AppearanceSection, samePropsButPosition)
+const LineStrokeSectionMemo = memo(LineStrokeSection, samePropsButPosition)
+const TypographySectionMemo = memo(TypographySection, samePropsButPosition)
+const VideoSectionMemo = memo(VideoSection, samePropsButPosition)
+const EffectsSectionMemo = memo(EffectsSection, samePropsButPosition)
+const AnimationsSectionMemo = memo(AnimationsSection)
+const LayersPanelMemo = memo(LayersPanel)
 
 // ---------------------------------------------------------------------------
 // SlideInspector — shown when no object is selected (M9)
@@ -1444,8 +1521,154 @@ function layerLabel(obj: SlideObject): string {
   return `${obj.type}-${obj.id.slice(0, 4)}`
 }
 
+/** One row of the layers panel: what it shows of its object. */
+interface LayerRowData {
+  id: string
+  label: string
+  locked: boolean
+  groupId: string
+}
+
+/**
+ * The rows of the layers panel. Layer panel convention matches Figma /
+ * Illustrator: front of the canvas (last in Y.Array) is rendered at the TOP.
+ */
+function layerRowsOf(objects: SlideObject[]): LayerRowData[] {
+  const rows: LayerRowData[] = []
+  for (let i = objects.length - 1; i >= 0; i--) {
+    const o = objects[i]!
+    rows.push({
+      id: o.id,
+      label: layerLabel(o),
+      locked: o.locked === true,
+      groupId: o.groupId ?? '',
+    })
+  }
+  return rows
+}
+
+function sameLayerRows(a: LayerRowData[], b: LayerRowData[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]!
+    const y = b[i]!
+    if (x.id !== y.id || x.label !== y.label || x.locked !== y.locked || x.groupId !== y.groupId)
+      return false
+  }
+  return true
+}
+
+/**
+ * What a layer row calls back. One stable object for the panel's lifetime, so a
+ * row's props change only when what it shows changes: dragging one object
+ * re-renders no row (a pointer move used to render all of them, ~450 elements
+ * at 224 objects, several times per move).
+ */
+interface LayerRowHandlers {
+  onDragStart: (id: string, e: React.DragEvent) => void
+  onDragOver: (id: string, e: React.DragEvent) => void
+  onDrop: (id: string, e: React.DragEvent) => void
+  onClick: (id: string, e: React.MouseEvent) => void
+  onDelete: (id: string) => void
+}
+
+interface LayerRowProps {
+  id: string
+  label: string
+  locked: boolean
+  /** The object's group id, '' when it is in none. */
+  groupId: string
+  active: boolean
+  readOnly: boolean
+  dragging: boolean
+  /** Where the drop indicator sits on this row, null for none. */
+  dropPosition: 'before' | 'after' | null
+  handlers: LayerRowHandlers
+}
+
+// Primitive props only, so React.memo's shallow compare is the whole check.
+const LayerRow = memo(function LayerRow({
+  id,
+  label,
+  locked,
+  groupId,
+  active,
+  readOnly,
+  dragging,
+  dropPosition,
+  handlers,
+}: LayerRowProps) {
+  return (
+    <li
+      draggable={!readOnly}
+      onDragStart={(e) => handlers.onDragStart(id, e)}
+      onDragOver={(e) => handlers.onDragOver(id, e)}
+      onDrop={(e) => handlers.onDrop(id, e)}
+      onClick={(e) => handlers.onClick(id, e)}
+      className={[
+        'group relative flex items-center gap-1.5 rounded-md border border-transparent px-1.5 py-1 text-[11px]',
+        'cursor-pointer select-none',
+        // Match the inspector toggle style: tinted blue fill +
+        // primary text/icon, no border accent. Keeps the row
+        // chrome identical between active and idle so only the
+        // colour change distinguishes selection.
+        active ? 'bg-primary/15 text-primary' : 'text-foreground hover:bg-accent/40',
+        dragging ? 'opacity-40' : '',
+        readOnly ? 'cursor-default' : '',
+      ].join(' ')}
+    >
+      {dropPosition === 'before' && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-0.5 left-0 right-0 h-0.5 rounded-full bg-primary"
+        />
+      )}
+      {dropPosition === 'after' && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute -bottom-0.5 left-0 right-0 h-0.5 rounded-full bg-primary"
+        />
+      )}
+      <span className="w-3 text-[9px] text-muted-foreground/60">⋮⋮</span>
+      <span className="flex-1 truncate">{label}</span>
+      {locked && (
+        <span className="text-muted-foreground/60" aria-hidden="true">
+          <Lock className="h-3 w-3" />
+        </span>
+      )}
+      {groupId !== '' && (
+        <span
+          className="rounded-md bg-muted px-1 text-[9px] text-muted-foreground"
+          title={`Group ${groupId.slice(0, 4)}`}
+        >
+          ∘
+        </span>
+      )}
+      {!readOnly && !locked && (
+        <button
+          type="button"
+          aria-label="Delete layer"
+          title="Delete layer"
+          onClick={(e) => {
+            e.stopPropagation()
+            handlers.onDelete(id)
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          draggable={false}
+          className="ml-0.5 rounded-md p-0.5 text-muted-foreground/60 opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus:opacity-100 focus:outline-none"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </li>
+  )
+})
+
 export function LayersPanel({ activeIds, readOnly }: { activeIds: string[]; readOnly: boolean }) {
-  const { objects } = useSlideObjects()
+  // What the rows show, selected from the slide's objects: moving an object
+  // (or typing into one) changes none of it, so the panel does not render.
+  const rows = useSlideObjectsSelector(layerRowsOf, sameLayerRows)
   const { activeSlideId } = useActiveSlide()
   const command = useCommand()
   const { selectOne, selectMany, clear } = useSelection()
@@ -1454,174 +1677,157 @@ export function LayersPanel({ activeIds, readOnly }: { activeIds: string[]; read
     null,
   )
 
-  // Layer panel convention matches Figma / Illustrator: front of the
-  // canvas (last in Y.Array) is rendered at the TOP of the list.
-  // Memoise — `objects` is a fresh array on every Y.Doc edit, so without
-  // this we paid for a copy + reverse on every keystroke during inline
-  // text edit.
-  const rows = useMemo(() => [...objects].reverse(), [objects])
   const activeSet = useMemo(() => new Set(activeIds), [activeIds])
 
-  const onDragStart = (id: string) => (e: React.DragEvent) => {
-    if (readOnly) return
-    setDraggingId(id)
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', id)
+  // What the row callbacks read, kept current by assignment: the callbacks
+  // themselves are created once (below), so the rows never see them change.
+  const live = useRef({
+    readOnly,
+    draggingId,
+    dropTarget,
+    rows,
+    objectCount: rows.length,
+    activeIds,
+    activeSet,
+    activeSlideId,
+    command,
+    selectOne,
+    selectMany,
+    clear,
+  })
+  live.current = {
+    readOnly,
+    draggingId,
+    dropTarget,
+    rows,
+    objectCount: rows.length,
+    activeIds,
+    activeSet,
+    activeSlideId,
+    command,
+    selectOne,
+    selectMany,
+    clear,
   }
-  const onDragOver = (id: string) => (e: React.DragEvent) => {
-    if (readOnly || draggingId === null) return
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-    // Top half of the row → "drop above this row"; bottom half → "drop
-    // below". The previous version always showed the indicator at the
-    // top edge of the hovered row, which lied to the user when they
-    // tried to drop after the last row: the cue said "above" but the
-    // mutation actually placed the item at the back. Splitting the row
-    // in half fixes both ends and gives a real "drop at the bottom"
-    // affordance.
-    const rect = e.currentTarget.getBoundingClientRect()
-    const midY = rect.top + rect.height / 2
-    const position: 'before' | 'after' = e.clientY < midY ? 'before' : 'after'
-    setDropTarget((prev) =>
-      prev !== null && prev.id === id && prev.position === position ? prev : { id, position },
-    )
-  }
-  const onDragEnd = () => {
+
+  const onDragEnd = useCallback(() => {
     setDraggingId(null)
     setDropTarget(null)
-  }
-  const onDrop = (targetId: string) => (e: React.DragEvent) => {
-    e.preventDefault()
-    if (readOnly || draggingId === null) {
-      onDragEnd()
-      return
-    }
-    if (draggingId === targetId) {
-      onDragEnd()
-      return
-    }
-    const visualTargetIdx = rows.findIndex((o) => o.id === targetId)
-    if (visualTargetIdx === -1) {
-      onDragEnd()
-      return
-    }
-    // rows is reversed: visual 0 = front = last in Y.Array.
-    // 'before' = above target visually = same Y.Array slot the target
-    // currently holds (target shifts down one).
-    // 'after'  = below target visually = one slot lower in Y.Array,
-    //            which clamps to 0 when dropping after the last row
-    //            so "drag to the bottom of the panel" sends the item
-    //            all the way to the back.
-    const position = dropTarget?.id === targetId ? dropTarget.position : 'before'
-    const yIndex =
-      position === 'before'
-        ? objects.length - 1 - visualTargetIdx
-        : objects.length - 2 - visualTargetIdx
-    if (activeSlideId !== null) {
-      command.tryRun('object.layer', {
-        slide: activeSlideId,
-        objects: [draggingId],
-        move: 'toIndex',
-        toIndex: Math.max(0, yIndex),
-      })
-    }
-    onDragEnd()
-  }
+  }, [])
 
-  const onRowClick = (id: string) => (e: React.MouseEvent) => {
-    if (e.shiftKey) {
-      const next = new Set(activeIds)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      selectMany([...next])
-    } else {
-      selectOne(id)
-    }
-  }
+  const handlers = useMemo<LayerRowHandlers>(
+    () => ({
+      onDragStart: (id, e) => {
+        if (live.current.readOnly) return
+        setDraggingId(id)
+        e.dataTransfer.effectAllowed = 'move'
+        e.dataTransfer.setData('text/plain', id)
+      },
+      onDragOver: (id, e) => {
+        if (live.current.readOnly || live.current.draggingId === null) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        // Top half of the row → "drop above this row"; bottom half → "drop
+        // below". The previous version always showed the indicator at the
+        // top edge of the hovered row, which lied to the user when they
+        // tried to drop after the last row: the cue said "above" but the
+        // mutation actually placed the item at the back. Splitting the row
+        // in half fixes both ends and gives a real "drop at the bottom"
+        // affordance.
+        const rect = e.currentTarget.getBoundingClientRect()
+        const midY = rect.top + rect.height / 2
+        const position: 'before' | 'after' = e.clientY < midY ? 'before' : 'after'
+        setDropTarget((prev) =>
+          prev !== null && prev.id === id && prev.position === position ? prev : { id, position },
+        )
+      },
+      onDrop: (targetId, e) => {
+        e.preventDefault()
+        const { readOnly, draggingId, dropTarget, rows, objectCount, activeSlideId, command } =
+          live.current
+        if (readOnly || draggingId === null) {
+          onDragEnd()
+          return
+        }
+        if (draggingId === targetId) {
+          onDragEnd()
+          return
+        }
+        const visualTargetIdx = rows.findIndex((o) => o.id === targetId)
+        if (visualTargetIdx === -1) {
+          onDragEnd()
+          return
+        }
+        // rows is reversed: visual 0 = front = last in Y.Array.
+        // 'before' = above target visually = same Y.Array slot the target
+        // currently holds (target shifts down one).
+        // 'after'  = below target visually = one slot lower in Y.Array,
+        //            which clamps to 0 when dropping after the last row
+        //            so "drag to the bottom of the panel" sends the item
+        //            all the way to the back.
+        const position = dropTarget?.id === targetId ? dropTarget.position : 'before'
+        const yIndex =
+          position === 'before'
+            ? objectCount - 1 - visualTargetIdx
+            : objectCount - 2 - visualTargetIdx
+        if (activeSlideId !== null) {
+          command.tryRun('object.layer', {
+            slide: activeSlideId,
+            objects: [draggingId],
+            move: 'toIndex',
+            toIndex: Math.max(0, yIndex),
+          })
+        }
+        onDragEnd()
+      },
+      onClick: (id, e) => {
+        const { activeIds, selectMany, selectOne } = live.current
+        if (e.shiftKey) {
+          const next = new Set(activeIds)
+          if (next.has(id)) next.delete(id)
+          else next.add(id)
+          selectMany([...next])
+        } else {
+          selectOne(id)
+        }
+      },
+      onDelete: (id) => {
+        const { activeSlideId, activeSet, clear, command } = live.current
+        if (activeSlideId === null) return
+        if (activeSet.has(id)) clear()
+        command.tryRun('object.delete', { slide: activeSlideId, objects: [id] })
+      },
+    }),
+    [onDragEnd],
+  )
 
   return (
-    <Section title={`Layers (${objects.length})`} storageKey="layers-panel">
+    <Section title={`Layers (${rows.length})`} storageKey="layers-panel">
       {rows.length === 0 && (
         <p className="text-[10px] text-muted-foreground/70">No objects on this slide yet.</p>
       )}
       <ul className="flex flex-col gap-0.5" onDragEnd={onDragEnd}>
-        {rows.map((o) => {
-          const active = activeSet.has(o.id)
-          const isDragging = draggingId === o.id
-          const dropOnThis =
-            dropTarget !== null &&
-            dropTarget.id === o.id &&
-            draggingId !== null &&
-            draggingId !== o.id
-          return (
-            <li
-              key={o.id}
-              draggable={!readOnly}
-              onDragStart={onDragStart(o.id)}
-              onDragOver={onDragOver(o.id)}
-              onDrop={onDrop(o.id)}
-              onClick={onRowClick(o.id)}
-              className={[
-                'group relative flex items-center gap-1.5 rounded-md border border-transparent px-1.5 py-1 text-[11px]',
-                'cursor-pointer select-none',
-                // Match the inspector toggle style: tinted blue fill +
-                // primary text/icon, no border accent. Keeps the row
-                // chrome identical between active and idle so only the
-                // colour change distinguishes selection.
-                active ? 'bg-primary/15 text-primary' : 'text-foreground hover:bg-accent/40',
-                isDragging ? 'opacity-40' : '',
-                readOnly ? 'cursor-default' : '',
-              ].join(' ')}
-            >
-              {dropOnThis && dropTarget!.position === 'before' && (
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute -top-0.5 left-0 right-0 h-0.5 rounded-full bg-primary"
-                />
-              )}
-              {dropOnThis && dropTarget!.position === 'after' && (
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute -bottom-0.5 left-0 right-0 h-0.5 rounded-full bg-primary"
-                />
-              )}
-              <span className="w-3 text-[9px] text-muted-foreground/60">⋮⋮</span>
-              <span className="flex-1 truncate">{layerLabel(o)}</span>
-              {o.locked === true && (
-                <span className="text-muted-foreground/60" aria-hidden="true">
-                  <Lock className="h-3 w-3" />
-                </span>
-              )}
-              {o.groupId !== undefined && o.groupId !== '' && (
-                <span
-                  className="rounded-md bg-muted px-1 text-[9px] text-muted-foreground"
-                  title={`Group ${o.groupId.slice(0, 4)}`}
-                >
-                  ∘
-                </span>
-              )}
-              {!readOnly && o.locked !== true && (
-                <button
-                  type="button"
-                  aria-label="Delete layer"
-                  title="Delete layer"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (activeSlideId === null) return
-                    if (activeSet.has(o.id)) clear()
-                    command.tryRun('object.delete', { slide: activeSlideId, objects: [o.id] })
-                  }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  draggable={false}
-                  className="ml-0.5 rounded-md p-0.5 text-muted-foreground/60 opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus:opacity-100 focus:outline-none"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </li>
-          )
-        })}
+        {rows.map((o) => (
+          <LayerRow
+            key={o.id}
+            id={o.id}
+            label={o.label}
+            locked={o.locked}
+            groupId={o.groupId}
+            active={activeSet.has(o.id)}
+            readOnly={readOnly}
+            dragging={draggingId === o.id}
+            dropPosition={
+              dropTarget !== null &&
+              dropTarget.id === o.id &&
+              draggingId !== null &&
+              draggingId !== o.id
+                ? dropTarget.position
+                : null
+            }
+            handlers={handlers}
+          />
+        ))}
       </ul>
     </Section>
   )
@@ -1646,11 +1852,13 @@ function SlideInspector() {
   const { activeSlideId } = useActiveSlide()
   const { role } = useDeckRole()
   const command = useCommand()
-  const slides = useSlides()
-
-  const slideIndex = slides.findIndex((s) => s.id === activeSlideId)
-  const slide = slideIndex === -1 ? undefined : slides[slideIndex]
-  const prevSlide = slideIndex > 0 ? slides[slideIndex - 1] : undefined
+  // The active slide and the one before it, selected: an edit on any other
+  // slide does not re-render this panel.
+  const slide = useSlidesSelector((slides) => slides.find((s) => s.id === activeSlideId))
+  const prevSlide = useSlidesSelector((slides) => {
+    const i = slides.findIndex((s) => s.id === activeSlideId)
+    return i > 0 ? slides[i - 1] : undefined
+  })
 
   // Magic Move morphs objects that share ids across the previous slide and
   // the active slide. Preview the count here so the user knows whether the
@@ -5700,21 +5908,24 @@ interface LinkSectionProps {
   patch: (p: SlideObjectPatch<SlideObject>) => void
 }
 
+function sameSlideOptions(
+  a: ReadonlyArray<{ id: string; label: string }>,
+  b: ReadonlyArray<{ id: string; label: string }>,
+): boolean {
+  return a.length === b.length && a.every((o, i) => o.id === b[i]!.id && o.label === b[i]!.label)
+}
+
 function LinkControls({ obj, patch }: LinkSectionProps) {
-  const slides = useSlides()
-  // Only id+name go into the slide dropdown; memoize so unrelated slide
-  // changes (object edits, transition tweaks) don't churn the <option> list.
-  // Keyed on a tiny fingerprint string instead of the slides reference,
-  // because useSlides() returns a fresh array on every observeDeep event.
-  const slideOptionsFingerprint = slides.map((s) => `${s.id}|${s.name ?? ''}`).join('\n')
-  const slideOptions = useMemo(
-    () =>
+  // Only id+name go into the slide dropdown: selected as such, so slide
+  // changes that touch neither (object edits, transition tweaks) render
+  // nothing here.
+  const slideOptions = useSlidesSelector(
+    (slides) =>
       slides.map((s, i) => ({
         id: s.id,
-        label: s.name && s.name.length > 0 ? s.name : `Slide ${i + 1}`,
+        label: s.name !== undefined && s.name.length > 0 ? s.name : `Slide ${i + 1}`,
       })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [slideOptionsFingerprint],
+    sameSlideOptions,
   )
   const containerRef = useRef<HTMLDivElement>(null)
   const typeSelectRef = useRef<HTMLSelectElement>(null)
@@ -5743,7 +5954,7 @@ function LinkControls({ obj, patch }: LinkSectionProps) {
       return
     }
     if (next === 'slide') {
-      const firstOther = slides.find((s) => s.id !== undefined)?.id ?? ''
+      const firstOther = slideOptions[0]?.id ?? ''
       const nextLink: ObjectHyperlink = { kind: 'slide', slideId: firstOther }
       patch({ hyperlink: nextLink } as SlideObjectPatch<SlideObject>)
       return

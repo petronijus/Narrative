@@ -17,7 +17,7 @@ import { useEffect } from 'react'
 import { Bot } from 'lucide-react'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { ObjectBounds } from '../renderer/types.js'
-import { useSlideObjects } from '../state/useSlideObjects.js'
+import { useActiveSlideObjectsById } from '../state/useDeckStore.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import { Button } from '@/components/ui/button'
 import { SHOW_HIGHLIGHT_MS, type PendingShow, type ShowHighlight } from './useEditorShow.js'
@@ -47,13 +47,15 @@ interface EditorShowHighlightProps {
   onDone: (token: number) => void
 }
 
+const NO_IDS: string[] = []
+
 export function EditorShowHighlight({ highlight, onDone }: EditorShowHighlightProps) {
   const canvasInstance = useCanvasInstance()
   const { zoom } = useZoomLevel()
-  // Re-render as objects change, so the outline tracks an object that moves
-  // while it is up — bounds come from the scene graph (a growing text box
-  // also changes them without a document change) …
-  useSlideObjects()
+  // Re-render as the highlighted objects change, so the outline tracks an
+  // object that moves while it is up — bounds come from the scene graph (a
+  // growing text box also changes them without a document change) …
+  useActiveSlideObjectsById(highlight?.objectIds ?? NO_IDS)
   useTextLayoutTick(canvasInstance?.sceneGraph ?? null)
   // … and once the reconciler has mounted the objects of a slide we just
   // switched to (it lags the switch; on a loading tab, by seconds).

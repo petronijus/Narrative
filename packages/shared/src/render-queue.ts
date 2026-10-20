@@ -88,9 +88,20 @@ interface RenderJobBase {
 /** PNGs of slides at their own size (1920×1080), one upload each: the PNG export. */
 export interface RenderExportJob extends RenderJobBase {
   kind: 'export'
-  /** The slides to render, in the order the result lists them, each with where its PNG goes. */
+  /** The slides to render, in the order the result lists them, each with where its picture goes. */
   uploads: RenderUpload[]
+  /**
+   * How each slide is encoded in the page: `png` (absent: the PNG export,
+   * lossless) or `jpeg` — a PDF's pages, flattened on white at
+   * `RENDER_JPEG_QUALITY`, which the server embeds as they are instead of
+   * decoding a PNG and encoding it again. A page older than this field
+   * answers PNG whatever it is asked; the server checks what it got.
+   */
+  format?: 'png' | 'jpeg'
 }
+
+/** The JPEG quality of a PDF page encoded in the render page (0–1, the canvas API's scale). */
+export const RENDER_JPEG_QUALITY = 0.85
 
 /**
  * A look's size limits — what a model reads of an image without scaling it

@@ -13,7 +13,7 @@
 
 import { BlurFilter, type Container, type Filter } from 'pixi.js'
 import { DropShadowFilter } from 'pixi-filters'
-import type { ShadowStyle } from '@narrative/shared'
+import { perfCount, type ShadowStyle } from '@narrative/shared'
 import { resolveColour } from './colourResolver.js'
 import { markRenderDirty } from './RenderScheduler.js'
 
@@ -59,6 +59,7 @@ function rebuildFilterList(container: Container): void {
   const list: Filter[] = []
   if (slots.shadow !== undefined) list.push(slots.shadow)
   if (slots.blur !== undefined) list.push(slots.blur)
+  perfCount('filters.applied', list.length)
   container.filters = list.length > 0 ? list : null
 }
 

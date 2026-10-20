@@ -7,6 +7,7 @@
  */
 
 import type { SlideObject, SlideObjectType } from '@narrative/shared'
+import { BUILTIN_OBJECT_TYPES } from './builtinObjectTypes.js'
 
 export interface ObjectTypeDef<T extends SlideObject = SlideObject> {
   type: T['type']
@@ -18,7 +19,11 @@ export interface ObjectTypeDef<T extends SlideObject = SlideObject> {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- registr pojme různé generické varianty
-const types = new Map<SlideObjectType, ObjectTypeDef<any>>()
+const types = new Map<SlideObjectType, ObjectTypeDef<any>>(
+  // The built-in types are here from the start (builtinObjectTypes.ts): no
+  // import has to run for its side effect before createObjectOfType works.
+  BUILTIN_OBJECT_TYPES.map((d) => [d.type, d]),
+)
 
 /**
  * Zaregistruje nový object type. Volej před použitím createObjectOfType().

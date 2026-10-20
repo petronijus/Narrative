@@ -5,6 +5,7 @@
  *
  * Endpoints:
  *   GET    /decks      → list all decks accessible to the authenticated user
+ *                         (`?limit=&cursor=` pages it, see the handler)
  *   POST   /decks      → create a new deck; ownerUserId = JWT sub claim
  *   DELETE /decks/:id  → delete deck (owner only)
  *   GET    /decks/:id  → get single deck (supports ?share_token=... for unauthenticated access)
@@ -30,6 +31,7 @@
  */
 
 import type { FastifyInstance } from 'fastify'
+import type { ListKeyset } from '@narrative/commands'
 import type { Database } from '../db/client.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
 import { lookupSession, SESSION_COOKIE_NAME } from '../auth/session.js'
@@ -64,6 +66,47 @@ interface CreateDeckBody {
  */
 const MAX_THUMBNAIL_BYTES = 6 * 1024 * 1024
 
+/**
+ * GET /decks's paging cursor: base64url of `{ v: 1, key, id, folderId }` —
+ * the service's keyset and the folder filter it was issued for. Not a
+ * secret and not signed: it names a position in a list the caller can
+ * already read, and the service validates the key and scopes the query to
+ * the caller.
+ */
+const DECK_LIST_CURSOR_VERSION = 1
+const MAX_DECK_LIST_CURSOR_CHARS = 512
+
+export function encodeDeckListCursor(keyset: ListKeyset, folderId: string | null): string {
+  return Buffer.from(
+    JSON.stringify({ v: DECK_LIST_CURSOR_VERSION, key: keyset.key, id: keyset.id, folderId }),
+    'utf8',
+  ).toString('base64url')
+}
+
+/** The keyset of a cursor issued for this `folderId`; null when it is not one. */
+export function decodeDeckListCursor(cursor: string, folderId: string | null): ListKeyset | null {
+  if (cursor.length === 0 || cursor.length > MAX_DECK_LIST_CURSOR_CHARS) return null
+  if (!/^[A-Za-z0-9_-]+$/.test(cursor)) return null
+  let payload: unknown
+  try {
+    payload = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))
+  } catch {
+    return null
+  }
+  if (typeof payload !== 'object' || payload === null) return null
+  const p = payload as Record<string, unknown>
+  if (
+    p['v'] !== DECK_LIST_CURSOR_VERSION ||
+    typeof p['key'] !== 'string' ||
+    typeof p['id'] !== 'string' ||
+    p['key'] === '' ||
+    p['id'] === '' ||
+    (p['folderId'] ?? null) !== folderId
+  )
+    return null
+  return { key: p['key'], id: p['id'] }
+}
+
 export async function registerDeckRoutes(app: FastifyInstance, db: Database): Promise<void> {
   // ---------------------------------------------------------------------------
   // GET /decks — list decks accessible to the authenticated user
@@ -71,15 +114,43 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
   // Optional query param: ?folderId=<id>
   //   When provided, returns only decks in that folder. The caller must be a
   //   member of the folder; filtering by a folder they are not in returns 403.
+  //
+  // Optional paging (opt-in; without `limit` the whole list, as before):
+  //   ?limit=<1..200>[&cursor=<nextCursor>]
+  //   → { decks: [...], nextCursor: string | null } — the same records in the
+  //   same order as the whole list (oldest first), so the pages put together
+  //   are the list. A cursor is bound to the `folderId` it was issued with.
   // ---------------------------------------------------------------------------
   app.get('/decks', { preHandler: authPreHandler }, async (request, reply) => {
-    const query = request.query as Record<string, string>
+    const query = request.query as Record<string, string | undefined>
+    const folderId = query['folderId']
+    const service = createDecksService(routeDeps(app, db, request.log))
     try {
-      const list = await createDecksService(routeDeps(app, db, request.log)).list({
+      if (query['limit'] === undefined) {
+        if (query['cursor'] !== undefined)
+          return reply.code(400).send({ error: 'cursor needs limit' })
+        return reply.send(await service.list({ userId: request.user!.sub, folderId }))
+      }
+      const limit = /^\d{1,4}$/.test(query['limit']) ? Number(query['limit']) : Number.NaN
+      const after =
+        query['cursor'] === undefined
+          ? undefined
+          : decodeDeckListCursor(query['cursor'], folderId ?? null)
+      if (after === null) {
+        return reply.code(400).send({
+          error: 'cursor: not one this list returned for these filters — pass nextCursor unchanged',
+        })
+      }
+      const page = await service.listRecordsPage({
         userId: request.user!.sub,
-        folderId: query['folderId'],
+        folderId,
+        limit,
+        after,
       })
-      return reply.send(list)
+      return reply.send({
+        decks: page.decks,
+        nextCursor: page.next === null ? null : encodeDeckListCursor(page.next, folderId ?? null),
+      })
     } catch (err) {
       return sendServiceError(reply, err)
     }

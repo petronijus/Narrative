@@ -9,6 +9,7 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { perfAvailable } from '../perf/activation.js'
 
 export interface SelectionContextValue {
   selectedIds: ReadonlySet<string>
@@ -46,8 +47,10 @@ export function SelectionProvider({ children }: { children: React.ReactNode }) {
 
   // P6 E2E: write the current selection to a global snapshot so Playwright
   // specs can observe selection changes without walking React internals.
+  // Dev builds, and any build with `?perf=1` (the perf scenarios select
+  // through it: selection is editor state, not a document write).
   useEffect(() => {
-    if (!import.meta.env.DEV) return
+    if (!perfAvailable()) return
     ;(
       window as unknown as {
         __narrative_selection_snapshot?: { selectedIds: string[] }
@@ -58,7 +61,7 @@ export function SelectionProvider({ children }: { children: React.ReactNode }) {
   // P6 E2E: listen for a window event that lets specs programmatically
   // set the selection without having to hit-test via the canvas.
   useEffect(() => {
-    if (!import.meta.env.DEV) return
+    if (!perfAvailable()) return
     const handler = (e: Event): void => {
       const detail = (e as CustomEvent<{ ids: string[] }>).detail
       if (detail?.ids === undefined) return

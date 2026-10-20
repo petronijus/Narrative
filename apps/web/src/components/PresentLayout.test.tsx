@@ -10,7 +10,6 @@
  * - Arrow Left at first slide is no-op
  * - Counter shows correct "X / N"
  * - Fullscreen API integration
- * - Animation runtime lifecycle
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -28,7 +27,7 @@ import { ActiveSlideContext } from '../state/ActiveSlideContext'
 import type { ActiveSlideContextValue } from '../state/ActiveSlideContext'
 import * as Y from 'yjs'
 import type { SlideMutationContext } from '@narrative/slide-model'
-import type { AnimationStep, Slide } from '@narrative/shared'
+import type { Slide } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -68,16 +67,6 @@ vi.mock('../state/useSlideObjectChanges', () => ({
   useSlideObjectChanges: () => undefined,
 }))
 
-// M12: PresentLayout now uses useMediaPreload which calls useAuth + useApi.
-// Mock the preload hook to bypass those dependencies in layout tests.
-vi.mock('../state/useMediaPreload', () => ({
-  useMediaPreload: () => ({
-    start: vi.fn().mockResolvedValue(undefined),
-    progress: { total: 0, completed: 0, errored: 0, isDone: true },
-    isPreloading: false,
-  }),
-}))
-
 // VideoOverlay also depends on api client; mock out to avoid AuthContext touch.
 vi.mock('../ui/VideoOverlay', () => ({
   VideoOverlay: () => null,
@@ -92,46 +81,6 @@ vi.mock('react-router-dom', async (importOriginal) => {
     useNavigate: () => mockNavigate,
   }
 })
-
-// Animation runtime mock
-const {
-  mockPlay,
-  mockDestroy,
-  mockCreateAnimationRuntime,
-  mockCreateClickInputBridge,
-  mockAnimationsData,
-} = vi.hoisted(() => {
-  const mockPlay = vi.fn()
-  const mockDestroy = vi.fn()
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mockCreateAnimationRuntime = vi.fn((_steps: any, _ctx: any) => ({
-    play: mockPlay,
-    destroy: mockDestroy,
-  }))
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mockCreateClickInputBridge = vi.fn((_el: any) => ({ onAdvance: vi.fn() }))
-  const mockAnimationsData: AnimationStep[] = []
-  return {
-    mockPlay,
-    mockDestroy,
-    mockCreateAnimationRuntime,
-    mockCreateClickInputBridge,
-    mockAnimationsData,
-  }
-})
-
-vi.mock('@narrative/animation', () => ({
-  createAnimationRuntime: mockCreateAnimationRuntime,
-  createClickInputBridge: mockCreateClickInputBridge,
-}))
-
-vi.mock('../animation/targetResolver', () => ({
-  createPixiTargetResolver: vi.fn(() => ({ resolve: vi.fn() })),
-}))
-
-vi.mock('../state/useAnimations', () => ({
-  useAnimations: () => ({ animations: mockAnimationsData }),
-}))
 
 // useSlides mock — controlled per test
 const mockSlidesData: Slide[] = []
@@ -156,13 +105,6 @@ function createDeckCtx(): SlideMutationContext {
 function createSlideDocValue(): SlideDocContextValue {
   const deckCtx = createDeckCtx()
   return createMockSlideDocValue({ deckCtx })
-}
-
-function createMockCanvasInstance(): CanvasInstance {
-  return {
-    sceneGraph: { getNode: vi.fn() } as unknown as CanvasInstance['sceneGraph'],
-    compositor: {} as unknown as CanvasInstance['compositor'],
-  }
 }
 
 function makeSlide(id: string): Slide {
@@ -214,11 +156,6 @@ function renderPresent(
 
 beforeEach(() => {
   mockNavigate.mockClear()
-  mockPlay.mockClear()
-  mockDestroy.mockClear()
-  mockCreateAnimationRuntime.mockClear()
-  mockCreateClickInputBridge.mockClear()
-  mockAnimationsData.length = 0
   mockSlidesData.length = 0
 
   Object.defineProperty(document, 'fullscreenElement', {
@@ -392,62 +329,5 @@ describe('PresentLayout — scale', () => {
 // Animation runtime integration tests (M6)
 // ---------------------------------------------------------------------------
 
-describe('PresentLayout — animation runtime', () => {
-  it('does not create runtime if canvas not ready', () => {
-    mockAnimationsData.push({
-      id: 'a1',
-      objectId: 'obj-1',
-      preset: 'fadeIn',
-      trigger: 'onEnter',
-      duration: 0.6,
-      delay: 0,
-      easing: 'power2.out',
-    })
-
-    renderPresent({ canvasInstance: null })
-    expect(mockCreateAnimationRuntime).not.toHaveBeenCalled()
-  })
-
-  it('does not create runtime if no animations exist', () => {
-    const instance = createMockCanvasInstance()
-    renderPresent({ canvasInstance: instance })
-    expect(mockCreateAnimationRuntime).not.toHaveBeenCalled()
-  })
-
-  it('creates runtime and calls play() when canvas is ready and animations exist', () => {
-    mockAnimationsData.push({
-      id: 'a1',
-      objectId: 'obj-1',
-      preset: 'fadeIn',
-      trigger: 'onEnter',
-      duration: 0.6,
-      delay: 0,
-      easing: 'power2.out',
-    })
-
-    const instance = createMockCanvasInstance()
-    renderPresent({ canvasInstance: instance })
-
-    expect(mockCreateAnimationRuntime).toHaveBeenCalledOnce()
-    expect(mockPlay).toHaveBeenCalledOnce()
-  })
-
-  it('calls destroy() on unmount', () => {
-    mockAnimationsData.push({
-      id: 'a1',
-      objectId: 'obj-1',
-      preset: 'fadeIn',
-      trigger: 'onEnter',
-      duration: 0.6,
-      delay: 0,
-      easing: 'power2.out',
-    })
-
-    const instance = createMockCanvasInstance()
-    const { unmount } = renderPresent({ canvasInstance: instance })
-
-    expect(mockPlay).toHaveBeenCalledOnce()
-    unmount()
-    expect(mockDestroy).toHaveBeenCalledOnce()
-  })
-})
+// The animation runtime (builds compiled on the prepared slide, played on
+// arrival) is the presentation controller's: present/presentation.test.ts.

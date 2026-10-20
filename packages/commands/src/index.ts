@@ -50,6 +50,7 @@ export {
   type BatchResult,
   type PreparedInvocation,
 } from './run.js'
+export { BatchForks, type BatchForksOptions } from './batchForks.js'
 export {
   FileSourceSchema,
   fileSourceUrlHost,
@@ -71,6 +72,7 @@ export {
   MAX_MEASURE_SLIDES,
   MAX_PDF_SLIDES,
   type PdfExportResult,
+  type PdfExportJobStatus,
   type TextMeasurement,
 } from './services/render.js'
 export {

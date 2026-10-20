@@ -22,8 +22,9 @@
  * (`workBudgetMs` from its start). A job that arrives after its deadline is
  * not started (`late`: nobody waits, and nothing is wrong with the browser);
  * at whichever clock runs out first its context is closed and its upload
- * aborted — a hung page or a wedged upload cannot hold the
- * one-job-at-a-time queue.
+ * aborted — a hung page or a wedged upload cannot hold one of the worker's
+ * few job slots. A job beside another one waits for memory for its page
+ * first (memory.ts).
  */
 
 import type { Browser, Page } from 'playwright-core'
@@ -45,6 +46,10 @@ import {
 import type { RenderWorkerConfig } from './config.js'
 import { getFromUpstream, installUpstreamRouting, putToUpstream } from './routing.js'
 import type { WarmPage, WarmPages } from './warmPages.js'
+import { MemoryWaitTimeout, type MemoryGate } from './memory.js'
+
+const errorText = (err: unknown): string =>
+  maskTokens(err instanceof Error ? err.message : String(err))
 
 /** The page's own refusals (apps/web/src/pages/DeckRender.tsx, RenderErrorReason). */
 type PageReason = Exclude<RenderFailureReason, 'browser' | 'deadline' | 'late' | 'upload'>
@@ -58,10 +63,12 @@ interface RenderWindow {
   __narrativeRenderFreeze?: (state: string) => void
   __narrativeRenderSlidePng?: (
     slideId: string,
-    opts: { stateVector: string },
+    opts: { stateVector: string; format?: 'png' | 'jpeg' },
   ) => Promise<
     PageOutcome<{
       base64: string
+      /** Absent from a page older than `format` (a PNG). */
+      mimeType?: string
       slideIndex: number
       failedLoads: number
       failedFonts: string[]
@@ -148,23 +155,63 @@ function pageFailure(outcome: { reason: PageReason; detail: string }): RenderJob
   return new RenderJobError(outcome.reason, maskTokens(outcome.detail).slice(0, 300))
 }
 
+/**
+ * What a recycled page's origin loses (CDP `Storage.clearDataForOrigin`):
+ * every store a document can write — not `shader_cache`, which holds the
+ * app's compiled GPU shaders and nothing of a deck, and costs SwiftShader a
+ * recompile of each when cleared.
+ */
+const ORIGIN_STORAGE_TYPES = [
+  'cookies',
+  'file_systems',
+  'indexeddb',
+  'local_storage',
+  'websql',
+  'service_workers',
+  'cache_storage',
+  'storage_buckets',
+  'shared_storage',
+  'interest_groups',
+].join(',')
+
+/** A new tab in `context` on the job's render page, its errors collected. */
+async function loadPage(
+  context: WarmPage['context'],
+  data: RenderJobData,
+  firstSlideId: string,
+  deps: { config: RenderWorkerConfig },
+  stopAt: number,
+  opts: { frozen?: boolean } = {},
+): Promise<{ page: Page; pageErrors: string[] }> {
+  const pageErrors: string[] = []
+  const page = await context.newPage()
+  page.on('pageerror', (err) => {
+    if (pageErrors.length < 10) pageErrors.push(maskTokens(err.message).slice(0, 300))
+  })
+  await page.goto(renderPageUrl(deps.config.appOrigin, data, firstSlideId, opts), {
+    waitUntil: 'domcontentloaded',
+    timeout: left(stopAt),
+  })
+  return { page, pageErrors }
+}
+
 /** Open a page for the job: a fresh context, routed, on the render page. */
 async function openPage(
   browser: Browser,
   data: RenderJobData,
   firstSlideId: string,
-  deps: { config: RenderWorkerConfig; log: (message: string) => void },
+  deps: { config: RenderWorkerConfig; log: (message: string) => void; warm: WarmPages },
   stopAt: number,
   onContext: (context: WarmPage['context']) => void,
   opts: { frozen?: boolean } = {},
 ): Promise<WarmPage> {
+  const generation = deps.warm.generation
   const context = await browser.newContext({
     viewport: { width: RENDER_WIDTH, height: RENDER_HEIGHT },
     deviceScaleFactor: 1,
     serviceWorkers: 'block',
   })
   onContext(context)
-  const pageErrors: string[] = []
   try {
     if (deps.config.upstream !== null) {
       await installUpstreamRouting(context, {
@@ -173,15 +220,66 @@ async function openPage(
         log: deps.log,
       })
     }
-    const page = await context.newPage()
-    page.on('pageerror', (err) => {
-      if (pageErrors.length < 10) pageErrors.push(maskTokens(err.message).slice(0, 300))
-    })
-    await page.goto(renderPageUrl(deps.config.appOrigin, data, firstSlideId, opts), {
-      waitUntil: 'domcontentloaded',
-      timeout: left(stopAt),
-    })
-    return { name: renderPageName(data.page), context, page, pageErrors }
+    const { page, pageErrors } = await loadPage(context, data, firstSlideId, deps, stopAt, opts)
+    return { name: renderPageName(data.page), context, page, pageErrors, generation }
+  } catch (err) {
+    await context.close().catch(() => undefined)
+    throw err
+  }
+}
+
+/**
+ * Another session's idle page, made into this job's: the same browser
+ * context (and so, most of the time, the same renderer process with the
+ * code it compiled — the part of a cold page this saves), and nothing else
+ * of what the page held before:
+ *
+ *   1. the old tab goes to `about:blank` first, so the old document — its
+ *      deck, its token, its open WebSocket — is unloaded before anything is
+ *      cleared and cannot write anything back afterwards;
+ *   2. the app origin's storage (localStorage, IndexedDB, Cache Storage, …),
+ *      the context's cookies and its HTTP cache are cleared;
+ *   3. the job's page loads in a NEW tab of that context — a fresh session
+ *      history (the old URL, token included, is in no `navigation.entries()`),
+ *      sessionStorage and `window.name` — and only then is the old tab closed
+ *      (closing it first could let its renderer process exit).
+ *
+ * Any step that fails closes the context: the job then opens a page of its
+ * own, as if there had been no spare.
+ */
+export async function recyclePage(
+  spare: WarmPage,
+  data: RenderJobData,
+  firstSlideId: string,
+  deps: { config: RenderWorkerConfig; log?: (message: string) => void },
+  stopAt: number,
+): Promise<WarmPage> {
+  const { context } = spare
+  try {
+    const started = Date.now()
+    await spare.page.goto('about:blank', { timeout: left(stopAt) })
+    const cdp = await context.newCDPSession(spare.page)
+    try {
+      await cdp.send('Storage.clearDataForOrigin', {
+        origin: deps.config.appOrigin,
+        storageTypes: ORIGIN_STORAGE_TYPES,
+      })
+      await cdp.send('Network.clearBrowserCache')
+    } finally {
+      await cdp.detach().catch(() => undefined)
+    }
+    await context.clearCookies()
+    const cleared = Date.now() - started
+    const { page, pageErrors } = await loadPage(context, data, firstSlideId, deps, stopAt)
+    await spare.page.close().catch(() => undefined)
+    deps.log?.(`${renderPageName(data.page)}: spare cleared in ${cleared} ms`)
+    return {
+      name: renderPageName(data.page),
+      context,
+      page,
+      pageErrors,
+      generation: spare.generation,
+    }
   } catch (err) {
     await context.close().catch(() => undefined)
     throw err
@@ -214,9 +312,9 @@ async function upload(
   config: RenderWorkerConfig,
   signal: AbortSignal,
 ): Promise<number> {
-  const png = Buffer.from(base64, 'base64')
+  const picture = Buffer.from(base64, 'base64')
   try {
-    await putToUpstream(target.url, png, target.headers, {
+    await putToUpstream(target.url, picture, target.headers, {
       appOrigin: config.appOrigin,
       upstream: config.upstream,
       signal,
@@ -225,7 +323,7 @@ async function upload(
     if (signal.aborted) throw new RenderJobError('deadline', 'the upload ran past the deadline')
     throw new RenderJobError('upload', maskTokens(err instanceof Error ? err.message : String(err)))
   }
-  return png.byteLength
+  return picture.byteLength
 }
 
 /** Where a page job's time went (pages/renderTimings.ts), one log line. */
@@ -244,7 +342,7 @@ async function drawBefore(
   browser: Browser,
   data: RenderJobData & { kind: 'look' },
   look: { slideId: string; before: { url: string } },
-  deps: { config: RenderWorkerConfig; log: (message: string) => void },
+  deps: { config: RenderWorkerConfig; log: (message: string) => void; warm: WarmPages },
   stopAt: number,
   signal: AbortSignal,
   onContext: (context: WarmPage['context'] | null) => void,
@@ -316,9 +414,12 @@ async function runOnPage(
     const failedFonts = new Set<string>()
     for (const target of data.uploads) {
       const outcome = await page.evaluate(
-        ([slideId, stateVector]) =>
-          (window as unknown as RenderWindow).__narrativeRenderSlidePng!(slideId, { stateVector }),
-        [target.slideId, data.stateVector] as const,
+        ([slideId, stateVector, format]) =>
+          (window as unknown as RenderWindow).__narrativeRenderSlidePng!(slideId, {
+            stateVector,
+            format,
+          }),
+        [target.slideId, data.stateVector, data.format ?? 'png'] as const,
       )
       if (!outcome.ok) throw pageFailure(outcome)
       logTimings(log, data, outcome.value.timings)
@@ -362,10 +463,18 @@ async function runOnPage(
   }
 }
 
+export interface RenderJobDeps {
+  config: RenderWorkerConfig
+  log: (message: string) => void
+  warm: WarmPages
+  /** Admits a job beside others only with memory for its page (none: always). */
+  gate?: MemoryGate
+}
+
 export async function renderJob(
   browser: Browser,
   data: RenderJobData,
-  deps: { config: RenderWorkerConfig; log: (message: string) => void; warm: WarmPages },
+  deps: RenderJobDeps,
 ): Promise<RenderJobResult> {
   const firstSlideId = firstSlideOf(data)
   if (firstSlideId === undefined) {
@@ -380,7 +489,8 @@ export async function renderJob(
   refuseLate(data)
   const stopAt = Math.min(data.deadline, Date.now() + data.workBudgetMs)
 
-  let warm: WarmPage | undefined = deps.warm.take(data.token, renderPageName(data.page))
+  const name = renderPageName(data.page)
+  let warm: WarmPage | undefined = deps.warm.take(data.token, name)
   const compare = data.kind === 'look' && data.look.mode === 'compare' ? data.look : null
   if (compare !== null && warm !== undefined) {
     // A compare draws on a frozen page first: the kept page goes, so that
@@ -388,6 +498,34 @@ export async function renderJob(
     await warm.context.close().catch(() => undefined)
     warm = undefined
   }
+  // Another job may be rendering: this one holds a page only with room for it.
+  if (deps.gate !== undefined) {
+    try {
+      await deps.gate.enter(stopAt, name)
+    } catch (err) {
+      if (warm !== undefined) await warm.context.close().catch(() => undefined)
+      if (err instanceof MemoryWaitTimeout) throw new RenderJobError('late', err.message)
+      throw err
+    }
+  }
+  try {
+    return await renderWithPage(browser, data, firstSlideId, deps, stopAt, warm, compare)
+  } finally {
+    deps.gate?.leave()
+  }
+}
+
+async function renderWithPage(
+  browser: Browser,
+  data: RenderJobData,
+  firstSlideId: string,
+  deps: RenderJobDeps,
+  stopAt: number,
+  sessionPage: WarmPage | undefined,
+  compare: { slideId: string; before: { url: string } } | null,
+): Promise<RenderJobResult> {
+  const name = renderPageName(data.page)
+  let warm = sessionPage
   let context = warm?.context
   let frozenContext: WarmPage['context'] | null = null
   // When time is up the context goes, every pending call with it, and the
@@ -418,13 +556,33 @@ export async function renderJob(
         },
       )
     }
+    const started = Date.now()
+    let how = 'session page'
+    if (warm === undefined && compare === null && data.keepPage !== false) {
+      // A person's job with no page of its own takes an idle one of another
+      // session (background work leaves people's pages alone).
+      const spare = deps.warm.takeSpare()
+      if (spare !== undefined) {
+        context = spare.context
+        try {
+          warm = await recyclePage(spare, data, firstSlideId, deps, stopAt)
+          how = 'recycled page'
+        } catch (err) {
+          if (pastDeadline) throw err
+          context = undefined
+          deps.log(`${name}: a spare page could not be recycled, opening one (${errorText(err)})`)
+        }
+      }
+    }
     if (warm === undefined) {
       warm = await openPage(browser, data, firstSlideId, deps, stopAt, (opened) => {
         context = opened
         if (pastDeadline) void opened.close().catch(() => undefined)
       })
+      how = 'new page'
     }
     await untilHooks(warm.page, stopAt)
+    deps.log(`${name}: ${how}, app ready in ${Date.now() - started} ms`)
     const result = await runOnPage(
       warm.page,
       data,
@@ -438,7 +596,7 @@ export async function renderJob(
   } catch (err) {
     if (err instanceof RenderJobError) throw err
     if (pastDeadline) throw new RenderJobError('deadline', 'the job ran past its deadline')
-    const message = maskTokens(err instanceof Error ? err.message : String(err))
+    const message = errorText(err)
     const errors = warm?.pageErrors ?? []
     const extra = errors.length > 0 ? ` (page errors: ${errors.join(' | ')})` : ''
     throw new RenderJobError('browser', `${message}${extra}`.slice(0, 1_000))

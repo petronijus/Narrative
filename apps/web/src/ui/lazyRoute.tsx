@@ -26,9 +26,15 @@
  * Errors thrown by a route load are wrapped in `RouteLoadError`, so the
  * boundary tells "this page's code did not arrive" from a render bug without
  * sniffing browser-specific messages.
+ *
+ * `preload()` starts the load ahead of the render — the page the document was
+ * opened on at boot (`App.tsx` → `preloadRoute`, in parallel with the session
+ * check), the likely next page when the browser is idle. A mount that starts
+ * after the preload resolved renders the page at once, without suspending: no
+ * fallback frame, no extra task (docs/plans/performance.md → L1).
  */
 
-import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
+import { lazy, useState, type ComponentType, type LazyExoticComponent } from 'react'
 
 /** A route page's code failed to load (fetch, MIME or evaluation error). */
 export class RouteLoadError extends Error {
@@ -93,6 +99,12 @@ export function resetFailedRoutes(): number {
   return entries.length
 }
 
+/** A `lazyRoute` component: render it, or start loading it ahead of time. */
+export type LazyRouteComponent<P extends object> = ComponentType<P> & {
+  /** Start loading the page's code (once); resolves when it arrived or failed. */
+  preload(): Promise<void>
+}
+
 /**
  * A lazily loaded route component that can be re-attempted after a failed
  * load. `load` must be a literal `import('./…')` so Vite still splits the
@@ -101,8 +113,20 @@ export function resetFailedRoutes(): number {
 export function lazyRoute<M, P extends object>(
   load: () => Promise<M>,
   pick: (module: M) => ComponentType<P>,
-): ComponentType<P> {
+): LazyRouteComponent<P> {
   let attempt = 0
+  /** The first load, shared by `preload` and the first render. */
+  let firstLoad: Promise<M> | null = null
+  /** The page, once a load succeeded. */
+  let loaded: ComponentType<P> | null = null
+
+  const loadFirst = (): Promise<M> => {
+    firstLoad ??= load().then((module) => {
+      loaded = pick(module)
+      return module
+    })
+    return firstLoad
+  }
 
   const loadAgain = async (): Promise<M> => {
     try {
@@ -124,8 +148,10 @@ export function lazyRoute<M, P extends object>(
   const create = (): LazyExoticComponent<ComponentType<P>> =>
     lazy(async () => {
       try {
-        const module = attempt === 0 ? await load() : await loadAgain()
-        return { default: pick(module) }
+        const module = attempt === 0 ? await loadFirst() : await loadAgain()
+        const page = pick(module)
+        loaded = page
+        return { default: page }
       } catch (error) {
         failedRoutes.add(entry)
         throw new RouteLoadError(error)
@@ -135,10 +161,22 @@ export function lazyRoute<M, P extends object>(
   let current = create()
 
   function LazyRoute(props: P) {
-    // `current` changes only in `reset`, which the boundary follows with a
-    // remount of this subtree — never between two renders of one mount.
+    // Chosen once per mount: a page already loaded renders directly; the
+    // lazy wrapper otherwise. Switching between the two inside one mount
+    // would remount the page. `current` changes only in `reset`, which the
+    // boundary follows with a remount of this subtree.
+    const [Direct] = useState<ComponentType<P> | null>(() => loaded)
+    if (Direct !== null) return <Direct {...props} />
     const Current = current
     return <Current {...props} />
+  }
+  LazyRoute.preload = (): Promise<void> => {
+    if (loaded !== null || attempt > 0) return Promise.resolve()
+    // A failure is the render's to report (the boundary's card): not here.
+    return loadFirst().then(
+      () => undefined,
+      () => undefined,
+    )
   }
   return LazyRoute
 }

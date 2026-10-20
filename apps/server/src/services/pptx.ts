@@ -7,8 +7,14 @@
  *   - `prepareInsert` + `appendPptx`: POST /decks/:id/append-pptx and
  *     `deck.insertFrom` share pptx/appendDeck.ts's staging and writer; a deck
  *     source goes through services/deckInsert.ts.
- *   - `exportPptx` / `exportBytes`: GET /decks/:id/export.pptx and
+ *   - `exportPptx` / `exportPackage`: GET /decks/:id/export.pptx and
  *     `deck.exportPptx` share pptx/exportDeck.ts, which reads the LIVE deck.
+ *
+ * The export is a package plan (pptx/exportDeck.ts): its size is known
+ * before a byte is written, so the inline delivery is refused for its size
+ * up front, and the bytes stream to the response or into the bucket (a
+ * multipart upload, media/multipartUpload.ts) without the whole file ever
+ * in memory.
  *
  * Export delivery for agents. `url` (the default): the package is stored
  * under the deck's own prefix (`decks/<id>/exports/…`, so it is reaped with
@@ -25,7 +31,6 @@ import { nanoid } from 'nanoid'
 import {
   DeleteObjectsCommand,
   ListObjectsV2Command,
-  PutObjectCommand,
   type ObjectIdentifier,
 } from '@aws-sdk/client-s3'
 import type {
@@ -48,6 +53,8 @@ import {
 import { discardDeckMedia, registerDeckMedia } from '../pptx/importDeck.js'
 import { attachmentDisposition, exportDeckToPptx, PPTX_CONTENT_TYPE } from '../pptx/exportDeck.js'
 import { buildS3Client, MEDIA_BUCKET, presignGetUrl } from '../media/s3Client.js'
+import { multipartUploadStream } from '../media/multipartUpload.js'
+import type { DeckPackage } from '../pptx/ooxml/writeDeck.js'
 import { MAX_PPTX_UPLOAD_SIZE } from '../media/uploadPolicy.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, failed, forbidden, notFound, tooLarge, type ServiceError } from './errors.js'
@@ -107,10 +114,10 @@ export interface ServerPptxService extends PptxService {
     slideIds: readonly string[]
     at?: number | undefined
   }): Promise<SlideInsertResult>
-  /** GET /decks/:id/export.pptx: the package bytes. */
-  exportBytes(args: {
+  /** GET /decks/:id/export.pptx: the package, to stream into the response. */
+  exportPackage(args: {
     deckId: string
-  }): Promise<{ buffer: Buffer; filename: string; slideCount: number }>
+  }): Promise<{ package: DeckPackage; filename: string; slideCount: number }>
 }
 
 export function createPptxService(deps: ServiceDeps): ServerPptxService {
@@ -280,7 +287,7 @@ export function createPptxService(deps: ServiceDeps): ServerPptxService {
     return result
   }
 
-  async function exportBytes(args: { deckId: string }) {
+  async function exportPackage(args: { deckId: string }) {
     const outcome = await exportDeckToPptx(deps, args.deckId)
     if (outcome.ok) return outcome
     if (outcome.error === 'deckNotFound') throw notFound('Deck not found')
@@ -325,14 +332,16 @@ export function createPptxService(deps: ServiceDeps): ServerPptxService {
     deckId: string
     delivery: 'url' | 'base64'
   }): Promise<PptxExportResult> {
-    const { buffer, filename, slideCount } = await exportBytes({ deckId: args.deckId })
+    const { package: pkg, filename, slideCount } = await exportPackage({ deckId: args.deckId })
     if (args.delivery === 'base64') {
-      if (buffer.byteLength > MAX_INLINE_EXPORT_BYTES) {
+      // Known before a byte is written: nothing is built for a refusal.
+      if (pkg.size > MAX_INLINE_EXPORT_BYTES) {
         throw tooLarge(
-          `The export is ${buffer.byteLength} bytes, over the ${MAX_INLINE_EXPORT_BYTES}-byte inline limit; ` +
+          `The export is ${pkg.size} bytes, over the ${MAX_INLINE_EXPORT_BYTES}-byte inline limit; ` +
             'use delivery "url"',
         )
       }
+      const buffer = await pkg.toBuffer()
       return {
         delivery: 'base64',
         filename,
@@ -342,27 +351,39 @@ export function createPptxService(deps: ServiceDeps): ServerPptxService {
       }
     }
     const key = `decks/${args.deckId}/exports/${nanoid(16)}/deck.pptx`
-    await buildS3Client().send(
-      new PutObjectCommand({
-        Bucket: MEDIA_BUCKET,
-        Key: key,
-        Body: buffer,
-        ContentType: PPTX_CONTENT_TYPE,
-        ContentDisposition: attachmentDisposition(filename, 'ascii'),
-        CacheControl: 'private, no-store',
-      }),
-    )
+    try {
+      await pkg.writeTo(
+        multipartUploadStream({
+          s3: buildS3Client(),
+          bucket: MEDIA_BUCKET,
+          key,
+          contentType: PPTX_CONTENT_TYPE,
+          contentDisposition: attachmentDisposition(filename, 'ascii'),
+          cacheControl: 'private, no-store',
+        }),
+      )
+    } catch (err) {
+      log.error({ err, deckId: args.deckId }, 'pptx-export: storing the package failed')
+      throw failed('Failed to build .pptx')
+    }
     void sweepOldExports(args.deckId)
     const expiresAt = new Date(Date.now() + EXPORT_URL_TTL_SEC * 1000)
     return {
       delivery: 'url',
       filename,
-      sizeBytes: buffer.byteLength,
+      sizeBytes: pkg.size,
       slideCount,
       url: await presignGetUrl(key, EXPORT_URL_TTL_SEC),
       expiresAt: expiresAt.toISOString(),
     }
   }
 
-  return { importPptx, prepareInsert, exportPptx, appendPptx, insertSlidesFromDeck, exportBytes }
+  return {
+    importPptx,
+    prepareInsert,
+    exportPptx,
+    appendPptx,
+    insertSlidesFromDeck,
+    exportPackage,
+  }
 }

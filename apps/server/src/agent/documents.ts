@@ -13,12 +13,29 @@
  *     lease for its whole life (runs.ts), which is what keeps its per-run
  *     undo history — which lives on the loaded Y.Doc — revertible while the
  *     agent works on a deck nobody has open.
- *   - `DirectConnection.transact` and `.disconnect` each persist a full
- *     snapshot immediately (Hocuspocus 2.15 runs the store hook with no
- *     debounce for direct connections). Sharing one connection and letting
- *     it linger briefly after the last release means a burst of agent reads
- *     and writes loads the document once and stores once per write, instead
- *     of load + store + store + unload per command.
+ *   - Sharing one connection and letting it linger briefly after the last
+ *     release means a burst of agent reads and writes loads the document
+ *     once, instead of load + unload per command.
+ *
+ * Durability (performance.md S3, 2026-10-18). A write is NOT stored on its
+ * own: `transact` applies it to the live document — every connected editor
+ * receives it at once — and leaves the snapshot store to the sync server's
+ * debounce, as for an editor's edits (2 s after the document's last change,
+ * at most 10 s after the first unstored one; hocuspocus/index.ts). Each
+ * store writes the whole document (ADR 0006), so storing per command made
+ * an agent's build of a large deck write the deck once per command. What
+ * is guaranteed:
+ *   - when a command returns, its change is in the live document and
+ *     broadcast, and its op is in `agent_ops` (serverHost.ts);
+ *   - it is stored within the debounce window, and at once (awaited) when
+ *     the run closes (`persist`, services/runs.ts `closeRun`) and after a
+ *     revert; when the agent host lets go of its connection (`disconnect`
+ *     stores before the document unloads); on graceful shutdown
+ *     (`closeAll`, then Hocuspocus stores and unloads every document);
+ *   - after a crash the document loses at most the writes of that window —
+ *     the same window people's edits have. `agent_ops` keeps those ops (it
+ *     records what was asked and answered), and the run's revert history
+ *     lived in memory anyway (ADR 0011: a restart makes a run unrevertible).
  *
  * Connection context: `{ userId: 'agent-host', via: 'agent-host' }` and
  * deliberately NO `role`. `PostgresPersistence.onStoreDocument` skips the
@@ -31,7 +48,7 @@
 
 import type { Document, Hocuspocus } from '@hocuspocus/server'
 import { subsystemLogger } from '../observability/logger.js'
-import { transactDirect } from '../hocuspocus/directWrite.js'
+import { storeDirect, writeDirect } from '../hocuspocus/directWrite.js'
 
 const log = subsystemLogger('agent')
 
@@ -48,13 +65,18 @@ export interface DocumentLease {
   /** The live document Hocuspocus holds for `documentName`. */
   readonly document: Document
   /**
-   * Run `fn` against the live document and persist the result (one
-   * immediate snapshot store). `fn` must be synchronous; it is where the
-   * host opens its one Yjs transaction. Rejects only when `fn` throws; a
-   * failed store after a successful write is logged, not thrown (the write
-   * is already live, and the next store persists it).
+   * Run `fn` against the live document. `fn` must be synchronous; it is
+   * where the host opens its one Yjs transaction. The change is stored on
+   * the sync server's debounce, not here (module header: Durability).
+   * Rejects only when `fn` throws.
    */
   transact(fn: (document: Document) => void): Promise<void>
+  /**
+   * Store the document now and wait for it (a durability point: the end of
+   * a run, a revert). Never rejects for a failed store: that is logged, the
+   * document stays in memory, and the next store persists it.
+   */
+  persist(): Promise<void>
   /** Give the lease back. Idempotent. */
   release(): void
 }
@@ -156,23 +178,19 @@ export function createAgentDocuments(
         documentName,
         document,
         async transact(fn) {
-          let applied = false
+          // A throw here means the write did not happen (handlers check every
+          // precondition before their first write); it propagates.
+          writeDirect(connection, fn)
+        },
+        async persist() {
           try {
-            await transactDirect(connection, (doc) => {
-              fn(doc)
-              applied = true
-            })
+            await storeDirect(connection)
           } catch (err) {
-            // The write itself failed: nothing was applied (handlers check
-            // every precondition before their first write), report it.
-            if (!applied) throw err
-            // The write was applied and broadcast, but the immediate store
-            // after it failed. Reporting the op as failed would make the
-            // agent retry and apply it twice; the change is live and is
-            // persisted by the next store of the document.
+            // Only a closed connection throws here (Hocuspocus catches store
+            // failures itself); the document was then stored as it closed.
             log.error(
               { doc: documentName, err: err instanceof Error ? err.message : String(err) },
-              'agent-host: storing the document after a write failed',
+              'agent-host: storing the document failed',
             )
           }
         },

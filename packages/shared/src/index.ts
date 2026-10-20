@@ -122,6 +122,17 @@ export {
 } from './video-queue.js'
 
 export {
+  PDF_EXPORT_QUEUE,
+  parsePdfExportFailure,
+  pdfExportFailureMessage,
+  type PdfExportFailure,
+  type PdfExportJobData,
+  type PdfExportJobResult,
+  type PdfExportProgress,
+  type PdfExportSlideRef,
+} from './pdf-export-queue.js'
+
+export {
   RENDER_QUEUE,
   RENDER_WIDTH,
   RENDER_HEIGHT,
@@ -147,6 +158,7 @@ export {
   THUMBNAIL_HEIGHT,
   THUMBNAIL_WIDTH,
   LOOK_MAX_PIXELS,
+  RENDER_JPEG_QUALITY,
 } from './render-queue.js'
 
 export {
@@ -182,3 +194,13 @@ export {
   scrubString,
   scrubTelemetryPayload,
 } from './telemetryScrub.js'
+export {
+  PERF_COUNTS_KEY,
+  perfCount,
+  perfCountFor,
+  perfCountersOn,
+  readPerfCounters,
+  resetPerfCounters,
+  startPerfCounters,
+  stopPerfCounters,
+} from './perfCounters.js'

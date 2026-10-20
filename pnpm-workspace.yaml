@@ -30,5 +30,12 @@ allowBuilds:
   esbuild: true
   '@swc/core': true
   msgpackr-extract: true
+  # electron-builder's Windows installer maker (apps/desktop): its install
+  # script only copies vendored signing tools into place for a Windows
+  # build. Declined, so a fresh install on any machine passes
+  # strictDepBuilds (every fresh install failed on it since it came into
+  # the lockfile, 2026-10-11); a Squirrel build for Windows would need it
+  # back.
+  electron-winstaller: false
 patchedDependencies:
   '@stryker-mutator/vitest-runner@10.0.0': patches/@stryker-mutator__vitest-runner@10.0.0.patch

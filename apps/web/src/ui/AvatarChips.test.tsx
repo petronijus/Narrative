@@ -24,6 +24,7 @@ const mockAwarenessData = {
 
 vi.mock('../state/useAwareness.js', () => ({
   useAwareness: () => mockAwarenessData,
+  usePresencePeers: () => mockAwarenessData,
 }))
 
 // ---------------------------------------------------------------------------

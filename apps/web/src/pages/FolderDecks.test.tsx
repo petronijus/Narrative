@@ -39,7 +39,7 @@ vi.mock('../state/deckThumbnailCache.js', () => ({
 // ---------------------------------------------------------------------------
 
 const mockListFolders = vi.fn()
-const mockListDecks = vi.fn()
+const mockListDecksPage = vi.fn()
 const mockCreateDeck = vi.fn()
 const mockDeleteDeck = vi.fn()
 const mockRenameDeck = vi.fn()
@@ -51,8 +51,8 @@ const stableApiClient = {
   get listFolders() {
     return mockListFolders
   },
-  get listDecks() {
-    return mockListDecks
+  get listDecksPage() {
+    return mockListDecksPage
   },
   get createDeck() {
     return mockCreateDeck
@@ -158,7 +158,7 @@ function renderFolderDecks(folderId = FOLDER_ID) {
 beforeEach(() => {
   vi.clearAllMocks()
   mockListFolders.mockResolvedValue(MOCK_FOLDERS)
-  mockListDecks.mockResolvedValue(MOCK_DECKS)
+  mockListDecksPage.mockResolvedValue({ decks: MOCK_DECKS, nextCursor: null })
   mockCreateDeck.mockResolvedValue({
     id: 'deck-new',
     title: 'Untitled Deck',
@@ -187,7 +187,7 @@ describe('FolderDecks', () => {
 
   it('shows loading state', () => {
     mockListFolders.mockReturnValue(new Promise(() => {}))
-    mockListDecks.mockReturnValue(new Promise(() => {}))
+    mockListDecksPage.mockReturnValue(new Promise(() => {}))
     renderFolderDecks()
     expect(screen.getByText(/loading decks/i)).toBeTruthy()
   })
@@ -200,8 +200,23 @@ describe('FolderDecks', () => {
     })
   })
 
+  it("loads the rest of a folder's decks behind the first page, in order", async () => {
+    mockListDecksPage
+      .mockResolvedValueOnce({ decks: [MOCK_DECKS[0]], nextCursor: 'after-1' })
+      .mockResolvedValueOnce({ decks: [MOCK_DECKS[1]], nextCursor: null })
+    renderFolderDecks()
+    await waitFor(() => {
+      expect(screen.getByText('Q1 Review')).toBeTruthy()
+      expect(screen.getByText('Roadmap 2026')).toBeTruthy()
+    })
+    expect(mockListDecksPage.mock.calls.map((c) => c[0])).toEqual([
+      { folderId: FOLDER_ID, limit: 60 },
+      { folderId: FOLDER_ID, limit: 60, cursor: 'after-1' },
+    ])
+  })
+
   it('shows empty state when folder has no decks', async () => {
-    mockListDecks.mockResolvedValue([])
+    mockListDecksPage.mockResolvedValue({ decks: [], nextCursor: null })
     renderFolderDecks()
     await waitFor(() => {
       expect(screen.getByText(/no decks in this folder yet/i)).toBeTruthy()

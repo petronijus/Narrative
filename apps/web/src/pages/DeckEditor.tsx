@@ -13,6 +13,7 @@
  *     Callback je předán do EditorLayout → Canvas.onReady.
  */
 
+import { useCallback, useEffect } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { SelectionProvider } from '../state/SelectionContext.js'
 import { ToolProvider } from '../state/ToolContext.js'
@@ -22,9 +23,24 @@ import { CropModeProvider } from '../state/CropModeContext.js'
 import { PathPointsModeProvider } from '../state/PathPointsModeContext.js'
 import { EditorLayout } from '../components/EditorLayout.js'
 import type { DeckShellContextValue } from '../components/DeckShell.js'
+import { preloadEditorParts } from '../ui/lazyEditorParts.js'
+import { markEditorCanvasReady } from '../ui/editorReady.js'
+import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 
 export function DeckEditor() {
   const ctx = useOutletContext<DeckShellContextValue | null>()
+  // The dialogs and overlays left out of the first paint (L2,
+  // docs/plans/performance.md), loaded once the canvas drew the deck
+  // (`markEditorCanvasReady`) and the editor is idle.
+  useEffect(() => preloadEditorParts(), [])
+  const parentOnCanvasReady = ctx?.onCanvasReady
+  const onCanvasReady = useCallback(
+    (instance: CanvasInstance | null) => {
+      parentOnCanvasReady?.(instance)
+      if (instance !== null) markEditorCanvasReady()
+    },
+    [parentOnCanvasReady],
+  )
 
   return (
     <SelectionProvider>
@@ -33,7 +49,7 @@ export function DeckEditor() {
           <TableEditProvider>
             <CropModeProvider>
               <PathPointsModeProvider>
-                <EditorLayout onCanvasReady={ctx?.onCanvasReady} />
+                <EditorLayout onCanvasReady={onCanvasReady} />
               </PathPointsModeProvider>
             </CropModeProvider>
           </TableEditProvider>

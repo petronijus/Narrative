@@ -279,6 +279,33 @@ export async function composeLook(
 }
 
 /** A Blob's bytes as base64 (handed to the render worker through Playwright). */
+/**
+ * A captured slide as a JPEG for a PDF page (the render worker's export with
+ * `format: 'jpeg'`): drawn on white on a CPU canvas — what the server's
+ * `flatten` did, and JPEG has no alpha — and encoded at `quality` by the
+ * browser. The page hands the PDF its pages ready to embed: no PNG to encode
+ * here, upload, decode on the server and encode there again.
+ */
+export function canvasToJpeg(source: CanvasImageSource, quality: number): Promise<Blob> {
+  const canvas = document.createElement('canvas')
+  canvas.width = SLIDE_WIDTH
+  canvas.height = SLIDE_HEIGHT
+  const ctx = canvas.getContext('2d', { willReadFrequently: true, alpha: false })
+  if (ctx === null) throw new Error('no 2D context for the JPEG')
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, SLIDE_WIDTH, SLIDE_HEIGHT)
+  ctx.drawImage(source, 0, 0, SLIDE_WIDTH, SLIDE_HEIGHT)
+  assertIntact(canvas, 'the JPEG page')
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) =>
+        blob !== null ? resolve(blob) : reject(new Error('the page could not be encoded')),
+      'image/jpeg',
+      quality,
+    )
+  })
+}
+
 export async function blobToBase64(blob: Blob): Promise<string> {
   const bytes = new Uint8Array(await blob.arrayBuffer())
   let binary = ''

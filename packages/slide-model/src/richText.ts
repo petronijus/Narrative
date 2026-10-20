@@ -754,8 +754,12 @@ export function toHtml(delta: RichDeltaOp[], defaults: HtmlDefaults): string {
       // breaks the declaration at the digits and the run falls back.
       const family = sanitizeFontFamily(a.fontFamily)
       const names = family === undefined ? [] : fontFamilyNames(family)
+      // A space after the colon: Pixi's HTMLText scans the markup for
+      // `font-family:<name>` to find faces to embed (and in WebKit then waits
+      // 100 ms before every raster); the renderer names the faces itself
+      // (renderer/fontChanges.ts), so the scan must find nothing.
       if (names.length > 0) {
-        styleBits.push(`font-family:${names.map((n) => quoteCssFamilyName(n, "'")).join(', ')}`)
+        styleBits.push(`font-family: ${names.map((n) => quoteCssFamilyName(n, "'")).join(', ')}`)
       }
     }
     const size = typeof a.fontSize === 'number' && a.fontSize > 0 ? a.fontSize : defaults.fontSize
@@ -911,7 +915,8 @@ export function buildListedHtml(paras: ParagraphDelta[], o: ListedHtmlOptions): 
       const family = sanitizeFontFamily(look.fontFamily)
       const names = family === undefined ? [] : fontFamilyNames(family)
       if (names.length > 0) {
-        styleBits.push(`font-family:${names.map((n) => quoteCssFamilyName(n, "'")).join(', ')}`)
+        // A space after the colon, as in `toHtml`: Pixi's markup scan finds nothing.
+        styleBits.push(`font-family: ${names.map((n) => quoteCssFamilyName(n, "'")).join(', ')}`)
       }
     }
     const spaceBefore = look?.spaceBefore ?? psB
