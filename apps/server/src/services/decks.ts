@@ -605,6 +605,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
         playbackKey: mediaAssets.playbackKey,
         posterKey: mediaAssets.posterKey,
         thumbnailKey: mediaAssets.thumbnailKey,
+        presentPlaybackKey: mediaAssets.presentPlaybackKey,
       })
       .from(mediaAssets)
       .where(eq(mediaAssets.deckId, id))
@@ -622,7 +623,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     if (deleted.folderId !== null) closeConnectionsForDocument(`folder:${deleted.folderId}`)
 
     const explicitKeys = assetRows.flatMap((r) =>
-      [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey].filter(
+      [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey, r.presentPlaybackKey].filter(
         (k): k is string => typeof k === 'string' && k !== '',
       ),
     )

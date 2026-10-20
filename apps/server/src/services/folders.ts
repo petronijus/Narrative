@@ -410,11 +410,12 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
         playbackKey: mediaAssets.playbackKey,
         posterKey: mediaAssets.posterKey,
         thumbnailKey: mediaAssets.thumbnailKey,
+        presentPlaybackKey: mediaAssets.presentPlaybackKey,
       })
       .from(mediaAssets)
       .where(deckIds.length > 0 ? or(inArray(mediaAssets.deckId, deckIds), ownMedia) : ownMedia)
     const keysOf = (r: (typeof assetRows)[number]) =>
-      [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey].filter(
+      [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey, r.presentPlaybackKey].filter(
         (k): k is string => typeof k === 'string' && k !== '',
       )
     const explicitKeys = assetRows.flatMap(keysOf)

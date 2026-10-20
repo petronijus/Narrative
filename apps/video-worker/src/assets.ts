@@ -88,3 +88,26 @@ export async function updateVideoAssetOutputs(
     })
     .where(eq(mediaAssets.id, id))
 }
+
+/**
+ * The 1080p playback rendition of a video larger than 1080p (present.mp4):
+ * written after the video is done, its size as encoded. The status is left
+ * as it is. False when no row took it: the asset was deleted meanwhile, and
+ * its deletion could not have named this file (the caller removes it).
+ */
+export async function updatePresentRendition(
+  db: Database,
+  id: string,
+  rendition: { presentKey: string; width: number; height: number },
+): Promise<boolean> {
+  const updated = await db
+    .update(mediaAssets)
+    .set({
+      presentPlaybackKey: rendition.presentKey,
+      presentWidth: rendition.width,
+      presentHeight: rendition.height,
+    })
+    .where(eq(mediaAssets.id, id))
+    .returning({ id: mediaAssets.id })
+  return updated.length > 0
+}

@@ -43,6 +43,10 @@ export const mediaAssets = pgTable(
     thumbnailKey: text('thumbnail_key'),
     transcodeStatus: transcodeStatusEnum('transcode_status'),
     transcodeError: text('transcode_error'),
+    // Migration 0039: the 1080p rendition of a video larger than 1080p.
+    presentPlaybackKey: text('present_playback_key'),
+    presentWidth: integer('present_width'),
+    presentHeight: integer('present_height'),
   },
   (t) => [index('media_assets_deck_idx').on(t.deckId)],
 )

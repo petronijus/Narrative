@@ -206,6 +206,37 @@ describe('query.render', () => {
   })
 })
 
+describe('deck.exportPdf', () => {
+  it('starts with the defaults, then waits for the job; a jobId alone waits again', async () => {
+    const c = ctx()
+    const out = await runCommand(registry, c, 'deck.exportPdf', {})
+    const calls = callsTo(c, 'render')
+    expect(calls[0]).toMatchObject({
+      method: 'startPdfExport',
+      args: { userId: 'u1', slides: 'all', includeSkipped: false, delivery: 'url' },
+    })
+    expect(calls[1]).toMatchObject({ method: 'pdfExportStatus' })
+    const jobId = (out as { jobId: string }).jobId
+    await runCommand(registry, c, 'deck.exportPdf', { jobId })
+    expect(callsTo(c, 'render').at(-1)).toMatchObject({
+      method: 'pdfExportStatus',
+      args: { jobId },
+    })
+  })
+
+  it('refuses a jobId with anything beside it, before calling the service', async () => {
+    const c = ctx()
+    for (const extra of [{ slides: 'all' }, { includeSkipped: false }, { delivery: 'base64' }]) {
+      const err = await failure(
+        runCommand(registry, c, 'deck.exportPdf', { jobId: 'pdf_8f2k1c', ...extra }),
+      )
+      expect(err.code).toBe('invalid_input')
+      expect(JSON.stringify(err.issues)).toMatch(/jobId alone/)
+    }
+    expect(callsTo(c, 'render')).toEqual([])
+  })
+})
+
 describe('deck.refreshThumbnail', () => {
   it('asks the render service to redraw the target deck’s card and returns its URL', async () => {
     const c = ctx()

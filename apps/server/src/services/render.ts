@@ -54,11 +54,17 @@ import {
   type RenderedSlide,
   buildImagePdf,
   jpegInfo,
+  parsePdfExportFailure,
+  pdfExportFailureMessage,
   RENDER_JPEG_QUALITY,
+  type PdfExportJobData,
+  type PdfExportJobResult,
+  type PdfExportProgress,
 } from '@narrative/shared'
 import { MAX_MEASURE_SLIDES, MAX_PDF_SLIDES, MAX_RENDER_SLIDES } from '@narrative/commands'
 import type {
   TextMeasurement,
+  PdfExportJobStatus,
   PdfExportResult,
   PngExportResult,
   RenderLookResult,
@@ -90,11 +96,17 @@ import {
   RenderUnavailableError,
   type RenderQueue,
 } from '../render/queue.js'
+import {
+  bullPdfExportQueue,
+  PDF_EXPORT_JOB_RETENTION_SEC,
+  type PdfExportQueue,
+} from '../render/pdfExportQueue.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, failed, forbidden, notFound, ServiceError, tooLarge } from './errors.js'
 import { cardDrawnFrom, cardSourceOf, noteCardDrawn } from '../render/cardState.js'
 import { readDocCopy } from './liveDocs.js'
 import { MAX_BEFORE_STATE_BYTES } from './runs.js'
+import { attachmentDisposition, safeFilename } from '../pptx/exportDeck.js'
 import { EXPORT_URL_TTL_SEC, MAX_INLINE_EXPORT_BYTES } from './pptx.js'
 
 /** The largest slide PNG a PDF page is made from (a photo-heavy 1920×1080 slide, with slack). */
@@ -111,6 +123,38 @@ const MAX_PDF_PAGE_PIXELS = 3840 * 2160
 const MIN_PDF_JOB_MS = 30_000
 /** A PDF over this many bytes is refused (40 photo-heavy slides stay far below). */
 const MAX_PDF_BYTES = 64 * 1024 * 1024
+/**
+ * How long one PDF export job may take, from when it starts (async: nobody's
+ * request waits for it). Each of its render jobs keeps its own RENDER_WAIT_MS.
+ */
+export const MAX_PDF_JOB_MS = 10 * 60_000
+/** PDF exports one person may have waiting or running at once. */
+export const MAX_PDF_JOBS_PER_USER = 2
+/** PDF exports everyone may have waiting or running before new ones are refused. */
+export const MAX_PENDING_PDF_JOBS = 20
+/**
+ * PDF exports one person may start per window, however they ask: the
+ * editor's route has its own rate limit too, the agent's command only the
+ * agent endpoint's (240 a minute) — each export is up to 40 slide renders.
+ */
+export const PDF_START_LIMIT = { max: 4, windowMs: 60_000 } as const
+/** Under BYPASS_AUTH: the e2e suite's one identity in parallel browsers (MAX_IN_FLIGHT_DEV). */
+export const PDF_START_LIMIT_DEV = { max: 60, windowMs: 60_000 } as const
+/** The longest a status read waits for its job, whoever asks (the route asks for less). */
+export const MAX_PDF_STATUS_WAIT_MS = 60_000
+/** Status reads of one person that may wait at once; more are answered without waiting. */
+export const MAX_PDF_STATUS_WAITERS_PER_USER = 4
+/**
+ * How often a finished inline (`base64`) PDF is handed out: each is a read
+ * of up to 8 MiB from storage, so a poller looping on a done job does not
+ * get it forever — a lost answer can still be asked for again.
+ */
+export const MAX_PDF_INLINE_HANDOUTS = 3
+
+/** Status reads waiting per person, in this process (the only one serving the API). */
+const pdfStatusWaiters = new Map<string, number>()
+/** Inline handouts per finished job, forgotten with the job (PDF_EXPORT_JOB_RETENTION_SEC). */
+const pdfInlineHandouts = new Map<string, { count: number; forgetAt: number }>()
 
 /**
  * A stored slide picture as a PDF page. The worker's bytes are not taken on
@@ -183,6 +227,8 @@ const MAX_THUMBNAIL_BYTES = 1_000_000
 export interface RenderServiceDeps extends ServiceDeps {
   /** The worker's queue; the process-wide BullMQ queue unless a test passes one. */
   renderQueue?: RenderQueue
+  /** The PDF export jobs; the process-wide BullMQ queue unless a test passes one. */
+  pdfExportQueue?: PdfExportQueue
   /** The clock (tests). */
   now?: () => number
 }
@@ -272,6 +318,20 @@ async function readStoredPicture(
   throw failed('The renderer returned something that is not a PNG', 503)
 }
 
+/** A stored export read back whole (null: gone), refused over `maxBytes`. */
+async function readStoredObject(key: string, maxBytes: number): Promise<Uint8Array | null> {
+  let object
+  try {
+    object = await buildS3Client().send(new GetObjectCommand({ Bucket: MEDIA_BUCKET, Key: key }))
+  } catch (err) {
+    if ((err as { name?: string }).name === 'NoSuchKey') return null
+    throw err
+  }
+  if (object.ContentLength !== undefined && object.ContentLength > maxBytes)
+    throw tooLarge('The export is too large to return inline; use delivery "url"')
+  return object.Body!.transformToByteArray()
+}
+
 /** A job before its render session's token is added (distributed over the job kinds). */
 type JobWithoutToken<T> = T extends unknown ? Omit<T, 'token'> : never
 
@@ -321,13 +381,15 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     deckId: string
     slides: RenderSlideRef[] | 'all'
   }): Promise<StoredRenders>
-  /** The slides as PDF bytes, for the editor's download route (A5.6). */
+  /** The slides as PDF bytes (A5.6): what a PDF export job runs. */
   buildPdf(args: {
     userId: string
     deckId: string
     slides: RenderSlideRef[] | 'all'
     includeSkipped: boolean
     signal?: AbortSignal
+    deadline?: number
+    onProgress?: (p: PdfExportProgress) => void
   }): Promise<
     Omit<PdfExportResult, 'delivery' | 'url' | 'expiresAt' | 'base64'> & {
       bytes: Uint8Array
@@ -340,6 +402,11 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
    * skipped when its first slide is as it was drawn last, and not stored
    * when `stillWanted` says no by then.
    */
+  /** One PDF export job, run by the server's worker (render/pdfExportQueue.ts). */
+  runPdfExport(
+    data: PdfExportJobData,
+    progress?: (p: PdfExportProgress) => void,
+  ): Promise<PdfExportJobResult>
   backgroundThumbnail(args: {
     userId: string
     card: CardRef
@@ -348,6 +415,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
 } {
   const { db } = deps
   const queue = deps.renderQueue ?? bullRenderQueue
+  const pdfJobs = deps.pdfExportQueue ?? bullPdfExportQueue
   const now = deps.now ?? Date.now
 
   /** The caller may read it; its slides and state vector, from the live document. */
@@ -409,6 +477,11 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
       background?: boolean
       /** A caller's deadline when the job is one of several (a PDF): never later than its own. */
       deadline?: number
+      /**
+       * Not held to the person's cap of renders in flight (a PDF export job,
+       * capped as a job of its own): it still weighs on their priority.
+       */
+      uncapped?: boolean
     } = {},
   ): Promise<RenderJobResult> {
     // The shared queue: a fair share per person (the slot is taken here,
@@ -418,6 +491,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     const mine = inFlight.get(userId) ?? { jobs: 0, slides: 0 }
     if (
       !background &&
+      opts.uncapped !== true &&
       mine.jobs >= (deps.bypass === true ? MAX_IN_FLIGHT_DEV : MAX_IN_FLIGHT_PER_USER)
     ) {
       throw failed(
@@ -888,24 +962,14 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
    * a time (`pdfPageOf`; a PNG from an older page is turned into one; only the JPEGs are
    * held), a page each (shared `buildImagePdf`).
    */
-  async function buildPdf(args: {
-    userId: string
-    deckId: string
-    slides: RenderSlideRef[] | 'all'
-    includeSkipped: boolean
-    /** Stop between steps once the caller has gone (the route's request closed). */
-    signal?: AbortSignal
-    /** Refuse as soon as the pages pass this many bytes (base64 delivery). */
-    maxBytes?: number
-  }): Promise<
-    Omit<PdfExportResult, 'delivery' | 'url' | 'expiresAt' | 'base64'> & {
-      bytes: Uint8Array
-      title: string | null
-    }
-  > {
-    const deck = await liveDeck(args)
-    const picked = pickSlides(deck.slides, args.slides)
-    const chosen = args.includeSkipped
+  /** The pages a PDF of `slides` has: checked as the export checks them, before any work. */
+  function pdfPages(
+    deck: LiveDoc,
+    slides: RenderSlideRef[] | 'all',
+    includeSkipped: boolean,
+  ): { chosen: Array<{ id: string; index: number }>; leftOut: number } {
+    const picked = pickSlides(deck.slides, slides)
+    const chosen = includeSkipped
       ? picked
       : picked.filter((s) => deck.slides[s.index]?.skipped !== true)
     const leftOut = picked.length - chosen.length
@@ -919,16 +983,40 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
       throw tooLarge(
         `That is ${chosen.length} slides; one PDF takes at most ${MAX_PDF_SLIDES} — ask for them in parts`,
       )
+    return { chosen, leftOut }
+  }
+
+  async function buildPdf(args: {
+    userId: string
+    deckId: string
+    slides: RenderSlideRef[] | 'all'
+    includeSkipped: boolean
+    /** Stop between steps once the caller has gone. */
+    signal?: AbortSignal
+    /** Refuse as soon as the pages pass this many bytes (base64 delivery). */
+    maxBytes?: number
+    /** When the whole file must be done (default: RENDER_WAIT_MS from now). */
+    deadline?: number
+    /** Pages rendered of the total, after each one. */
+    onProgress?: (p: PdfExportProgress) => void
+  }): Promise<
+    Omit<PdfExportResult, 'delivery' | 'url' | 'expiresAt' | 'base64'> & {
+      bytes: Uint8Array
+      title: string | null
+    }
+  > {
+    const deck = await liveDeck(args)
+    const { chosen, leftOut } = pdfPages(deck, args.slides, args.includeSkipped)
+    args.onProgress?.({ done: 0, total: chosen.length })
     const prefix = exportsPrefix(deck.card)
     const jpegs: Uint8Array[] = []
     const fonts = new Set<string>()
     let failedLoads = 0
     let pageBytes = 0
     const maxBytes = Math.min(args.maxBytes ?? MAX_PDF_BYTES, MAX_PDF_BYTES)
-    // One deadline for the whole file, as for every render: a caller waits
-    // at most RENDER_WAIT_MS (Cloudflare gives up at 100 s). Every job ends
-    // by it, and a further job starts only with time left to render.
-    const deadline = now() + RENDER_WAIT_MS
+    // One deadline for the whole file: every render job ends by it, and a
+    // further job starts only with time left to render.
+    const deadline = args.deadline ?? now() + RENDER_WAIT_MS
     const gone = (): void => {
       if (args.signal?.aborted === true) throw failed('The request was cancelled', 499)
     }
@@ -951,7 +1039,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
           format: 'jpeg',
           uploads: part.map((s) => ({ slideId: s.id, key: keys.get(s.id)! })),
         },
-        { deadline },
+        { deadline, uncapped: true },
       )
       if (result.kind !== 'export') throw failed('The renderer answered another job', 503)
       const rendered = new Map(result.slides.map((r) => [r.slideId, r]))
@@ -970,6 +1058,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
               : 'The PDF is too large; export fewer slides at a time',
           )
         jpegs.push(jpeg)
+        args.onProgress?.({ done: jpegs.length, total: chosen.length })
       }
       for (const f of result.failedFonts) fonts.add(f)
     }
@@ -994,55 +1083,214 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     }
   }
 
-  async function exportPdf(args: {
+  /** One PDF export job: the file made and stored; what the poller is handed. */
+  async function runPdfExport(
+    data: PdfExportJobData,
+    progress?: (p: PdfExportProgress) => void,
+  ): Promise<PdfExportJobResult> {
+    try {
+      const { bytes, title, ...info } = await buildPdf({
+        userId: data.userId,
+        deckId: data.deckId,
+        slides: data.slides,
+        includeSkipped: data.includeSkipped,
+        deadline: now() + MAX_PDF_JOB_MS,
+        ...(data.delivery === 'base64' ? { maxBytes: MAX_INLINE_EXPORT_BYTES } : {}),
+        ...(progress !== undefined ? { onProgress: progress } : {}),
+      })
+      if (data.delivery === 'base64' && bytes.byteLength > MAX_INLINE_EXPORT_BYTES)
+        throw tooLarge(
+          `The PDF is ${bytes.byteLength} bytes, over the ${MAX_INLINE_EXPORT_BYTES}-byte inline limit; ` +
+            'use delivery "url" or fewer slides',
+        )
+      const filename = `${safeFilename(title ?? 'deck')}.pdf`
+      const key = `${exportsPrefix({ kind: 'deck', id: data.deckId })}deck.pdf`
+      await buildS3Client().send(
+        new PutObjectCommand({
+          Bucket: MEDIA_BUCKET,
+          Key: key,
+          Body: bytes,
+          ContentType: 'application/pdf',
+          ContentDisposition: attachmentDisposition(filename, 'ascii'),
+          CacheControl: 'private, no-store',
+        }),
+      )
+      return { key, filename, ...info }
+    } catch (err) {
+      // What the poller hears: the request's answer, had it waited.
+      if (err instanceof ServiceError)
+        throw new Error(
+          pdfExportFailureMessage({ code: err.code, status: err.status, message: err.message }),
+        )
+      deps.log.error({ err, deckId: data.deckId }, 'render: PDF export failed')
+      throw new Error(
+        pdfExportFailureMessage({ code: 'failed', status: 503, message: 'The PDF export failed' }),
+      )
+    }
+  }
+
+  async function startPdfExport(args: {
     userId: string
     deckId: string
     slides: RenderSlideRef[] | 'all'
     includeSkipped: boolean
     delivery: 'url' | 'base64'
-  }): Promise<PdfExportResult> {
-    const {
-      bytes,
-      title: _title,
-      ...info
-    } = await buildPdf({
-      ...args,
-      ...(args.delivery === 'base64' ? { maxBytes: MAX_INLINE_EXPORT_BYTES } : {}),
-    })
-    if (args.delivery === 'base64') {
-      if (bytes.byteLength > MAX_INLINE_EXPORT_BYTES)
-        throw tooLarge(
-          `The PDF is ${bytes.byteLength} bytes, over the ${MAX_INLINE_EXPORT_BYTES}-byte inline limit; ` +
-            'use delivery "url" or fewer slides',
+  }): Promise<PdfExportJobStatus> {
+    // Everything a request can be refused for, before it is queued.
+    const deck = await liveDeck(args)
+    const { chosen } = pdfPages(deck, args.slides, args.includeSkipped)
+    // The person's and everyone's share, taken in one atomic step on Redis
+    // (render/pdfExportQueue.ts `reserve`): requests arriving together
+    // cannot all pass a count read before any of them queued its job.
+    const jobId = `pdf_${nanoid(16)}`
+    const dev = deps.bypass === true
+    const starts = dev ? PDF_START_LIMIT_DEV : PDF_START_LIMIT
+    let slot
+    try {
+      slot = await pdfJobs.reserve(args.userId, jobId, {
+        perUser: dev ? MAX_IN_FLIGHT_DEV : MAX_PDF_JOBS_PER_USER,
+        global: MAX_PENDING_PDF_JOBS,
+        startsPerWindow: starts.max,
+        windowMs: starts.windowMs,
+      })
+    } catch {
+      throw busy('The renderer is unavailable right now; try again shortly', 503)
+    }
+    if (!slot.ok) {
+      if (slot.reason === 'rate')
+        throw failed(
+          `You started ${slot.count} PDF exports in the last minute; try again in ` +
+            `${Math.max(1, Math.ceil((slot.retryAfterMs ?? starts.windowMs) / 1000))} s`,
+          429,
         )
+      if (slot.reason === 'user')
+        throw failed(
+          `You have ${slot.count} PDF exports in progress; wait for them to finish, then ask again`,
+          429,
+        )
+      throw busy('The renderer is busy right now; try again in a minute', 503)
+    }
+    try {
+      await pdfJobs.add(jobId, {
+        userId: args.userId,
+        deckId: args.deckId,
+        slides: args.slides,
+        includeSkipped: args.includeSkipped,
+        delivery: args.delivery,
+      })
+    } catch {
+      await pdfJobs.release(args.userId, jobId)
+      throw busy('The renderer is unavailable right now; try again shortly', 503)
+    }
+    return { jobId, status: 'queued', done: 0, total: chosen.length }
+  }
+
+  /** Wait for a job to end, unless this person already has as many reads waiting as they may. */
+  async function waitForPdfJob(userId: string, jobId: string, waitMs: number): Promise<void> {
+    const waiting = pdfStatusWaiters.get(userId) ?? 0
+    if (waiting >= MAX_PDF_STATUS_WAITERS_PER_USER) return
+    pdfStatusWaiters.set(userId, waiting + 1)
+    try {
+      await pdfJobs.waitForEnd(jobId, waitMs).catch(() => undefined)
+    } finally {
+      const left = (pdfStatusWaiters.get(userId) ?? 1) - 1
+      if (left > 0) pdfStatusWaiters.set(userId, left)
+      else pdfStatusWaiters.delete(userId)
+    }
+  }
+
+  /** Count one inline handout of a finished job; false past MAX_PDF_INLINE_HANDOUTS. */
+  function handOutInline(jobId: string): boolean {
+    const at = now()
+    for (const [id, h] of pdfInlineHandouts) if (h.forgetAt <= at) pdfInlineHandouts.delete(id)
+    const h = pdfInlineHandouts.get(jobId) ?? {
+      count: 0,
+      forgetAt: at + PDF_EXPORT_JOB_RETENTION_SEC * 1000,
+    }
+    if (h.count >= MAX_PDF_INLINE_HANDOUTS) return false
+    h.count++
+    pdfInlineHandouts.set(jobId, h)
+    return true
+  }
+
+  async function pdfExportStatus(args: {
+    userId: string
+    deckId: string
+    jobId: string
+    waitMs?: number
+  }): Promise<PdfExportJobStatus> {
+    const missing = () => notFound('No such PDF export (they are kept for an hour)')
+    const read = async () => {
+      let job
+      try {
+        job = await pdfJobs.get(args.jobId)
+      } catch {
+        throw busy('The renderer is unavailable right now; try again shortly', 503)
+      }
+      // Only its own job, on this deck: another person's id is not found.
+      if (job === null || job.data.userId !== args.userId || job.data.deckId !== args.deckId)
+        throw missing()
+      return job
+    }
+    let job = await read()
+    // Clamped here, whoever asks: a waiting read holds listeners and a poll.
+    const waitMs = Math.min(Math.max(0, args.waitMs ?? 0), MAX_PDF_STATUS_WAIT_MS)
+    if ((job.state === 'queued' || job.state === 'running') && waitMs > 0) {
+      await waitForPdfJob(args.userId, args.jobId, waitMs)
+      job = await read()
+    }
+    // The file is the deck's: whoever lost the deck since does not get it.
+    if (!(await resolveDeckAccess(db, { deckId: args.deckId, userId: args.userId })))
+      throw forbidden()
+    const total = job.progress?.total ?? 0
+    const done = job.progress?.done ?? 0
+    if (job.state === 'failed')
       return {
-        ...info,
-        delivery: 'base64',
-        base64: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64'),
+        jobId: job.id,
+        status: 'failed',
+        done,
+        total,
+        error: parsePdfExportFailure(job.failedReason ?? undefined),
+      }
+    if (job.state !== 'done' || job.result === null)
+      return { jobId: job.id, status: job.state === 'done' ? 'running' : job.state, done, total }
+    const { key, ...info } = job.result
+    if (job.data.delivery === 'base64') {
+      if (!handOutInline(job.id))
+        throw failed(
+          `This PDF was already handed out ${MAX_PDF_INLINE_HANDOUTS} times; export it again ` +
+            '(delivery "url" gives a link instead)',
+          410,
+        )
+      const stored = await readStoredObject(key, MAX_INLINE_EXPORT_BYTES)
+      if (stored === null) throw missing()
+      return {
+        jobId: job.id,
+        status: 'done',
+        done,
+        total,
+        result: { ...info, delivery: 'base64', base64: Buffer.from(stored).toString('base64') },
       }
     }
-    const deck = { kind: 'deck', id: args.deckId } as const
-    const key = `${exportsPrefix(deck)}deck.pdf`
-    await buildS3Client().send(
-      new PutObjectCommand({
-        Bucket: MEDIA_BUCKET,
-        Key: key,
-        Body: bytes,
-        ContentType: 'application/pdf',
-        CacheControl: 'private, no-store',
-      }),
-    )
     return {
-      ...info,
-      delivery: 'url',
-      url: await presignGetUrl(key, EXPORT_URL_TTL_SEC),
-      expiresAt: new Date(now() + EXPORT_URL_TTL_SEC * 1000).toISOString(),
+      jobId: job.id,
+      status: 'done',
+      done,
+      total,
+      result: {
+        ...info,
+        delivery: 'url',
+        url: await presignGetUrl(key, EXPORT_URL_TTL_SEC),
+        expiresAt: new Date(now() + EXPORT_URL_TTL_SEC * 1000).toISOString(),
+      },
     }
   }
 
   return {
     exportPng,
-    exportPdf,
+    startPdfExport,
+    pdfExportStatus,
+    runPdfExport,
     buildPdf,
     renderStored,
     look,
@@ -1055,5 +1303,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
 /** Test helper: forget the in-flight counts. */
 export function clearRenderInFlightForTests(): void {
   inFlight.clear()
+  pdfStatusWaiters.clear()
+  pdfInlineHandouts.clear()
   clearRenderSessionsForTests()
 }

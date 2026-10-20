@@ -73,10 +73,12 @@ export function DeckRoleProvider({ deckId, children }: DeckRoleProviderProps) {
   const [role, setRole] = useState<DeckRole>('viewer')
   const [folderId, setFolderId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  // Only the share link's token matters, not the rest of the query: the
+  // render page changes `?slide=` for every slide it shows, and each change
+  // asked GET /decks/:id again (docs/plans/performance.md, R1).
+  const shareToken = new URLSearchParams(location.search).get('share_token')
 
   useEffect(() => {
-    const shareToken = new URLSearchParams(location.search).get('share_token')
-
     // Neither a session nor a share link (ProtectedRoute should have
     // redirected already, but be safe).
     if (shareToken === null && user === null) {
@@ -105,7 +107,7 @@ export function DeckRoleProvider({ deckId, children }: DeckRoleProviderProps) {
     return () => {
       cancelled = true
     }
-  }, [deckId, user, api, location.search])
+  }, [deckId, user, api, shareToken])
 
   return <DeckRoleContext value={{ role, folderId, isLoading }}>{children}</DeckRoleContext>
 }

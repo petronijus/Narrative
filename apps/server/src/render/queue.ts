@@ -63,7 +63,11 @@ let shared: {
  * not on every reconnect attempt (ioredis retries every few seconds, and an
  * error with no listener is printed as "Unhandled error event").
  */
-function redisConnection(url: string, name: string, opts: { offlineQueue: boolean }): IORedis {
+export function redisConnection(
+  url: string,
+  name: string,
+  opts: { offlineQueue: boolean },
+): IORedis {
   // maxRetriesPerRequest: null is required by BullMQ (it manages retries).
   const connection = new IORedis(url, {
     maxRetriesPerRequest: null,
@@ -82,9 +86,13 @@ function redisConnection(url: string, name: string, opts: { offlineQueue: boolea
   return connection
 }
 
+/** The media Redis the render and PDF export queues live on. */
+export const mediaRedisUrl = (): string =>
+  process.env['MEDIA_REDIS_URL'] ?? 'redis://127.0.0.1:6380'
+
 function connect() {
   if (shared !== null) return shared
-  const redisUrl = process.env['MEDIA_REDIS_URL'] ?? 'redis://127.0.0.1:6380'
+  const redisUrl = mediaRedisUrl()
   // A QueueEvents holds a blocking connection, so it gets its own.
   const connections = [
     redisConnection(redisUrl, 'queue', { offlineQueue: false }),
@@ -102,7 +110,7 @@ function connect() {
 }
 
 /** `promise`, or `onTimeout()` thrown at `deadline`. */
-async function within<T>(
+export async function within<T>(
   promise: Promise<T>,
   deadline: number,
   onTimeout: () => Error,

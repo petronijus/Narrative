@@ -36,6 +36,11 @@ export interface VideoInfoResult {
   posterUrl: string | null
   thumbnailUrl: string | null
   playbackUrl: string | null
+  /**
+   * The playback fitted into 1920×1080, for a video larger than that: what
+   * present mode plays at 1080p or less (renderer/videoRendition.ts).
+   */
+  presentPlayback: { url: string; width: number; height: number } | null
   transcodeError: string | null
 }
 
@@ -134,6 +139,7 @@ export function createVideoInfoResolver(apiBaseUrl: string): VideoInfoResolver {
           posterUrl: json.posterUrl ?? null,
           thumbnailUrl: json.thumbnailUrl ?? null,
           playbackUrl: json.playbackUrl ?? null,
+          presentPlayback: json.presentPlayback ?? null,
           transcodeError: json.transcodeError ?? null,
         }
 

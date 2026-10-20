@@ -15,6 +15,8 @@ import * as Y from 'yjs'
 import sharp from 'sharp'
 import {
   renderFailureMessage,
+  type PdfExportJobData,
+  type PdfExportProgress,
   type RenderExportJob,
   type RenderJobData,
   type RenderJobResult,
@@ -88,7 +90,13 @@ import {
   clearRenderInFlightForTests,
   createRenderService,
   MAX_IN_FLIGHT_PER_USER,
+  MAX_PDF_INLINE_HANDOUTS,
+  MAX_PDF_JOBS_PER_USER,
+  MAX_PDF_STATUS_WAIT_MS,
+  MAX_PDF_STATUS_WAITERS_PER_USER,
+  MAX_PENDING_PDF_JOBS,
   MAX_WAITING_JOBS,
+  PDF_START_LIMIT,
   pickSlides,
   RENDER_WAIT_MS,
   RENDER_WORK_BASE_MS,
@@ -96,6 +104,7 @@ import {
 } from './render.js'
 import { RenderTimeoutError, RenderUnavailableError, type RenderQueue } from '../render/queue.js'
 import { SESSION_MAX_MS } from '../render/sessions.js'
+import type { PdfExportJobView, PdfExportQueue, PdfSlotLimits } from '../render/pdfExportQueue.js'
 import type { ServiceDeps } from './deps.js'
 import { ServiceError } from './errors.js'
 
@@ -983,4 +992,285 @@ describe('RenderService.buildPdf / exportPdf (A5.6)', () => {
     gone.abort()
     await expect(pdf(service, { signal: gone.signal })).rejects.toThrow(/cancelled/)
   })
+})
+
+describe('PDF export jobs (performance.md R1: no request waits for a PDF)', () => {
+  /**
+   * An in-memory PDF job queue: jobs stay queued until the test runs them.
+   * Its reservation is atomic as the Redis script is (no await inside), and
+   * its `add` takes a turn of the event loop, as a Redis call does: a
+   * service that read the counts and then added would let concurrent starts
+   * all through.
+   */
+  function fakePdfQueue() {
+    const jobs = new Map<string, PdfExportJobView>()
+    const slots = new Map<string, string>() // jobId → userId
+    const starts = new Map<string, number>()
+    const queue = {
+      reserve: vi.fn(async (userId: string, jobId: string, limits: PdfSlotLimits) => {
+        const begun = starts.get(userId) ?? 0
+        if (begun >= limits.startsPerWindow)
+          return { ok: false, reason: 'rate', count: begun, retryAfterMs: 42_000 } as const
+        const mine = [...slots.values()].filter((u) => u === userId).length
+        if (mine >= limits.perUser) return { ok: false, reason: 'user', count: mine } as const
+        if (slots.size >= limits.global)
+          return { ok: false, reason: 'global', count: slots.size } as const
+        slots.set(jobId, userId)
+        starts.set(userId, begun + 1)
+        return { ok: true } as const
+      }),
+      release: vi.fn(async (_userId: string, jobId: string) => {
+        slots.delete(jobId)
+      }),
+      add: vi.fn(async (jobId: string, data: PdfExportJobData) => {
+        await new Promise((resolve) => setImmediate(resolve))
+        jobs.set(jobId, {
+          id: jobId,
+          data,
+          state: 'queued',
+          progress: null,
+          result: null,
+          failedReason: null,
+        })
+      }),
+      get: vi.fn(async (jobId: string) => jobs.get(jobId) ?? null),
+      waitForEnd: vi.fn(async (_jobId: string, _waitMs: number) => undefined),
+    } satisfies PdfExportQueue
+    return { queue, jobs, slots, starts }
+  }
+
+  function pdfSetup() {
+    const { queue: renderQueue } = setup(async (data) => rendered(data))
+    const pdf = fakePdfQueue()
+    const service = createRenderService({
+      db: componentDb,
+      log,
+      renderQueue,
+      pdfExportQueue: pdf.queue,
+      now: () => NOW,
+    })
+    return { service, renderQueue, ...pdf }
+  }
+
+  /** Run a queued job as the server's worker does, recording what it stored. */
+  async function runJob(
+    service: ReturnType<typeof pdfSetup>['service'],
+    jobs: Map<string, PdfExportJobView>,
+    jobId: string,
+  ): Promise<{ progress: PdfExportProgress[]; put: Record<string, unknown> | undefined }> {
+    const job = jobs.get(jobId)!
+    const progress: PdfExportProgress[] = []
+    const jpeg = new Uint8Array(
+      await sharp({ create: { width: 32, height: 18, channels: 3, background: '#e53935' } })
+        .jpeg()
+        .toBuffer(),
+    )
+    const send = vi.fn(async (cmd: { input: Record<string, unknown> }) =>
+      'Body' in cmd.input
+        ? {}
+        : { ContentLength: jpeg.byteLength, Body: { transformToByteArray: async () => jpeg } },
+    )
+    vi.mocked(buildS3Client).mockReturnValue({ send } as unknown as ReturnType<
+      typeof buildS3Client
+    >)
+    job.state = 'running'
+    try {
+      const result = await service.runPdfExport(job.data, (p) => {
+        progress.push(p)
+        job.progress = p
+      })
+      job.state = 'done'
+      job.result = result
+    } catch (err) {
+      job.state = 'failed'
+      job.failedReason = (err as Error).message
+    }
+    const put = send.mock.calls.map(([c]) => c.input).find((i) => 'Body' in i)
+    return { progress, put }
+  }
+
+  const start = (
+    service: ReturnType<typeof pdfSetup>['service'],
+    over: Partial<Parameters<ReturnType<typeof pdfSetup>['service']['startPdfExport']>[0]> = {},
+  ) =>
+    service.startPdfExport({
+      userId: 'u1',
+      deckId: 'd1',
+      slides: 'all',
+      includeSkipped: false,
+      delivery: 'url',
+      ...over,
+    })
+
+  it('checks the request, queues it and answers at once with the pages to come', async () => {
+    const { service, queue } = pdfSetup()
+    const started = await start(service)
+    expect(started).toMatchObject({ status: 'queued', done: 0, total: 3 })
+    expect(started.jobId).toMatch(/^pdf_/)
+    expect(queue.add).toHaveBeenCalledWith(started.jobId, {
+      userId: 'u1',
+      deckId: 'd1',
+      slides: 'all',
+      includeSkipped: false,
+      delivery: 'url',
+    })
+
+    // Refused before anything is queued: too many slides, no access.
+    vi.mocked(readDocCopy).mockImplementation(async () =>
+      deckDoc(Array.from({ length: 41 }, (_, i) => `s${i + 1}`)),
+    )
+    expect(await status(start(service))).toBe(413)
+    vi.mocked(readDocCopy).mockImplementation(async () => deckDoc(['s1']))
+    vi.mocked(resolveDeckAccess).mockResolvedValueOnce(null)
+    expect(await status(start(service))).toBe(403)
+    expect(queue.add).toHaveBeenCalledTimes(1)
+  })
+
+  it('holds a person to two exports at once, and the queue to its bound, under concurrent starts', async () => {
+    const { service, queue, slots } = pdfSetup()
+    // Five at once: the reservation, not a count read before the add, decides.
+    const answers = await Promise.all(Array.from({ length: 5 }, () => status(start(service))))
+    expect(answers.filter((s) => s === 200)).toHaveLength(2)
+    expect(answers.filter((s) => s === 429)).toHaveLength(3)
+    expect(queue.add).toHaveBeenCalledTimes(2)
+    expect(queue.reserve).toHaveBeenCalledWith('u1', expect.stringMatching(/^pdf_/), {
+      perUser: MAX_PDF_JOBS_PER_USER,
+      global: MAX_PENDING_PDF_JOBS,
+      startsPerWindow: PDF_START_LIMIT.max,
+      windowMs: PDF_START_LIMIT.windowMs,
+    })
+    expect(await status(start(service, { userId: 'u2' }))).toBe(200)
+    // Everyone's bound: the queue is full.
+    for (let i = 0; slots.size < MAX_PENDING_PDF_JOBS; i++) slots.set(`other-${i}`, `x${i}`)
+    expect(await status(start(service, { userId: 'u3' }))).toBe(503)
+  })
+
+  it('gives the slot back when the job cannot be queued', async () => {
+    const { service, queue, slots } = pdfSetup()
+    queue.add.mockRejectedValueOnce(new Error('redis down'))
+    expect(await status(start(service))).toBe(503)
+    expect(queue.release).toHaveBeenCalledTimes(1)
+    expect(slots.size).toBe(0)
+  })
+
+  it('holds a person to PDF_START_LIMIT starts a minute, through the agent command too', async () => {
+    const { service, slots } = pdfSetup()
+    for (let i = 0; i < PDF_START_LIMIT.max; i++) {
+      expect(await status(start(service))).toBe(200)
+      slots.clear() // each one ended at once: only the start rate is left
+    }
+    await expect(start(service)).rejects.toMatchObject({
+      status: 429,
+      message: expect.stringMatching(/started 4 PDF exports in the last minute; try again in 42 s/),
+    })
+  })
+  it('runs the job: reports pages, stores the file as an attachment', async () => {
+    const { service, jobs, renderQueue } = pdfSetup()
+    const { jobId } = await start(service)
+    const { progress, put } = await runJob(service, jobs, jobId)
+    expect(progress).toEqual([
+      { done: 0, total: 3 },
+      { done: 1, total: 3 },
+      { done: 2, total: 3 },
+      { done: 3, total: 3 },
+    ])
+    expect(put).toMatchObject({
+      ContentType: 'application/pdf',
+      CacheControl: 'private, no-store',
+    })
+    expect(String(put!['ContentDisposition'])).toMatch(/^attachment; filename="deck\.pdf"/)
+    expect(String(put!['Key'])).toMatch(/^decks\/d1\/exports\/[^/]+\/deck\.pdf$/)
+    // One render job of the three slides, ending by its own wait (the file's deadline is later).
+    expect(renderQueue.run.mock.calls[0]![0].deadline).toBe(NOW + RENDER_WAIT_MS)
+    expect(jobs.get(jobId)!.result).toMatchObject({ pages: 3, leftOut: 0, filename: 'deck.pdf' })
+  })
+
+  it('answers the job to its owner only: progress, a fresh link when done, the reason when failed', async () => {
+    const { service, jobs, queue } = pdfSetup()
+    const { jobId } = await start(service)
+    const read = (over: { userId?: string; deckId?: string; waitMs?: number } = {}) =>
+      service.pdfExportStatus({ userId: 'u1', deckId: 'd1', jobId, ...over })
+
+    expect(await read()).toMatchObject({ status: 'queued', done: 0, total: 0 })
+    expect(await status(read({ userId: 'u2' }))).toBe(404)
+    expect(await status(read({ deckId: 'd2' }))).toBe(404)
+    expect(
+      await status(service.pdfExportStatus({ userId: 'u1', deckId: 'd1', jobId: 'nope' })),
+    ).toBe(404)
+
+    await runJob(service, jobs, jobId)
+    const done = await read({ waitMs: 5000 })
+    expect(queue.waitForEnd).not.toHaveBeenCalled()
+    expect(done).toMatchObject({
+      status: 'done',
+      done: 3,
+      total: 3,
+      result: { delivery: 'url', pages: 3, filename: 'deck.pdf' },
+    })
+    expect(done.status === 'done' && done.result.delivery === 'url' && done.result.url).toMatch(
+      /^https:\/\/storage\.test\/get\/decks\/d1\/exports\//,
+    )
+    // Lost the deck since: no link.
+    vi.mocked(resolveDeckAccess).mockResolvedValueOnce(null)
+    expect(await status(read())).toBe(403)
+
+    // A job that failed says what the request would have answered.
+    vi.mocked(readDocCopy).mockImplementation(async () => deckWithOneSkipped())
+    const second = await start(service, { slides: [{ index: 1 }], includeSkipped: true })
+    vi.mocked(readDocCopy).mockImplementation(async () => deckDoc([]))
+    await runJob(service, jobs, second.jobId)
+    expect(
+      await service.pdfExportStatus({ userId: 'u1', deckId: 'd1', jobId: second.jobId }),
+    ).toMatchObject({ status: 'failed', error: { code: 'not_found', status: 404 } })
+  })
+
+  it('waits for a job still running when asked to, at most a minute, four reads a person at once', async () => {
+    const { service, queue } = pdfSetup()
+    const { jobId } = await start(service)
+    await service.pdfExportStatus({ userId: 'u1', deckId: 'd1', jobId, waitMs: 2000 })
+    expect(queue.waitForEnd).toHaveBeenCalledWith(jobId, 2000)
+    // Clamped whoever asks.
+    await service.pdfExportStatus({ userId: 'u1', deckId: 'd1', jobId, waitMs: 10 * 60_000 })
+    expect(queue.waitForEnd).toHaveBeenLastCalledWith(jobId, MAX_PDF_STATUS_WAIT_MS)
+
+    queue.waitForEnd.mockClear()
+    const ends: Array<() => void> = []
+    queue.waitForEnd.mockImplementation(
+      () => new Promise<undefined>((resolve) => ends.push(() => resolve(undefined))),
+    )
+    const reads = Array.from({ length: MAX_PDF_STATUS_WAITERS_PER_USER + 2 }, () =>
+      service.pdfExportStatus({ userId: 'u1', deckId: 'd1', jobId, waitMs: 5000 }),
+    )
+    await vi.waitFor(() => expect(ends).toHaveLength(MAX_PDF_STATUS_WAITERS_PER_USER))
+    // The ones past the bound answered at once, without waiting.
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(queue.waitForEnd).toHaveBeenCalledTimes(MAX_PDF_STATUS_WAITERS_PER_USER)
+    for (const end of ends) end()
+    expect((await Promise.all(reads)).every((r) => r.status === 'queued')).toBe(true)
+  })
+
+  it('hands a finished inline PDF out at most MAX_PDF_INLINE_HANDOUTS times', async () => {
+    const { service, jobs } = pdfSetup()
+    const { jobId } = await start(service, { delivery: 'base64' })
+    await runJob(service, jobs, jobId)
+    const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46])
+    const send = vi.fn(async () => ({
+      ContentLength: pdfBytes.byteLength,
+      Body: { transformToByteArray: async () => pdfBytes },
+    }))
+    vi.mocked(buildS3Client).mockReturnValue({ send } as unknown as ReturnType<
+      typeof buildS3Client
+    >)
+    const read = () => service.pdfExportStatus({ userId: 'u1', deckId: 'd1', jobId })
+    for (let i = 0; i < MAX_PDF_INLINE_HANDOUTS; i++)
+      expect(await read()).toMatchObject({ status: 'done', result: { base64: 'JVBERg==' } })
+    expect(await status(read())).toBe(410)
+    expect(send).toHaveBeenCalledTimes(MAX_PDF_INLINE_HANDOUTS)
+  })
+
+  function deckWithOneSkipped(): Y.Doc {
+    const doc = deckDoc(['s1', 's2'])
+    doc.getArray<Y.Map<unknown>>('slides').get(1).set('skipped', true)
+    return doc
+  }
 })

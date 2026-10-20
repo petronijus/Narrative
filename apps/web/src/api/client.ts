@@ -81,8 +81,13 @@ export interface ApiClient {
   /**
    * The deck as one PDF, rendered on the server (`deck.exportPdf`, agentic
    * A5.6; skipped slides left out): the file and the name the server gives it.
+   * The server makes it as a job (no request waits for it): started, then
+   * polled, `onProgress` with the pages rendered of the total.
    */
-  exportDeckPdf(deckId: string): Promise<{ blob: Blob; filename: string }>
+  exportDeckPdf(
+    deckId: string,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ blob: Blob; filename: string }>
   /**
    * Copy chosen slides of another deck into `deckId` at `at` (the slides
    * panel's cross-deck paste). The server checks editor access to the source
@@ -913,10 +918,39 @@ export function createApiClient(): ApiClient {
       return { blob: await res.blob(), filename: attachmentFilename(res, 'slide.png') }
     },
 
-    exportDeckPdf: async (deckId) => {
-      const res = await request(`/decks/${encodeURIComponent(deckId)}/export.pdf`)
-      if (!res.ok) throw await apiError(res)
-      return { blob: await res.blob(), filename: attachmentFilename(res, 'deck.pdf') }
+    exportDeckPdf: async (deckId, onProgress) => {
+      const base = `/decks/${encodeURIComponent(deckId)}/export.pdf`
+      const started = await request(base, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+      if (!started.ok) throw await apiError(started)
+      type Job =
+        | { jobId: string; status: 'queued' | 'running'; done: number; total: number }
+        | {
+            jobId: string
+            status: 'done'
+            done: number
+            total: number
+            result: { url: string; filename: string }
+          }
+        | { jobId: string; status: 'failed'; error: { message: string } }
+      let job = (await started.json()) as Job
+      // Each poll waits on the server for the job to end (a few seconds at most).
+      while (job.status === 'queued' || job.status === 'running') {
+        onProgress?.(job.done, job.total)
+        const res = await request(`${base}/${encodeURIComponent(job.jobId)}?waitMs=3000`)
+        if (!res.ok) throw await apiError(res)
+        job = (await res.json()) as Job
+      }
+      if (job.status === 'failed') throw new Error(job.error.message)
+      if (job.status !== 'done') throw new Error('the PDF export ended without a file')
+      onProgress?.(job.done, job.total)
+      // The stored file, by its presigned link (no cookies: the link is the grant).
+      const file = await fetch(job.result.url, { credentials: 'omit' })
+      if (!file.ok) throw new Error(`HTTP ${file.status}`)
+      return { blob: await file.blob(), filename: job.result.filename }
     },
 
     uploadDeckThumbnail: (id, dataUrl) =>

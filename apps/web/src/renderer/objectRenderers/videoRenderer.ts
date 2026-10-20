@@ -621,15 +621,28 @@ function applyVideoInfoResult(
       removeProcessingLabel(container)
       return
     }
-    // Keep placeholder visible with loading style, start polling if not already.
-    const ph = ensurePlaceholder(container)
-    drawLoadingPlaceholder(ph, box.w, box.h)
-    ph.visible = true
+    // The worker uploads the poster as soon as it has one, long before the
+    // playback file (performance.md, R2): show it under the label while the
+    // transcode runs. Until then, the grey placeholder.
+    const stillUrl = info.posterUrl ?? null
+    if (stillUrl === null || getAcquiredUrl(container) !== stillUrl) {
+      const ph = ensurePlaceholder(container)
+      drawLoadingPlaceholder(ph, box.w, box.h)
+      ph.visible = getAcquiredUrl(container) === undefined
+    }
     // Processing label: remove old if any, add fresh one.
     removeProcessingLabel(container)
     const label = makeProcessingLabel(box.w, box.h)
     container.addChild(label)
     setProcessingLabel(container, label)
+    if (stillUrl !== null && getAcquiredUrl(container) !== stillUrl) {
+      void loadPosterTexture(container, stillUrl, box, fit, myGen, { playIcon: false }).then(() => {
+        // The poster landed above the label: the label goes back on top.
+        const current = getProcessingLabel(container)
+        if (current !== undefined && !current.destroyed) container.addChild(current)
+      })
+    }
+    markRenderDirty()
     return
   }
 
@@ -657,6 +670,14 @@ function applyVideoInfoResult(
     drawLoadingPlaceholder(ph, box.w, box.h)
     ph.visible = true
     ensurePlayIcon(container, box)
+    return
+  }
+
+  // The poster already shows (it came while the video was processing): only
+  // the play icon is new — no reload, no blink.
+  if (getAcquiredUrl(container) === posterUrl && getSprite(container) !== undefined) {
+    ensurePlayIcon(container, box)
+    markRenderDirty()
     return
   }
 
@@ -758,6 +779,7 @@ async function loadPosterTexture(
   box: { w: number; h: number },
   fit: 'cover' | 'contain',
   myGen: number,
+  opts: { playIcon: boolean } = { playIcon: true },
 ): Promise<void> {
   // Bail before any teardown if a newer load already superseded us — we
   // must not release the current poster or destroy the live sprite wrap.
@@ -811,8 +833,8 @@ async function loadPosterTexture(
     ph.visible = false
   }
 
-  // Add play icon on top.
-  ensurePlayIcon(container, box)
+  // Add play icon on top (not while the video is still processing).
+  if (opts.playIcon) ensurePlayIcon(container, box)
 
   // P12b: async branch landed a sprite without going through SceneGraph;
   // poke the scheduler so the new poster shows up under autoStart:false.

@@ -27,9 +27,11 @@ const {
   mockUpdateTranscodeStatus,
   mockUpdateVideoAssetOutputs,
   mockUpdateVideoStills,
+  mockUpdatePresentRendition,
   createMockSpawn,
 } = vi.hoisted(() => {
   const mockS3Send = vi.fn().mockResolvedValue({ Body: {} })
+  const mockUpdatePresentRendition = vi.fn().mockResolvedValue(true)
   const mockUpdateTranscodeStatus = vi.fn().mockResolvedValue(undefined)
   const mockUpdateVideoAssetOutputs = vi.fn().mockResolvedValue(undefined)
   const mockUpdateVideoStills = vi.fn().mockResolvedValue(undefined)
@@ -72,6 +74,7 @@ const {
     mockUpdateTranscodeStatus,
     mockUpdateVideoAssetOutputs,
     mockUpdateVideoStills,
+    mockUpdatePresentRendition,
     createMockSpawn,
   }
 })
@@ -126,6 +129,9 @@ vi.mock('@aws-sdk/client-s3', () => ({
   PutObjectCommand: vi.fn().mockImplementation(function (_input: unknown) {
     return { input: _input }
   }),
+  DeleteObjectCommand: vi.fn().mockImplementation(function (_input: unknown) {
+    return { input: _input, delete: true }
+  }),
 }))
 
 vi.mock('../db.js', () => ({
@@ -136,10 +142,16 @@ vi.mock('../assets.js', () => ({
   updateTranscodeStatus: mockUpdateTranscodeStatus,
   updateVideoAssetOutputs: mockUpdateVideoAssetOutputs,
   updateVideoStills: mockUpdateVideoStills,
+  updatePresentRendition: mockUpdatePresentRendition,
 }))
 
 // Import module under test AFTER mocks
-import { transcodeProcessor } from './transcode.js'
+import {
+  displaySize,
+  needsPresentRendition,
+  quarterTurnsOf,
+  transcodeProcessor,
+} from './transcode.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -399,6 +411,146 @@ describe('transcodeProcessor', () => {
       expect.stringContaining('asset-01'),
       expect.objectContaining({ recursive: true, force: true }),
     )
+  })
+
+  describe('the 1080p rendition (present.mp4) of a source larger than 1080p', () => {
+    /** ffprobe of the source says `source`; of present.mp4, `present`; ffmpeg runs succeed (or `failPresent`). */
+    function spawnFor(
+      source: Record<string, unknown>,
+      present = { width: 1920, height: 1080 },
+      failPresent = false,
+    ) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return vi.fn().mockImplementation((cmd: string, args: string[]): any => {
+        if (cmd === 'ffprobe' && args.includes('stream=width,height'))
+          return createMockSpawn(0, JSON.stringify({ streams: [present] }))()
+        if (cmd === 'ffprobe')
+          return createMockSpawn(
+            0,
+            JSON.stringify({ streams: [{ duration: '10', codec_type: 'video', ...source }] }),
+          )()
+        const isPresentOnly =
+          args.some((a) => a.endsWith('present.mp4')) &&
+          !args.some((a) => a.endsWith('playback.mp4'))
+        return createMockSpawn(failPresent && isPresentOnly ? 1 : 0)()
+      })
+    }
+
+    it('encodes it beside the stream copy of a 4K H.264, after the video is marked done', async () => {
+      const spawnSpy = spawnFor({ width: 3840, height: 2160, codec_name: 'h264' })
+      mockSpawnImpl = spawnSpy
+      const result = await transcodeProcessor(makeJob())
+
+      const ffmpeg = spawnSpy.mock.calls
+        .filter((c) => c[0] === 'ffmpeg')
+        .map((c) => c[1] as string[])
+      expect(ffmpeg).toHaveLength(3)
+      const present = ffmpeg.find((a) => a.at(-1)!.endsWith('present.mp4'))!
+      expect(present.join(' ')).toContain(
+        'scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2',
+      )
+      expect(present).toContain('libx264')
+      // The copy stays a copy, the original resolution kept.
+      expect(ffmpeg.find((a) => a.at(-1)!.endsWith('playback.mp4'))).toContain('copy')
+      expect(mockUpdatePresentRendition).toHaveBeenCalledWith(expect.anything(), 'asset-01', {
+        presentKey: 'decks/deck-01/videos/asset-01/present.mp4',
+        width: 1920,
+        height: 1080,
+      })
+      expect(mockUpdateVideoAssetOutputs.mock.invocationCallOrder[0]!).toBeLessThan(
+        mockUpdatePresentRendition.mock.invocationCallOrder[0]!,
+      )
+      expect(result).toMatchObject({
+        presentKey: expect.stringContaining('present.mp4'),
+        presentWidth: 1920,
+      })
+    })
+
+    it('encodes it after the re-encode of a source x264 cannot copy, the playback first', async () => {
+      const spawnSpy = spawnFor(
+        { width: 4096, height: 2160, codec_name: 'prores' },
+        {
+          width: 1920,
+          height: 1012,
+        },
+      )
+      mockSpawnImpl = spawnSpy
+      await transcodeProcessor(
+        makeJob({ storageKey: 'decks/deck-01/uploads/asset-01/original.mov' }),
+      )
+      const ffmpeg = spawnSpy.mock.calls
+        .map((c, i) => ({ args: c[1] as string[], order: spawnSpy.mock.invocationCallOrder[i]! }))
+        .filter((_, i) => spawnSpy.mock.calls[i]![0] === 'ffmpeg')
+      expect(ffmpeg).toHaveLength(3)
+      const playback = ffmpeg.find((c) => c.args.at(-1)!.endsWith('playback.mp4'))!
+      const present = ffmpeg.find((c) => c.args.at(-1)!.endsWith('present.mp4'))!
+      expect(playback.order).toBeLessThan(present.order)
+      // Spawned only once the playback's run has closed.
+      expect(mockUpdatePresentRendition).toHaveBeenCalledWith(
+        expect.anything(),
+        'asset-01',
+        expect.objectContaining({ width: 1920, height: 1012 }),
+      )
+    })
+
+    it('makes none for a 1080p source, and turns a rotated phone video upright to decide', async () => {
+      mockSpawnImpl = spawnFor({ width: 1920, height: 1080, codec_name: 'h264' })
+      await transcodeProcessor(makeJob())
+      expect(mockUpdatePresentRendition).not.toHaveBeenCalled()
+
+      // Coded 1920×1080, shown 1080×1920: taller than the slide.
+      mockSpawnImpl = spawnFor(
+        {
+          width: 1920,
+          height: 1080,
+          codec_name: 'h264',
+          side_data_list: [{ side_data_type: 'Display Matrix', rotation: -90 }],
+        },
+        { width: 608, height: 1080 },
+      )
+      await transcodeProcessor(makeJob())
+      expect(mockUpdatePresentRendition).toHaveBeenCalledTimes(1)
+    })
+
+    it('removes present.mp4 again when the asset was deleted while it was made', async () => {
+      mockSpawnImpl = spawnFor({ width: 3840, height: 2160, codec_name: 'h264' })
+      mockUpdatePresentRendition.mockResolvedValueOnce(false)
+      const result = await transcodeProcessor(makeJob())
+      const deletes = mockS3Send.mock.calls
+        .map(([c]) => c as { input: { Key?: string }; delete?: boolean })
+        .filter((c) => c.delete === true)
+      expect(deletes.map((c) => c.input.Key)).toEqual(['decks/deck-01/videos/asset-01/present.mp4'])
+      expect(result.presentKey).toBeUndefined()
+    })
+
+    it('removes nothing when the rendition is recorded', async () => {
+      mockSpawnImpl = spawnFor({ width: 3840, height: 2160, codec_name: 'h264' })
+      await transcodeProcessor(makeJob())
+      expect(mockS3Send.mock.calls.some(([c]) => (c as { delete?: boolean }).delete === true)).toBe(
+        false,
+      )
+    })
+
+    it('keeps the video playable when only the rendition fails', async () => {
+      mockSpawnImpl = spawnFor({ width: 3840, height: 2160, codec_name: 'h264' }, undefined, true)
+      const result = await transcodeProcessor(makeJob())
+      expect(mockUpdateVideoAssetOutputs).toHaveBeenCalled()
+      expect(mockUpdatePresentRendition).not.toHaveBeenCalled()
+      expect(result.presentKey).toBeUndefined()
+    })
+
+    it('reads the display rotation from side data or the old rotate tag', () => {
+      expect(quarterTurnsOf({ side_data_list: [{ rotation: -90 }] })).toBe(3)
+      expect(quarterTurnsOf({ side_data_list: [{ rotation: 180 }] })).toBe(2)
+      expect(quarterTurnsOf({ tags: { rotate: '90' } })).toBe(1)
+      expect(quarterTurnsOf({})).toBe(0)
+      expect(displaySize({ width: 3840, height: 2160, quarterTurns: 1 })).toEqual({
+        width: 2160,
+        height: 3840,
+      })
+      expect(needsPresentRendition({ width: 1920, height: 1080 })).toBe(false)
+      expect(needsPresentRendition({ width: 1080, height: 1920 })).toBe(true)
+    })
   })
 
   it('throws when ffprobe finds no video stream', async () => {

@@ -93,6 +93,9 @@ const FIXTURE_VIDEO_PENDING: VideoAssetRow = {
   playbackKey: null,
   posterKey: null,
   thumbnailKey: null,
+  presentPlaybackKey: null,
+  presentWidth: null,
+  presentHeight: null,
   transcodeStatus: 'pending',
   transcodeError: null,
   createdAt: new Date('2026-04-20T10:00:00Z'),
@@ -112,6 +115,9 @@ const FIXTURE_VIDEO_DONE: VideoAssetRow = {
   playbackKey: 'decks/deck-alpha/videos/video-done-01/playback.mp4',
   posterKey: 'decks/deck-alpha/videos/video-done-01/poster.jpg',
   thumbnailKey: 'decks/deck-alpha/videos/video-done-01/thumb.jpg',
+  presentPlaybackKey: null,
+  presentWidth: null,
+  presentHeight: null,
   transcodeStatus: 'done',
   transcodeError: null,
   createdAt: new Date('2026-04-20T10:00:00Z'),
@@ -136,6 +142,9 @@ const FIXTURE_ASSET: MediaAsset = {
   playbackKey: null,
   posterKey: null,
   thumbnailKey: null,
+  presentPlaybackKey: null,
+  presentWidth: null,
+  presentHeight: null,
   transcodeStatus: null,
   transcodeError: null,
   fontFamily: null,
@@ -284,7 +293,7 @@ describe('DELETE /api/media/:assetId', () => {
     vi.mocked(getMediaAsset).mockResolvedValue(FIXTURE_ASSET)
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
     vi.mocked(roleAtLeast).mockReturnValue(true)
-    vi.mocked(deleteMediaAsset).mockResolvedValue(undefined)
+    vi.mocked(deleteMediaAsset).mockResolvedValue([])
 
     const res = await app.inject({
       method: 'DELETE',

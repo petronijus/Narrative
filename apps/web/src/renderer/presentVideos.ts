@@ -20,6 +20,10 @@
  * refused. The element's own buffer is what is ready ahead; the browser keeps
  * reading the file as it plays.
  *
+ * A video larger than 1080p plays its 1080p rendition when the screen shows
+ * no more pixels than it has (renderer/videoRendition.ts, P3): a quarter of
+ * the decode and upload of a 4K original per frame.
+ *
  * Leaving a video's slide pauses the element and puts it back on its first
  * frame (`rewind`), as a new element would start there.
  */
@@ -28,6 +32,7 @@ import type { Slide, VideoObject } from '@narrative/shared'
 import { attachLiveVideo } from './objectRenderers/videoRenderer.js'
 import { getDefaultVideoInfoResolver, type VideoInfoResult } from './videoInfo.js'
 import { trackRenderWork } from './renderWork.js'
+import { choosePlayback, presentStageScale, type PlaybackChoice } from './videoRendition.js'
 
 /** One buffered video: its element and the info it was opened with. */
 export interface PresentVideo {
@@ -36,6 +41,8 @@ export interface PresentVideo {
   info: VideoInfoResult
   /** The first frame the element shows: the poster frame, else the trim start (s). */
   startAt: number
+  /** Which file it plays (the 1080p rendition or the original). */
+  kind: PlaybackChoice['kind']
 }
 
 /** A video that has not buffered within this long is kept as it is (it streams while it plays). */
@@ -148,11 +155,13 @@ export class PresentVideoPool {
       assetId: v.info.assetId,
       forceRefresh: true,
     })
-    if (info.playbackUrl === null) return
+    // The same file as before, freshly signed.
+    const url = v.kind === 'present' ? (info.presentPlayback?.url ?? null) : info.playbackUrl
+    if (url === null) return
     const at = v.element.currentTime
     const playing = !v.element.paused
     v.info = info
-    v.element.src = info.playbackUrl
+    v.element.src = url
     v.element.load()
     if (await once(v.element, 'loadedmetadata', BUFFER_TIMEOUT_MS)) {
       v.element.currentTime = at
@@ -174,7 +183,9 @@ export class PresentVideoPool {
 
   private async open(v: VideoObject): Promise<void> {
     const info = await trackRenderWork(getDefaultVideoInfoResolver()({ assetId: v.assetId }))
-    if (this.destroyed || info.transcodeStatus !== 'done' || info.playbackUrl === null) return
+    if (this.destroyed || info.transcodeStatus !== 'done') return
+    const chosen = choosePlayback(info, v, presentStageScale())
+    if (chosen === null) return
     const el = document.createElement('video')
     // As EditorVideoPreview's own element: muted unless the object says
     // otherwise, inline, no autoplay (the slide starts it), its loop.
@@ -186,7 +197,7 @@ export class PresentVideoPool {
     el.setAttribute('aria-hidden', 'true')
     el.volume = Math.max(0, Math.min(1, v.volume ?? 1))
     this.host.appendChild(el)
-    el.src = info.playbackUrl
+    el.src = chosen.url
     el.load()
     const startAt = startOf(v)
     // Buffered far enough to play through, then on its first frame, decoded.
@@ -196,7 +207,7 @@ export class PresentVideoPool {
       await once(el, 'seeked', 5000)
     }
     if (this.destroyed) return
-    this.videos.set(v.id, { objectId: v.id, element: el, info, startAt })
+    this.videos.set(v.id, { objectId: v.id, element: el, info, startAt, kind: chosen.kind })
     // Every scene of this video — on stage and prepared — draws the live frame.
     attachLiveVideo(v.id, el)
   }

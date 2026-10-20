@@ -163,10 +163,12 @@ the display's rate).
   a step back or a jump swaps a scene in (`SceneGraph.swapSlideScene`);
   builds are compiled onto the prepared slide before it shows.
 - **P3 ✅ (pre-buffering) 2026-10-18** Videos pre-buffered and their first frame decoded
-  before their slide (`renderer/presentVideos.ts`). Open: a 1080p playback
-  rendition for 4K sources — the video worker keeps the source resolution
-  (a stream copy or a re-encode at source size), so a 4K video decodes and
-  uploads 8.3 Mpx a frame on a 1920 × 1080 slide; a server change, not built.
+  before their slide (`renderer/presentVideos.ts`). **1080p rendition ✅
+  2026-10-19** (Log): a source larger than 1920 × 1080 also gets
+  `present.mp4` fitted into it, played when the screen shows no more pixels
+  than it has (`renderer/videoRendition.ts`); the original stays for larger
+  or denser screens. Open: measure the decode/upload saving in the
+  `present.video` bench with a 4K source.
 
 ### E. WebKit (Safari, the Tauri shell)
 
@@ -203,12 +205,15 @@ the display's rate).
   cgroup memory gate, a deck-agnostic warm pool (idle pages recycled across
   sessions), JPEG pages encoded in the page for PDF. Open: the slim render
   entry / an in-place deck switch (touches `renderer/` and `state/`), the
-  ~0.7 s slide switch of the render page, a 30-slide photo PDF that still
-  misses the 95 s window on two cores.
+  ~0.7 s slide switch of the render page. **Async PDF ✅ 2026-10-19** (Log):
+  a PDF is a job (`pdf-export` queue) the editor and the agent poll, so no
+  request waits for it and the 95 s window is gone; the render page no
+  longer re-reads `/api/decks/:id` per slide. Open: the 30-slide photo PDF
+  measured end to end on the job API.
 - **R2 (S)** Video worker — **built**: poster and thumbnail from one ffmpeg
-  run beside the transcode, on the asset before the playback. Open: the
-  editor shows the poster only once the transcode is done
-  (`renderer/objectRenderers/videoRenderer.ts`).
+  run beside the transcode, on the asset before the playback. **The editor
+  shows it while processing ✅ 2026-10-19**
+  (`renderer/objectRenderers/videoRenderer.ts`, Log).
 - **R3 (S)** — **built**: `preview` and `display` warmed through the cache
   after an image upload (`IMGPROXY_WARM_ENDPOINT`). Open: video posters.
 - Drivers: `apps/render-worker/perf/render.ts`,
@@ -976,8 +981,9 @@ webkit`.
   raced the 500 ms edit debounce plus this readback (failed 1 in 3 on
   e71d31d4 too); they now poll for the expected colour.
 
-- 2026-10-19, **X3 (streaming PPTX writer)** (MacBook M3 Pro, Low Power
-  Mode on, Node 24.21, a machine shared with other agents).
+- 2026-10-19, **X3 (streaming PPTX writer), async PDF, R2 poster while
+  processing, P3 1080p rendition** (MacBook M3 Pro, Low Power Mode on, Node
+  24.21, a machine shared with other agents; load and how A/B ran per item).
   - **X3** — the export is streamed instead of built in memory by JSZip.
     `pptx/zipWriter.ts` lays the archive out before its first byte: every
     entry's CRC-32 (`zlib.crc32`, native) and sizes come from a first pass
@@ -1014,3 +1020,94 @@ webkit`.
     Intro (166) 6, Audi LIVE (174) 1 differences — identical with HEAD's
     writer swapped back in. The 879 MB Audi deck did not go through
     `perf-pptx`: 2 GB of free disk at the time (its import stores ~0.9 GB).
+
+  - **Async PDF** (R1) — `POST /decks/:id/export.pdf` checks the request
+    (access, slides, two exports per person, 20 pending) and answers 202 with
+    a job id; `GET /decks/:id/export.pdf/:jobId[?waitMs=]` reports pages done
+    of total, then a fresh 15-minute link (stored as an attachment named
+    after the deck) or the failure the request would have answered. The job
+    runs in the server process on the BullMQ queue `pdf-export` (media
+    Redis; `render/pdfExportQueue.ts`), its slides through the render queue
+    as before (jobs of 20, each with its own 95 s), the file within 10
+    minutes; a job a stopped process left is retried once. `deck.exportPdf`
+    waits up to 50 s, else answers `status: "running"` and a `jobId`; called
+    with only `jobId` it waits for that job (one tool, not two: the
+    tools/list budget). The editor's server fallback polls, with progress
+    in its notice. The render page re-read `/api/decks/:id` on every
+    `?slide=` change (`DeckRoleContext` depended on the whole query); now on
+    the share token only (unit test: 4 → 1 reads for 3 switches). Not
+    measured end to end: the 30-slide photo PDF needs the production web
+    build, Caddy and the render worker image under VM 103's limits (R1's
+    setup), too heavy for this machine today; `apps/render-worker/perf/render.ts`
+    still times the synchronous call and needs the job API first.
+  - **R2, poster while processing** — the editor showed a processing video
+    as grey "Processing…" until the transcode was done, although the worker
+    stores the poster seconds after the probe; it now draws the poster under
+    the label as soon as video-info has it (the 5 s poll), and keeps it
+    without a reload when the video turns done.
+  - **P3, 1080p rendition** — a source larger than 1920 × 1080 as displayed
+    (rotation applied) gets `present.mp4` (libx264 crf 20, aac, fitted, even
+    sides) and its size on the row (migration 0039); `video-info` hands it
+    out as `presentPlayback`; present mode plays it when the video's picture
+    at the presentation's device-pixel size needs no more pixels
+    (`renderer/videoRendition.ts`: a 1080p screen yes, a Retina laptop or a
+    4K projector no). It is its own ffmpeg run after the video is marked
+    playable: one run with both outputs (split filter) made 4K ProRes
+    playable 9.9 → 15.0 s on two threads, so that was dropped.
+    `apps/video-worker/perf/transcode.ts` (now also time to 1080p and the
+    sizes), `FFMPEG_THREADS=2`, 10 s testsrc2, new/base/new interleaved,
+    n=2 each, load 7–47:
+
+    | case            | playable base → new | 1080p ready | playback / present.mp4 |
+    | --------------- | ------------------- | ----------- | ---------------------- |
+    | 4K H.264 (copy) | 0.64 → 0.63–1.15 s  | 2.9–3.5 s   | 24.9 / 4.7 MB          |
+    | 4K ProRes       | 11.8 → 11.3–11.7 s  | 15.4 s      | 35.2 / 5.1 MB          |
+    | 1080p H.264     | unchanged           | none        | 7.2 / –                |
+
+    A rendition frame is 2.07 Mpx instead of 8.29 (a quarter of the decode
+    and the texture upload); not yet measured in the browser. Videos
+    transcoded before 0039 have none until `db:backfill-video --all`
+    re-runs them.
+
+  - **Review fixes (security, code, agent parity), same day.**
+    - _PDF caps:_ a person's two exports and the queue's twenty were read
+      (`activeFor` / `pending`) before the job was added, so concurrent
+      starts all passed. A Redis script now reserves the slot in one step
+      (the person's set, everyone's set, the person's starts per minute:
+      `PDF_START_LIMIT` 4, the agent's command held to it too, not only to
+      the agent endpoint's 240); the slot goes back when the job ends
+      (worker `completed`/`failed`, the queue's `failed` for a job failed for
+      stalling), when the add fails, and — missed releases — when a refused
+      reservation finds slots older than a minute whose job is gone; two
+      hours is the last resort. The PDF jobs' renders stay `uncapped`
+      (capped as the job). Integration-tested: ten concurrent reservations,
+      two pass.
+    - _Status reads:_ `waitMs` clamped to 60 s in the service (25 s on the
+      route), four waiting reads per person at once, 60 reads a minute on the
+      route; a finished `base64` PDF is handed out three times (each an
+      8 MiB read), then 410.
+    - _Waiters:_ `waitForEnd` reads the state only once the events
+      connection is up, and again every 2 s — the stream is read from "now",
+      so an end between the check and its first read was never heard.
+    - _Shutdown:_ the PDF worker closed gracefully (up to 10 s) before
+      Hocuspocus stored anything; Docker's 10 s grace could SIGKILL first.
+      Now `shutdown.ts`: the worker closes with force (its job is retried by
+      the next process — integration-tested, the stall retry included), HTTP
+      closes beside it (8 s at most), the agent host then Hocuspocus first;
+      `stop_grace_period: 30s` for the server.
+    - _Uploads and storage:_ the multipart writer aborts also when destroyed
+      while its upload is being created or a part is on its way (unit
+      tests); MinIO refuses `AbortIncompleteMultipartUpload`, so its own
+      stale-upload expiry (24 h) is pinned in compose (docs/storage.md). The
+      zip writer opens a source ahead only within 1 MiB of its data, and the
+      HTTP route one at a time: a slow download holds one idle storage read
+      at most. A `present.mp4` finished after its asset was deleted is
+      removed by the worker (the update reports no row), and a single
+      asset's delete purges the keys `DELETE … RETURNING` gives. A video
+      copied between `done` and its rendition gets none — documented in
+      docs/storage.md, not fixed (no copy→source link, no rendition-only
+      job).
+    - _Agent surface:_ `deck.exportPdf` refuses `jobId` with any other
+      field (defaults in the descriptions now, so a given value can be told
+      from an omitted one) and names `queued`; tools/list stays under
+      200,000 bytes. `just eval` not run for it (paid).

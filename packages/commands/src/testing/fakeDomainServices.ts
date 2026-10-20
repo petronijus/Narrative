@@ -455,6 +455,7 @@ export function createDomainFakes(
   const rComponents = recorder('components')
   const rPptx = recorder('pptx')
   const rRender = recorder('render')
+  const pdfJobs = new Map<string, { deckId: string; pages: number; delivery: 'url' | 'base64' }>()
   const pickRenderSlides = (deckId: string, refs: RenderSlideRef[] | 'all') => {
     requireDeck(deckId)
     return pickFixtureSlides(deckId === world.deckId, refs)
@@ -991,6 +992,7 @@ export function createDomainFakes(
           posterUrl: 'https://img.test/poster.jpg',
           thumbnailUrl: 'https://img.test/thumb.jpg',
           playbackUrl: 'https://storage.test/playback.mp4',
+          presentPlayback: null,
           transcodeError: null,
         }
       },
@@ -1263,25 +1265,51 @@ export function createDomainFakes(
               failedFonts: [],
             }
       },
-      async exportPdf(args) {
-        rRender('exportPdf', args)
+      async startPdfExport(args) {
+        rRender('startPdfExport', args)
         // The fixture deck skips none of its slides; a PDF is a page per slide asked for.
         const chosen = pickRenderSlides(args.deckId, args.slides)
+        const jobId = `pdf_fixture_${pdfJobs.size + 1}`
+        pdfJobs.set(jobId, { deckId: args.deckId, pages: chosen.length, delivery: args.delivery })
+        return { jobId, status: 'queued', done: 0, total: chosen.length }
+      },
+      async pdfExportStatus(args) {
+        rRender('pdfExportStatus', args)
+        // `pdf_8f2k1c`: a finished job of the world's deck (the command's example).
+        const job =
+          pdfJobs.get(args.jobId) ??
+          (args.jobId === 'pdf_8f2k1c'
+            ? {
+                deckId: world.deckId,
+                pages: pickRenderSlides(world.deckId, 'all').length,
+                delivery: 'url' as const,
+              }
+            : undefined)
+        if (job === undefined || job.deckId !== args.deckId)
+          throw new CommandError('not_found', `No such PDF export '${args.jobId}'`)
         const base = {
-          pages: chosen.length,
+          filename: 'Fixture deck.pdf',
+          pages: job.pages,
           leftOut: 0,
-          sizeBytes: 2048 * chosen.length,
+          sizeBytes: 2048 * job.pages,
           failedLoads: 0,
           failedFonts: [],
         }
-        return args.delivery === 'base64'
-          ? { ...base, delivery: 'base64', base64: 'JVBERi0xLjQK' }
-          : {
-              ...base,
-              delivery: 'url',
-              url: 'https://storage.test/exports/deck.pdf?X-Amz-Signature=fixture',
-              expiresAt: T0,
-            }
+        return {
+          jobId: args.jobId,
+          status: 'done',
+          done: job.pages,
+          total: job.pages,
+          result:
+            job.delivery === 'base64'
+              ? { ...base, delivery: 'base64', base64: 'JVBERi0xLjQK' }
+              : {
+                  ...base,
+                  delivery: 'url',
+                  url: 'https://storage.test/exports/deck.pdf?X-Amz-Signature=fixture',
+                  expiresAt: T0,
+                },
+        }
       },
       async refreshThumbnail(args) {
         rRender('refreshThumbnail', args)

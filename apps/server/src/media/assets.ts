@@ -48,6 +48,10 @@ export interface VideoAssetRow {
   playbackKey: string | null
   posterKey: string | null
   thumbnailKey: string | null
+  /** The 1080p rendition of a video larger than 1080p, and its size (migration 0039). */
+  presentPlaybackKey: string | null
+  presentWidth: number | null
+  presentHeight: number | null
   transcodeStatus: TranscodeStatus | null
   transcodeError: string | null
   createdAt: Date
@@ -191,6 +195,9 @@ export async function getVideoAsset(db: Database, id: string): Promise<VideoAsse
     playbackKey: row.playbackKey,
     posterKey: row.posterKey,
     thumbnailKey: row.thumbnailKey,
+    presentPlaybackKey: row.presentPlaybackKey,
+    presentWidth: row.presentWidth,
+    presentHeight: row.presentHeight,
     transcodeStatus: row.transcodeStatus as TranscodeStatus | null,
     transcodeError: row.transcodeError,
     createdAt: row.createdAt,
@@ -223,6 +230,9 @@ export async function listVideoAssets(db: Database, deckId: string): Promise<Vid
       playbackKey: row.playbackKey,
       posterKey: row.posterKey,
       thumbnailKey: row.thumbnailKey,
+      presentPlaybackKey: row.presentPlaybackKey,
+      presentWidth: row.presentWidth,
+      presentHeight: row.presentHeight,
       transcodeStatus: row.transcodeStatus as TranscodeStatus | null,
       transcodeError: row.transcodeError,
       createdAt: row.createdAt,
@@ -456,6 +466,20 @@ export async function updateVideoAssetOutputs(
  * Does NOT delete the corresponding MinIO object — that is the responsibility
  * of the media agent cleanup job (TODO: media phase 2 / M29).
  */
-export async function deleteMediaAsset(db: Database, id: string): Promise<void> {
-  await db.delete(mediaAssets).where(eq(mediaAssets.id, id))
+export async function deleteMediaAsset(db: Database, id: string): Promise<string[]> {
+  // The keys as the row held them when it went: a file the video worker
+  // recorded after the caller read the row (present.mp4, written minutes
+  // after the video is done) is named here too.
+  const deleted = await db.delete(mediaAssets).where(eq(mediaAssets.id, id)).returning({
+    storageKey: mediaAssets.storageKey,
+    playbackKey: mediaAssets.playbackKey,
+    posterKey: mediaAssets.posterKey,
+    thumbnailKey: mediaAssets.thumbnailKey,
+    presentPlaybackKey: mediaAssets.presentPlaybackKey,
+  })
+  return deleted.flatMap((r) =>
+    [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey, r.presentPlaybackKey].filter(
+      (k): k is string => typeof k === 'string' && k !== '',
+    ),
+  )
 }

@@ -379,6 +379,15 @@ export const mediaAssets = pgTable(
     /** S3/MinIO key for the sidebar thumbnail: decks/<deckId>/videos/<id>/thumb.jpg */
     thumbnailKey: text('thumbnail_key'),
     /**
+     * 0039: the playback fitted into 1920×1080 for a video larger than that
+     * (<prefix>/videos/<id>/present.mp4), and its size — what present mode
+     * plays at 1080p or less (docs/plans/performance.md, P3). NULL for
+     * smaller videos, images and videos transcoded before 0039.
+     */
+    presentPlaybackKey: text('present_playback_key'),
+    presentWidth: integer('present_width'),
+    presentHeight: integer('present_height'),
+    /**
      * Transcode job status — NULL for image assets.
      * Lifecycle: pending → processing → done | failed (set by BullMQ worker, phase 2).
      */

@@ -372,6 +372,7 @@ export async function keysStillReferenced(
       playbackKey: mediaAssets.playbackKey,
       posterKey: mediaAssets.posterKey,
       thumbnailKey: mediaAssets.thumbnailKey,
+      presentPlaybackKey: mediaAssets.presentPlaybackKey,
     })
     .from(mediaAssets)
     .where(
@@ -380,11 +381,18 @@ export async function keysStillReferenced(
         inArray(mediaAssets.playbackKey, wanted),
         inArray(mediaAssets.posterKey, wanted),
         inArray(mediaAssets.thumbnailKey, wanted),
+        inArray(mediaAssets.presentPlaybackKey, wanted),
       ),
     )
   const named = new Set<string>()
   for (const r of rows) {
-    for (const k of [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey]) {
+    for (const k of [
+      r.storageKey,
+      r.playbackKey,
+      r.posterKey,
+      r.thumbnailKey,
+      r.presentPlaybackKey,
+    ]) {
       if (typeof k === 'string' && k !== '') named.add(k)
     }
   }

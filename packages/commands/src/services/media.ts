@@ -57,6 +57,11 @@ export interface VideoInfo {
   posterUrl: string | null
   thumbnailUrl: string | null
   playbackUrl: string | null
+  /**
+   * The playback fitted into 1920×1080, for a video larger than that (what
+   * present mode plays at 1080p or less); null when there is none.
+   */
+  presentPlayback: { url: string; width: number; height: number } | null
   transcodeError: string | null
 }
 

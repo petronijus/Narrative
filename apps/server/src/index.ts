@@ -44,6 +44,9 @@ import { createAgentPrincipalKeys } from './agent/presence.js'
 import { agentPrincipalKeySecretFromEnv } from './agent/principalKeySecret.js'
 import { closeQueueConnection } from './media/enqueue.js'
 import { closeRenderQueue, dropStaleRenderJobs } from './render/queue.js'
+import { startPdfExportWorker } from './render/pdfExportQueue.js'
+import { shutdownServer } from './shutdown.js'
+import { createRenderService } from './services/render.js'
 import { metricsRegistrationDecision } from './metrics/index.js'
 import { initSentry } from './observability/sentry.js'
 import { createJwtVerifier } from './auth/jwt.js'
@@ -411,48 +414,30 @@ app.log.info(
 // Graceful shutdown
 // ---------------------------------------------------------------------------
 
+let stopPdfExports: (() => Promise<void>) | null = null
+
+// The order is shutdown.ts's: Hocuspocus stores its documents before anything
+// that may take long (in-flight requests, a running PDF export) is waited for.
 const shutdown = async (signal: string) => {
   console.log(`[server] Received ${signal}, shutting down...`)
-  deckThumbnails.stop()
-
-  try {
-    await app.close()
-    console.log('[server] Fastify closed')
-  } catch (err) {
-    console.error('[server] Error closing Fastify:', err)
-  }
-
-  // Before Hocuspocus: close open agent runs (recorded as closed) and let go
-  // of the documents the agent host holds, so they store and unload cleanly.
-  try {
-    await agent.shutdown()
-    console.log('[server] Agent host closed')
-  } catch (err) {
-    console.error('[server] Error closing the agent host:', err)
-  }
-
-  try {
-    await hocuspocusServer.destroy()
-    console.log('[server] Hocuspocus closed')
-  } catch (err) {
-    console.error('[server] Error closing Hocuspocus:', err)
-  }
-
-  try {
-    await pool.end()
-    console.log('[server] Postgres pool closed')
-  } catch (err) {
-    console.error('[server] Error closing pg pool:', err)
-  }
-
-  try {
-    await closeQueueConnection()
-    await closeRenderQueue()
-    console.log('[server] BullMQ queue connections closed')
-  } catch (err) {
-    console.error('[server] Error closing BullMQ queue connections:', err)
-  }
-
+  await shutdownServer({
+    stopBackground: () => deckThumbnails.stop(),
+    stopPdfExports: async () => stopPdfExports?.(),
+    closeHttp: () => app.close(),
+    // Before Hocuspocus: close open agent runs (recorded as closed) and let go
+    // of the documents the agent host holds, so they store and unload cleanly.
+    closeAgent: () => agent.shutdown(),
+    closeHocuspocus: () => hocuspocusServer.destroy(),
+    closePostgres: () => pool.end(),
+    closeQueues: async () => {
+      await closeQueueConnection()
+      await closeRenderQueue()
+    },
+    log: {
+      info: (message) => console.log(`[server] ${message}`),
+      error: (message, err) => console.error(`[server] ${message}`, err),
+    },
+  })
   process.exit(0)
 }
 
@@ -501,4 +486,16 @@ void dropStaleRenderJobs(Date.now() - process.uptime() * 1000).then(
     if (dropped > 0) app.log.info({ dropped }, 'render: dropped jobs left by the previous process')
   },
   (err: unknown) => app.log.warn({ err }, 'render: could not check the render queue at start'),
+)
+
+// Deck PDFs are jobs (render/pdfExportQueue.ts): this process runs them, as
+// it is the one that queues their slide renders and holds their render
+// sessions. Started once the server takes requests.
+stopPdfExports = startPdfExportWorker((data, progress) =>
+  createRenderService({
+    db,
+    log: app.log,
+    bypass: bypassAuth,
+    hocuspocus: () => hocuspocus,
+  }).runPdfExport(data, progress),
 )

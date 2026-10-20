@@ -37,6 +37,7 @@ function makeResult(overrides: Partial<VideoInfoResult> = {}): VideoInfoResult {
     posterUrl: 'https://imgproxy.example.com/poster.jpg',
     thumbnailUrl: 'https://imgproxy.example.com/thumb.jpg',
     playbackUrl: 'https://minio.example.com/videos/playback.mp4',
+    presentPlayback: null,
     transcodeError: null,
     ...overrides,
   }

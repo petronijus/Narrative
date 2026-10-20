@@ -320,7 +320,7 @@
       "id": "deck.exportPdf",
       "domain": "deck",
       "title": "Export slides as PDF",
-      "description": "The deck as one PDF, a page per slide as the editor shows it now: pictures of the slides, not editable text (that is deck.exportPptx). Skipped slides are left out unless `includeSkipped`. A download URL for 15 minutes — a bearer link, only for the user who asked — or `delivery: \"base64\"` (≤ 8 MB). At most 40 slides a call; about a second a slide. Any reader of the deck.",
+      "description": "The deck as one PDF, a page per slide as the editor shows it now (pictures; editable: deck.exportPptx); skipped slides only with `includeSkipped`. A 15-minute bearer link (only for the asker), or `delivery: \"base64\"` (≤ 8 MB). At most 40 slides, ~1 s each. Waits ≤ 50 s; not done: `jobId` + `status` queued/running — call again with `jobId` alone. Any reader of the deck.",
       "role": "viewer",
       "effects": ["server"],
       "undo": "n/a",
@@ -328,8 +328,12 @@
       "hosts": ["server"],
       "routes": [
         {
-          "method": "GET",
+          "method": "POST",
           "path": "/decks/:id/export.pdf"
+        },
+        {
+          "method": "GET",
+          "path": "/decks/:id/export.pdf/:jobId"
         }
       ]
     },

@@ -9,8 +9,9 @@ import { z } from 'zod'
 import { defineCommand } from '../registry.js'
 import { requireServices } from '../services.js'
 import { SlideRefSchema, type SlideRef } from '../refs.js'
-import { MAX_PDF_SLIDES, type RenderSlideRef } from '../services/render.js'
-import { GET, PUT, serverCommand, targetDeckId, targetDocument } from './serverShared.js'
+import { MAX_PDF_SLIDES, type PdfExportJobStatus, type RenderSlideRef } from '../services/render.js'
+import { CommandError, type CommandErrorCode } from '../errors.js'
+import { GET, POST, PUT, serverCommand, targetDeckId, targetDocument } from './serverShared.js'
 
 /**
  * Slides one call renders at most: a slide with fresh pictures costs up to
@@ -93,43 +94,95 @@ export const deckExportPng = defineCommand({
   },
 })
 
+/**
+ * How long one `deck.exportPdf` call waits for its job before answering
+ * `running` (an MCP call stays well under Cloudflare's 100 s).
+ */
+export const PDF_EXPORT_WAIT_MS = 50_000
+
+/** A finished PDF export, as the command hands it over. */
+const PdfDone = z.object({
+  status: z.literal('done'),
+  jobId: z.string(),
+  delivery: z.enum(['url', 'base64']),
+  url: z.string().optional(),
+  expiresAt: z.string().optional(),
+  base64: z.string().optional(),
+  filename: z.string(),
+  pages: z.number(),
+  leftOut: z.number(),
+  sizeBytes: z.number(),
+  failedLoads: z.number(),
+  failedFonts: z.array(z.string()),
+})
+const PdfRunning = z.object({
+  status: z.enum(['queued', 'running']),
+  jobId: z.string(),
+  done: z.number().describe('Pages rendered so far'),
+  total: z.number().describe('Pages the file will have (0 until the job has read the deck)'),
+})
+const PdfExportOutput = z.discriminatedUnion('status', [PdfDone, PdfRunning])
+
+/** A job's status as the command answers it: the result flattened, a failure thrown. */
+function pdfOutput(s: PdfExportJobStatus): z.infer<typeof PdfExportOutput> {
+  if (s.status === 'failed') throw new CommandError(asErrorCode(s.error.code), s.error.message)
+  if (s.status === 'done') return { status: 'done', jobId: s.jobId, ...s.result }
+  return { status: s.status, jobId: s.jobId, done: s.done, total: s.total }
+}
+
+/** The codes a PDF export can fail with (the service's errors); anything else is `failed`. */
+const PDF_FAILURE_CODES: ReadonlySet<string> = new Set<CommandErrorCode>([
+  'invalid_input',
+  'forbidden',
+  'not_found',
+  'conflict',
+  'failed',
+])
+
+function asErrorCode(code: string): CommandErrorCode {
+  return PDF_FAILURE_CODES.has(code) ? (code as CommandErrorCode) : 'failed'
+}
+
 export const deckExportPdf = defineCommand({
   ...serverCommand,
   id: 'deck.exportPdf',
   domain: 'deck',
   title: 'Export slides as PDF',
   description:
-    'The deck as one PDF, a page per slide as the editor shows it now: pictures of the slides, not editable ' +
-    'text (that is deck.exportPptx). Skipped slides are left out unless `includeSkipped`. A download URL for ' +
-    '15 minutes — a bearer link, only for the user who asked — or `delivery: "base64"` (≤ 8 MB). At most ' +
-    `${MAX_PDF_SLIDES} slides a call; about a second a slide. Any reader of the deck.`,
-  input: z.strictObject({
-    slides: z
-      .union([z.literal('all'), z.array(SlideRefSchema).min(1).max(MAX_PDF_SLIDES)])
-      .default('all')
-      .describe('"all" (default), or the slides in page order'),
-    includeSkipped: z.boolean().default(false),
-    delivery: z.enum(['url', 'base64']).default('url'),
-  }),
-  output: z.object({
-    delivery: z.enum(['url', 'base64']),
-    url: z.string().optional(),
-    expiresAt: z.string().optional(),
-    base64: z.string().optional(),
-    pages: z.number(),
-    leftOut: z.number(),
-    sizeBytes: z.number(),
-    failedLoads: z.number(),
-    failedFonts: z.array(z.string()),
-  }),
+    'The deck as one PDF, a page per slide as the editor shows it now (pictures; editable: deck.exportPptx); ' +
+    'skipped slides only with `includeSkipped`. A 15-minute bearer link (only for the asker), ' +
+    `or \`delivery: "base64"\` (≤ 8 MB). At most ${MAX_PDF_SLIDES} slides, ~1 s each. ` +
+    `Waits ≤ ${PDF_EXPORT_WAIT_MS / 1000} s; not done: \`jobId\` + \`status\` queued/running — call again ` +
+    'with `jobId` alone. Any reader of the deck.',
+  input: z
+    .strictObject({
+      slides: z
+        .union([z.literal('all'), z.array(SlideRefSchema).min(1).max(MAX_PDF_SLIDES)])
+        .optional()
+        .describe('"all" (default) or slides in page order'),
+      includeSkipped: z.boolean().optional().describe('default false'),
+      // The description says it: a link unless `delivery: "base64"`.
+      delivery: z.enum(['url', 'base64']).optional(),
+      jobId: z.string().min(1).max(64).optional(),
+    })
+    // A job keeps what it was started with: another value beside its id
+    // would be silently ignored.
+    .refine(
+      (v) =>
+        v.jobId === undefined ||
+        (v.slides === undefined && v.includeSkipped === undefined && v.delivery === undefined),
+      { message: 'jobId alone: its slides, includeSkipped and delivery were set at the start' },
+    ),
+  output: PdfExportOutput,
   role: 'viewer',
   scope: 'deck',
   effects: ['server'],
   undo: 'n/a',
   confirm: 'never',
-  routes: [GET('/decks/:id/export.pdf')],
+  routes: [POST('/decks/:id/export.pdf'), GET('/decks/:id/export.pdf/:jobId')],
   examples: [
     { title: 'The deck as a PDF download link', input: {} },
+    { title: 'Wait for an export still running', input: { jobId: 'pdf_8f2k1c' } },
     {
       title: 'Slides 1–3 inline, the skipped ones too',
       input: {
@@ -140,13 +193,26 @@ export const deckExportPdf = defineCommand({
     },
   ],
   async handler(ctx, input) {
-    return requireServices(ctx).render.exportPdf({
+    const render = requireServices(ctx).render
+    const deckId = targetDeckId(ctx)
+    const wait = (jobId: string) =>
+      render.pdfExportStatus({
+        userId: ctx.actor.userId,
+        deckId,
+        jobId,
+        waitMs: PDF_EXPORT_WAIT_MS,
+      })
+    if (input.jobId !== undefined) return pdfOutput(await wait(input.jobId))
+    const slides = input.slides ?? 'all'
+    const started = await render.startPdfExport({
       userId: ctx.actor.userId,
-      deckId: targetDeckId(ctx),
-      slides: input.slides === 'all' ? 'all' : input.slides.map(toRenderRef),
-      includeSkipped: input.includeSkipped,
-      delivery: input.delivery,
+      deckId,
+      slides: slides === 'all' ? 'all' : slides.map(toRenderRef),
+      includeSkipped: input.includeSkipped ?? false,
+      delivery: input.delivery ?? 'url',
     })
+    if (started.status === 'done' || started.status === 'failed') return pdfOutput(started)
+    return pdfOutput(await wait(started.jobId))
   },
 })
 

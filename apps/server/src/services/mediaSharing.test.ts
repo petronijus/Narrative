@@ -28,7 +28,7 @@ vi.mock('../media/assets.js', () => ({
   getMediaAsset: vi.fn(),
   getVideoAsset: vi.fn(),
   getFontAsset: vi.fn(),
-  deleteMediaAsset: vi.fn(),
+  deleteMediaAsset: vi.fn(async () => [] as string[]),
 }))
 vi.mock('../media/imgproxyUrl.js', () => ({
   signImgproxyUrl: vi.fn().mockReturnValue('https://img.test/signed'),
@@ -548,6 +548,37 @@ describe('MediaService scoping', () => {
         'decks/d1/uploads/v1/original.mp4',
         'decks/d1/videos/v1/playback.mp4',
         'decks/d1/videos/v1/poster.jpg',
+      ],
+      expect.anything(),
+    )
+  })
+
+  it('also purges what the row named when it was deleted (a rendition recorded after it was read)', async () => {
+    vi.mocked(getMediaAsset).mockResolvedValue({
+      id: 'v2',
+      deckId: 'd1',
+      componentId: null,
+      folderId: null,
+      storageKey: 'decks/d1/uploads/v2/original.mp4',
+      playbackKey: 'decks/d1/videos/v2/playback.mp4',
+      posterKey: null,
+      thumbnailKey: null,
+      presentPlaybackKey: null,
+      kind: 'video',
+    } as never)
+    vi.mocked(deleteMediaAsset).mockResolvedValueOnce([
+      'decks/d1/uploads/v2/original.mp4',
+      'decks/d1/videos/v2/playback.mp4',
+      'decks/d1/videos/v2/present.mp4',
+    ])
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
+    await media().delete({ userId: 'u1', assetId: 'v2', owner: { deckId: 'd1' } })
+    expect(purgeUnreferencedKeys).toHaveBeenLastCalledWith(
+      expect.anything(),
+      [
+        'decks/d1/uploads/v2/original.mp4',
+        'decks/d1/videos/v2/playback.mp4',
+        'decks/d1/videos/v2/present.mp4',
       ],
       expect.anything(),
     )

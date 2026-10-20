@@ -10,8 +10,13 @@
  *
  *   time to poster   job start → `poster.jpg` is in the bucket (polled every
  *                    50 ms with HeadObject: the moment a reader could have it)
- *   time to playable job start → the processor returns (playback.mp4 stored,
- *                    the asset marked done)
+ *   time to playable job start → `playback.mp4` is in the bucket (polled the
+ *                    same way; the asset is marked done right after it)
+ *   time to 1080p    job start → `present.mp4` is in the bucket: the playback
+ *                    rendition present mode plays for a source above 1080p
+ *                    (R2 / P3); "-" when the source needs none
+ *   job              job start → the processor returns
+ *   sizes            playback.mp4 and present.mp4 as stored
  *
  * Cases: 1080p and 4K, each as H.264 (web-playable: the lossless stream copy)
  * and as ProRes (re-encoded with libx264). Everything it uploads (sources and
@@ -115,6 +120,16 @@ async function exists(s3: S3Client, key: string): Promise<boolean> {
   }
 }
 
+async function sizeOf(s3: S3Client, key: string): Promise<number | null> {
+  try {
+    return (
+      (await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }))).ContentLength ?? null
+    )
+  } catch {
+    return null
+  }
+}
+
 async function deletePrefix(s3: S3Client, prefix: string): Promise<void> {
   const listed = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix }))
   const keys = (listed.Contents ?? []).map((o) => ({ Key: o.Key! }))
@@ -157,6 +172,9 @@ async function main(): Promise<void> {
       const bytes = readFileSync(source)
       const poster: number[] = []
       const playable: number[] = []
+      const present: number[] = []
+      const job: number[] = []
+      const sizes: string[] = []
       for (let run = 0; run < c.runs; run++) {
         const assetId = `perf${randomBytes(6).toString('hex')}`
         const storageKey = `decks/${deckId}/uploads/${assetId}/original.${c.ext}`
@@ -168,31 +186,46 @@ async function main(): Promise<void> {
             ContentType: c.mime,
           }),
         )
-        const posterKey = `decks/${deckId}/videos/${assetId}/poster.jpg`
-        const job = {
+        const prefix = `decks/${deckId}/videos/${assetId}`
+        const watched = ['poster.jpg', 'playback.mp4', 'present.mp4'].map((f) => `${prefix}/${f}`)
+        const seenAt = new Map<string, number>()
+        const bullJob = {
           id: `perf-${run}`,
           data: { assetId, deckId, storageKey, uploaderUserId: 'perf', mimeType: c.mime },
           updateProgress: async () => undefined,
         } as unknown as Job<VideoTranscodeJobData, VideoTranscodeResult>
         const start = Date.now()
-        let posterAt: number | null = null
         let polling = true
         const poll = (async () => {
-          while (polling && posterAt === null) {
-            if (await exists(s3, posterKey)) posterAt = Date.now()
-            else await new Promise((r) => setTimeout(r, 50))
+          while (polling) {
+            for (const key of watched)
+              if (!seenAt.has(key) && (await exists(s3, key))) seenAt.set(key, Date.now())
+            await new Promise((r) => setTimeout(r, 50))
           }
         })()
-        await transcodeProcessor(job)
+        await transcodeProcessor(bullJob)
         const doneAt = Date.now()
         polling = false
         await poll
-        poster.push((posterAt ?? doneAt) - start)
-        playable.push(doneAt - start)
+        // Stored between the last poll and the return: counted at the return.
+        for (const key of watched)
+          if (!seenAt.has(key) && (await exists(s3, key))) seenAt.set(key, doneAt)
+        poster.push((seenAt.get(watched[0]!) ?? doneAt) - start)
+        playable.push((seenAt.get(watched[1]!) ?? doneAt) - start)
+        const presentAt = seenAt.get(watched[2]!)
+        if (presentAt !== undefined) present.push(presentAt - start)
+        job.push(doneAt - start)
+        const mbOf = (n: number | null) => (n === null ? '-' : (n / 1e6).toFixed(1))
+        sizes.push(
+          `${mbOf(await sizeOf(s3, watched[1]!))}/${mbOf(await sizeOf(s3, watched[2]!))} MB`,
+        )
       }
       const fmt = (v: number[]) =>
         `p50=${Math.round(median(v))} p95=${Math.round(quantile(v, 0.95))} (n=${v.length})`
-      const row = `${c.name.padEnd(13)} ${(bytes.byteLength / 1e6).toFixed(1).padStart(6)} MB  poster ${fmt(poster)}  playable ${fmt(playable)}`
+      const row =
+        `${c.name.padEnd(13)} ${(bytes.byteLength / 1e6).toFixed(1).padStart(6)} MB  poster ${fmt(poster)}  ` +
+        `playable ${fmt(playable)}  1080p ${present.length > 0 ? fmt(present) : '-'}  job ${fmt(job)}  ` +
+        `playback/1080p ${sizes[0]}`
       rows.push(row)
       console.log(`[perf] ${row}`)
     }

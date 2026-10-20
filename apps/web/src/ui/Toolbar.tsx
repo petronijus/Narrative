@@ -250,7 +250,15 @@ function ToolbarImpl({ masterMode = false }: ToolbarProps = {}) {
           )
         console.warn('[export] building the PDF in the browser failed; asking the server', err)
         showEditorNotice('Exporting the PDF on the server…')
-        return (await api.exportDeckPdf(id)).blob
+        return (
+          await api.exportDeckPdf(id, (done, total) =>
+            showEditorNotice(
+              total > 0
+                ? `Exporting the PDF on the server… ${done} of ${total}`
+                : 'Exporting the PDF on the server…',
+            ),
+          )
+        ).blob
       })
       dismissEditorNotice()
       downloadBlob(blob, `${safeFilename(title)}.pdf`)

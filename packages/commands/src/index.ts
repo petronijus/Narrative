@@ -72,6 +72,7 @@ export {
   MAX_MEASURE_SLIDES,
   MAX_PDF_SLIDES,
   type PdfExportResult,
+  type PdfExportJobStatus,
   type TextMeasurement,
 } from './services/render.js'
 export {

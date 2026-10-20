@@ -48,6 +48,9 @@ const sampleAsset: MediaAsset = {
   playbackKey: null,
   posterKey: null,
   thumbnailKey: null,
+  presentPlaybackKey: null,
+  presentWidth: null,
+  presentHeight: null,
   transcodeStatus: null,
   transcodeError: null,
   fontFamily: null,
@@ -75,6 +78,9 @@ const sampleVideoAsset: MediaAsset = {
   playbackKey: null,
   posterKey: null,
   thumbnailKey: null,
+  presentPlaybackKey: null,
+  presentWidth: null,
+  presentHeight: null,
   transcodeStatus: 'pending',
   transcodeError: null,
   fontFamily: null,
@@ -137,8 +143,11 @@ function makeMockDbForSelect(rows: MediaAsset[]): Database {
  * Builds a mock for deleteMediaAsset.
  * The function calls db.delete(table).where(...).
  */
-function makeMockDbForDelete(): { db: Database; whereMock: ReturnType<typeof vi.fn> } {
-  const whereMock = vi.fn().mockResolvedValue([])
+function makeMockDbForDelete(rows: Array<Record<string, string | null>> = []): {
+  db: Database
+  whereMock: ReturnType<typeof vi.fn>
+} {
+  const whereMock = vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue(rows) })
   const db = {
     delete: vi.fn().mockReturnValue({ where: whereMock }),
   } as unknown as Database
@@ -307,7 +316,25 @@ describe('deleteMediaAsset', () => {
   it('does not throw when asset does not exist (no-op at DB level)', async () => {
     const { db } = makeMockDbForDelete()
 
-    await expect(deleteMediaAsset(db, 'nonexistent')).resolves.toBeUndefined()
+    await expect(deleteMediaAsset(db, 'nonexistent')).resolves.toEqual([])
+  })
+
+  it("returns the deleted row's keys, the rendition recorded after the caller read it included", async () => {
+    const { db } = makeMockDbForDelete([
+      {
+        storageKey: 'decks/d/uploads/a.mp4',
+        playbackKey: 'decks/d/videos/a/playback.mp4',
+        posterKey: 'decks/d/videos/a/poster.jpg',
+        thumbnailKey: null,
+        presentPlaybackKey: 'decks/d/videos/a/present.mp4',
+      },
+    ])
+    expect(await deleteMediaAsset(db, 'a')).toEqual([
+      'decks/d/uploads/a.mp4',
+      'decks/d/videos/a/playback.mp4',
+      'decks/d/videos/a/poster.jpg',
+      'decks/d/videos/a/present.mp4',
+    ])
   })
 })
 
