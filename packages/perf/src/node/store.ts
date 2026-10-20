@@ -46,7 +46,10 @@ export interface Baselines {
  * and the desktop shells (`fill.solid.mount@prod/chromium-browser`).
  */
 export function baselineKey(benchId: string, fp: Pick<Fingerprint, 'build' | 'browser'>): string {
-  const runtime = fp.browser === undefined ? 'node' : `${fp.browser.engine}-${fp.browser.shell}`
+  const runtime =
+    fp.browser === undefined
+      ? 'node'
+      : `${fp.browser.engine}-${fp.browser.shell}${fp.browser.headed === true ? '-headed' : ''}`
   return `${benchId}@${fp.build.mode}/${runtime}`
 }
 

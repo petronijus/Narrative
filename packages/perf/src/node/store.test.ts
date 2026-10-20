@@ -109,6 +109,16 @@ describe('the result store', () => {
     expect(baselineKey('fill.solid.mount', fp)).toBe('fill.solid.mount@prod/webkit-tauri')
   })
 
+  it('a headed browser keeps a series apart from the headless one', () => {
+    const browser = { name: 'webkit', version: '26', engine: 'webkit', shell: 'browser' } as const
+    expect(baselineKey('present.advance.text', { ...FP, browser })).toBe(
+      'present.advance.text@prod/webkit-browser',
+    )
+    expect(
+      baselineKey('present.advance.text', { ...FP, browser: { ...browser, headed: true } }),
+    ).toBe('present.advance.text@prod/webkit-browser-headed')
+  })
+
   it('refuses a baselines file of another machine', () => {
     const store = openResultStore({ machine: 'test-box', home })
     store.append({ ...structuredClone(FP_RESULT), fingerprint: FP })

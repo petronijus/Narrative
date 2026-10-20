@@ -93,6 +93,8 @@ interface PlaywrightRun {
   mode: BuildMode
   sides: Array<{ name: string; baseURL: string; version?: string; rev?: string }>
   browser: 'chromium' | 'webkit'
+  /** A window on the screen instead of a headless browser (`--headed`). */
+  headed?: boolean
   env?: NodeJS.ProcessEnv
 }
 
@@ -108,13 +110,21 @@ function playwright(root: string, o: PlaywrightRun): Promise<number> {
     // The machine's GPU unless a caller says otherwise (--swiftshader).
     PERF_GPU: '1',
     ...(o.browser === 'webkit' ? { PW_WEBKIT: '1' } : {}),
+    ...(o.headed === true ? { PERF_HEADED: '1' } : {}),
     ...o.env,
   }
   const project = o.browser === 'webkit' ? 'perf-webkit' : 'perf'
   return new Promise((resolve, reject) => {
     const child = spawn(
       'pnpm',
-      ['exec', 'playwright', 'test', 'e2e/perf', `--project=${project}`],
+      [
+        'exec',
+        'playwright',
+        'test',
+        'e2e/perf',
+        `--project=${project}`,
+        ...(o.headed === true ? ['--headed'] : []),
+      ],
       {
         cwd: path.join(root, 'apps', 'web'),
         env,
@@ -171,6 +181,7 @@ async function perf(args: Args): Promise<number> {
       ids,
       mode: m,
       browser,
+      headed: args.flags.has('headed'),
       sides: [
         { name: m, baseURL: s.url, ...(s.version !== undefined ? { version: s.version } : {}) },
       ],

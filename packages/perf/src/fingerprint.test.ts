@@ -32,6 +32,14 @@ describe('comparability', () => {
     })
   })
 
+  it('never a headed browser against a headless one', () => {
+    const browser = { name: 'webkit', version: '26', engine: 'webkit', shell: 'browser' } as const
+    const r = comparability(fp({ browser }), fp({ browser: { ...browser, headed: true } }), {
+      ab: true,
+    })
+    expect(r).toEqual({ ok: false, reasons: ['a headed vs a headless browser'] })
+  })
+
   it('never across machines', () => {
     const r = comparability(fp(), fp({ machine: 'petronijus-pc' }))
     expect(r).toEqual({ ok: false, reasons: [expect.stringMatching(/different machines/)] })

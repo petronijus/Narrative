@@ -60,6 +60,11 @@ export interface Fingerprint {
     version: string
     engine: 'chromium' | 'webkit' | 'gecko'
     shell: 'browser' | 'tauri' | 'electron'
+    /**
+     * Drawn in a window on the screen (`just perf --headed`), paced by the
+     * display as an app's window is; absent for a headless browser.
+     */
+    headed?: true
   }
   gl?: { vendor: string; renderer: string }
   /** ISO time the fingerprint was taken. */
@@ -138,6 +143,8 @@ export function comparability(
     else if (ba.version !== bb.version)
       reasons.push(`different ${ba.name} versions (${ba.version} vs ${bb.version})`)
     if (ba.shell !== bb.shell) reasons.push(`different shells (${ba.shell} vs ${bb.shell})`)
+    if ((ba.headed === true) !== (bb.headed === true))
+      reasons.push(`a headed vs a headless browser`)
   }
   if (a.gl?.renderer !== b.gl?.renderer)
     reasons.push(

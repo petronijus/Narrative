@@ -43,9 +43,13 @@ replaced baseline to `baselines.history.jsonl`.
 ## Running the benches
 
 `just perf [ids…] [--mode prod|dev|profiling] [--layer I|C] [--runs N]
-[--warmup N] [--browser chromium|webkit] [--swiftshader] [--no-build]` (the
+[--warmup N] [--browser chromium|webkit] [--swiftshader] [--headed] [--no-build]` (the
 dev stack must be up). Chromium draws with the machine's GPU unless
 `--swiftshader`; counts do not depend on it, timings do.
+`--headed` draws in a window on the screen, paced by the display as the
+Tauri app's window is (a headless WebKit or Chromium paces itself); its
+results are a series of their own (`…/webkit-browser-headed`), never
+compared with a headless run.
 
 - **prod** (default) builds `apps/web` with NODE_ENV=production and
   production's relative endpoints (`VITE_API_URL=/api`,

@@ -13,6 +13,7 @@
  *   PERF_SIDES          JSON [{ name, baseURL, version?, rev? }] (default: one side, PW_BASE_URL)
  *   PERF_RUNS, PERF_WARMUP   recorded / warm-up runs per side (default 10 / 2)
  *   PERF_STORE=0        print only, store nothing
+ *   PERF_HEADED=1       the browser draws in a window (`--headed`); its own baseline series
  *   PERF_PROFILE=1      one run with a CPU profile (Chromium), written next to the results
  *   PERF_VERDICT_FILE   where to write the A/B verdicts (JSON) for perf-compare / perf-bisect
  *
@@ -86,6 +87,8 @@ export const PERF = {
   profile: process.env['PERF_PROFILE'] === '1',
   sides: sides(),
   gpu: process.env['PERF_GPU'] === '1',
+  /** A window on the screen (`just perf --headed`), recorded in the fingerprint. */
+  headed: process.env['PERF_HEADED'] === '1',
   noMask: process.env['PERF_NO_MASK'] === '1',
 }
 
@@ -169,6 +172,7 @@ async function fingerprintFor(browser: Browser, state: SideState): Promise<Finge
     version: browser.version(),
     engine: name === 'webkit' ? 'webkit' : name === 'firefox' ? 'gecko' : 'chromium',
     shell: 'browser',
+    ...(PERF.headed ? { headed: true as const } : {}),
   }
   if (info.gl !== null) fp.gl = info.gl
   return fp
