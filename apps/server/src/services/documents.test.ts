@@ -63,7 +63,9 @@ vi.mock('../media/bucketCleanup.js', () => ({
   purgeComponentBucketPrefix: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
   purgeExplicitKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
   purgeUnreferencedKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
-  sweepAgainAfterGrace: vi.fn(),
+}))
+vi.mock('../media/ownerSweeps.js', () => ({
+  scheduleOwnerSweeps: vi.fn().mockResolvedValue(undefined),
 }))
 
 // The services close live WebSocket connections through the process-wide

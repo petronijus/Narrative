@@ -23,8 +23,8 @@ import { serviceErrorOf } from '../test-support/serviceErrors.js'
 
 /** How many database deletes had been issued when each purge ran. */
 const purgeCalls: Array<{ purge: string; arg: unknown; deletesBefore: number }> = []
-/** The sweeps scheduled to run again after the grace window. */
-const secondSweeps: Array<() => Promise<unknown>> = []
+/** The owners whose prefix is scheduled to be swept again after the grace window. */
+const secondSweeps: unknown[] = []
 let current: ScriptedDb | null = null
 const deletesSoFar = (): number => current?.writes.filter((w) => w.kind === 'delete').length ?? 0
 
@@ -48,11 +48,13 @@ vi.mock('../media/bucketCleanup.js', async (importOriginal) => {
       purgeCalls.push({ purge: 'explicit', arg: keys, deletesBefore: deletesSoFar() })
       return { deleted: 0, failed: 0 }
     }),
-    sweepAgainAfterGrace: vi.fn((sweep: () => Promise<unknown>) => {
-      secondSweeps.push(sweep)
-    }),
   }
 })
+vi.mock('../media/ownerSweeps.js', () => ({
+  scheduleOwnerSweeps: vi.fn(async (_tx: unknown, owners: unknown[]) => {
+    secondSweeps.push(...owners)
+  }),
+}))
 vi.mock('../media/s3Client.js', () => ({
   MEDIA_BUCKET: 'bucket',
   buildS3Client: () => ({ send: vi.fn() }),
@@ -150,17 +152,8 @@ describe('deleting a folder', () => {
     expect(vi.mocked(purgeComponentBucketPrefix).mock.calls.map((c) => c[1])).toEqual(['cmp_a'])
 
     // Once more after the grace window: what a transcode or a copy was still
-    // writing (media/bucketCleanup.ts) — the same prefixes, no explicit keys.
-    expect(secondSweeps).toHaveLength(1)
-    await secondSweeps[0]!()
-    expect(vi.mocked(purgeDeckBucketPrefix).mock.calls.map((c) => c[1])).toEqual([
-      'deck_a',
-      'deck_a',
-    ])
-    expect(vi.mocked(purgeComponentBucketPrefix).mock.calls.map((c) => c[1])).toEqual([
-      'cmp_a',
-      'cmp_a',
-    ])
+    // writing (media/ownerSweeps.ts) — the same prefixes, no explicit keys.
+    expect(secondSweeps).toEqual([{ deckId: 'deck_a' }, { componentId: 'cmp_a' }])
   })
 
   it('sweeps the bucket only after the decks and the folder rows are deleted', async () => {

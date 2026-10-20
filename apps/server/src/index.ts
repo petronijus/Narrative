@@ -33,6 +33,7 @@ import { runDataMigrations } from './services/dataMigrations.js'
 import { checkMovedMediaAfterStore } from './services/localiseMedia.js'
 import { createHocuspocusServer } from './hocuspocus/index.js'
 import { createDeckThumbnailScheduler } from './services/deckThumbnails.js'
+import { startOwnerSweeps } from './media/ownerSweeps.js'
 import { registerHttpRoutes } from './http/registerRoutes.js'
 import {
   createDrizzleUploadSessionStore,
@@ -293,6 +294,11 @@ const deckThumbnails = createDeckThumbnailScheduler({
   hocuspocus: () => hocuspocus,
 })
 
+// The second storage sweep of deleted decks and components, due a minute
+// after the grace window; kept in the database, so a restart forgets none
+// (media/ownerSweeps.ts).
+const ownerSweeps = startOwnerSweeps(db, app.log)
+
 const hocuspocusServer = createHocuspocusServer({
   port: HOCUSPOCUS_PORT,
   db,
@@ -421,7 +427,10 @@ let stopPdfExports: (() => Promise<void>) | null = null
 const shutdown = async (signal: string) => {
   console.log(`[server] Received ${signal}, shutting down...`)
   await shutdownServer({
-    stopBackground: () => deckThumbnails.stop(),
+    stopBackground: () => {
+      deckThumbnails.stop()
+      ownerSweeps.stop()
+    },
     stopPdfExports: async () => stopPdfExports?.(),
     closeHttp: () => app.close(),
     // Before Hocuspocus: close open agent runs (recorded as closed) and let go

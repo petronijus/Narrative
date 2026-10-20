@@ -44,11 +44,8 @@ import {
 } from '../auth/permissions.js'
 import { listUsersBySubs } from '../auth/users.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
-import {
-  purgeDeckBucketPrefix,
-  purgeUnreferencedKeys,
-  sweepAgainAfterGrace,
-} from '../media/bucketCleanup.js'
+import { purgeDeckBucketPrefix, purgeUnreferencedKeys } from '../media/bucketCleanup.js'
+import { scheduleOwnerSweeps } from '../media/ownerSweeps.js'
 import { listDeckFontAssets } from '../media/assets.js'
 import { activeEditorsByDeck } from '../hocuspocus/presence.js'
 import { closeConnectionsForDocument, closeDeckConnections } from '../hocuspocus/connections.js'
@@ -610,10 +607,17 @@ export function createDecksService(deps: ServiceDeps): DeckService {
       .from(mediaAssets)
       .where(eq(mediaAssets.deckId, id))
 
-    const [deleted] = await db
-      .delete(decks)
-      .where(eq(decks.id, id))
-      .returning({ id: decks.id, folderId: decks.folderId, title: decks.title })
+    // The delete and the second sweep of its prefix commit together
+    // (media/ownerSweeps.ts): what is too young to sweep now goes later, also
+    // after a restart.
+    const deleted = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .delete(decks)
+        .where(eq(decks.id, id))
+        .returning({ id: decks.id, folderId: decks.folderId, title: decks.title })
+      if (row) await scheduleOwnerSweeps(tx, [{ deckId: id }])
+      return row
+    })
     if (!deleted) throw notFound('Deck not found')
     notifyDeleted(deps, { actorId: args.userId, audience, kind: 'deck', title: deleted.title })
     // Nobody may keep the deck open, and its guests read its folder's token
@@ -632,12 +636,12 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     // Neither deletes a file another media row still names (a pre-0009
     // folder font stored under this deck's prefix, say). Both loss-tolerant:
     // errors are logged and swallowed.
+    // What is too young to sweep now (a transcode or a copy still writing)
+    // goes with the sweep scheduled above.
     await Promise.all([
       purgeDeckBucketPrefix(db, id, deps.log),
       purgeUnreferencedKeys(db, explicitKeys, deps.log),
     ])
-    // What was too young to sweep (a transcode or a copy still writing).
-    sweepAgainAfterGrace(() => purgeDeckBucketPrefix(db, id, deps.log), deps.log, { deckId: id })
   }
 
   /**

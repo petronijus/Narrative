@@ -91,11 +91,20 @@ the cascade. Two rules keep files that are still in use:
   `videos/<id>/` of an existing row stays, and so does every object younger
   than the **grace window of 15 minutes** (`MEDIA_SWEEP_GRACE_MS` overrides
   it). When the owner itself is gone (a deleted deck, component or folder),
-  the sweep runs once more after the window, in process and best effort.
+  the sweep runs once more a minute after the window: the delete writes a
+  `media_owner_sweeps` row in its own transaction (migration 0040,
+  `media/ownerSweeps.ts`), every server process looks for due rows each
+  minute, and a row goes once its sweep ended without an error — a failed
+  one is tried again (5 minutes doubling, 6 hours at most, 8 tries, then a
+  warning). A row is taken by moving its due time 10 minutes forward
+  (`FOR UPDATE SKIP LOCKED`), so two processes never sweep the same owner at
+  once, and a row whose owner exists is dropped unswept. Until 2026-10-20
+  this second sweep was an in-process timer that every restart forgot: the
+  dev bucket had collected 5.8 GiB under 26 deleted decks.
 
 Object versioning is NOT enabled. Deletes are hard-deletes. There is no
-background garbage collection: what a failed purge leaves stays until its
-owner's prefix is swept again.
+background garbage collection of prefixes no deletion scheduled: what a
+purge that gave up leaves stays until its owner's prefix is swept again.
 
 ## Access patterns
 
@@ -290,7 +299,8 @@ or accepted on purpose:
   `present.mp4` it just uploaded. The other way round (recorded, then
   deleted) the deletion names it: a single asset's delete purges the keys
   the `DELETE … RETURNING` hands back (`deleteMediaAsset`), a deck's or a
-  folder's also sweeps the prefix again after a grace period.
+  folder's also sweeps the prefix again after a grace period (scheduled in
+  `media_owner_sweeps`).
 - _The video copied meanwhile_ (deck insert, `deck.insertFrom`, a
   component placed into another owner: `services/deckInsert.ts`). The copy
   takes the files the row names when it is copied; a `done` row without

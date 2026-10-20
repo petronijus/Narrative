@@ -41,13 +41,16 @@ vi.mock('../media/bucketCleanup.js', () => ({
   purgeDeckBucketPrefix: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
   purgeExplicitKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
   purgeUnreferencedKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
-  sweepAgainAfterGrace: vi.fn(),
+}))
+// The second sweep is a row written with the delete (media/ownerSweeps.ts).
+vi.mock('../media/ownerSweeps.js', () => ({
+  scheduleOwnerSweeps: vi.fn().mockResolvedValue(undefined),
 }))
 
 const { resolveDeckAccess } = await import('../auth/permissions.js')
 const resolveMock = resolveDeckAccess as ReturnType<typeof vi.fn>
-const { purgeDeckBucketPrefix, purgeExplicitKeys, sweepAgainAfterGrace } =
-  await import('../media/bucketCleanup.js')
+const { purgeDeckBucketPrefix, purgeExplicitKeys } = await import('../media/bucketCleanup.js')
+const { scheduleOwnerSweeps } = await import('../media/ownerSweeps.js')
 const purgeMock = purgeDeckBucketPrefix as ReturnType<typeof vi.fn>
 const purgeKeysMock = purgeExplicitKeys as ReturnType<typeof vi.fn>
 
@@ -405,11 +408,10 @@ describe('DELETE /decks/:id', () => {
     expect(res.statusCode).toBe(204)
     expect(purgeMock).toHaveBeenCalledOnce()
     expect(purgeMock).toHaveBeenCalledWith(expect.anything(), 'deck-purge', expect.anything())
-    // And once more after the grace window (a transcode still writing its outputs).
-    const again = vi.mocked(sweepAgainAfterGrace).mock.calls[0]?.[0]
-    expect(again).toBeTypeOf('function')
-    await again!()
-    expect(purgeMock).toHaveBeenCalledTimes(2)
+    // And once more after the grace window (a transcode still writing its
+    // outputs): scheduled in the delete's transaction.
+    expect(scheduleOwnerSweeps).toHaveBeenCalledOnce()
+    expect(scheduleOwnerSweeps).toHaveBeenCalledWith(expect.anything(), [{ deckId: 'deck-purge' }])
   })
 
   it('does not sweep bucket when delete returns 404', async () => {
@@ -421,6 +423,7 @@ describe('DELETE /decks/:id', () => {
 
     expect(res.statusCode).toBe(404)
     expect(purgeMock).not.toHaveBeenCalled()
+    expect(scheduleOwnerSweeps).not.toHaveBeenCalled()
   })
 
   it('returns 403 when user is not owner (editor role)', async () => {

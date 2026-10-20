@@ -297,6 +297,36 @@ export const deckMovedMedia = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// media_owner_sweeps — the storage sweep a deleted owner still needs
+// ---------------------------------------------------------------------------
+
+/**
+ * The second prefix sweep of a deleted deck or component master, due once
+ * the grace window has passed (media/ownerSweeps.ts): what was too young to
+ * sweep at the delete — a copy or a transcode still writing. In the
+ * database, so a restart does not forget it. No foreign key: the owner is
+ * gone by the time the row matters. Migration 0040.
+ */
+export const mediaOwnerSweeps = pgTable(
+  'media_owner_sweeps',
+  {
+    /** `deck` (`decks/<id>/`) or `component` (`components/<id>/`). */
+    ownerKind: text('owner_kind').$type<'deck' | 'component'>().notNull(),
+    ownerId: text('owner_id').notNull(),
+    /** When it may run next; a process taking it moves this forward. */
+    dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+    /** Sweeps that ended with an error so far. */
+    attempts: integer('attempts').default(0).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ name: 'media_owner_sweeps_pk', columns: [t.ownerKind, t.ownerId] }),
+    index('media_owner_sweeps_due_idx').on(t.dueAt),
+    check('media_owner_sweeps_kind_check', sql`${t.ownerKind} IN ('deck', 'component')`),
+  ],
+)
+
+// ---------------------------------------------------------------------------
 // share_links — public-token-based access (M10)
 // ---------------------------------------------------------------------------
 

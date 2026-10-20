@@ -36,13 +36,15 @@ vi.mock('../media/imgproxyUrl.js', () => ({
 // Deleting a component purges its storage; no MinIO here.
 const purgeComponentBucketPrefix = vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 })
 const purgeExplicitKeys = vi.fn().mockResolvedValue({ deleted: 0, errors: 0 })
-const sweepAgainAfterGrace = vi.fn()
+const scheduleOwnerSweeps = vi.fn().mockResolvedValue(undefined)
 vi.mock('../media/bucketCleanup.js', () => ({
   purgeComponentBucketPrefix: (...a: unknown[]) => purgeComponentBucketPrefix(...a),
   purgeExplicitKeys: (...a: unknown[]) => purgeExplicitKeys(...a),
   purgeDeckBucketPrefix: vi.fn(),
   purgeUnreferencedKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
-  sweepAgainAfterGrace: (...a: unknown[]) => sweepAgainAfterGrace(...a),
+}))
+vi.mock('../media/ownerSweeps.js', () => ({
+  scheduleOwnerSweeps: (...a: unknown[]) => scheduleOwnerSweeps(...a),
 }))
 
 // ---------------------------------------------------------------------------
@@ -499,10 +501,9 @@ describe('DELETE /components/:id', () => {
       expect.anything(),
     )
     expect(purgeExplicitKeys).not.toHaveBeenCalled()
-    // Swept again after the grace window: a video's outputs still being written.
-    expect(sweepAgainAfterGrace).toHaveBeenCalledWith(expect.any(Function), expect.anything(), {
-      componentId: 'comp-1',
-    })
+    // Swept again after the grace window (a video's outputs still being
+    // written): scheduled with the delete (media/ownerSweeps.ts).
+    expect(scheduleOwnerSweeps).toHaveBeenCalledWith(expect.anything(), [{ componentId: 'comp-1' }])
   })
 
   it('deletes it for an editor of the folder, and refuses a viewer', async () => {

@@ -1202,3 +1202,17 @@ captureSlideCanvasAsync`, `renderer/liveThumbnail.ts`): drawn into a
       field (defaults in the descriptions now, so a given value can be told
       from an omitted one) and names `queued`; tools/list stays under
       200,000 bytes. `just eval` not run for it (paid).
+
+- 2026-10-20, **The second prefix sweep survives a restart** (server;
+  found 2026-10-19, see the D entry's "Found on the way"). A deleted owner's
+  first sweep keeps everything younger than the grace window, and a perf
+  run creates and deletes its decks within minutes — so all of their media
+  waited for the second sweep, an in-process timer the dev server's restart
+  on every edit forgot: 5.77 GiB, 4 150 objects under 26 deleted decks
+  (checked: no deck row, no media row naming a key under them), deleted
+  2026-10-20, the dev bucket now 65 MiB. The deck, component and folder
+  deletes now write a `media_owner_sweeps` row in their own transaction
+  (migration 0040, `media/ownerSweeps.ts`), every server process runs the
+  due rows each minute (taken with `FOR UPDATE SKIP LOCKED`, retried with
+  back-off, a row whose owner exists dropped unswept); docs/storage.md →
+  Cleanup. Integration-tested against Postgres and MinIO.
