@@ -192,14 +192,48 @@ export function gestureValues(
   }
 }
 
-/** The centre of an object on screen, from the artboard's box and the slide's 1920 px width. */
+/**
+ * The centre of an object on screen, from the artboard's box and the slide's
+ * 1920 px width — a point the pointer reaches. The editor's panels lie over
+ * the canvas (it centres the artboard in the channel between them), so at
+ * 100 % in a window narrower than the slide an object near its edge sits
+ * under a panel: then the canvas is scrolled until the point is at the
+ * window's centre (transform.move.rect.light dragged the slides panel's
+ * list, and the object never moved).
+ */
 export async function screenCentre(
   page: Page,
   box: { x: number; y: number; width: number; height: number },
 ): Promise<{ x: number; y: number }> {
-  const a = (await page.locator('.artboard').boundingBox())!
-  const k = a.width / 1920
-  return { x: a.x + (box.x + box.width / 2) * k, y: a.y + (box.y + box.height / 2) * k }
+  const at = async () => {
+    const a = (await page.locator('.artboard').boundingBox())!
+    const k = a.width / 1920
+    return { x: a.x + (box.x + box.width / 2) * k, y: a.y + (box.y + box.height / 2) * k }
+  }
+  const onArtboard = (p: { x: number; y: number }) =>
+    page.evaluate(
+      ([x, y]) => document.elementFromPoint(x!, y!)?.closest('.artboard') != null,
+      [p.x, p.y],
+    )
+  const p = await at()
+  if (await onArtboard(p)) return p
+  await page.evaluate(
+    ([x, y]) => {
+      // The canvas's scroll container: the artboard's nearest ancestor that scrolls.
+      const scrolls = (e: Element) => /auto|scroll/.test(getComputedStyle(e).overflow)
+      let el = document.querySelector('.artboard')?.parentElement ?? null
+      while (el !== null && !scrolls(el)) el = el.parentElement
+      el?.scrollBy({ left: x! - innerWidth / 2, top: y! - innerHeight / 2, behavior: 'instant' })
+    },
+    [p.x, p.y],
+  )
+  // The scroll lands on the next frame.
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(null))))
+  const q = await at()
+  expect(await onArtboard(q), `object at (${box.x}, ${box.y}) is under the editor's panels`).toBe(
+    true,
+  )
+  return q
 }
 
 /** The object's current position as the canvas has it. */
