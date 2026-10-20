@@ -770,10 +770,12 @@ describe('pptx export', () => {
         [{ id: 'd1', title: 'Q3 review', folderId: null }], // the deck row
       ],
     })
-    const out = await createPptxService(deps(script.db)).exportBytes({ deckId: 'd1' })
+    const out = await createPptxService(deps(script.db)).exportPackage({ deckId: 'd1' })
     expect(out.slideCount).toBe(2)
     expect(out.filename).toBe('Q3 review.pptx')
-    expect(out.buffer.subarray(0, 2).toString()).toBe('PK')
+    const bytes = await out.package.toBuffer()
+    expect(bytes.byteLength).toBe(out.package.size)
+    expect(bytes.subarray(0, 2).toString()).toBe('PK')
     await editor.disconnect()
   })
 

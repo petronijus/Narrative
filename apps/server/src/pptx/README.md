@@ -78,9 +78,16 @@ What keeps import and export fast (docs/plans/performance.md, X1/X2):
   process-wide pixel budget (`OVERSIZE_PIXEL_BUDGET` in
   `media/storedImageLimits.ts`, shared with the tus upload finaliser) so their
   decodes cannot stack up, however many imports run at once;
-- the exporter fetches every asset (and reads each picture's size) six at a
-  time before it writes the slides, and stores already-compressed media
-  (JPEG, PNG, GIF, WebP, video) instead of deflating them again.
+- the exporter reads every asset six at a time before it writes the slides —
+  streamed from storage for its CRC-32 and size (`zlib.crc32`) and each
+  picture's size from its header — and stores already-compressed media
+  (JPEG, PNG, GIF, WebP, video) instead of deflating them again;
+- the package is a plan before its first byte (`zipWriter.ts`, X3): its
+  exact size is known, and it is streamed to the response or the bucket,
+  each asset read from storage a second time as it is written, so the
+  deck's media is never in memory at once. The format is what JSZip wrote
+  (no data descriptors), with ZIP64 past 4 GiB; a source that changed
+  between the two reads fails the export.
 
 None of it changes what is imported or exported: parts are numbered and rows
 collected in the deck's order, whichever task finished first.

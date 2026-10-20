@@ -223,6 +223,9 @@ the display's rate).
 - **X2 — measured and done 2026-10-18** (Log): `just perf-pptx` (G7's PPTX
   part); export 3–9× faster (no JS deflate of compressed media, assets
   fetched six at a time).
+- **X3 — done 2026-10-19** (Log): the exporter streams the package
+  (`pptx/zipWriter.ts`: native CRC-32, exact size before the first byte, no
+  JSZip on export); export peak RSS halved, 20–40 % faster.
 
 ### I. Production and deploy
 
@@ -972,3 +975,42 @@ webkit`.
   `inspector-flows.spec.ts` sampled the thumbnail after a fixed 800 ms and
   raced the 500 ms edit debounce plus this readback (failed 1 in 3 on
   e71d31d4 too); they now poll for the expected colour.
+
+- 2026-10-19, **X3 (streaming PPTX writer)** (MacBook M3 Pro, Low Power
+  Mode on, Node 24.21, a machine shared with other agents).
+  - **X3** — the export is streamed instead of built in memory by JSZip.
+    `pptx/zipWriter.ts` lays the archive out before its first byte: every
+    entry's CRC-32 (`zlib.crc32`, native) and sizes come from a first pass
+    over the media — streamed from storage, never held; pictures sized from
+    their first 1 MiB where the header tells (JPEG/PNG/GIF/WebP; anything
+    else, or a header that does not tell, read whole as before) — so the
+    package has an exact size: the route sends `Content-Length` and streams
+    with backpressure (a client that leaves stops the storage reads), the
+    agent's `url` delivery is a multipart upload into the bucket
+    (`media/multipartUpload.ts`, 8 MiB parts), `base64` is refused for its
+    size before any work. A second read of each object writes it; a source
+    that does not match its first read (size, CRC) fails the write instead
+    of producing a package that lies. Format as JSZip wrote it (local
+    headers with CRC and sizes, no data descriptors, DOS UTC timestamps, the
+    same entry order), version needed 2.0; ZIP64 past 4 GiB or 65 535
+    entries (JSZip wrote a broken file there); dates before 1980 clamped.
+    Deflated parts by Node's zlib at level 6 (other bytes than pako's, the
+    same content).
+  - Numbers (`just perf-pptx`; the driver now exports in a fresh process
+    into a file, so the export's peak RSS is its own — before, it sat on the
+    import's heap):
+
+    | deck                                | export p50 before → after | export peak RSS (maxRSS) | how                           |
+    | ----------------------------------- | ------------------------- | ------------------------ | ----------------------------- |
+    | synthetic (199 MB, 205 media)       | 2.68 → 2.06 s             | 720 → 370 MB             | same load (5–13), 3 runs each |
+    | OHSOMO continuum (208 MB, 9 videos) | 3.53 → 2.06 s             | 747 → 388 MB             | 2 runs each, load ~8 / ~5     |
+
+    The time moved: `export.zip` (JSZip's CRC and package, 1.1–1.3 s) is
+    now 10–20 ms of layout plus `export.write` ~1.0 s (the second storage
+    read, into the file); `export.assets` 1.4 → 1.0 s. A first after-run of
+    OHSOMO under load 55–94 took minutes for everything, import included,
+    and is not counted. Model and export fingerprints identical before and
+    after on both decks; `just pptx-roundtrip`: Atomic (49 slides) 0, IIC
+    Intro (166) 6, Audi LIVE (174) 1 differences — identical with HEAD's
+    writer swapped back in. The 879 MB Audi deck did not go through
+    `perf-pptx`: 2 GB of free disk at the time (its import stores ~0.9 GB).

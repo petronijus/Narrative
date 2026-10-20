@@ -11,7 +11,10 @@
  * model (pptx/roundtrip.ts).
  */
 
-import JSZip from 'jszip'
+import { Readable, Writable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import { promisify } from 'node:util'
+import { crc32, createDeflateRaw, deflateRaw } from 'node:zlib'
 import sharp from 'sharp'
 import type { AnimationStep, Slide, SlideBackground, SlideObject } from '@narrative/shared'
 import { computeSlideNumber, rotationToDegrees } from '@narrative/shared'
@@ -54,8 +57,28 @@ import { writeTransition } from './transition.js'
 import { writeTiming, type AnimatedTarget } from './timing.js'
 import { writeFill, type FillModel } from './fill.js'
 import { fractionToPercent, pxToEmu } from './units.js'
+import {
+  ZIP_DEFLATE_LEVEL,
+  deflatedEntry,
+  planZip,
+  type ZipEntry,
+  type ReadAheadOptions,
+  type ZipLimits,
+  type ZipSource,
+} from '../zipWriter.js'
 
-export type AssetLoader = (assetId: string) => Promise<{ bytes: Buffer; mimeType: string } | null>
+const deflateRawAsync = promisify(deflateRaw)
+
+/**
+ * An asset's bytes: in memory, or a stream opened when they are read — the
+ * exporter reads a stream twice (once for its CRC and sizes, once to write
+ * it), so a deck's media is never all in memory at once.
+ */
+export type AssetSource =
+  | { bytes: Buffer; mimeType: string }
+  | { mimeType: string; open: () => Promise<AsyncIterable<Uint8Array>> }
+
+export type AssetLoader = (assetId: string) => Promise<AssetSource | null>
 
 export interface WriteDeckOptions {
   title?: string
@@ -69,6 +92,23 @@ export interface WriteDeckOptions {
    * byte for byte (tests).
    */
   now?: Date
+  /** ZIP64 thresholds (tests; pptx/zipWriter.ts). */
+  zipLimits?: ZipLimits
+  /** An asset that could not be read: it is left out like a missing one. */
+  onAssetError?: (assetId: string, err: unknown) => void
+}
+
+/** A deck laid out as a package: its exact size, and its bytes on demand. */
+export interface DeckPackage {
+  readonly size: number
+  /**
+   * Stream the package into `destination` (ended when done, destroyed on a
+   * failure): an HTTP response, a file, the bucket's upload; media sources
+   * opened ahead as `ReadAheadOptions` say (pptx/zipWriter.ts).
+   */
+  writeTo(destination: Writable, opts?: { signal?: AbortSignal } & ReadAheadOptions): Promise<void>
+  /** The package in one buffer (tests, inline delivery). */
+  toBuffer(): Promise<Buffer>
 }
 
 // ---------------------------------------------------------------------------
@@ -110,14 +150,30 @@ const CONTENT_TYPE_BY_EXT: Record<string, string> = {
 
 /**
  * Media formats that are compressed already: written STORE, since DEFLATE
- * gains a percent or two on them at the price of running JSZip's JavaScript
- * deflate over every byte (seconds per 100 MB; docs/plans/performance.md, X2).
- * PowerPoint reads stored entries like any other.
+ * gains a percent or two on them for a pass over every byte (seconds per
+ * 100 MB; docs/plans/performance.md, X2). PowerPoint reads stored entries
+ * like any other.
  */
 const STORED_EXTS = new Set(['png', 'jpeg', 'gif', 'webp', 'mp4', 'mov', 'webm', 'avi', 'wmv'])
 
-/** Assets fetched (and measured) at once before the slides are written. */
+/** Assets read (and measured) at once before the slides are written. */
 const EXPORT_MEDIA_CONCURRENCY = 6
+
+/**
+ * Pictures whose size sharp reads from their first bytes: the dimensions
+ * and the EXIF orientation sit in the header, so a large one is not held
+ * whole for it. Any other picture (SVG, TIFF — whose directory can be at the
+ * end —, BMP, …) is read whole for its size, as before; a header that does
+ * not tell is read whole too.
+ */
+const HEADER_SIZED_MIMES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+])
+const PICTURE_HEADER_BYTES = 1024 * 1024
 
 interface MediaPart {
   path: string
@@ -125,20 +181,180 @@ interface MediaPart {
   mimeType: string
 }
 
-type LoadedAsset = Awaited<ReturnType<AssetLoader>>
+/**
+ * An asset read once through: what its zip entry will say (CRC-32, sizes —
+ * the compressed size by deflating it too, for a format that is deflated),
+ * and its picture size. Its bytes are not kept; the entry's source reads
+ * them again when the package is written.
+ */
+interface ScannedAsset {
+  mimeType: string
+  method: 0 | 8
+  crc: number
+  size: number
+  compressedSize: number
+  pixelSize: PixelSize | null
+  /** The bytes again, as the entry writes them (deflated for method 8). */
+  source: ZipSource
+}
+
+type Loaded = Awaited<ReturnType<AssetLoader>>
+
+/** The asset's bytes as a stream factory, whichever way the loader gave them. */
+function rawSource(asset: AssetSource): () => Promise<AsyncIterable<Uint8Array>> {
+  if ('bytes' in asset) {
+    const bytes = asset.bytes
+    return async () =>
+      (async function* () {
+        yield bytes
+      })()
+  }
+  return asset.open
+}
+
+/** Whether a stream ended early or held other bytes than the first pass read. */
+function changed(name: string): Error {
+  return new Error(`pptx-export: ${name} changed while the package was written`)
+}
+
+/**
+ * The asset's bytes deflated, for its zip entry: the raw bytes checked
+ * against the first pass's CRC and size as they pass (they exist only here).
+ */
+function deflatingSource(
+  open: () => Promise<AsyncIterable<Uint8Array>>,
+  expect: { crc: number; size: number },
+  name: string,
+): ZipSource {
+  return async () => {
+    const raw = await open()
+    async function* verified(): AsyncGenerator<Uint8Array> {
+      let crc = 0
+      let size = 0
+      for await (const chunk of raw) {
+        crc = crc32(chunk, crc)
+        size += chunk.byteLength
+        yield chunk
+      }
+      if (size !== expect.size || crc >>> 0 !== expect.crc >>> 0) throw changed(name)
+    }
+    const deflate = createDeflateRaw({ level: ZIP_DEFLATE_LEVEL })
+    const input = Readable.from(verified())
+    input.on('error', (err) => deflate.destroy(err))
+    deflate.on('close', () => input.destroy())
+    return input.pipe(deflate)
+  }
+}
+
+/** Collects up to `limit` bytes of what passes (all of it: Infinity). */
+class Head {
+  private readonly chunks: Uint8Array[] = []
+  private held = 0
+  constructor(private readonly limit: number) {}
+  add(chunk: Uint8Array): void {
+    if (this.held >= this.limit) return
+    const part =
+      chunk.byteLength <= this.limit - this.held ? chunk : chunk.subarray(0, this.limit - this.held)
+    this.chunks.push(part)
+    this.held += part.byteLength
+  }
+  bytes(): Buffer {
+    return Buffer.concat(this.chunks)
+  }
+}
+
+async function drain(source: AsyncIterable<Uint8Array>): Promise<Buffer> {
+  const chunks: Uint8Array[] = []
+  for await (const chunk of source) chunks.push(chunk)
+  return Buffer.concat(chunks)
+}
+
+/**
+ * Read an asset through once: its CRC and size (and, for a deflated format,
+ * its compressed size), and its picture size from its header or, where the
+ * header cannot tell, from its whole bytes — held only while sharp reads them.
+ */
+async function scanAsset(asset: AssetSource, ext: string, name: string): Promise<ScannedAsset> {
+  const method: 0 | 8 = STORED_EXTS.has(ext) ? 0 : 8
+  const video = asset.mimeType.startsWith('video/')
+  const open = rawSource(asset)
+  const headerSized = HEADER_SIZED_MIMES.has(asset.mimeType.toLowerCase())
+  let crc = 0
+  let size = 0
+  let compressedSize = 0
+  let picture: Buffer | null = null
+  if ('bytes' in asset) {
+    crc = crc32(asset.bytes)
+    size = asset.bytes.byteLength
+    if (method === 8)
+      compressedSize = (await deflateRawAsync(asset.bytes, { level: ZIP_DEFLATE_LEVEL })).byteLength
+    if (!video) picture = asset.bytes
+  } else {
+    const head = video ? null : new Head(headerSized ? PICTURE_HEADER_BYTES : Infinity)
+    const raw = await open()
+    async function* passing(): AsyncGenerator<Uint8Array> {
+      for await (const chunk of raw) {
+        crc = crc32(chunk, crc)
+        size += chunk.byteLength
+        head?.add(chunk)
+        yield chunk
+      }
+    }
+    if (method === 0) {
+      // Read through for the CRC and the size.
+      for await (const chunk of passing()) void chunk
+    } else {
+      // The compressed size, by deflating it once here; the write deflates
+      // it again (deterministically) instead of holding the result.
+      await pipeline(
+        Readable.from(passing()),
+        createDeflateRaw({ level: ZIP_DEFLATE_LEVEL }),
+        new Writable({
+          write(chunk: Buffer, _enc, done) {
+            compressedSize += chunk.byteLength
+            done()
+          },
+        }),
+      )
+    }
+    if (head !== null) picture = head.bytes()
+  }
+  let pixelSize: PixelSize | null = null
+  if (picture !== null) {
+    pixelSize = await readPixelSize(picture)
+    // The header did not tell: the whole picture, as before.
+    if (pixelSize === null && picture.byteLength < size)
+      pixelSize = await readPixelSize(await drain(await open()))
+  }
+  crc >>>= 0
+  if (method === 0) compressedSize = size
+  return {
+    mimeType: asset.mimeType,
+    method,
+    crc,
+    size,
+    compressedSize,
+    pixelSize,
+    source: method === 0 ? open : deflatingSource(open, { crc, size }, name),
+  }
+}
 
 class MediaStore {
   private readonly byAsset = new Map<string, MediaPart | null>()
-  private readonly sizes = new Map<string, Promise<PixelSize | null>>()
-  private readonly loads = new Map<string, Promise<LoadedAsset>>()
-  readonly parts = new Map<string, Buffer>()
+  private readonly loads = new Map<string, Promise<Loaded>>()
+  private readonly scans = new Map<string, Promise<ScannedAsset | null>>()
+  /** Media parts in the order they were numbered: path → asset id. */
+  readonly parts = new Map<string, string>()
   readonly defaults = new Map<string, string>()
   private n = 0
 
-  constructor(private readonly loader: AssetLoader | undefined) {}
+  constructor(
+    private readonly loader: AssetLoader | undefined,
+    private readonly onFailure: (assetId: string, err: unknown) => void = () => undefined,
+  ) {}
 
   /** The loader's answer for `assetId`, asked once. */
-  private load(assetId: string): Promise<LoadedAsset> {
+  private load(assetId: string): Promise<Loaded> {
     let p = this.loads.get(assetId)
     if (p === undefined) {
       p = this.loader !== undefined ? this.loader(assetId) : Promise.resolve(null)
@@ -148,34 +364,67 @@ class MediaStore {
   }
 
   /**
-   * Fetch every asset the slides name, and read the pictures' sizes, a few at
-   * a time — the object store's round trips and sharp overlap instead of
+   * The asset read through once (`scanAsset`), or null when the loader has
+   * none or reading it failed — the writer then skips it like a missing file.
+   */
+  private scan(assetId: string): Promise<ScannedAsset | null> {
+    let p = this.scans.get(assetId)
+    if (p === undefined) {
+      p = this.load(assetId).then(async (asset) => {
+        if (asset === null) return null
+        try {
+          return await scanAsset(asset, extOf(asset.mimeType), assetId)
+        } catch (err) {
+          this.onFailure(assetId, err)
+          return null
+        }
+      })
+      this.scans.set(assetId, p)
+    }
+    return p
+  }
+
+  /**
+   * Read every asset the slides name, and their pictures' sizes, a few at a
+   * time — the object store's round trips and sharp overlap instead of
    * running one after the other as the slides are written. Only a warm-up:
    * parts are still numbered by `part()`, in the order the slides reach them,
-   * so the package does not depend on which fetch finished first.
+   * so the package does not depend on which read finished first.
    */
   async prefetch(assetIds: readonly string[]): Promise<void> {
     await mapConcurrent(assetIds, EXPORT_MEDIA_CONCURRENCY, async (assetId) => {
-      const asset = await this.load(assetId)
-      if (asset !== null && !asset.mimeType.startsWith('video/')) await this.pixelSize(assetId)
+      await this.scan(assetId)
     })
   }
 
   async part(assetId: string): Promise<MediaPart | null> {
     if (this.byAsset.has(assetId)) return this.byAsset.get(assetId) ?? null
-    const asset = await this.load(assetId)
-    if (asset === null) {
+    const scanned = await this.scan(assetId)
+    if (scanned === null) {
       this.byAsset.set(assetId, null)
       return null
     }
-    const ext = EXT_BY_MIME[asset.mimeType.toLowerCase()] ?? 'bin'
-    const kind = asset.mimeType.startsWith('video/') ? 'media' : 'image'
+    const ext = extOf(scanned.mimeType)
+    const kind = scanned.mimeType.startsWith('video/') ? 'media' : 'image'
     const path = `ppt/media/${kind}${++this.n}.${ext}`
-    const part = { path, ext, mimeType: asset.mimeType }
-    this.parts.set(path, asset.bytes)
+    const part = { path, ext, mimeType: scanned.mimeType }
+    this.parts.set(path, assetId)
     this.defaults.set(ext, CONTENT_TYPE_BY_EXT[ext] ?? 'application/octet-stream')
     this.byAsset.set(assetId, part)
     return part
+  }
+
+  /** The zip entry of a numbered media part. */
+  async entry(path: string): Promise<ZipEntry> {
+    const scanned = (await this.scan(this.parts.get(path)!))!
+    return {
+      name: path,
+      method: scanned.method,
+      crc: scanned.crc,
+      size: scanned.size,
+      compressedSize: scanned.compressedSize,
+      data: scanned.source,
+    }
   }
 
   /**
@@ -184,15 +433,12 @@ class MediaStore {
    * its box, which is the best PowerPoint can be told.
    */
   async pixelSize(assetId: string): Promise<PixelSize | undefined> {
-    let size = this.sizes.get(assetId)
-    if (size === undefined) {
-      size = this.load(assetId).then((asset) =>
-        asset === null ? null : readPixelSize(asset.bytes),
-      )
-      this.sizes.set(assetId, size)
-    }
-    return (await size) ?? undefined
+    return (await this.scan(assetId))?.pixelSize ?? undefined
   }
+}
+
+function extOf(mimeType: string): string {
+  return EXT_BY_MIME[mimeType.toLowerCase()] ?? 'bin'
 }
 
 async function readPixelSize(bytes: Buffer): Promise<PixelSize | null> {
@@ -429,32 +675,40 @@ function notesSlidePart(doc: NotesDoc, rels: SlideRels): string {
 // Deck
 // ---------------------------------------------------------------------------
 
+/** The deck as one `.pptx` buffer (tests, the synthetic perf deck). */
 export async function writeDeck(
   slides: readonly Slide[],
   options: WriteDeckOptions = {},
 ): Promise<Buffer> {
-  const zip = new JSZip()
-  const media = new MediaStore(options.assetLoader)
+  return (await planDeck(slides, options)).toBuffer()
+}
+
+/**
+ * The deck laid out as a package (pptx/zipWriter.ts): every asset read once
+ * for its CRC and sizes, every part written and compressed — so nothing is
+ * left to fail but reading the media again — and the package's exact size.
+ * Its bytes are produced as the destination takes them.
+ */
+export async function planDeck(
+  slides: readonly Slide[],
+  options: WriteDeckOptions = {},
+): Promise<DeckPackage> {
+  const media = new MediaStore(options.assetLoader, options.onAssetError)
   const now = options.now ?? new Date()
   const overrides: Array<{ partName: string; contentType: string }> = []
   /**
-   * Every entry is a part, stamped `now`. Left to itself JSZip stamps each
-   * with the moment it was added and adds an entry for every folder on the
-   * way; folders are not parts of a package (PowerPoint writes none), and
-   * the clock made two exports of one deck differ whenever they straddled
-   * a tick of the zip's two-second time.
+   * The package's entries in order, each a part. Folders are not parts of a
+   * package (PowerPoint writes none), so none are written; every entry is
+   * stamped `now`, so two exports of one deck do not differ by the clock.
+   * XML parts are deflated as they are put (libuv's pool, beside the next
+   * slide); media parts are added where the media go, below.
    */
-  const put = (
-    path: string,
-    content: string | Buffer,
-    contentType?: string,
-    compression?: 'STORE',
-  ): void => {
-    zip.file(path, content, {
-      date: now,
-      createFolders: false,
-      ...(compression !== undefined ? { compression } : {}),
-    })
+  const entries: Array<Promise<ZipEntry>> = []
+  const put = (path: string, content: string, contentType?: string): void => {
+    const entry = deflatedEntry(path, content)
+    // Awaited all together below; a rejection is not left unhandled meanwhile.
+    entry.catch(() => undefined)
+    entries.push(entry)
     if (contentType !== undefined) overrides.push({ partName: `/${path}`, contentType })
   }
 
@@ -641,10 +895,7 @@ export async function writeDeck(
   put('ppt/presProps.xml', presPropsPart(), CT.presProps)
   put('ppt/viewProps.xml', viewPropsPart(), CT.viewProps)
   put('ppt/tableStyles.xml', tableStylesPart(), CT.tableStyles)
-  for (const [path, bytes] of media.parts) {
-    const ext = path.slice(path.lastIndexOf('.') + 1)
-    put(path, bytes, undefined, STORED_EXTS.has(ext) ? 'STORE' : undefined)
-  }
+  for (const path of media.parts.keys()) entries.push(media.entry(path))
 
   const title = options.title ?? 'Narrative deck'
   const author = options.author ?? 'Narrative'
@@ -666,12 +917,29 @@ export async function writeDeck(
     ),
   )
 
-  // `nodebuffer` is a Buffer already; copying it held the package twice.
-  const out = await zip.generateAsync({
-    type: 'nodebuffer',
-    compression: 'DEFLATE',
-    compressionOptions: { level: 6 },
+  const plan = planZip(await Promise.all(entries), {
+    date: now,
+    ...(options.zipLimits !== undefined ? { limits: options.zipLimits } : {}),
   })
   endPhase('export', 'zip')
-  return out
+  return {
+    size: plan.size,
+    async writeTo(destination, opts = {}) {
+      await plan.writeTo(destination, opts)
+      endPhase('export', 'write')
+    },
+    async toBuffer() {
+      const out = Buffer.allocUnsafe(plan.size)
+      let at = 0
+      for await (const chunk of plan.chunks()) {
+        if (at + chunk.byteLength > out.byteLength)
+          throw new Error('pptx-export: package overran its size')
+        out.set(chunk, at)
+        at += chunk.byteLength
+      }
+      if (at !== out.byteLength) throw new Error('pptx-export: package fell short of its size')
+      endPhase('export', 'write')
+      return out
+    },
+  }
 }

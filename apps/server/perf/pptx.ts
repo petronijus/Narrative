@@ -9,13 +9,16 @@
  *   just perf-pptx --dump dir/             # each run's normalised model, to diff runs
  *   just perf-pptx --cpu-prof              # one profile per run (node_modules/.cache/perf-pptx/profiles)
  *
- * Each run is its own Node process, so its peak RSS (`maxRSS`) is that run's
- * alone and no garbage of an earlier run counts. A run imports the deck the
- * way the server does (`importDeckFromPptxBytes`: the dev Postgres and MinIO,
- * a user and folder of its own) and exports it back
- * (`exportDeckToPptx`), then deletes everything it created — rows and stored
- * files. Videos are counted instead of queued, so no transcode job reaches a
- * worker of the shared dev stack.
+ * Each run is two Node processes: one imports the deck the way the server
+ * does (`importDeckFromPptxBytes`: the dev Postgres and MinIO, a user and
+ * folder of its own), a second, fresh one exports it back
+ * (`exportDeckToPptx`) into a file — the package at its destination, as the
+ * route streams it to a response or the command to the bucket — then the
+ * first deletes everything the run created (rows, stored files, the file).
+ * Each process's peak RSS is its operation's alone: an export measured after
+ * an import in one process sat on the import's heap. Videos are counted
+ * instead of queued, so no transcode job reaches a worker of the shared dev
+ * stack.
  *
  * Phases come from the importer's and exporter's own marks
  * (src/pptx/phases.ts); a phase's RSS is the highest resident set seen while
@@ -30,7 +33,15 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { subscribe, unsubscribe } from 'node:diagnostics_channel'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import type { Writable } from 'node:stream'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { performance } from 'node:perf_hooks'
@@ -64,7 +75,11 @@ interface RunResult {
   phases: PhaseResult[]
   importMs: number
   exportMs: number
+  /** The kernel's peak RSS of the import process. */
   maxRssMb: number
+  /** The kernel's peak RSS of the export process, and the highest RSS sampled in it. */
+  exportMaxRssMb: number
+  exportSampledRssMb: number
   slides: number
   objects: number
   mediaRows: number
@@ -75,22 +90,21 @@ interface RunResult {
   exportFingerprint: string
 }
 
+/** What the export process reports to the import process. */
+interface ExportResult {
+  phases: PhaseResult[]
+  exportMs: number
+  maxRssMb: number
+  sampledRssMb: number
+  exportBytes: number
+  warnings: number
+  exportFingerprint: string
+}
+
 const mb = (bytes: number): number => Math.round((bytes / 1024 / 1024) * 10) / 10
 
-// ─── One run (child process) ──────────────────────────────────────────────
-
-async function child(deckPath: string): Promise<void> {
-  // Imported here, not at the top: the parent needs neither a database nor
-  // the server's environment.
-  const { eq } = await import('drizzle-orm')
-  const { db, pool } = await import('../src/db/client.js')
-  const { deckUpdates, decks, folderPermissions, folders, mediaAssets, users } =
-    await import('../src/db/schema.js')
-  const { importDeckFromPptxBytes } = await import('../src/pptx/importDeck.js')
-  const { exportDeckToPptx } = await import('../src/pptx/exportDeck.js')
-  const { purgeDeckBucketPrefix } = await import('../src/media/bucketCleanup.js')
-  const { hydrateSlideDoc, listSlides, getSlideNotesDoc } = await import('@narrative/slide-model')
-
+/** A logger with every method the services call, counting warnings. */
+function perfLogger(): { log: FastifyBaseLogger; warnings: () => number } {
   let warnings = 0
   const log = {
     level: 'warn',
@@ -106,9 +120,87 @@ async function child(deckPath: string): Promise<void> {
     fatal: (obj: unknown, msg?: string) => console.error('fatal', msg, obj),
     child: () => log,
   }
-  // The services take a Fastify logger; this one has every method they call.
-  const fastifyLog = log as unknown as FastifyBaseLogger
+  return { log: log as unknown as FastifyBaseLogger, warnings: () => warnings }
+}
 
+/**
+ * Per-phase wall time and RSS from the pptx phase marks: every mark closes
+ * the phase that ran since the previous one (or since `begin`).
+ */
+function phaseClock(): {
+  phases: PhaseResult[]
+  begin: () => void
+  stop: () => number
+} {
+  const phases: PhaseResult[] = []
+  let phaseStart = 0
+  let phasePeak = 0
+  let peak = 0
+  const sample = (): void => {
+    const rss = process.memoryUsage.rss()
+    phasePeak = Math.max(phasePeak, rss)
+    peak = Math.max(peak, rss)
+  }
+  const sampler = setInterval(sample, 5)
+  const onMark = (message: unknown): void => {
+    const m = message as PptxPhaseMark
+    sample()
+    const now = performance.now()
+    phases.push({ op: m.op, phase: m.phase, ms: now - phaseStart, rssMb: mb(phasePeak) })
+    phaseStart = now
+    phasePeak = process.memoryUsage.rss()
+  }
+  subscribe(PPTX_PHASE_CHANNEL, onMark)
+  return {
+    phases,
+    begin: () => {
+      phaseStart = performance.now()
+      phasePeak = process.memoryUsage.rss()
+    },
+    stop: () => {
+      sample()
+      unsubscribe(PPTX_PHASE_CHANNEL, onMark)
+      clearInterval(sampler)
+      return peak
+    },
+  }
+}
+
+/** Run this file as `args`, in a process of its own; the line it prints after `marker`. */
+function runSelf(args: string[], marker: string, nodeArgs = process.execArgv): Promise<string> {
+  return new Promise((ok, fail) => {
+    const p = spawn(process.execPath, [...nodeArgs, fileURLToPath(import.meta.url), ...args], {
+      stdio: ['ignore', 'pipe', 'inherit'],
+      env: process.env,
+    })
+    let out = ''
+    p.stdout.on('data', (d: Buffer) => (out += d.toString()))
+    p.on('error', fail)
+    p.on('exit', (code) => {
+      const line = out.split('\n').find((l) => l.startsWith(`${marker} `))
+      if (code !== 0 || line === undefined) {
+        fail(new Error(`${args[0]} exited with ${code}\n${out}`))
+        return
+      }
+      ok(line.slice(marker.length + 1))
+    })
+  })
+}
+
+// ─── One run: the import process ──────────────────────────────────────────
+
+async function child(deckPath: string): Promise<void> {
+  // Imported here, not at the top: the parent needs neither a database nor
+  // the server's environment.
+  const { eq } = await import('drizzle-orm')
+  const { db, pool } = await import('../src/db/client.js')
+  const { deckUpdates, decks, folderPermissions, folders, mediaAssets, users } =
+    await import('../src/db/schema.js')
+  const { importDeckFromPptxBytes } = await import('../src/pptx/importDeck.js')
+  const { purgeDeckBucketPrefix } = await import('../src/media/bucketCleanup.js')
+  const { hydrateSlideDoc, listSlides, getSlideNotesDoc } = await import('@narrative/slide-model')
+
+  const { log, warnings } = perfLogger()
   const bytes = readFileSync(deckPath)
   const owner = `perf-${nanoid(10)}`
   const folderId = nanoid(12)
@@ -116,31 +208,16 @@ async function child(deckPath: string): Promise<void> {
   await db.insert(folders).values({ id: folderId, ownerUserId: owner, name: 'perf-pptx' })
   await db.insert(folderPermissions).values({ folderId, userId: owner, role: 'owner' })
 
-  // Phase clock: every mark closes the phase that ran since the previous one.
-  const phases: PhaseResult[] = []
-  let phaseStart = 0
-  let phasePeak = 0
-  const sampler = setInterval(() => {
-    phasePeak = Math.max(phasePeak, process.memoryUsage.rss())
-  }, 5)
-  const begin = (): void => {
-    phaseStart = performance.now()
-    phasePeak = process.memoryUsage.rss()
-  }
-  const onMark = (message: unknown): void => {
-    const m = message as PptxPhaseMark
-    const now = performance.now()
-    const rss = Math.max(phasePeak, process.memoryUsage.rss())
-    phases.push({ op: m.op, phase: m.phase, ms: now - phaseStart, rssMb: mb(rss) })
-    phaseStart = now
-    phasePeak = process.memoryUsage.rss()
-  }
-  subscribe(PPTX_PHASE_CHANNEL, onMark)
+  const scratch = resolve(HERE, '../node_modules/.cache/perf-pptx/runs')
+  mkdirSync(scratch, { recursive: true })
+  const idsFile = join(scratch, `ids-${process.pid}.json`)
+  const outFile = join(scratch, `export-${process.pid}.pptx`)
 
   let deckId: string | undefined
   try {
     let videos = 0
-    begin()
+    const clock = phaseClock()
+    clock.begin()
     const t0 = performance.now()
     const imported = await importDeckFromPptxBytes({
       bytes,
@@ -154,16 +231,9 @@ async function child(deckPath: string): Promise<void> {
       },
     })
     const importMs = performance.now() - t0
+    clock.stop()
     if (!imported.ok) throw new Error(`import failed: ${JSON.stringify(imported.error)}`)
     deckId = imported.result.deckId
-
-    begin()
-    const t1 = performance.now()
-    const exported = await exportDeckToPptx({ db, log: fastifyLog, hocuspocus: () => null }, deckId)
-    const exportMs = performance.now() - t1
-    if (!exported.ok) throw new Error(`export failed: ${exported.error}`)
-    unsubscribe(PPTX_PHASE_CHANNEL, onMark)
-    clearInterval(sampler)
     const maxRssMb = mb(process.resourceUsage().maxRSS * 1024)
 
     // ── Fingerprints: ids → ordinals, assets → what they hold ────────────
@@ -234,8 +304,74 @@ async function child(deckPath: string): Promise<void> {
     if (dump !== undefined) writeFileSync(join(dump, `model-${process.pid}.json`), modelJson)
     doc.destroy()
 
+    // The export, in a fresh process (its RSS its own), with the id map.
+    writeFileSync(idsFile, JSON.stringify([...ids]))
+    const exported = JSON.parse(
+      await runSelf(['--export', deckId, idsFile, outFile], 'PERF_EXPORT', exportNodeArgs()),
+    ) as ExportResult
+
+    const result: RunResult = {
+      phases: [...clock.phases, ...exported.phases],
+      importMs,
+      exportMs: exported.exportMs,
+      maxRssMb,
+      exportMaxRssMb: exported.maxRssMb,
+      exportSampledRssMb: exported.sampledRssMb,
+      slides: imported.result.slideCount,
+      objects: imported.result.objectsCreated,
+      mediaRows: rows.length,
+      videos,
+      exportBytes: exported.exportBytes,
+      warnings: warnings() + exported.warnings,
+      modelFingerprint: modelFingerprint.slice(0, 16),
+      exportFingerprint: exported.exportFingerprint,
+    }
+    process.stdout.write(`PERF_RESULT ${JSON.stringify(result)}\n`)
+  } finally {
+    if (deckId !== undefined) {
+      await db.delete(decks).where(eq(decks.id, deckId))
+      await purgeDeckBucketPrefix(db, deckId, log)
+    }
+    await db.delete(folders).where(eq(folders.id, folderId))
+    await db.delete(users).where(eq(users.sub, owner))
+    await pool.end()
+    // This run's own files.
+    rmSync(idsFile, { force: true })
+    rmSync(outFile, { force: true })
+  }
+}
+
+/** Node flags of the export process: the parent's, plus its profile when asked. */
+function exportNodeArgs(): string[] {
+  const dir = process.env['PERF_PPTX_PROFILE_DIR']
+  return dir !== undefined
+    ? [...process.execArgv, '--cpu-prof', `--cpu-prof-dir=${dir}`]
+    : process.execArgv
+}
+
+// ─── One run: the export process ──────────────────────────────────────────
+
+async function exportChild(deckId: string, idsFile: string, outFile: string): Promise<void> {
+  const { pool } = await import('../src/db/client.js')
+  const { db } = await import('../src/db/client.js')
+  const { exportDeckToPptx } = await import('../src/pptx/exportDeck.js')
+  const { log, warnings } = perfLogger()
+  try {
+    const clock = phaseClock()
+    clock.begin()
+    const t0 = performance.now()
+    const exported = await exportDeckToPptx({ db, log, hocuspocus: () => null }, deckId)
+    if (!exported.ok) throw new Error(`export failed: ${exported.error}`)
+    // At its destination: a file, as the route streams it to a response.
+    await deliverToFile(exported, outFile)
+    const exportMs = performance.now() - t0
+    const sampledPeak = clock.stop()
+    const maxRssMb = mb(process.resourceUsage().maxRSS * 1024)
+
     // The package, entry by entry: what it says, not how it was compressed.
-    const zip = await JSZip.loadAsync(exported.buffer)
+    const ids = new Map(JSON.parse(readFileSync(idsFile, 'utf8')) as Array<[string, string]>)
+    const file = readFileSync(outFile)
+    const zip = await JSZip.loadAsync(file)
     const idPattern = new RegExp(
       [...ids.keys()].map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') || '(?!)',
       'g',
@@ -251,33 +387,27 @@ async function child(deckPath: string): Promise<void> {
         parts.push(`${name}:${sha(await entry.async('nodebuffer'))}`)
       }
     }
-    const exportFingerprint = sha(parts.join('\n'))
-
-    const result: RunResult = {
-      phases,
-      importMs,
+    const result: ExportResult = {
+      phases: clock.phases,
       exportMs,
       maxRssMb,
-      slides: imported.result.slideCount,
-      objects: imported.result.objectsCreated,
-      mediaRows: rows.length,
-      videos,
-      exportBytes: exported.buffer.byteLength,
-      warnings,
-      modelFingerprint: modelFingerprint.slice(0, 16),
-      exportFingerprint: exportFingerprint.slice(0, 16),
+      sampledRssMb: mb(sampledPeak),
+      exportBytes: file.byteLength,
+      warnings: warnings(),
+      exportFingerprint: sha(parts.join('\n')).slice(0, 16),
     }
-    process.stdout.write(`PERF_RESULT ${JSON.stringify(result)}\n`)
+    process.stdout.write(`PERF_EXPORT ${JSON.stringify(result)}\n`)
   } finally {
-    clearInterval(sampler)
-    if (deckId !== undefined) {
-      await db.delete(decks).where(eq(decks.id, deckId))
-      await purgeDeckBucketPrefix(db, deckId, log)
-    }
-    await db.delete(folders).where(eq(folders.id, folderId))
-    await db.delete(users).where(eq(users.sub, owner))
     await pool.end()
   }
+}
+
+/** Put an export where it goes: a file, streamed as the route streams a response. */
+async function deliverToFile(
+  exported: { package: { writeTo: (destination: Writable) => Promise<void> } },
+  outFile: string,
+): Promise<void> {
+  await exported.package.writeTo(createWriteStream(outFile))
 }
 
 function sha(data: string | Buffer): string {
@@ -307,33 +437,10 @@ async function syntheticDeckPath(): Promise<string> {
   return file
 }
 
-function runChild(deckPath: string, profileDir: string | undefined): Promise<RunResult> {
+async function runChild(deckPath: string, profileDir: string | undefined): Promise<RunResult> {
   const nodeArgs = [...process.execArgv]
   if (profileDir !== undefined) nodeArgs.push('--cpu-prof', `--cpu-prof-dir=${profileDir}`)
-  return new Promise((ok, fail) => {
-    const p = spawn(
-      process.execPath,
-      [...nodeArgs, fileURLToPath(import.meta.url), '--child', deckPath],
-      {
-        stdio: ['ignore', 'pipe', 'inherit'],
-        env: {
-          ...process.env,
-          ...(option('--dump') !== undefined ? { PERF_PPTX_DUMP: resolve(option('--dump')!) } : {}),
-        },
-      },
-    )
-    let out = ''
-    p.stdout.on('data', (d: Buffer) => (out += d.toString()))
-    p.on('error', fail)
-    p.on('exit', (code) => {
-      const line = out.split('\n').find((l) => l.startsWith('PERF_RESULT '))
-      if (code !== 0 || line === undefined) {
-        fail(new Error(`run exited with ${code}\n${out}`))
-        return
-      }
-      ok(JSON.parse(line.slice('PERF_RESULT '.length)) as RunResult)
-    })
-  })
+  return JSON.parse(await runSelf(['--child', deckPath], 'PERF_RESULT', nodeArgs)) as RunResult
 }
 
 async function parent(): Promise<void> {
@@ -344,7 +451,12 @@ async function parent(): Promise<void> {
   const profileDir = flag('--cpu-prof')
     ? resolve(HERE, '../node_modules/.cache/perf-pptx/profiles')
     : undefined
-  if (profileDir !== undefined) mkdirSync(profileDir, { recursive: true })
+  if (profileDir !== undefined) {
+    mkdirSync(profileDir, { recursive: true })
+    process.env['PERF_PPTX_PROFILE_DIR'] = profileDir
+  }
+  const dump = option('--dump')
+  if (dump !== undefined) process.env['PERF_PPTX_DUMP'] = resolve(dump)
 
   console.log(
     `Deck ${basename(deckPath)}: ${mb(deck.byteLength)} MB, sha256 ${sha(deck).slice(0, 16)}`,
@@ -356,7 +468,8 @@ async function parent(): Promise<void> {
     const r = await runChild(deckPath, profileDir)
     results.push(r)
     console.log(
-      `  run ${i + 1}: import ${(r.importMs / 1000).toFixed(2)} s, export ${(r.exportMs / 1000).toFixed(2)} s, peak RSS ${r.maxRssMb} MB`,
+      `  run ${i + 1}: import ${(r.importMs / 1000).toFixed(2)} s (peak RSS ${r.maxRssMb} MB), ` +
+        `export ${(r.exportMs / 1000).toFixed(2)} s (peak RSS ${r.exportMaxRssMb} MB, sampled ${r.exportSampledRssMb} MB)`,
     )
   }
 
@@ -396,21 +509,36 @@ async function parent(): Promise<void> {
       peaks,
     ),
   )
+  const exportPeaks = results.map((r) => r.exportMaxRssMb)
   console.log(
     row(
       'export (wall)',
       results.map((r) => r.exportMs),
-      peaks,
+      exportPeaks,
     ),
   )
   // Two views of the peak: the kernel's maxRSS for the process, and the
   // highest `process.memoryUsage.rss()` sampled. They disagree on macOS
   // (task resident size vs ru_maxrss), so both are printed; compare like
-  // with like across revisions.
-  const sampled = results.map((r) => Math.max(...r.phases.map((p) => p.rssMb)))
+  // with like across revisions. Import and export run in processes of their own.
+  const peakLine = (what: string, kernel: number[], sampled: number[]): string =>
+    `${what}: maxRSS p50 ${Math.round(median(kernel))} MB, max ${Math.max(...kernel)} MB;` +
+    ` sampled p50 ${Math.round(median(sampled))} MB, max ${Math.max(...sampled)} MB`
   console.log(
-    `\npeak RSS per run: maxRSS p50 ${Math.round(median(peaks))} MB, max ${Math.max(...peaks)} MB;` +
-      ` sampled p50 ${Math.round(median(sampled))} MB, max ${Math.max(...sampled)} MB`,
+    `\n${peakLine(
+      'peak RSS, import',
+      peaks,
+      results.map((r) =>
+        Math.max(...r.phases.filter((p) => p.op === 'import').map((p) => p.rssMb)),
+      ),
+    )}`,
+  )
+  console.log(
+    peakLine(
+      'peak RSS, export',
+      exportPeaks,
+      results.map((r) => r.exportSampledRssMb),
+    ),
   )
 
   const models = new Set(results.map((r) => r.modelFingerprint))
@@ -431,6 +559,9 @@ async function parent(): Promise<void> {
 
 if (flag('--child')) {
   await child(argv[argv.indexOf('--child') + 1]!)
+} else if (flag('--export')) {
+  const i = argv.indexOf('--export')
+  await exportChild(argv[i + 1]!, argv[i + 2]!, argv[i + 3]!)
 } else {
   await parent()
 }

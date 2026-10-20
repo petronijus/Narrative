@@ -1,7 +1,14 @@
 /**
  * routes/pptxExport.ts
  *
- * Synchronous deck → `.pptx` download.
+ * Deck → `.pptx` download, streamed: the package's size is known before its
+ * first byte (pptx/zipWriter.ts), so the response carries `Content-Length`
+ * and the bytes go out as they are produced — the media read from storage
+ * a stream at a time, never the whole file in memory. A failure before the
+ * first byte is a JSON error; one while streaming (storage failing on the
+ * second read) cuts the response short, which the browser reports as a
+ * failed download rather than a broken file. A client that goes away stops
+ * the export (its reads of storage) with it.
  *
  * Endpoint:
  *   GET /decks/:id/export.pptx
@@ -16,6 +23,7 @@
  * vocabulary with.
  */
 
+import { PassThrough } from 'node:stream'
 import type { FastifyInstance } from 'fastify'
 import type { Database } from '../db/client.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
@@ -39,18 +47,33 @@ export async function registerPptxExportRoutes(app: FastifyInstance, db: Databas
     async (request, reply) => {
       let exported
       try {
-        exported = await createPptxService(routeDeps(app, db, request.log)).exportBytes({
+        exported = await createPptxService(routeDeps(app, db, request.log)).exportPackage({
           deckId: request.params.id,
         })
       } catch (err) {
         return sendServiceError(reply, err)
       }
+      const body = new PassThrough()
+      // A client that went away stops the write (pipeline destroys `body`).
+      const gone = new AbortController()
+      reply.raw.on('close', () => {
+        if (!reply.raw.writableEnded) gone.abort()
+      })
+      // The pace is the client's: one source opened ahead, near the end of
+      // the current one, so a slow download holds one idle storage read at most.
+      exported.package
+        .writeTo(body, { signal: gone.signal, readAhead: 1 })
+        .catch((err: unknown) => {
+          if (!gone.signal.aborted)
+            request.log.error({ err, deckId: request.params.id }, 'pptx-export: streaming failed')
+        })
       return reply
         .status(200)
         .header('Content-Type', PPTX_CONTENT_TYPE)
         .header('Content-Disposition', attachmentDisposition(exported.filename))
-        .header('Content-Length', String(exported.buffer.byteLength))
-        .send(exported.buffer)
+        .header('Content-Length', String(exported.package.size))
+        .header('Cache-Control', 'private, no-store')
+        .send(body)
     },
   )
 }

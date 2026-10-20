@@ -65,10 +65,20 @@ describe('createDeckAssetLoader', () => {
       { db, log: quietLog, s3: s3 as never },
       { id: 'deck-1', folderId: 'folder-1' },
     )
-    await expect(load('asset-1')).resolves.toEqual({
-      bytes: Buffer.from('png'),
-      mimeType: 'image/png',
-    })
+    const source = await load('asset-1')
+    expect(source).toMatchObject({ mimeType: 'image/png' })
+    // Each open is a fresh read of the stored object (the writer reads twice).
+    for (let i = 0; i < 2; i++) {
+      const chunks: Uint8Array[] = []
+      for await (const c of await (
+        source as { open: () => Promise<AsyncIterable<Uint8Array>> }
+      ).open())
+        chunks.push(c)
+      expect(Buffer.concat(chunks).toString()).toBe('png')
+    }
+    expect(s3.send).toHaveBeenCalledTimes(2)
+    await load('asset-1')
+    expect(wheres).toHaveLength(1)
     const q = compile(wheres[0]!)
     expect(q.sql).toContain('"media_assets"."id" = $1')
     expect(q.sql).toContain('"media_assets"."deck_id" = $2')
