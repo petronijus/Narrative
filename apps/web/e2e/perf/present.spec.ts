@@ -17,6 +17,13 @@
  *   - video: a 10 s 1080p H.264 between two text slides (transcoded by the dev video worker).
  * `present.presenter.window` drives the text deck from the pop-out presenter window
  * (`?presenter=1`) and counts that window's work too.
+ *
+ * Diagnostics: every frame over 1.5 intervals goes into the details file
+ * (`notes.slowFrames`: the advance it followed, the renders and long tasks
+ * around it; printed with PERF_VERBOSE=1); PERF_TRACE=<dir> writes a Chromium
+ * performance trace of each pass there; PERF_KEEP_WARM_AB=1 runs one build as
+ * two interleaved sides, present mode's keep-warm off and on (use with
+ * PERF_STORE=0 — neither side is the bench's series).
  */
 
 import type { BrowserContext, Page } from '@playwright/test'
@@ -42,6 +49,7 @@ import {
 
 const IDS = [
   'present.advance.text',
+  'present.advance.paced',
   'present.advance.photo',
   'present.transition.all',
   'present.build.steps',
@@ -52,6 +60,9 @@ const IDS = [
 const VIEWPORT = { width: 1600, height: 900 }
 /** Quiet after each advance: the transition and the builds are over, nothing else moves. */
 const ADVANCE_QUIET_MS = 300
+/** present.advance.paced: how many advances, and how long each slide is held before the next. */
+const PACED_ADVANCES = 6
+const PACED_HOLD_MS = 4000
 
 interface PresentState extends SideState {
   context: BrowserContext
@@ -60,6 +71,7 @@ interface PresentState extends SideState {
 
 const DECKS_OF: Record<string, DeckKind> = {
   'present.advance.text': 'text',
+  'present.advance.paced': 'text',
   'present.advance.photo': 'photo',
   'present.transition.all': 'transitions',
   'present.build.steps': 'builds',
@@ -95,6 +107,8 @@ type Step =
 
 interface AdvanceRecord {
   step: string
+  /** The input's `performance.now()` on the presentation's page. */
+  t0: number
   /** Input to the incoming slide fully shown and quiet (or held for `holdMs`). */
   ms: number
 }
@@ -143,6 +157,7 @@ async function runSteps(
     )
     out.push({
       step: `${step.kind === 'key' ? step.key : 'click'} → ${step.expect + 1}`,
+      t0,
       ms: done - t0,
     })
   }
@@ -164,6 +179,14 @@ function stepsFor(id: string, deck: PresentDeck): Step[] {
     case 'present.advance.photo':
     case 'present.presenter.window':
       return forwardAndBack(n)
+    case 'present.advance.paced':
+      // Held before each advance, as a presenter talks over a slide.
+      return Array.from({ length: PACED_ADVANCES }, (_, i) => ({
+        kind: 'key' as const,
+        key: 'ArrowRight',
+        expect: i + 1,
+        holdMs: PACED_HOLD_MS,
+      }))
     case 'present.transition.all':
       // Present mode plays the incoming slide's transition: forward plays
       // each slide's own, back the one of the slide it lands on.
@@ -203,6 +226,40 @@ function percentile(values: readonly number[], p: number): number {
   if (values.length === 0) return 0
   const sorted = [...values].sort((a, b) => a - b)
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1))]!
+}
+
+/**
+ * Every frame longer than 1.5 intervals, placed against the advance it
+ * followed and the editor renders around it: where a missed frame's work
+ * has to be looked for (the details file, `notes.slowFrames`).
+ */
+function slowFrames(
+  c: Captured,
+  interval: number,
+  advances: readonly AdvanceRecord[],
+): Array<Record<string, unknown>> {
+  const rec = c.recording
+  // An older build's harness (an A/B's "before") has neither field.
+  const startedAt = rec.startedAt ?? Number.NaN
+  const renderLog = rec.renderLog ?? []
+  return rec.frames
+    .filter((f) => f.ms > 1.5 * interval)
+    .map((f) => {
+      const abs = startedAt + f.at
+      const prior = advances.filter((a) => a.t0 <= abs + f.ms).at(-1)
+      return {
+        at: Math.round(f.at),
+        ms: Math.round(f.ms * 10) / 10,
+        after: prior?.step ?? null,
+        sinceInput: prior === undefined ? null : Math.round(abs - prior.t0),
+        renders: renderLog
+          .filter((r) => r.at >= f.at - interval && r.at <= f.at + f.ms)
+          .map((r) => `${Math.round(r.at - f.at)}+${r.ms.toFixed(1)}`),
+        longTasks: (rec.longTasks ?? [])
+          .filter((l) => l.at + l.ms >= f.at && l.at <= f.at + f.ms)
+          .map((l) => `${Math.round(l.at - f.at)}+${Math.round(l.ms)}`),
+      }
+    })
 }
 
 const PRESENT_KEYS = new Set([
@@ -273,8 +330,22 @@ test('present mode', async ({ browser }) => {
 
   const kinds = new Set(ids.map((id) => DECKS_OF[id]!))
   const states: PresentState[] = []
-  for (const side of PERF.sides) {
+  // PERF_KEEP_WARM_AB=1: one build as two interleaved sides, present mode's
+  // keep-warm off (A) and on (B) — renderer/presentSlides.ts → "Kept warm".
+  const keepWarmAb = process.env['PERF_KEEP_WARM_AB'] === '1'
+  const sides = keepWarmAb
+    ? [
+        { ...PERF.sides[0]!, name: 'keep-warm off' },
+        { ...PERF.sides[0]!, name: 'keep-warm on' },
+      ]
+    : PERF.sides
+  for (const side of sides) {
     const context = await sideContext(browser, side, VIEWPORT)
+    if (keepWarmAb && side.name === 'keep-warm off')
+      await context.addInitScript(() => {
+        ;(window as unknown as { __narrative_perf_keepWarm?: boolean }).__narrative_perf_keepWarm =
+          false
+      })
     const page = await context.newPage()
     const decks = new Map<DeckKind, PresentDeck>()
     for (const kind of kinds) {
@@ -320,6 +391,32 @@ test('present mode', async ({ browser }) => {
           () => window.__narrative_perf_harness!.glLive?.().textures ?? 0,
         )
         const trace = process.env['PERF_TRACE_UPLOADS'] === '1'
+        // PERF_TRACE=<dir>: a Chromium performance trace of the pass (open it in
+        // DevTools → Performance), for finding the work in a missed frame.
+        const traceDir = process.env['PERF_TRACE']
+        if (traceDir !== undefined && traceDir !== '')
+          await browser.startTracing(s.page, {
+            path: `${traceDir}/${id}-${s.side.name}-${Date.now()}.json`,
+            categories: [
+              'devtools.timeline',
+              'disabled-by-default-devtools.timeline',
+              'disabled-by-default-devtools.timeline.frame',
+              'v8.execute',
+              'blink.user_timing',
+              'gpu',
+              'viz',
+              'cc',
+              'benchmark',
+              'toplevel',
+              'gpu.angle',
+              'gpu.service',
+              'gpu.decoder',
+              'disabled-by-default-gpu.angle',
+              'disabled-by-default-gpu.service',
+              'disabled-by-default-gpu.decoder',
+              'disabled-by-default-gpu.device',
+            ],
+          })
         const c = await capture(s.page, async (inputEnd) => {
           if (trace)
             await s.page.evaluate(() => window.__narrative_perf_harness!.traceUploads(true))
@@ -328,6 +425,7 @@ test('present mode', async ({ browser }) => {
           advances = await runSteps(s.page, presenter ?? s.page, deck, steps)
           await inputEnd()
         })
+        if (traceDir !== undefined && traceDir !== '') await browser.stopTracing()
         s.last = c
         if (trace)
           for (const u of await s.page.evaluate(() =>
@@ -344,7 +442,16 @@ test('present mode', async ({ browser }) => {
           presenter === null
             ? undefined
             : await presenter.evaluate(() => window.__narrative_perf_harness!.counters())
-        s.notes = { interval, advances, presenterCounters: extra ?? null, live }
+        s.notes = {
+          interval,
+          advances: advances.map((a) => ({ step: a.step, ms: a.ms })),
+          slowFrames: slowFrames(c, interval, advances),
+          presenterCounters: extra ?? null,
+          live,
+        }
+        if (process.env['PERF_VERBOSE'] === '1')
+          for (const f of s.notes['slowFrames'] as Array<Record<string, unknown>>)
+            console.log(`PERF slow frame ${id} [${s.side.name}] ${JSON.stringify(f)}`)
         return {
           ...passValues(def, c, {
             readyMs,

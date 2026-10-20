@@ -8,7 +8,9 @@
  * objects) after each edit, which landed when the user paused or carried on.
  * For the slide being edited all of it is already on the editor's canvas, text
  * rasters and picture textures included: this draws that scene once more, into
- * a texture the size of the thumbnail, and reads it back (~1 ms).
+ * a texture the size of the thumbnail, and reads it back asynchronously (a
+ * fenced pixel-pack read: the first capture after an edit spent ~290 ms in a
+ * synchronous `readPixels` waiting for the GPU).
  *
  * Only a settled scene is trusted: the objects of the slide are all there (and
  * nothing else), no load is in flight, no text raster is pending. Otherwise
@@ -17,7 +19,7 @@
 
 import { perfCount } from '@narrative/shared'
 import { SLIDE_WIDTH } from './constants.js'
-import { canvasToPng, captureSlideCanvas } from './captureSlide.js'
+import { canvasToPng, captureSlideCanvasAsync } from './captureSlide.js'
 import { getDefaultRenderScheduler } from './RenderScheduler.js'
 import { settleScene } from './settleScene.js'
 import type { SceneGraph } from './SceneGraph.js'
@@ -53,6 +55,10 @@ export async function captureLiveThumbnail(
   if (!expectedIds.every((id) => have.has(id))) return null
 
   perfCount('thumb.live')
-  const canvas = scene.withTextUnfaded(() => captureSlideCanvas(scene, width / SLIDE_WIDTH))
+  // Drawn now (the scene as settled), read back once the GPU is there: the
+  // read never waits for the GPU on the main thread (captureSlideCanvasAsync).
+  const canvas = await captureSlideCanvasAsync(scene, width / SLIDE_WIDTH, (draw) =>
+    scene.withTextUnfaded(draw),
+  )
   return canvasToPng(canvas)
 }

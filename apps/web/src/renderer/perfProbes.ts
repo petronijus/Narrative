@@ -5,41 +5,58 @@
  * chunk; kept in the renderer because Pixi objects are the renderer's to touch
  * (AGENTS.md → Render = SceneGraph diff only).
  *
- * Nothing here changes what is drawn, except `stripMasks`, a diagnostic the
- * crowded-slide scenario runs on request (PERF_NO_MASK=1) to price the clip
- * masks.
+ * Nothing here changes what is drawn, except two diagnostics run on
+ * request: `stripMasks` (the crowded-slide scenario, PERF_NO_MASK=1, to
+ * price the clip masks) and `setKeepWarmEnabled` (present.spec.ts,
+ * PERF_KEEP_WARM_AB=1, to price present mode's keep-warm).
  */
 
 import type { Application, Container } from 'pixi.js'
 import type { SlideObject } from '@narrative/shared'
 import type { RenderScheduler } from './RenderScheduler.js'
 import type { SceneGraph } from './SceneGraph.js'
+import { isKeepWarmFrame, KEEP_WARM_LABEL } from './presentKeepWarm.js'
 
 /**
- * Called after every `render` of the editor's renderer: when it started, how
- * long it took, and whether it drew the screen — present mode also draws
- * slides prepared off stage into a texture of their own
- * (renderer/presentSlides.ts), which is not a frame.
+ * What a `render` drew into: the screen, a slide prepared off stage being
+ * drawn into a texture of its own (renderer/presentSlides.ts — not a frame),
+ * or the present-mode keep-warm draw (maintenance: not a frame, not work).
  */
-export type RenderHook = (startedAt: number, ms: number, toScreen: boolean) => void
+export type RenderKind = 'screen' | 'offscreen' | 'keepWarm'
+
+/** Called after every `render` of the editor's renderer: when it started, how long it took, what it drew. */
+export type RenderHook = (startedAt: number, ms: number, kind: RenderKind) => void
 
 /**
  * Wrap the editor renderer's `render` so every frame — the scheduler's, a
  * `renderNow`, the ticker's during playback — reports to `hook`. Returns the
  * function that unwraps it.
  */
-export function instrumentRender(app: Application, hook: RenderHook): () => void {
+export function instrumentRender(
+  app: Application,
+  hook: RenderHook,
+  /** Called as a `render` starts, with what it draws into (the harness pauses its GL counts for keep-warm). */
+  before?: (kind: RenderKind) => void,
+): () => void {
   const renderer = app.renderer as unknown as { render: (...args: unknown[]) => unknown }
   const original = renderer.render
   const wrapped = function (this: unknown, ...args: unknown[]): unknown {
     const t = performance.now()
-    const opts = args[0] as { target?: unknown } | null | undefined
-    const toScreen =
-      typeof opts !== 'object' || opts === null || !('target' in opts) || !opts.target
+    const opts = args[0] as { target?: { label?: unknown } | null } | null | undefined
+    const target = typeof opts === 'object' && opts !== null ? opts.target : undefined
+    const kind: RenderKind =
+      target === undefined || target === null
+        ? isKeepWarmFrame()
+          ? 'keepWarm'
+          : 'screen'
+        : target.label === KEEP_WARM_LABEL
+          ? 'keepWarm'
+          : 'offscreen'
+    before?.(kind)
     try {
       return original.apply(this, args)
     } finally {
-      hook(t, performance.now() - t, toScreen)
+      hook(t, performance.now() - t, kind)
     }
   }
   renderer.render = wrapped
@@ -93,6 +110,9 @@ export function stripMasks(sceneGraph: SceneGraph): number {
   walk(sceneGraph.getRoot())
   return n
 }
+
+/** Switch present mode's keep-warm on or off (a diagnostic: what does an advance cost without it?). */
+export { setKeepWarmEnabled } from './presentKeepWarm.js'
 
 /** Thumbnails waiting or rendering (the store's queues, debounces and retries): settle waits for 0. */
 export { pendingThumbnailWork } from './thumbnailStore.js'

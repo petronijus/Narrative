@@ -981,6 +981,97 @@ webkit`.
   raced the 500 ms edit debounce plus this readback (failed 1 in 3 on
   e71d31d4 too); they now poll for the expected colour.
 
+- 2026-10-19, **D: the last missed frame of an advance, and the live
+  thumbnail's read-back** (renderer; MacBook M3 Pro, 18 GB, Chromium 156 on
+  ANGLE Metal, prod builds; memory pressure level 2 all day — ~14 GB in the
+  compressor — and load 5–74 from other work on the machine; Low Power Mode
+  on for part of it, so WebKit was not measured).
+  - **Where the frame went.** `present.spec.ts` now writes every frame over
+    1.5 intervals to the details file (`notes.slowFrames`: the advance it
+    followed, the renders and long tasks around it) and can trace a pass
+    (`PERF_TRACE=<dir>`). The missed frames sat on the first frame of a
+    swap (`render` 0.2–3.6 ms, 25 draws, nothing uploaded, no GC, no React
+    commit, no request) — the time was the GPU process executing that
+    frame's WebGL commands: 2–44 ms on an advance, 0.2 ms for the same
+    textures on the next frame of a transition. A diagnostic (dev, text
+    deck) put it on time off screen: a swap after 0.4 s cost 7–15 ms
+    (key → GPU done), after 5–20 s 38–163 ms with a 33–150 ms frame; a
+    redraw of the same slide after 5–20 s 25–113 ms, right after 11–15 ms.
+    What goes cold is both the canvas's screen path and the incoming
+    slide's textures: drawing the textures again (1 × 1) or presenting a
+    frame again each removed only half of it.
+  - **Fix: keep-warm** (`renderer/presentSlides.ts` → "Kept warm",
+    `renderer/presentKeepWarm.ts`): after ready, every 500 ms in an idle
+    callback (never during a transition or build, never on a hidden page),
+    the slide shown and the slides one step away are drawn into a 1 × 1
+    target and the canvas presents one frame (skipped while Pixi's ticker
+    runs anyway). Same diagnostic with it: redraw after 5–20 s 13.5–18.8 ms,
+    swap after 5 s 12–20 ms, no frame over 16.7 ms. The perf harness counts
+    these draws as maintenance (`RenderKind 'keepWarm'`: no frame, no GL
+    counter, not "busy"); `setKeepWarm` / `PERF_KEEP_WARM_AB=1` runs one
+    build as two interleaved sides, keep-warm off and on.
+  - **New bench `present.advance.paced`**: six advances, each slide held 4 s
+    (a presenter's pace); the quick pass advances every ~370 ms and never
+    lets a slide go cold. Budget 0 work (dev counters: ok).
+  - **A/B, one prod build, 10 runs a side, interleaved** (runs with any
+    missed frame / frames over 1.5 intervals at an advance):
+
+    | bench                   | keep-warm off                 | keep-warm on                  |
+    | ----------------------- | ----------------------------- | ----------------------------- |
+    | `present.advance.paced` | 3 / 10 runs, 5 frames ≤ 83 ms | 1 / 10 runs, 1 frame of 33 ms |
+    | `present.advance.text`  | 2 / 10, 6 frames ≤ 83 ms      | 2 / 10, 5 frames ≤ 67 ms      |
+    | `present.advance.photo` | 3 / 10, 7 frames ≤ 200 ms     | 1 / 10, 1 frame of 133 ms     |
+
+    Medians: 0 frames missed, longest frame 16.8 ms, p99 16.8 ms on every
+    side; GL textures gained 0. Not zero hitches: the misses left are
+    single, scattered, on frames whose own work is ≤ 3.6 ms of `render`, and
+    the same runs drop frames 1.8 s into a hold, when nothing of ours draws
+    at all (`present.advance.paced`, keep-warm on, run 12). The "long tasks"
+    reported in those frames (50–106 ms) are the harness's own input fence
+    (a 1 × 1 `readPixels` waiting on the GPU process), not the app's work.
+    On this machine under this memory pressure that is the floor; a clean
+    run (AC, Low Power Mode off, no memory pressure) is still to be made.
+
+  - **The live thumbnail's read-back** (`renderer/captureSlide.ts →
+captureSlideCanvasAsync`, `renderer/liveThumbnail.ts`): drawn into a
+    texture as before, read into a pixel-pack buffer behind a fence, the
+    pixels fetched once a timer poll sees the fence passed; the pixels and
+    the canvas made exactly as Pixi's `extract.canvas` makes them (the same
+    read of the resolved framebuffer, `putImageData` unchanged); WebGL1
+    falls back to the synchronous read. Measured with a throwaway spec
+    (crowded slide, one edit on a fresh page, 10 pages a side, HEAD vs this
+    tree): on the GPU, 0 ms of long tasks on both sides — the queue is
+    empty by the time the capture runs; on SwiftShader (as the e2e suite
+    runs) `readPixels` was 592.5 ms of main-thread self time in the
+    capture, now `getBufferSubData` 0.4 ms — but the long tasks stay
+    (longTask.max median 1072–1226 → 1219–1325 ms over two runs): the
+    main thread waits on the same GPU-process work at the next frame's
+    flush instead. The capture no longer stalls the main thread itself; it
+    does not make a software-GL editor's frames cheaper. Budgets unchanged. The
+    capture lands a poll later than the synchronous one did, which exposed
+    `inspector-flows.spec.ts`'s thumbnail poll: it waited for a blue
+    channel over 180, which the empty slide's white picture also has; it
+    now polls for the whole colour (failed 4 of 4 before, passes since).
+  - **E3 (the editor's slide switch from the prepared-slide cache): not
+    built.** The swap and the held-slide bookkeeping fit as they are, but
+    the editor's texts are pinned to the zoom's staged resolution
+    (`restageTextResolution`): a scene prepared off stage either rasterises
+    again at the switch (the cost E3 removes) or every prepared slide
+    rasterises again on every zoom commit. Which of the two — or a
+    zoom-independent raster resolution for prepared slides — is a decision
+    for ADR 0016's follow-up (tech-lead).
+  - **Found on the way**: `just perf-compare` cannot build an older side on
+    this MacBook — the worktree install fails on `ERR_PNPM_IGNORED_BUILDS`
+    (`electron-winstaller` is not in `allowBuilds`), and without the
+    decrypted `.env` its build has no `VITE_BYPASS_AUTH` and shows the
+    login page; `npm_config_strict_dep_builds=false VITE_BYPASS_AUTH=true`
+    in the environment works around both for a throwaway worktree.
+    `transform.move.rect.light` fails on HEAD itself ("perf-r0 moved").
+    Dev MinIO is at 6.0 GiB, ~5.4 GiB of it under `decks/<id>/` of 26
+    decks whose rows are gone (no deck, no media row): the deck delete's second
+    prefix sweep is an in-process timer (`sweepAgainAfterGrace`), lost when
+    the dev server restarts — five of them (1.0 GiB) are this work's
+    present photo decks.
 - 2026-10-19, **X3 (streaming PPTX writer), async PDF, R2 poster while
   processing, P3 1080p rendition** (MacBook M3 Pro, Low Power Mode on, Node
   24.21, a machine shared with other agents; load and how A/B ran per item).

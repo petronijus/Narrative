@@ -78,6 +78,17 @@ false`): residency is decided here, not by a timer.
 
 - An advance does no mounting, rasterising, uploading, decoding or fetching
   (budgeted at 0 in `perf/budgets/present.*.json`); its cost is compositing.
+- Compositing what rested is not free: after a few seconds off screen the
+  first frame of a swap cost the GPU process 38–163 ms (M3 Pro under memory
+  pressure, 2026-10-19) — both the canvas's screen path and the incoming
+  slide's textures go cold. So while the presentation rests, the slide shown
+  and the slides one step away are kept warm: every 500 ms, in an idle
+  callback and never during a transition, a build or on a hidden page, they
+  are drawn into a 1 × 1 target and the canvas presents one frame
+  (`presentSlides.ts` → "Kept warm"; a frame and three 1 × 1 draws, ~2 Hz).
+  Measured by `present.advance.paced` (a slide held 4 s before each
+  advance): runs with a missed frame 3 → 1 of 10 (performance.md, Log
+  2026-10-19).
 - Present mode needs GPU memory for the prepared slides (a 12-slide photo
   deck: ~300 MB of distinct 2560-px photos) and a longer start (the photo
   deck: ~10 s on a MacBook in dev, most of it decoding and uploading).

@@ -31,6 +31,20 @@
  * Before the presentation is ready the plan is built as fast as it goes;
  * after, a slide entering the plan (a big deck's window moving on) is built
  * in idle time only, never while a transition or a build animation runs.
+ *
+ * Kept warm: what a frame needs on the GPU goes cold while nothing is drawn
+ * — measured on an M3 Pro under memory pressure (ANGLE Metal, 2026-10-19,
+ * e2e/perf diagnostics): the canvas that presented nothing for 5–20 s cost
+ * its next frame of the same slide 25–113 ms (11–15 ms right after), and a
+ * swap after 5 s 100–113 ms (a 100 ms frame), all of it in the GPU
+ * process's command execution, with 0.2 ms of `render` on the main thread
+ * and nothing uploaded. Drawing the textures again or presenting a frame
+ * again each fixed only half of it: with both, the swap after 5 s took
+ * 12–20 ms and no frame was missed. So while the presentation rests, every
+ * `KEEP_WARM_MS` (an idle callback; never during a transition, a build or
+ * on a hidden page) the slide shown and the slides one step away are drawn
+ * into a 1 × 1 target of their own, and the canvas presents a frame of what
+ * it shows (unless Pixi's ticker is presenting frames anyway).
  */
 
 import { Container, Graphics, RenderTexture, Sprite, Texture, type TextureSource } from 'pixi.js'
@@ -54,6 +68,13 @@ import { attachLiveVideo } from './objectRenderers/videoRenderer.js'
 import { pendingRenderWork, whenRenderWorkIdle } from './renderWork.js'
 import { getDefaultResourceManager, type ResourceManager } from './ResourceManager.js'
 import { outsideFadeAlpha, type SceneGraph, type SlideScene } from './SceneGraph.js'
+import {
+  asKeepWarmFrame,
+  KEEP_WARM_LABEL,
+  KEEP_WARM_MS,
+  keepWarmEnabled,
+} from './presentKeepWarm.js'
+import { getDefaultRenderScheduler } from './RenderScheduler.js'
 import { getRenderingSlideNumber, setRenderingSlideNumber } from './slideNumberContext.js'
 import { whenIdle } from './textResolutionStaging.js'
 
@@ -250,6 +271,9 @@ export class PresentSlideCache {
   private planOrder = ''
   private readonly listeners = new Set<() => void>()
   private warmTarget: RenderTexture | null = null
+  private keepWarmTarget: RenderTexture | null = null
+  /** The pending keep-warm turn (a timer, then an idle callback): cancels it. */
+  private keepWarmCancel: (() => void) | null = null
   private destroyed = false
   private readonly unsubscribeColours: () => void
   private readonly unsubscribeFonts: () => void
@@ -317,6 +341,9 @@ export class PresentSlideCache {
   /** After ready: build only in idle time (`true`), or as fast as possible. */
   setIdleOnly(on: boolean): void {
     this.idleOnly = on
+    // Ready: from now on the slides around the presenter are kept warm.
+    if (on) this.scheduleKeepWarm()
+    else this.stopKeepWarm()
   }
 
   /** Tell the cache when the presentation is moving (a transition, a build): it builds nothing then. */
@@ -461,13 +488,16 @@ export class PresentSlideCache {
     this.destroyed = true
     this.unsubscribeColours()
     this.unsubscribeFonts()
+    this.stopKeepWarm()
     for (const id of [...this.entries.keys()]) this.evict(id)
-    try {
-      this.warmTarget?.destroy(true)
-    } catch {
-      // The renderer went first (see destroySlideScene).
-    }
+    for (const target of [this.warmTarget, this.keepWarmTarget])
+      try {
+        target?.destroy(true)
+      } catch {
+        // The renderer went first (see destroySlideScene).
+      }
     this.warmTarget = null
+    this.keepWarmTarget = null
     this.notify()
     this.listeners.clear()
   }
@@ -527,6 +557,57 @@ export class PresentSlideCache {
       if (!this.busy()) return
       await new Promise<void>((resolve) => setTimeout(resolve, 100))
     }
+  }
+
+  /**
+   * Draw the slide on stage and the prepared slides the presenter can reach
+   * in one step into the keep-warm target (see the module comment). Nothing
+   * while a transition or a build moves, or while the page is hidden.
+   */
+  keepWarm(): void {
+    if (this.destroyed || this.busy() || !keepWarmEnabled()) return
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+    const renderer = this.sceneGraph.getApp().renderer
+    if (this.keepWarmTarget === null) {
+      this.keepWarmTarget = RenderTexture.create({ width: 1, height: 1 })
+      this.keepWarmTarget.label = KEEP_WARM_LABEL
+    }
+    const target = this.keepWarmTarget
+    const roots: Container[] = []
+    // The scene on stage: its render group only (a scene mounted change by
+    // change has none, and drawing it alone would make the stage's root one).
+    const onStage = this.sceneGraph.getRoot()
+    if (onStage.isRenderGroup && !onStage.destroyed) roots.push(onStage)
+    for (const id of this.required) {
+      const p = this.entries.get(id)?.prepared
+      if (p != null && !p.root.destroyed) roots.push(p.root)
+    }
+    for (const root of roots) renderer.render({ container: root, target, clear: true })
+    // The screen path too (see the module comment) — unless Pixi's ticker
+    // presents frames anyway (a video or a timeline playing).
+    if (!this.sceneGraph.getApp().ticker.started)
+      asKeepWarmFrame(() => getDefaultRenderScheduler()?.renderNow())
+  }
+
+  private scheduleKeepWarm(): void {
+    if (this.destroyed || !this.idleOnly || this.keepWarmCancel !== null) return
+    let cancelIdle: (() => void) | null = null
+    const timer = setTimeout(() => {
+      cancelIdle = whenIdle(() => {
+        this.keepWarmCancel = null
+        this.keepWarm()
+        this.scheduleKeepWarm()
+      }, KEEP_WARM_MS)
+    }, KEEP_WARM_MS)
+    this.keepWarmCancel = () => {
+      clearTimeout(timer)
+      cancelIdle?.()
+    }
+  }
+
+  private stopKeepWarm(): void {
+    this.keepWarmCancel?.()
+    this.keepWarmCancel = null
   }
 
   private warm(root: Container): void {

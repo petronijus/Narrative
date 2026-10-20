@@ -39,7 +39,9 @@ import {
   pendingTextRestage,
   pendingThumbnailWork,
   renderNow,
+  setKeepWarmEnabled,
   stripMasks,
+  type RenderKind,
 } from '../renderer/perfProbes.js'
 import type { RenderScheduler } from '../renderer/RenderScheduler.js'
 import type { SceneGraph } from '../renderer/SceneGraph.js'
@@ -73,6 +75,13 @@ export interface PerfRecording {
   renders: { count: number; ms: number; maxMs: number; drawsMax: number }
   /** When each zoom's text restaging finished (ms from the start). */
   restagesDone: number[]
+  /**
+   * `performance.now()` at the recording's start: the origin of every `at`.
+   * Optional: a build's harness before 2026-10-19 (an A/B's older side) has none.
+   */
+  startedAt?: number
+  /** Each on-screen editor render: its start (ms from the recording's start) and duration (optional as `startedAt`). */
+  renderLog?: Array<{ at: number; ms: number }>
 }
 
 /**
@@ -162,6 +171,14 @@ export interface PerfHarnessApi {
    * the same pass is a leak (performance.md → E8).
    */
   glLive(): { textures: number }
+  /** Present mode's keep-warm draws since the harness loaded (renderer/presentSlides.ts → "Kept warm"). */
+  keepWarmDraws(): number
+  /**
+   * A diagnostic: switch present mode's keep-warm off (or on again). A page
+   * whose `window.__narrative_perf_keepWarm` is `false` when the harness
+   * loads starts with it off (present.spec.ts, PERF_KEEP_WARM_AB=1).
+   */
+  setKeepWarm(on: boolean): void
   /**
    * A diagnostic: from now on keep each texture upload of the editor's
    * context (its size, and the stack that made it) until read; null stops.
@@ -219,6 +236,10 @@ export function installPerfHarness(): void {
   let editorDraws = 0
   let drawsAtLastRender = 0
   let lastRenderAt = -Infinity
+  /** Keep-warm draws of the present canvas since the harness loaded (renderer/presentSlides.ts). */
+  let keepWarmDraws = 0
+  /** A keep-warm draw is under way: its GL calls are not counted. */
+  let inKeepWarm = false
 
   // --- GL --------------------------------------------------------------------
   /** Textures of the editor's context created and not deleted (glLive). */
@@ -231,6 +252,8 @@ export function installPerfHarness(): void {
       if (typeof original !== 'function') return
       proto[name] = function (this: unknown, ...args: unknown[]): unknown {
         const editor = this === editorContext
+        // Present mode's keep-warm draw is maintenance: none of its GL calls is work.
+        if (editor && inKeepWarm) return original.apply(this, args)
         count(editor ? 'gl' : 'gl.thumb', args)
         if (editor && name.startsWith('draw')) editorDraws++
         return original.apply(this, args)
@@ -332,6 +355,7 @@ export function installPerfHarness(): void {
   let pending: PendingInput[] = []
   let renders = { count: 0, ms: 0, maxMs: 0, drawsMax: 0 }
   let restagesDone: number[] = []
+  let renderLog: Array<{ at: number; ms: number }> = []
   let fenceWaiters: Array<(t: number) => void> = []
   let domCheckScheduled = false
   let inputFence = true
@@ -373,8 +397,15 @@ export function installPerfHarness(): void {
     }
   }
 
-  const onRender = (startedAt: number, ms: number, toScreen: boolean): void => {
-    if (!toScreen) {
+  const onRender = (startedAt: number, ms: number, kind: RenderKind): void => {
+    // The present canvas keeping the slides around the presenter warm: no
+    // frame, no work — "quiet" does not wait for it to stop (it never does).
+    if (kind === 'keepWarm') {
+      inKeepWarm = false
+      keepWarmDraws++
+      return
+    }
+    if (kind === 'offscreen') {
       // A slide prepared off stage drawn into its own texture: not a frame.
       perfCount('editor.render.offscreen')
       lastRenderAt = startedAt + ms
@@ -389,6 +420,7 @@ export function installPerfHarness(): void {
     const draws = editorDraws - drawsAtLastRender
     drawsAtLastRender = editorDraws
     if (recording) {
+      renderLog.push({ at: startedAt - recStart, ms })
       renders.count++
       renders.ms += ms
       renders.maxMs = Math.max(renders.maxMs, ms)
@@ -415,7 +447,10 @@ export function installPerfHarness(): void {
     scheduler = (canvas?.scheduler as RenderScheduler | undefined) ?? null
     pendingLoads = canvas?.pendingLoads ?? null
     editorContext = app === null ? null : editorGl(app)
-    if (app !== null) unhookRender = instrumentRender(app, onRender)
+    if (app !== null)
+      unhookRender = instrumentRender(app, onRender, (kind) => {
+        inKeepWarm = kind === 'keepWarm'
+      })
   })
 
   // A DOM-only input (typing into the text overlay, a panel) is shown by the
@@ -463,6 +498,13 @@ export function installPerfHarness(): void {
 
   const reactProbe = (): ReactProbe | null =>
     (window as unknown as { __narrative_react_perf?: ReactProbe }).__narrative_react_perf ?? null
+
+  // present.spec.ts's keep-warm A/B: this page measures without it.
+  if (
+    (window as unknown as { __narrative_perf_keepWarm?: boolean }).__narrative_perf_keepWarm ===
+    false
+  )
+    setKeepWarmEnabled(false)
 
   const harness: PerfHarnessApi = {
     version: 1,
@@ -520,6 +562,7 @@ export function installPerfHarness(): void {
       pending = []
       renders = { count: 0, ms: 0, maxMs: 0, drawsMax: 0 }
       restagesDone = []
+      renderLog = []
       wasRestaging = false
       lastFrameAt = recStart
       slowEvents.length = 0
@@ -547,6 +590,8 @@ export function installPerfHarness(): void {
         inputs: [...inputs],
         renders: { ...renders },
         restagesDone: [...restagesDone],
+        startedAt: recStart,
+        renderLog: [...renderLog],
       }
     },
     setInputFence(on) {
@@ -635,6 +680,8 @@ export function installPerfHarness(): void {
       }
     },
     glLive: () => ({ textures: liveTextures }),
+    keepWarmDraws: () => keepWarmDraws,
+    setKeepWarm: (on) => setKeepWarmEnabled(on),
     traceUploads(on) {
       const out = uploadTrace ?? []
       uploadTrace = on ? [] : null

@@ -414,6 +414,15 @@ export const INTERACTION_BENCHES: ReadonlyArray<BenchDef<never>> = [
     time: PRESENT_METRICS,
     work: PRESENT_WORK,
   }),
+  // A presenter's pace: six advances, each slide held 4 s before the next.
+  // What rests between two advances goes cold on the GPU (renderer/
+  // presentSlides.ts → "Kept warm"); the quick pass above never rests.
+  interaction('present.advance.paced', {
+    scene: SCENES.presentText,
+    actions: PRESENT_ACTIONS,
+    time: PRESENT_METRICS,
+    work: PRESENT_WORK,
+  }),
   interaction('present.advance.photo', {
     scene: SCENES.presentPhoto,
     actions: PRESENT_ACTIONS,

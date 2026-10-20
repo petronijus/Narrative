@@ -410,25 +410,22 @@ test.describe('Renderer paint smoke', () => {
           tmp.src = img.src
         })
       })
+    // Expected RGB ≈ (59, 130, 246) for #3b82f6. JPEG/PNG round-tripping
+    // through Pixi's extract may shift each channel by ±10, so allow
+    // tolerance. The whole colour is polled for: the empty slide's white
+    // picture (shown until the live one lands) has a blue channel over 180
+    // too, and a poll on that channel alone sampled it.
+    const isBlue = (c: Rgb | null): boolean =>
+      c !== null && c.b > 180 && c.r < 120 && c.g > 80 && c.g < 180
     let sample: Rgb | null = null
     await expect
       .poll(
         async () => {
           sample = await readSample()
-          return sample !== null && sample.b > 180
+          return isBlue(sample)
         },
-        { timeout: 15_000 },
+        { timeout: 15_000, message: () => `thumbnail centre ${JSON.stringify(sample)}` },
       )
       .toBe(true)
-
-    // Expected RGB ≈ (59, 130, 246) for #3b82f6. JPEG/PNG round-tripping
-    // through Pixi's extract may shift each channel by ±10, so allow
-    // tolerance.
-    const painted = sample as Rgb | null
-    expect(painted).not.toBeNull()
-    expect(painted!.b).toBeGreaterThan(180)
-    expect(painted!.r).toBeLessThan(120)
-    expect(painted!.g).toBeGreaterThan(80)
-    expect(painted!.g).toBeLessThan(180)
   })
 })
