@@ -9,6 +9,11 @@
  * `VITE_HOCUSPOCUS_URL=/ws`): the preview's proxies (apps/web/vite.config.ts →
  * `preview.proxy`) map those to the dev backend the way production's Caddy
  * maps them to the API, so the page talks to its own origin on any port.
+ *
+ * The client variables (`VITE_*`) come from this checkout's env files, also
+ * for a worktree of another revision (`just perf-compare`): its `.env` is
+ * gitignored and missing, and without `VITE_BYPASS_AUTH` its build showed
+ * the sign-in page instead of the deck.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -16,6 +21,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import net from 'node:net'
 import path from 'node:path'
+import { parseEnv } from 'node:util'
+import { repoRoot } from './budgetFiles.js'
 import type { BuildMode } from '../fingerprint.js'
 
 export type BuiltMode = Exclude<BuildMode, 'dev'>
@@ -29,9 +36,34 @@ export function outDirFor(mode: BuiltMode): string {
   return `dist-perf-${mode}`
 }
 
-/** The environment of a perf build: production's, with production's relative endpoints. */
-export function buildEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+/**
+ * The `VITE_*` variables of the env files in `envDir` for a Vite `mode`, in
+ * Vite's order (`.env`, `.env.local`, `.env.<mode>`, `.env.<mode>.local`;
+ * a later file wins).
+ */
+export function clientEnvFiles(envDir: string, mode: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const name of ['.env', '.env.local', `.env.${mode}`, `.env.${mode}.local`]) {
+    const file = path.join(envDir, name)
+    if (!existsSync(file)) continue
+    for (const [k, v] of Object.entries(parseEnv(readFileSync(file, 'utf8')))) {
+      if (k.startsWith('VITE_') && v !== undefined) out[k] = v
+    }
+  }
+  return out
+}
+
+/**
+ * The environment of a perf build: production's, with production's relative
+ * endpoints; the client variables of this checkout's env files under the
+ * process's own (as Vite ranks them).
+ */
+export function buildEnv(
+  base: NodeJS.ProcessEnv = process.env,
+  clientEnv: Record<string, string> = {},
+): NodeJS.ProcessEnv {
   return {
+    ...clientEnv,
     ...base,
     NODE_ENV: 'production',
     VITE_API_URL: '/api',
@@ -75,13 +107,18 @@ function viteBin(webDir: string): string {
   return path.join(path.dirname(pkg), bin)
 }
 
+/** The client variables of this checkout (the process's repository) for `mode`. */
+function checkoutClientEnv(mode: BuiltMode): Record<string, string> {
+  return clientEnvFiles(repoRoot(), viteMode(mode))
+}
+
 /** `vite build` of `webDir` (an apps/web) in `mode`; returns the outDir's absolute path. */
 export async function buildWeb(webDir: string, mode: BuiltMode, verbose = false): Promise<string> {
   const outDir = outDirFor(mode)
   await run(
     process.execPath,
     [viteBin(webDir), 'build', '--mode', viteMode(mode), '--outDir', outDir, '--emptyOutDir'],
-    { cwd: webDir, env: buildEnv(), verbose },
+    { cwd: webDir, env: buildEnv(process.env, checkoutClientEnv(mode)), verbose },
   )
   return path.join(webDir, outDir)
 }
@@ -137,7 +174,12 @@ export async function startPreview(
       String(port),
       '--strictPort',
     ],
-    { cwd: webDir, env: buildEnv(), stdio: 'pipe', detached: true },
+    {
+      cwd: webDir,
+      env: buildEnv(process.env, checkoutClientEnv(mode)),
+      stdio: 'pipe',
+      detached: true,
+    },
   )
   let out = ''
   child.stdout?.on('data', (b: Buffer) => (out += b.toString()))
