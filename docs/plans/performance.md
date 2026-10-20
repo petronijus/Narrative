@@ -1216,3 +1216,74 @@ captureSlideCanvasAsync`, `renderer/liveThumbnail.ts`): drawn into a
   due rows each minute (taken with `FOR UPDATE SKIP LOCKED`, retried with
   back-off, a row whose owner exists dropped unswept); docs/storage.md →
   Cleanup. Integration-tested against Postgres and MinIO.
+
+- 2026-10-20, **Baselines on a quiet machine; present mode in Chromium and
+  WebKit, headless and headed** (MacBook M3 Pro, AC, Low Power Mode off,
+  Chromium 156 on ANGLE Metal, Playwright WebKit 27.2, prod builds of
+  2a3171c6 + this work; the Wacom tablet daemon `com.wacom.DataStoreMgr`
+  stopped — it took ~50 % of a core all day — load 5–9 from the dev
+  stack's Docker VM, Jamf and the desktop).
+  - **Baselines re-accepted** (`just perf --mode prod`, all 28 benches,
+    40 min, then `just perf-accept`; 78 baselines: Chromium prod plus the
+    dev/profiling series as they stood, WebKit present). The old ones were
+    taken on AC with Low Power Mode on. Counter budgets unchanged. A run
+    the stop hook's `just check` overlapped (server tests at 245 s, four
+    timeouts) was thrown away and run again; so was one started with the
+    Wacom daemon still busy.
+  - **Chromium, present mode, runs (of 10) with any missed frame:**
+
+    | bench                      | 2026-10-19 (busy machine) | now              |
+    | -------------------------- | ------------------------- | ---------------- |
+    | `present.advance.text`     | 2                         | 0                |
+    | `present.advance.paced`    | 1                         | 0                |
+    | `present.advance.photo`    | 1                         | 3, on a rerun 0  |
+    | `present.transition.all`   | —                         | 0                |
+    | `present.build.steps`      | —                         | 1 (one 33–83 ms) |
+    | `present.video.play`       | —                         | 0                |
+    | `present.jump.link`        | —                         | 0                |
+    | `present.presenter.window` | 0                         | 0                |
+
+    Longest frame 16.8 ms in every clean run. Ready 0.65–2.7 s.
+
+  - **The one Chromium hitch left** (`present.build.steps`): the first
+    entry of slide 3 (a `scaleIn` + `rotateIn` that play on arrival), in
+    the first pass of a fresh page — 3 of 4 fresh pages, one 33 ms frame —
+    and once in a later pass. `present.spec.ts` now keeps the slow frames of
+    every pass (`notes.slowFramesOfPasses`; the details file had the last
+    pass only), and `PERF_TRACE_CATEGORIES` adds trace categories. In the
+    trace the renderer's main thread sits 29–40 ms at the start of
+    `WebFrameWidgetImpl::BeginMainFrame` with ~2 ms of thread time: no
+    task, wait, IPC, GC or GPU work is traced on any thread, our `rAF`
+    runs after it, and the compositor meanwhile reports frames without the
+    main thread. The builds are compiled (and run to the end and back) at
+    the key press already, so it is not their first run. Native samples
+    (`sample`) of `chrome-headless-shell` carry no symbols. Not explained;
+    measured in the headless shell only.
+  - **WebKit, headless, runs with a missed frame:** text 1, paced 1, photo
+    1, transitions 1, jump 2, video 4 (up to 66 ms), builds 4 (17 frames in
+    one run, up to 99 ms). Medians 0 everywhere; ready 3.5–4.3 s (Chromium
+    1.4–2.7 s).
+  - **`just perf --headed`** (new): the browser draws in a window, paced by
+    the display as the Tauri window is; its results are a series of their
+    own (`…/webkit-browser-headed`) and never compared with a headless run
+    (`fingerprint.browser.headed`, unit-tested). Headed WebKit, runs with a
+    missed frame: video 1 (37 ms; headless 4), photo 1, transitions 2, text
+    3, builds 5 (1–3 frames each), paced 5 — paced's large ones (up to
+    402 ms) fell in holds with nothing of ours drawn, while the desktop
+    was in use (WindowServer ~40 %, Chrome): a window on a shared desktop
+    measures the desktop too.
+  - **Keep-warm in headed WebKit** (`PERF_KEEP_WARM_AB=1`, paced, 10 runs a
+    side, interleaved): off — median 4 frames missed and 2 hitches a run,
+    longest frame 55 ms; on — 0 and 0, 21.5 ms. The harness now logs each
+    keep-warm draw (`keepWarmLog`) next to the slow frames: the hold-time
+    misses were not keep-warm's. What is left with it on are single misses
+    on the first frame of a swap (26–66 ms, 1–12 ms after the key).
+  - **Tried and dropped: keep-warm on the canvas's own path.** Hypothesis:
+    the 1 × 1 target warms the incoming slide's textures but not the
+    pipelines of the canvas's format, so the swap's first frame builds them.
+    The keep-warm frame drew the slides one step away on the canvas and the
+    slide shown over them in the same task (only the last is composited).
+    A/B against the 1 × 1 target alone, headed WebKit, 10 runs a side:
+    `present.advance.text` 0 → 2 runs with a miss (13 frames in one),
+    `present.advance.paced` 2 → 2; Chromium `present.advance.text` 0 → 0.
+    No gain, so not kept; the swap-frame misses in WebKit stay open.
