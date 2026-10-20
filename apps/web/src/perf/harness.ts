@@ -82,6 +82,8 @@ export interface PerfRecording {
   startedAt?: number
   /** Each on-screen editor render: its start (ms from the recording's start) and duration (optional as `startedAt`). */
   renderLog?: Array<{ at: number; ms: number }>
+  /** Each keep-warm draw of the present canvas (no frame of its own; optional as `startedAt`). */
+  keepWarmLog?: Array<{ at: number; ms: number }>
 }
 
 /**
@@ -356,6 +358,7 @@ export function installPerfHarness(): void {
   let renders = { count: 0, ms: 0, maxMs: 0, drawsMax: 0 }
   let restagesDone: number[] = []
   let renderLog: Array<{ at: number; ms: number }> = []
+  let keepWarmLog: Array<{ at: number; ms: number }> = []
   let fenceWaiters: Array<(t: number) => void> = []
   let domCheckScheduled = false
   let inputFence = true
@@ -403,6 +406,7 @@ export function installPerfHarness(): void {
     if (kind === 'keepWarm') {
       inKeepWarm = false
       keepWarmDraws++
+      if (recording) keepWarmLog.push({ at: startedAt - recStart, ms })
       return
     }
     if (kind === 'offscreen') {
@@ -563,6 +567,7 @@ export function installPerfHarness(): void {
       renders = { count: 0, ms: 0, maxMs: 0, drawsMax: 0 }
       restagesDone = []
       renderLog = []
+      keepWarmLog = []
       wasRestaging = false
       lastFrameAt = recStart
       slowEvents.length = 0
@@ -592,6 +597,7 @@ export function installPerfHarness(): void {
         restagesDone: [...restagesDone],
         startedAt: recStart,
         renderLog: [...renderLog],
+        keepWarmLog: [...keepWarmLog],
       }
     },
     setInputFence(on) {

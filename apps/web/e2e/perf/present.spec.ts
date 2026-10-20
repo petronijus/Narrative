@@ -64,6 +64,13 @@ const ADVANCE_QUIET_MS = 300
 const PACED_ADVANCES = 6
 const PACED_HOLD_MS = 4000
 
+/**
+ * The slow frames of every pass so far, per bench and side (warm-ups
+ * included, numbered in order): the details file holds the last pass's
+ * capture only, and a miss in one pass of ten was lost with it.
+ */
+const slowFramesOfPasses = new Map<string, Array<{ pass: number; frames: unknown[] }>>()
+
 interface PresentState extends SideState {
   context: BrowserContext
   decks: Map<DeckKind, PresentDeck>
@@ -255,6 +262,9 @@ function slowFrames(
         renders: renderLog
           .filter((r) => r.at >= f.at - interval && r.at <= f.at + f.ms)
           .map((r) => `${Math.round(r.at - f.at)}+${r.ms.toFixed(1)}`),
+        keepWarm: (rec.keepWarmLog ?? [])
+          .filter((r) => r.at >= f.at - interval && r.at <= f.at + f.ms)
+          .map((r) => `${Math.round(r.at - f.at)}+${r.ms.toFixed(1)}`),
         longTasks: (rec.longTasks ?? [])
           .filter((l) => l.at + l.ms >= f.at && l.at <= f.at + f.ms)
           .map((l) => `${Math.round(l.at - f.at)}+${Math.round(l.ms)}`),
@@ -415,6 +425,8 @@ test('present mode', async ({ browser }) => {
               'disabled-by-default-gpu.service',
               'disabled-by-default-gpu.decoder',
               'disabled-by-default-gpu.device',
+              // PERF_TRACE_CATEGORIES: more, comma-separated (`base,ipc,blink`).
+              ...(process.env['PERF_TRACE_CATEGORIES'] ?? '').split(',').filter((c) => c !== ''),
             ],
           })
         const c = await capture(s.page, async (inputEnd) => {
@@ -442,10 +454,17 @@ test('present mode', async ({ browser }) => {
           presenter === null
             ? undefined
             : await presenter.evaluate(() => window.__narrative_perf_harness!.counters())
+        const slow = slowFrames(c, interval, advances)
+        const passKey = `${id}@${s.side.name}`
+        const passes = slowFramesOfPasses.get(passKey) ?? []
+        slowFramesOfPasses.set(passKey, passes)
+        const pass = (passes.at(-1)?.pass ?? 0) + 1
+        passes.push({ pass, frames: slow })
         s.notes = {
           interval,
           advances: advances.map((a) => ({ step: a.step, ms: a.ms })),
-          slowFrames: slowFrames(c, interval, advances),
+          slowFrames: slow,
+          slowFramesOfPasses: passes.filter((p) => p.frames.length > 0),
           presenterCounters: extra ?? null,
           live,
         }
