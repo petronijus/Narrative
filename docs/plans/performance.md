@@ -2678,8 +2678,14 @@ deck.open.* --mode prod`, 10 runs, medians; a machine shared with other
   - After the fixes: the audit batch (notes, present, local copies, collab,
     text edit, tables, shortcuts) 78/78 in Chromium;
     `renderer-visual|inspector-flows|table` 25/25; `table-raster-pixels`
-    Chromium 3/3 repeats and WebKit; WebKit `text-engine-spike` 4/4. A
-    second full `just e2e` over the final tree is not recorded here.
+    Chromium 3/3 repeats and WebKit; WebKit `text-engine-spike` 4/4.
+  - Final pass over the whole tree (04:12–04:24): `just check` green; full
+    `just e2e` 252 passed, 20 skipped in Chromium (13.8 min); the 6 failures
+    are the Electron project's desktop specs only, which this round neither
+    runs nor fixes (the desktop app is Tauri). One server unit test
+    (`editor.test.ts`, "tolerates editors that do not publish an active
+    slide yet") timed out once at 30 s, only while the stop hook's check ran
+    alongside the queued one; alone it passes 3/3.
   - **Trap**: two Playwright runs started in parallel share
     `apps/web/test-results/` and wiped each other's artefacts (ENOENT on the <!-- docs-check: ignore -->
     other run's traces and screenshots). The session's queue now serialises
