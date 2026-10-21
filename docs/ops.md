@@ -120,6 +120,63 @@ The endpoint returns Prometheus text format (version 0.0.4).
   after the last Yjs update by default).
 - A high `narrative_updates_bytes_total` means large documents or heavy editing.
 
+### Client session metrics (performance plan G4)
+
+What real sessions measure in the browser, sampled: every page session (a
+share of them, `VITE_CLIENT_METRICS_SAMPLE_RATE` at build time, default 1;
+0 turns it off) sends one report when the page is first hidden
+(`apps/web/src/observability/sessionMetrics.ts`) to
+`POST /api/client-metrics` (`apps/server/src/routes/clientMetrics.ts`). A
+report carries durations and counts only — no deck, user, URL or content —
+and a coarse route kind (`editor`, `present`, `home`, `other`). The render
+page, share-link visitors, the sign-in pages and automated browsers (the e2e
+suite, the perf harness: `navigator.webdriver`) never report. The route takes
+a signed-in session only (no token: not an agent capability), from the web
+app's origin, 30 reports per user per minute. Each report carries a random
+id per page session (never stored or logged); an id among the last 10,000
+seen is a repeat and counted nowhere, so one page session counts once.
+
+**The numbers are client-asserted.** Any signed-in user can send made-up
+reports within the schema's bounds and the rate limit: read them as trends
+across many sessions, never as an alerting signal or a per-user fact.
+
+Each report becomes histograms on `/metrics` (in memory: a restart starts
+them from zero) and one log line of the server, `client session metrics`
+(kept as long as the container's logs). **Production today has no
+`/metrics`:** `METRICS_TOKEN` is not set in `infra/.env.prod`, so the
+endpoint is not registered (see "Access control" above) and the log lines
+are the only source until a token is configured.
+
+| Metric (`narrative_client_…`, labels `route`, deck ones also `load`)    | What                                                                    |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `reports_total`                                                         | reports received                                                        |
+| `nav_ttfb_ms`, `nav_fcp_ms`, `nav_dom_content_loaded_ms`                | the document: first byte, first contentful paint, DOMContentLoaded      |
+| `deck_ws_connected_ms`, `deck_ws_synced_ms`                             | deck open, from the deck route's mount: WebSocket connected, doc synced |
+| `deck_pixi_ready_ms`, `deck_first_paint_ms`                             | deck open: renderer initialised, first canvas frame                     |
+| `deck_long_task_ms`                                                     | long-task time between the deck route's mount and its first paint       |
+| `session_long_tasks`, `session_long_task_ms`, `session_longest_task_ms` | long tasks (> 50 ms) of the whole session: count, total, the longest    |
+| `inp_ms`                                                                | Interaction to Next Paint (the worst, or the p98 from 50 interactions)  |
+
+`load="cold"` is the deck the page landed on (chunks, fonts and the
+WebSocket all new), `warm` a deck opened later in the same page. Only the
+last deck of a page is reported (`state/loadTimings.ts` keeps one). The
+first paint can come before the sync (the canvas draws the empty slide first).
+
+**Reading them** — `infra/scripts/client-metrics.py` prints count, p50, p75
+and p95 per metric from either source:
+
+```bash
+# On the VM: every report in the server's logs (exact percentiles)
+docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml \
+  logs --no-log-prefix server | infra/scripts/client-metrics.py
+# … since a deploy
+docker compose … logs --no-log-prefix server | infra/scripts/client-metrics.py --since 2026-10-21T08:00
+
+# The histograms since the server started (interpolated in the buckets)
+curl -s -H "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:3001/metrics \
+  | infra/scripts/client-metrics.py
+```
+
 **Access control** (was a TODO for M29; **done** in the 2026-06-12 audit,
 commit `b89796b`): `/metrics` leaks connection counts and document sizes, so in
 production it is gated by `METRICS_TOKEN` — scrape with

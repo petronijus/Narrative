@@ -12,6 +12,10 @@
 
 import { StrictMode } from 'react'
 import { installVersionGuard } from './state/versionGuard.js'
+import { browserSessionMetricsEnv, startSessionMetrics } from './observability/sessionMetrics.js'
+import { readLoadTimings } from './state/loadTimings.js'
+import { API_URL } from './lib/endpoints.js'
+import { pageShareToken } from './lib/shareToken.js'
 import { TELEMETRY_DATA_COLLECTION, scrubTelemetryPayload } from '@narrative/shared'
 import { createRoot } from 'react-dom/client'
 import './index.css'
@@ -144,6 +148,16 @@ createRoot(rootEl).render(
 // a browser stuck on an old document recovers even if everything else on the
 // page is broken by that mismatch.
 installVersionGuard()
+
+// Real sessions' boot waterfall, long tasks and INP, sampled, sent once when
+// the page is first hidden (observability/sessionMetrics.ts, plan G4).
+startSessionMetrics(
+  browserSessionMetricsEnv({
+    apiUrl: API_URL,
+    hasShareToken: pageShareToken() !== null,
+    readLoadTimings,
+  }),
+)
 
 const sentryDsn = import.meta.env['VITE_SENTRY_DSN'] as string | undefined
 if (sentryDsn) {

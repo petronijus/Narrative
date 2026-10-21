@@ -8,6 +8,8 @@ interface ImportMetaEnv {
   readonly VITE_BUILD_VERSION?: string
   readonly VITE_HOCUSPOCUS_URL?: string
   readonly VITE_API_URL?: string
+  /** Share of page sessions that report their timings (observability/sessionMetrics.ts); default 1. */
+  readonly VITE_CLIENT_METRICS_SAMPLE_RATE?: string
 }
 
 interface ImportMeta {

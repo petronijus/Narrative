@@ -7,6 +7,8 @@
  * Thread safety: Node.js je single-threaded → atomicita není problém.
  */
 
+import { formatClientMetrics } from './clientMetrics.js'
+
 let wsConnections = 0
 let updatesIngested = 0
 let updatesBytes = 0
@@ -51,6 +53,9 @@ export function formatPrometheus(): string {
     '# HELP narrative_updates_bytes_total Total bytes of Yjs updates received',
     '# TYPE narrative_updates_bytes_total counter',
     `narrative_updates_bytes_total ${updatesBytes}`,
+    '',
+    // The editor's session reports (metrics/clientMetrics.ts).
+    ...formatClientMetrics(),
     '',
   ].join('\n')
 }

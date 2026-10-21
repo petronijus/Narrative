@@ -87,8 +87,14 @@ describe('formatPrometheus', () => {
     const typeLines = lines.filter((l) => l.startsWith('# TYPE'))
     const valueLines = lines.filter((l) => !l.startsWith('#'))
 
-    expect(helpLines.length).toBe(3)
-    expect(typeLines.length).toBe(3)
-    expect(valueLines.length).toBe(3)
+    // The three server metrics; the editor's session histograms
+    // (clientMetrics.ts) add HELP + TYPE per family and no sample until a
+    // report arrives (beyond their families, they are tested in
+    // routes/clientMetrics.test.ts).
+    const server = (l: string) => !l.includes('narrative_client_')
+    expect(helpLines.filter(server).length).toBe(3)
+    expect(typeLines.filter(server).length).toBe(3)
+    expect(valueLines.filter(server).length).toBe(3)
+    expect(helpLines.length).toBe(typeLines.length)
   })
 })

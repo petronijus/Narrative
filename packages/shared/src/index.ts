@@ -210,6 +210,16 @@ export {
   scrubTelemetryPayload,
 } from './telemetryScrub.js'
 export {
+  CLIENT_METRICS_COUNT_BUCKETS,
+  CLIENT_METRICS_INTERACTION_BUCKETS,
+  CLIENT_METRICS_MAX_MS,
+  CLIENT_METRICS_MS_BUCKETS,
+  CLIENT_METRICS_ROUTES,
+  clientMetricsReportSchema,
+  type ClientMetricsReport,
+  type ClientMetricsRoute,
+} from './clientMetrics.js'
+export {
   PERF_COUNTS_KEY,
   perfCount,
   perfCountFor,

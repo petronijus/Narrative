@@ -195,6 +195,14 @@ export const AGENT_ALLOWLIST: readonly AllowlistEntry[] = [
     routes: [{ method: 'GET', path: '/metrics' }],
   },
   {
+    capability: 'Editor session performance reports',
+    reason:
+      "The browser's own boot timings, long tasks and INP, folded into /metrics (performance plan G4): telemetry " +
+      'about the page, not a user capability. Session-cookie only (authPreHandler rejects every token), so no ' +
+      'agent can write into the histograms.',
+    routes: [{ method: 'POST', path: '/client-metrics' }],
+  },
+  {
     capability: 'Speaker-notes live editing (Tiptap + y-prosemirror binding)',
     reason:
       "Not a separate capability: a CRDT editor binding that writes the slide's notes Y.XmlFragment keystroke by " +

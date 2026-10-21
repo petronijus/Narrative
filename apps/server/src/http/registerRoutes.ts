@@ -32,6 +32,7 @@ import { registerAccessTokenRoutes } from '../routes/accessTokens.js'
 import { registerTusPlugin } from '../media/tus.js'
 import { registerMediaRoutes } from '../media/routes.js'
 import { registerMetricsEndpoint } from '../metrics/index.js'
+import { registerClientMetricsRoute } from '../routes/clientMetrics.js'
 import { registerAgentRoutes } from '../routes/agent.js'
 import { registerAgentConfirmationRoutes } from '../routes/agentConfirmations.js'
 import type { AgentRuntime } from '../agent/runtime.js'
@@ -78,6 +79,9 @@ export async function registerHttpRoutes(app: FastifyInstance, deps: HttpRouteDe
   // Prometheus metrics. /metrics leaks connection counts / doc sizes; the
   // endpoint gates itself by METRICS_TOKEN (loopback-only fallback in dev).
   if (deps.metrics) await registerMetricsEndpoint(app)
+  // The editor's session reports (boot waterfall, long tasks, INP), folded
+  // into /metrics and logged (routes/clientMetrics.ts).
+  registerClientMetricsRoute(app)
 
   // Development only: render tokens for the e2e suite (routes/devRender.ts).
   if (deps.devRoutes) await registerDevRenderRoutes(app, db)
