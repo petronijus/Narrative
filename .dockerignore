@@ -13,10 +13,14 @@ build
 .gitignore
 .gitattributes
 
-# Env files (secrets — nikdy v image)
+# Env files (secrets — nikdy v image), at the root and in any directory
+# (infra/.env.prod included)
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
+!**/.env.example
 
 # Private overlay (SOPS secrets + non-public fixtures — never into the build context)
 private
@@ -38,9 +42,10 @@ spikes
 *.md
 !apps/server/drizzle
 
-# Test coverage
+# Test coverage and mutation-testing sandboxes
 coverage
 **/coverage
+**/.stryker-tmp
 
 # OS
 .DS_Store

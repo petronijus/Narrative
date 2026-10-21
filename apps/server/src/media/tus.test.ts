@@ -182,13 +182,22 @@ vi.mock('./enqueue.js', () => ({
   enqueueVideoTranscode: vi.fn().mockResolvedValue(undefined),
 }))
 
-// Mock probe-image-size (createRequire path)
-vi.mock('node:module', () => ({
-  createRequire: vi.fn(
-    () => () =>
-      vi.fn().mockResolvedValue({ width: 100, height: 100, mime: 'image/jpeg', type: 'jpg' }),
-  ),
-}))
+// Mock probe-image-size (createRequire path). Only that id: other modules
+// require through createRequire too (media/svgSanitize.ts loads jsdom and
+// DOMPurify on the first SVG), and get the real module.
+vi.mock('node:module', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:module')>()
+  const probe = vi
+    .fn()
+    .mockResolvedValue({ width: 100, height: 100, mime: 'image/jpeg', type: 'jpg' })
+  return {
+    ...actual,
+    createRequire: vi.fn((from: string | URL) => {
+      const real = actual.createRequire(from)
+      return (id: string) => (id === 'probe-image-size' ? probe : real(id))
+    }),
+  }
+})
 
 vi.mock('../auth/permissions.js', () => ({
   resolveDeckAccess: vi.fn(),

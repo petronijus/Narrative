@@ -378,7 +378,17 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
         throw new UploadRejected(400, 'Failed to read uploaded SVG for sanitization.')
       }
 
-      const cleaned = sanitizeSvg(fullBytes)
+      // The sanitizer loads jsdom on its first call (svgSanitize.ts): if that
+      // load (or the sanitizer) throws, the raw upload must not stay in the
+      // bucket.
+      let cleaned: Buffer | null
+      try {
+        cleaned = sanitizeSvg(fullBytes)
+      } catch (err) {
+        log.error({ err }, 'SVG sanitizer failed')
+        await deleteQuietly(s3, storageKey, log)
+        throw new UploadRejected(500, 'SVG could not be sanitized; the upload was discarded.')
+      }
       if (!cleaned) {
         await deleteQuietly(s3, storageKey, log)
         throw new UploadRejected(400, 'SVG rejected: no valid graphic content after sanitization.')

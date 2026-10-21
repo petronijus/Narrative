@@ -12,9 +12,13 @@
  * mirror, a future feature, etc).
  *
  * Design notes:
- *   - The jsdom Window is expensive to construct, so we build ONE DOMPurify
- *     instance bound to a single jsdom window at module load and reuse it for
- *     every upload. DOMPurify itself is stateless across `.sanitize()` calls.
+ *   - jsdom is the largest module graph the server has (~1,100 of the
+ *     ~2,700 modules a boot loaded, css-tree, parse5 and undici included),
+ *     and only SVG uploads need it: it is required on the first
+ *     `sanitizeSvg` call, not at boot (performance plan D3). The jsdom Window
+ *     is expensive to construct too, so that first call builds ONE DOMPurify
+ *     instance bound to a single jsdom window and every later upload reuses
+ *     it. DOMPurify itself is stateless across `.sanitize()` calls.
  *   - SVG/XML is text, so it can't be identified by a fixed magic-byte
  *     signature the way raster formats can — `sniffIsSvg` does a lightweight
  *     leading-bytes scan for `<svg`/`<?xml` so a `.png`-renamed SVG is still
@@ -24,31 +28,14 @@
  *     (e.g. a PE binary or shell script wearing a .png coat).
  */
 
-import { JSDOM } from 'jsdom'
-import createDOMPurify from 'dompurify'
-import type { WindowLike } from 'dompurify'
+import { createRequire } from 'node:module'
+import type { JSDOM as JSDOMClass } from 'jsdom'
+import type createDOMPurifyFn from 'dompurify'
+import type { DOMPurify as DOMPurifyInstance, WindowLike } from 'dompurify'
 
-// ---------------------------------------------------------------------------
-// One jsdom window + DOMPurify instance, constructed once at module scope.
-// jsdom window construction is ~tens of ms; doing it per-upload would be a
-// needless tax on the upload-finalize path.
-// ---------------------------------------------------------------------------
-
-const window = new JSDOM('').window
-// jsdom's DOMWindow provides every DOM constructor DOMPurify's WindowLike
-// needs; the structural cast bridges the two nominal window types.
-const DOMPurify = createDOMPurify(window as unknown as WindowLike)
-
-// ---------------------------------------------------------------------------
-// Hardening hook: belt-and-suspenders on top of USE_PROFILES.svg.
-//
-// DOMPurify's SVG profile already drops <script> and on* handlers, but we add
-// an explicit afterSanitizeAttributes hook to also clamp href / xlink:href to
-// safe values (only `#fragment` internal refs and `data:image/...` are kept).
-// This blocks `javascript:` URIs and external-document references (which can
-// be used for data exfiltration / SSRF-ish fetches) that some renderers honor
-// on <a>, <use>, <image>, <feImage>, etc.
-// ---------------------------------------------------------------------------
+// Both are CommonJS-loadable; a synchronous require keeps `sanitizeSvg`
+// synchronous for its caller while deferring the load to the first SVG.
+const require = createRequire(import.meta.url)
 
 const SAFE_HREF = /^(#|data:image\/(?:png|jpe?g|gif|webp|svg\+xml)[,;])/i
 
@@ -61,16 +48,40 @@ function isSafeHref(value: string): boolean {
   return SAFE_HREF.test(value.trim()) || SAFE_HREF.test(cleaned)
 }
 
-DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-  const el = node as Element
-  if (typeof el.getAttribute !== 'function') return
-  for (const attr of ['href', 'xlink:href']) {
-    const val = el.getAttribute(attr)
-    if (val !== null && !isSafeHref(val)) {
-      el.removeAttribute(attr)
+let purifier: DOMPurifyInstance | null = null
+
+/**
+ * The one jsdom window + DOMPurify instance, built on first use.
+ *
+ * Hardening hook: belt-and-suspenders on top of USE_PROFILES.svg.
+ * DOMPurify's SVG profile already drops <script> and on* handlers, but we add
+ * an explicit afterSanitizeAttributes hook to also clamp href / xlink:href to
+ * safe values (only `#fragment` internal refs and `data:image/...` are kept).
+ * This blocks `javascript:` URIs and external-document references (which can
+ * be used for data exfiltration / SSRF-ish fetches) that some renderers honor
+ * on <a>, <use>, <image>, <feImage>, etc.
+ */
+function domPurify(): DOMPurifyInstance {
+  if (purifier !== null) return purifier
+  const { JSDOM } = require('jsdom') as { JSDOM: typeof JSDOMClass }
+  const createDOMPurify = require('dompurify') as typeof createDOMPurifyFn
+  const window = new JSDOM('').window
+  // jsdom's DOMWindow provides every DOM constructor DOMPurify's WindowLike
+  // needs; the structural cast bridges the two nominal window types.
+  const instance = createDOMPurify(window as unknown as WindowLike)
+  instance.addHook('afterSanitizeAttributes', (node) => {
+    const el = node as Element
+    if (typeof el.getAttribute !== 'function') return
+    for (const attr of ['href', 'xlink:href']) {
+      const val = el.getAttribute(attr)
+      if (val !== null && !isSafeHref(val)) {
+        el.removeAttribute(attr)
+      }
     }
-  }
-})
+  })
+  purifier = instance
+  return instance
+}
 
 // ---------------------------------------------------------------------------
 // SVG sanitization
@@ -97,7 +108,7 @@ export function sanitizeSvg(bytes: Buffer): Buffer | null {
   const input = bytes.toString('utf8')
   if (input.trim() === '') return null
 
-  const clean = DOMPurify.sanitize(input, {
+  const clean = domPurify().sanitize(input, {
     USE_PROFILES: { svg: true, svgFilters: true },
     // Belt over the hook: forbid these outright even if a profile would allow.
     FORBID_TAGS: ['script', 'foreignObject'],

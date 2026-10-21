@@ -928,12 +928,41 @@ wherever a `*_DATA_PATH` is not set to a host path.
 Each Dockerfile copies the workspace `package.json` files it needs **before**
 `pnpm install`, by an explicit list. A new workspace package that an image
 depends on has to be added to that image's list, or the install inside the
-build cannot link it. Agentic-layer A0 (2026-09-26, unreleased) added
-`packages/commands` to `apps/web/Dockerfile`; the server and video-worker
-images do not depend on it. They do now load **zod** at runtime through
-`packages/shared`, which the `--prod` install picks up from
-`packages/shared/package.json`. No image had been built with A0 when this was
-written — the first `build-push.sh` after it is the verification.
+build cannot link it.
+
+### How the Node images are put together (since 2026-10-20)
+
+The server, video-worker and render-worker images are two stages
+(performance plan D2). The builder installs the workspace (the pnpm package
+store is a BuildKit cache mount, never a layer), compiles the app with `tsc`,
+and runs `infra/docker/runtime-tree.sh <app> /out`:
+
+- `pnpm deploy --prod` of the app: `node_modules` with its production
+  dependencies only;
+- each workspace package in it (`node_modules/@narrative/*`) gets the
+  compiled JavaScript the app's `tsc` emitted under `dist/packages/<pkg>/src`
+  instead of its TypeScript, its `main`/`exports` pointed at `.js`, and
+  keeps nothing else but its `package.json` and the commands package's
+  `playbooks/`. A package with no compiled copy, or TypeScript left anywhere
+  in one, **fails the build** (the runtime Node cannot load `.ts` from
+  `node_modules`);
+- type declarations, TypeScript sources, source maps and Markdown are
+  removed from third-party packages.
+
+The runtime stage is the base image (plus ffmpeg, or Chromium) and `/out`
+copied to `/app`: no pnpm, no corepack, no store, no package metadata cache.
+The entry points (`apps/<app>/dist/apps/<app>/src/index.js`, the server's
+`db/migrate.js`) are where they were. The web image keeps its build's
+hidden source maps out of `/srv/web`.
+
+Sizes (linux/amd64, sum of the uncompressed layers, built on the MacBook
+2026-10-20): server 1182 → 340 MB, video-worker 874 → 345 MB, render-worker
+1369 → 900 MB (Chromium and its fonts are ~600 MB of it), web 99 → 74 MB.
+What went: the pnpm package store and its metadata cache (`/root/.cache`,
+`/root/.local`: 400–660 MB per image), dev dependencies, declarations and
+maps. On a build machine with
+Docker Desktop's default 2 GB VM, the server's `tsc` runs out of heap: pass
+`--build-arg NODE_OPTIONS=--max-old-space-size=1536`.
 
 ### The browser shows an old version after a deploy
 

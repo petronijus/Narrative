@@ -124,11 +124,15 @@ docker pull "${WEB_IMAGE}"
 WEB_CONTAINER=$(docker create "${WEB_IMAGE}")
 # Zajistíme existenci volume
 docker volume create narrative_web_static 2>/dev/null || true
-# Zkopírujeme přes tar pipe
+# Zkopírujeme přes tar pipe. The volume keeps earlier releases' hashed
+# assets (a tab on an old version still lazy-loads its chunks), and with them
+# the source maps images before 2026-10-20 carried, served to anyone who
+# guessed a chunk's name + `.map`: the images have none now (performance plan
+# D2), and the ones already in the volume go here — nothing references them.
 docker cp "${WEB_CONTAINER}:/srv/web/." - \
   | docker run --rm -i \
       -v narrative_web_static:/srv/web \
-      alpine sh -c "cd /srv/web && tar xf -"
+      alpine sh -c "cd /srv/web && tar xf - && find /srv/web -type f \( -name '*.map' -o -name '*.map.br' -o -name '*.map.gz' \) -delete"
 docker rm "${WEB_CONTAINER}"
 
 log "Statické soubory zkopírovány do volume web_static"

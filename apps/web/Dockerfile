@@ -19,8 +19,9 @@ COPY packages/commands/package.json      packages/commands/package.json
 # --ignore-scripts skips esbuild's postinstall (just verifies platform binary
 # exists — not needed since @esbuild/* platform packages bundle the binary).
 # Also keeps pnpm's strict build check (allowBuilds in pnpm-workspace.yaml)
-# out of the image build.
-RUN pnpm install --frozen-lockfile --ignore-scripts
+# out of the image build. The package store is a build cache, never a layer.
+RUN --mount=type=cache,id=narrative-pnpm-store,target=/pnpm/store,sharing=locked \
+  pnpm install --frozen-lockfile --ignore-scripts --store-dir /pnpm/store
 
 COPY apps/web/    apps/web/
 COPY packages/    packages/
@@ -42,6 +43,11 @@ ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_HOCUSPOCUS_URL=$VITE_HOCUSPOCUS_URL
 
 RUN pnpm --filter @narrative/web build
+
+# The build's hidden source maps (vite.config.ts `sourcemap: 'hidden'`, kept
+# for a Sentry upload from the builder) stay out of the served files: nothing
+# uploads them, and served next to each chunk they would publish the source.
+RUN find apps/web/dist \( -name '*.map' -o -name '*.map.br' -o -name '*.map.gz' \) -delete
 
 # ── Stage 2: runtime (Caddy static file server) ───────────────────────────────
 # Caddy je v produkci externě — web service nepoužíváme v compose.
