@@ -90,6 +90,7 @@
     "yjs": "^13.6.33"
   },
   "devDependencies": {
+    "@mapbox/tiny-sdf": "^2.3.0",
     "@narrative/perf": "workspace:*",
     "@playwright/test": "^1.64.0",
     "@size-limit/file": "^14.2.0",

@@ -261,6 +261,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/state/SlideDocProvider.tsx", SYNC + ["render-page"]),
     ("apps/web/src/state/slideDocContext.ts", SYNC + ["render-page"]),
     ("apps/web/src/state/hocuspocusAuth.ts", SYNC + TOKENS),
+    ("apps/web/src/state/localDoc*", SYNC + ACCESS + TOKENS + COMPONENTS),
+    ("apps/web/src/state/authBroadcast.ts", ACCESS + ["local-doc-copies"]),
     ("apps/web/src/state/DeckRoleContext.tsx", ACCESS + TOKENS),
     ("apps/web/src/state/folderAccess.ts", ACCESS + COMPONENTS),
     ("apps/web/src/state/AuthContext.tsx", ACCESS),
