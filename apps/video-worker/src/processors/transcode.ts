@@ -22,7 +22,9 @@
  *      extracts poster.jpg (-q:v 2) and thumb.jpg (400 px wide, -q:v 3) at the
  *      1 s mark; both are uploaded and written to the asset at once
  *      (updateVideoStills, the status still 'processing') — a re-encode takes
- *      minutes, the stills a second
+ *      minutes, the stills a second — and reported on the job's progress
+ *      (`{ stage: 'stills' }`), on which the server warms their imgproxy
+ *      variants (apps/server/src/media/videoStillsWarm.ts)
  *   6. Wait for both; a failure of either fails the job (after both ended)
  *   7. Upload playback.mp4 to MinIO under <owner>/videos/<assetId>/ (the
  *      stills went there in step 5), the owner being decks/<deckId> or
@@ -69,6 +71,7 @@ import type { Readable } from 'node:stream'
 import {
   videoOutputPrefix,
   type VideoTranscodeJobData,
+  type VideoTranscodeProgress,
   type VideoTranscodeResult,
 } from '../queue.js'
 
@@ -479,6 +482,12 @@ export async function transcodeProcessor(
       ])
       await updateVideoStills(db, assetId, { posterKey, thumbnailKey, durationSec, width, height })
       console.log(`[transcode] poster + thumbnail ready, assetId=${assetId}`)
+      // The server warms their imgproxy variants on this (media/videoStillsWarm.ts).
+      // Best effort: a lost report only means the first viewer encodes them.
+      const report: VideoTranscodeProgress = { stage: 'stills', assetId }
+      await Promise.resolve(job.updateProgress(report)).catch((err: unknown) =>
+        console.warn(`[transcode] stills report failed, assetId=${assetId}:`, err),
+      )
     })()
 
     // 4. Build playback.mp4 — keep full source resolution. Stream-copy when the

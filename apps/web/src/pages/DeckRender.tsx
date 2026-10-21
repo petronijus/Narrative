@@ -55,7 +55,7 @@ import { getDefaultRenderScheduler } from '../renderer/RenderScheduler.js'
 import { getRenderer } from '../renderer/objectRenderers/index.js'
 import { settleScene, type SettleResult } from '../renderer/settleScene.js'
 import { failedRenderFonts, failedRenderWork } from '../renderer/renderWork.js'
-import { canvasToPng, captureSlideCanvas, watchContextLoss } from '../renderer/captureSlide.js'
+import { canvasToPng, captureSlideCanvasAsync, watchContextLoss } from '../renderer/captureSlide.js'
 import { getDefaultResourceManager } from '../renderer/ResourceManager.js'
 import { setImageVariantCap } from '../renderer/imageUrl.js'
 import {
@@ -204,9 +204,31 @@ const NO_DECK_FONTS: Pick<DeckFontsContextValue, 'loading' | 'error'> = {
   error: null,
 }
 
+/** The page's own waits for its next status (`showAndWait`): told at once, never polled. */
+const statusListeners = new Set<(status: RenderStatus) => void>()
+
 function publish(status: RenderStatus): void {
   window.__narrativeRender = status
   document.documentElement.dataset['renderStatus'] = status.status
+  for (const listener of [...statusListeners]) listener(status)
+}
+
+/**
+ * The first status (the current one included) that `done` accepts. A switch
+ * used to poll every 50 ms — on average 25 ms of each slide spent waiting for
+ * the poll to notice (performance.md R1, 2026-10-20).
+ */
+function untilStatus(done: (status: RenderStatus | undefined) => boolean): Promise<RenderStatus> {
+  const now = window.__narrativeRender
+  if (done(now)) return Promise.resolve(now!)
+  return new Promise((resolve) => {
+    const listener = (status: RenderStatus): void => {
+      if (!done(status)) return
+      statusListeners.delete(listener)
+      resolve(status)
+    }
+    statusListeners.add(listener)
+  })
 }
 
 export function DeckRender() {
@@ -335,6 +357,20 @@ export function DeckRender() {
     }
   }, [setParams])
 
+  // Document updates this page has received, and how many there were when the
+  // settle behind the current `ready` began: a capture right after an
+  // unchanged `ready` confirms the scene without settling it all again
+  // (settleScene `quick`).
+  const docUpdates = useRef(0)
+  const readySince = useRef<{ slideId: string; updates: number } | null>(null)
+  useEffect(() => {
+    const onUpdate = (): void => {
+      docUpdates.current += 1
+    }
+    deckCtx.doc.on('update', onUpdate)
+    return () => deckCtx.doc.off('update', onUpdate)
+  }, [deckCtx])
+
   // The ids the scene graph should mount (it skips unknown types), read live
   // by the settle loop: an edit during settling changes what it waits for
   // instead of starting it over.
@@ -354,6 +390,7 @@ export function DeckRender() {
     if (scheduler === null) return
     const stop = new AbortController()
     const settledFor = slideParam
+    const updatesAtStart = docUpdates.current
     void settleScene(canvas.sceneGraph, {
       expectedIds: () =>
         objectsRef.current.filter((o) => getRenderer(o.type) !== undefined).map((o) => o.id),
@@ -362,6 +399,9 @@ export function DeckRender() {
       signal: stop.signal,
     }).then((settle) => {
       if (stop.signal.aborted) return
+      readySince.current = settle.settled
+        ? { slideId: targetSlideId, updates: updatesAtStart }
+        : null
       setOutcome({
         for: settledFor,
         status: settle.settled
@@ -433,16 +473,29 @@ export function DeckRender() {
     }> => {
       const scheduler = getDefaultRenderScheduler()
       if (scheduler === null) throw new Error('the canvas is not ready')
+      // Nothing reached the document since the settle behind the shown
+      // slide's `ready` began: confirm it, without its two quiet frames.
+      const status = window.__narrativeRender
+      const since = readySince.current
+      const unchanged =
+        status?.status === 'ready' &&
+        since !== null &&
+        since.slideId === status.slideId &&
+        since.updates === docUpdates.current
       const settle = await settleScene(sceneGraph, {
         expectedIds: () =>
           objectsRef.current.filter((o) => getRenderer(o.type) !== undefined).map((o) => o.id),
         renderNow: () => scheduler.renderNow(),
         timeoutMs: SETTLE_TIMEOUT_MS,
+        quick: unchanged,
       })
       timer?.mark('settle')
       timer?.settled(settle.phases)
       if (!settle.settled) throw new PageJobError('not-settled', 'the slide did not finish drawing')
-      const canvas = captureSlideCanvas(sceneGraph)
+      // Read back without blocking the page on the GPU, into a CPU canvas:
+      // every capture is encoded or drawn into another canvas next, and a
+      // GPU-backed one is read back again for that (captureSlide.ts).
+      const canvas = await captureSlideCanvasAsync(sceneGraph, 1, undefined, { cpuCanvas: true })
       timer?.mark('extract')
       return { canvas, failedLoads: settle.failedLoads - (failureBaseline.current ?? 0) }
     }
@@ -453,15 +506,13 @@ export function DeckRender() {
      */
     const showAndWait = async (slideId: string): Promise<{ index: number }> => {
       window.__narrativeRenderShow?.(slideId)
-      for (;;) {
-        const status = window.__narrativeRender
-        if (status?.status === 'ready' && status.slideId === slideId) break
-        if (status?.status === 'error') {
-          const waiting =
-            status.waitingFor !== undefined ? ` (waiting for ${status.waitingFor.join(', ')})` : ''
-          throw new PageJobError(status.reason, `slide ${slideId}${waiting}`)
-        }
-        await new Promise((resolve) => setTimeout(resolve, 50))
+      const status = await untilStatus(
+        (s) => (s?.status === 'ready' && s.slideId === slideId) || s?.status === 'error',
+      )
+      if (status.status === 'error') {
+        const waiting =
+          status.waitingFor !== undefined ? ` (waiting for ${status.waitingFor.join(', ')})` : ''
+        throw new PageJobError(status.reason, `slide ${slideId}${waiting}`)
       }
       const index = listSlides(deckCtx).findIndex((s) => s.id === slideId)
       if (index < 0) throw new PageJobError('slide-not-found', `slide ${slideId}`)

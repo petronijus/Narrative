@@ -319,6 +319,26 @@ describe('transcodeProcessor', () => {
     )
   })
 
+  it('reports the stills on the job once they are on the asset (the server warms them)', async () => {
+    const job = makeJob()
+    await transcodeProcessor(job)
+
+    const report = vi.mocked(job.updateProgress)
+    expect(report).toHaveBeenCalledWith({ stage: 'stills', assetId: 'asset-01' })
+    expect(report.mock.invocationCallOrder[0]!).toBeGreaterThan(
+      mockUpdateVideoStills.mock.invocationCallOrder[0]!,
+    )
+  })
+
+  it('does not fail the job when the stills report cannot be made', async () => {
+    const job = makeJob()
+    vi.mocked(job.updateProgress).mockRejectedValue(new Error('redis down'))
+    const result = await transcodeProcessor(job)
+
+    expect(result.posterKey).toBe('decks/deck-01/videos/asset-01/poster.jpg')
+    expect(mockUpdateVideoAssetOutputs).toHaveBeenCalled()
+  })
+
   it('fails the job when the stills fail, after the playback run ended, and marks nothing done', async () => {
     let callCount = 0
     mockSpawnImpl = vi.fn().mockImplementation((cmd: string, args: string[]) => {

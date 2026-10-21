@@ -13,10 +13,18 @@
  *                    of its own);
  *   - warm page      the next one-slide PNGs of that deck (the session's
  *                    page, slides switched in place);
+ *   - PDF            a `PERF_PDF_SLIDES`-slide PDF through the job API
+ *                    (`POST /decks/:id/export.pdf` → 202 and a job id, then
+ *                    `GET /decks/:id/export.pdf/:jobId?waitMs=` until it is
+ *                    done): how long the request took to be accepted, the
+ *                    first page, the whole file (wall time from the POST to
+ *                    the `done` answer, link included), pages per second, and
+ *                    the peak resident memory of the render worker and the
+ *                    server while it ran (perf/rss.ts);
  *   - PNG behind PDF one person's one-slide PNG asked for while another
- *                    person's `PERF_PDF_SLIDES`-slide PDF is rendering: its
- *                    queue wait (added → started) is what R1's concurrency
- *                    is about; the PDF's own total time comes with it.
+ *                    person's PDF is rendering: its queue wait (added →
+ *                    started) is what R1's concurrency is about; that PDF's
+ *                    own times come with it.
  *
  * Every deck is seeded through the API and deleted afterwards. Slides carry a
  * full-bleed photo of noise (incompressible, like A3's reference deck), a
@@ -34,7 +42,13 @@
  *                     (default redis://127.0.0.1:6380)
  *   PERF_RUNS         samples per scenario (default 5)
  *   PERF_PDF_SLIDES   slides of the PDF (default 30)
- *   PERF_PDF_RUNS     PDFs with a PNG behind each (default 3)
+ *   PERF_PDF_RUNS     PDFs per PDF scenario (default 3)
+ *   PERF_SCENARIOS    which to run, of `png` (first job, cold and warm
+ *                     page), `pdf` (a PDF alone) and `behind` (a PDF with a
+ *                     PNG behind it); default all three
+ *   PERF_RSS          what to sample: `name=pid` (a process tree) or
+ *                     `name=container:<name>` (`docker stats`), comma-separated;
+ *                     `off`; default the dev stack's render worker and server
  *   PERF_JSON         write the results there as JSON too
  *
  * Numbers mean nothing without the machine, the build (dev server or the
@@ -49,6 +63,7 @@ import bullmq from 'bullmq'
 import IORedisModule from 'ioredis'
 import { quantile, summarize } from '@narrative/perf/stats'
 import { RENDER_QUEUE, type RenderJobData } from '@narrative/shared'
+import { mib, rssTargetsFromEnv, sampleRss, type RssTarget } from './rss.js'
 
 const { Queue, QueueEvents } = bullmq
 const IORedis =
@@ -60,6 +75,11 @@ const REDIS_URL = process.env['MEDIA_REDIS_URL'] ?? 'redis://127.0.0.1:6380'
 const RUNS = Number(process.env['PERF_RUNS'] ?? 5)
 const PDF_SLIDES = Number(process.env['PERF_PDF_SLIDES'] ?? 30)
 const PDF_RUNS = Number(process.env['PERF_PDF_RUNS'] ?? 3)
+const SCENARIOS = new Set(
+  (process.env['PERF_SCENARIOS'] ?? 'png,pdf,behind').split(',').map((s) => s.trim()),
+)
+/** How long one status read may wait for the job to end (the route caps it at 25 s). */
+const PDF_POLL_WAIT_MS = 2_000
 /** How long the queue must be quiet before a measurement starts. */
 const QUIET_MS = 15_000
 
@@ -289,6 +309,116 @@ async function onePng(
   throw new Error(`the job of ${deckId} was not seen on the queue`)
 }
 
+/** What `GET /decks/:id/export.pdf/:jobId` answers (the fields used). */
+interface PdfJobStatus {
+  jobId: string
+  status: 'queued' | 'running' | 'done' | 'failed'
+  done: number
+  total: number
+  result?: { pages: number; sizeBytes: number; failedLoads: number; url?: string }
+  error?: { code: string; status: number; message: string }
+}
+
+interface PdfRun {
+  /** POST → its 202. */
+  accepted: number
+  /** POST → the first status read that saw a page done. */
+  firstPage: number | null
+  /** POST → the `done` answer (the link with it). */
+  total: number
+  pages: number
+  sizeBytes: number
+  failedLoads: number
+  /** Peak resident memory per sampled target while the job ran. */
+  peaks: Record<string, number | null>
+}
+
+/**
+ * One PDF of `deckId` through the job API, polled until it ends; throws with
+ * the job's reason when it fails. `onAccepted` runs once the 202 is in.
+ */
+async function pdfJob(
+  person: Person,
+  deckId: string,
+  rss: () => Promise<RssTarget[]>,
+  onAccepted?: () => void,
+): Promise<PdfRun> {
+  // Found again per run: a dev process restarted by its watcher has a new pid.
+  const sampler = sampleRss(await rss())
+  const since = Date.now()
+  let peaks: Record<string, number | null> | null = null
+  try {
+    const started = await api<PdfJobStatus>(person, 'POST', `/decks/${deckId}/export.pdf`, {})
+    const accepted = Date.now() - since
+    onAccepted?.()
+    let firstPage: number | null = null
+    let status = started
+    while (status.status === 'queued' || status.status === 'running') {
+      status = await api<PdfJobStatus>(
+        person,
+        'GET',
+        `/decks/${deckId}/export.pdf/${started.jobId}?waitMs=${PDF_POLL_WAIT_MS}`,
+      )
+      if (firstPage === null && status.done > 0) firstPage = Date.now() - since
+    }
+    const total = Date.now() - since
+    peaks = await sampler.stop()
+    if (status.status === 'failed' || status.result === undefined) {
+      throw new Error(
+        `the PDF job failed after ${total} ms: ${status.error?.code} ${status.error?.status} ${status.error?.message}`,
+      )
+    }
+    return {
+      accepted,
+      firstPage,
+      total,
+      pages: status.result.pages,
+      sizeBytes: status.result.sizeBytes,
+      failedLoads: status.result.failedLoads,
+      peaks,
+    }
+  } finally {
+    if (peaks === null) await sampler.stop()
+  }
+}
+
+/** A failure as one line of the report. */
+const failureText = (since: number, err: unknown): string =>
+  `after ${Date.now() - since} ms: ${err instanceof Error ? err.message.slice(0, 200) : String(err)}`
+
+/** The PDF runs' summaries, under `label`. */
+function reportPdf(
+  results: Record<string, Summary | Record<string, unknown>>,
+  label: string,
+  runs: readonly PdfRun[],
+  failures: readonly string[],
+): void {
+  if (runs.length > 0) {
+    results[`${label}: accepted`] = summary(runs.map((r) => r.accepted))
+    const first = runs.flatMap((r) => (r.firstPage === null ? [] : [r.firstPage]))
+    if (first.length > 0) results[`${label}: first page`] = summary(first)
+    results[`${label}: total`] = summary(runs.map((r) => r.total))
+    results[`${label}: pages/min`] = summary(runs.map((r) => (r.pages * 60_000) / r.total))
+    const names = Object.keys(runs[0]!.peaks)
+    const peaks: Record<string, string> = {}
+    for (const name of names) {
+      const values = runs.flatMap((r) => (r.peaks[name] == null ? [] : [r.peaks[name]!]))
+      peaks[name] = values.length === 0 ? 'n/a' : mib(Math.max(...values))
+    }
+    results[`${label}: peak RSS`] = peaks
+    results[`${label}: file`] = {
+      pages: runs.map((r) => r.pages),
+      sizeMB: runs.map((r) => Math.round(r.sizeBytes / 1e5) / 10),
+      failedLoads: runs.map((r) => r.failedLoads),
+    }
+  }
+  results[`${label}: outcome`] = {
+    finished: runs.length,
+    failed: failures.length,
+    ...(failures.length > 0 ? { failures } : {}),
+  }
+}
+
 // ── the scenarios ──────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -296,83 +426,105 @@ async function main(): Promise<void> {
   console.log(`[perf] api=${API} (health ${health}) redis=${REDIS_URL} queue=${RENDER_QUEUE}`)
   const created: Array<{ person: Person; deckId: string }> = []
   const results: Record<string, Summary | Record<string, unknown>> = {}
+  const rss = () => rssTargetsFromEnv(process.env['PERF_RSS'])
+  console.log(
+    `[perf] scenarios=${[...SCENARIOS].join(',')} rss=${
+      (await rss()).map((t) => `${t.name}:${'pid' in t ? t.pid : t.container}`).join(',') || 'none'
+    }`,
+  )
   try {
-    console.log(`[perf] seeding ${RUNS + 1} decks of 3 slides and one of ${PDF_SLIDES}…`)
+    const png = SCENARIOS.has('png')
+    const needsPdf = SCENARIOS.has('pdf') || SCENARIOS.has('behind')
+    const smallDecks = png ? RUNS + 1 : SCENARIOS.has('behind') ? 1 : 0
+    console.log(
+      `[perf] seeding ${smallDecks} decks of 3 slides${needsPdf ? ` and one of ${PDF_SLIDES}` : ''}…`,
+    )
     const small: string[] = []
-    for (let i = 0; i <= RUNS; i++) {
+    for (let i = 0; i < smallDecks; i++) {
       const deckId = await seedDeck('a', `perf render ${i}`, 3)
       created.push({ person: 'a', deckId })
       small.push(deckId)
     }
-    const pdfDeck = await seedDeck('b', 'perf render pdf', PDF_SLIDES)
-    created.push({ person: 'b', deckId: pdfDeck })
+    let pdfDeck: string | null = null
+    if (needsPdf) {
+      pdfDeck = await seedDeck('b', 'perf render pdf', PDF_SLIDES)
+      created.push({ person: 'b', deckId: pdfDeck })
+    }
     console.log('[perf] waiting for the queue to be quiet (background card pictures)…')
     await untilQuiet()
 
-    // The first job: the worker may have to start Chromium. Only a real
-    // cold start if the worker's browser had quit (RENDER_IDLE_MS) — the
-    // driver says which it saw.
-    const first = await onePng('a', small[0]!, 0)
-    results['first job'] = { ...first }
-    console.log(`[perf] first job: ${JSON.stringify(first)}`)
+    if (png) {
+      // The first job: the worker may have to start Chromium. Only a real
+      // cold start if the worker's browser had quit (RENDER_IDLE_MS) — the
+      // driver says which it saw.
+      const first = await onePng('a', small[0]!, 0)
+      results['first job'] = { ...first }
+      console.log(`[perf] first job: ${JSON.stringify(first)}`)
 
-    const cold: Array<{ total: number; wait: number; run: number }> = []
-    for (let i = 1; i <= RUNS; i++) cold.push(await onePng('a', small[i]!, 0))
-    const warm: Array<{ total: number; wait: number; run: number }> = []
-    for (let i = 0; i < RUNS; i++) warm.push(await onePng('a', small[RUNS]!, (i + 1) % 3))
-    results['cold page: total'] = summary(cold.map((c) => c.total))
-    results['cold page: job run'] = summary(cold.map((c) => c.run))
-    results['warm page: total'] = summary(warm.map((c) => c.total))
-    results['warm page: job run'] = summary(warm.map((c) => c.run))
+      const cold: Array<{ total: number; wait: number; run: number }> = []
+      for (let i = 1; i <= RUNS; i++) cold.push(await onePng('a', small[i]!, 0))
+      const warm: Array<{ total: number; wait: number; run: number }> = []
+      for (let i = 0; i < RUNS; i++) warm.push(await onePng('a', small.at(-1)!, (i + 1) % 3))
+      results['cold page: total'] = summary(cold.map((c) => c.total))
+      results['cold page: job run'] = summary(cold.map((c) => c.run))
+      results['warm page: total'] = summary(warm.map((c) => c.total))
+      results['warm page: job run'] = summary(warm.map((c) => c.run))
+    }
 
-    // A PNG behind a PDF: person B's PDF starts, then person A asks for one
-    // slide of a deck whose page is warm.
-    const behind: Array<{ total: number; wait: number; run: number }> = []
-    const pdfTotals: number[] = []
-    const pdfFailures: string[] = []
-    const behindFailures: string[] = []
-    for (let i = 0; i < PDF_RUNS; i++) {
-      await untilQuiet()
-      const since = Date.now()
-      // A PDF that does not finish within the caller's 95 s is an outcome
-      // too (the server refuses a further job without 30 s left).
-      const pdf = command('b', pdfDeck, 'deck.exportPdf', { delivery: 'url' }).then(
-        () => Date.now() - since,
-        (err: unknown) => {
-          pdfFailures.push(
-            `after ${Date.now() - since} ms: ${err instanceof Error ? err.message.slice(0, 160) : String(err)}`,
-          )
-          return Number.NaN
-        },
-      )
-      await untilJobStarted(pdfDeck, since, 60_000)
-      // Well inside the PDF's first job.
-      await sleep(1_500)
-      const pngSince = Date.now()
-      try {
-        behind.push(await onePng('a', small[RUNS]!, i % 3))
-      } catch (err) {
-        behindFailures.push(
-          `after ${Date.now() - pngSince} ms: ${err instanceof Error ? err.message.slice(0, 160) : String(err)}`,
-        )
+    if (SCENARIOS.has('pdf') && pdfDeck !== null) {
+      // The PDF alone: nothing else in the queue.
+      const runs: PdfRun[] = []
+      const failures: string[] = []
+      for (let i = 0; i < PDF_RUNS; i++) {
+        await untilQuiet()
+        const since = Date.now()
+        try {
+          const run = await pdfJob('b', pdfDeck, rss)
+          runs.push(run)
+          console.log(`[perf] PDF ${i + 1}/${PDF_RUNS}: ${JSON.stringify(run)}`)
+        } catch (err) {
+          failures.push(failureText(since, err))
+          console.log(`[perf] PDF ${i + 1}/${PDF_RUNS} failed: ${failures.at(-1)}`)
+        }
       }
-      pdfTotals.push(await pdf)
+      reportPdf(results, `PDF of ${PDF_SLIDES}`, runs, failures)
     }
-    if (behind.length > 0) {
-      results['PNG behind PDF: queue wait'] = summary(behind.map((b) => b.wait))
-      results['PNG behind PDF: total'] = summary(behind.map((b) => b.total))
-    }
-    results['PNG behind PDF: outcome'] = {
-      finished: behind.length,
-      failed: behindFailures.length,
-      ...(behindFailures.length > 0 ? { failures: behindFailures } : {}),
-    }
-    const done = pdfTotals.filter((t) => !Number.isNaN(t))
-    if (done.length > 0) results[`PDF of ${PDF_SLIDES}: total`] = summary(done)
-    results[`PDF of ${PDF_SLIDES}: outcome`] = {
-      finished: done.length,
-      failed: pdfFailures.length,
-      ...(pdfFailures.length > 0 ? { failures: pdfFailures } : {}),
+
+    if (SCENARIOS.has('behind') && pdfDeck !== null) {
+      // A PNG behind a PDF: person B's PDF starts, then person A asks for one
+      // slide of a deck whose page is warm.
+      const behind: Array<{ total: number; wait: number; run: number }> = []
+      const behindFailures: string[] = []
+      const runs: PdfRun[] = []
+      const pdfFailures: string[] = []
+      for (let i = 0; i < PDF_RUNS; i++) {
+        await untilQuiet()
+        const since = Date.now()
+        const pdf = pdfJob('b', pdfDeck, rss).then(
+          (run) => void runs.push(run),
+          (err: unknown) => void pdfFailures.push(failureText(since, err)),
+        )
+        await untilJobStarted(pdfDeck, since, 60_000)
+        // Well inside the PDF's first render job.
+        await sleep(1_500)
+        const pngSince = Date.now()
+        try {
+          behind.push(await onePng('a', small.at(-1)!, i % 3))
+        } catch (err) {
+          behindFailures.push(failureText(pngSince, err))
+        }
+        await pdf
+      }
+      if (behind.length > 0) {
+        results['PNG behind PDF: queue wait'] = summary(behind.map((b) => b.wait))
+        results['PNG behind PDF: total'] = summary(behind.map((b) => b.total))
+      }
+      results['PNG behind PDF: outcome'] = {
+        finished: behind.length,
+        failed: behindFailures.length,
+        ...(behindFailures.length > 0 ? { failures: behindFailures } : {}),
+      }
+      reportPdf(results, `PDF of ${PDF_SLIDES} with a PNG`, runs, pdfFailures)
     }
   } finally {
     for (const { person, deckId } of created) {
@@ -383,14 +535,14 @@ async function main(): Promise<void> {
     await Promise.all([connection.quit(), eventsConnection.quit()])
   }
 
-  console.log('\n[perf] results (ms)')
+  console.log('\n[perf] results (ms unless named)')
   for (const [name, value] of Object.entries(results)) {
     if ('p50' in value) {
       const s = value as Summary
       console.log(
-        `  ${name.padEnd(28)} n=${s.n} p50=${Math.round(s.p50)} p95=${Math.round(s.p95)} min=${Math.round(s.min)} max=${Math.round(s.max)}`,
+        `  ${name.padEnd(36)} n=${s.n} p50=${Math.round(s.p50)} p95=${Math.round(s.p95)} min=${Math.round(s.min)} max=${Math.round(s.max)}`,
       )
-    } else console.log(`  ${name.padEnd(28)} ${JSON.stringify(value)}`)
+    } else console.log(`  ${name.padEnd(36)} ${JSON.stringify(value)}`)
   }
   const out = process.env['PERF_JSON']
   if (out)

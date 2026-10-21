@@ -68,6 +68,7 @@ export async function captureSlideCanvasAsync(
   sceneGraph: SceneGraph,
   resolution = 1,
   around: <T>(draw: () => T) => T = (draw) => draw(),
+  opts: CaptureCanvasOptions = {},
 ): Promise<HTMLCanvasElement | OffscreenCanvas> {
   const renderer = sceneGraph.getApp().renderer
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi's WebGL renderer exposes `gl` untyped on the base type
@@ -80,6 +81,7 @@ export async function captureSlideCanvasAsync(
     !(gl instanceof WebGL2RenderingContext)
   )
     return around(() => captureSlideCanvas(sceneGraph, resolution))
+  const cpu = opts.cpuCanvas === true
   const height =
     resolution === 1 ? SLIDE_HEIGHT : Math.floor(SLIDE_HEIGHT * resolution) / resolution
   const texture = around(() =>
@@ -132,8 +134,9 @@ export async function captureSlideCanvasAsync(
     const canvas = DOMAdapter.get().createCanvas(width, rows) as HTMLCanvasElement | OffscreenCanvas
     canvas.width = width
     canvas.height = rows
-    const ctx = canvas.getContext('2d') as
-      CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
+    const ctx = (
+      cpu ? canvas.getContext('2d', { willReadFrequently: true }) : canvas.getContext('2d')
+    ) as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
     if (ctx !== null) {
       const image = ctx.createImageData(width, rows)
       image.data.set(pixels)
@@ -147,6 +150,18 @@ export async function captureSlideCanvasAsync(
     }
     texture.destroy(true)
   }
+}
+
+export interface CaptureCanvasOptions {
+  /**
+   * Put the pixels into a CPU-backed 2D canvas (`willReadFrequently`), for a
+   * picture that is encoded or drawn into another 2D canvas next, not shown.
+   * A GPU-backed one (the default, and what Pixi's `extract.canvas` makes)
+   * uploads the pixels to the GPU and reads them back again on the next
+   * `drawImage` / `toBlob`: under SwiftShader (the render worker) a second
+   * readback of the whole slide, 40–60 ms each (performance.md R1, 2026-10-20).
+   */
+  cpuCanvas?: boolean
 }
 
 /** How long a read-back may take before it is given up on (a GPU that hangs). */

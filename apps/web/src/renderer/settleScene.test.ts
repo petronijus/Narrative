@@ -155,3 +155,119 @@ describe('settleScene', () => {
     expect(result.elapsedMs).toBeLessThan(1_000)
   })
 })
+
+describe('settleScene quick (a scene seen settled, unchanged since)', () => {
+  const frames = vi.fn()
+  beforeEach(() => {
+    frames.mockClear()
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      frames()
+      return setTimeout(() => cb(performance.now()), 1)
+    })
+    Object.defineProperty(document, 'fonts', {
+      value: { ready: Promise.resolve(), status: 'loaded' },
+      configurable: true,
+    })
+  })
+
+  it('confirms an idle scene with one draw and no frames', async () => {
+    const { scene, mounted } = fakeScene()
+    mounted.push('a')
+    const renderNow = vi.fn()
+    const result = await settleScene(scene, {
+      expectedIds: () => ['a'],
+      renderNow,
+      timeoutMs: 2_000,
+      quick: true,
+    })
+    expect(result).toMatchObject({ settled: true, phases: { passes: 1, framesMs: 0 } })
+    expect(renderNow).toHaveBeenCalledTimes(1)
+    expect(frames).not.toHaveBeenCalled()
+  })
+
+  it('is not held up by a raster an earlier settle saw land', async () => {
+    const { scene, mounted, addRaster } = fakeScene()
+    mounted.push('a')
+    addRaster(Promise.resolve())
+    // The settle behind `ready`: it waits for the raster.
+    expect(
+      (
+        await settleScene(scene, {
+          expectedIds: () => ['a'],
+          renderNow: () => {},
+          timeoutMs: 2_000,
+        })
+      ).phases.rasters,
+    ).toBe(1)
+    frames.mockClear()
+    const result = await settleScene(scene, {
+      expectedIds: () => ['a'],
+      renderNow: () => {},
+      timeoutMs: 2_000,
+      quick: true,
+    })
+    expect(result).toMatchObject({ settled: true, phases: { passes: 1, rasters: 0 } })
+    expect(frames).not.toHaveBeenCalled()
+  })
+
+  it('settles as usual, quiet frames included, when the draw starts a raster', async () => {
+    const { scene, mounted, addRaster } = fakeScene()
+    mounted.push('a')
+    const raster = deferred()
+    let draws = 0
+    const result = settleScene(scene, {
+      expectedIds: () => ['a'],
+      renderNow: () => {
+        draws += 1
+        if (draws === 1) addRaster(raster.promise)
+      },
+      timeoutMs: 2_000,
+      quick: true,
+    })
+    await later(20)
+    raster.resolve()
+    expect((await result).settled).toBe(true)
+    expect(frames).toHaveBeenCalledTimes(2)
+  })
+
+  it('settles as usual when an object is missing, a load is in flight or fonts are loading', async () => {
+    const { scene, mounted } = fakeScene()
+    setTimeout(() => mounted.push('late'), 20)
+    expect(
+      (
+        await settleScene(scene, {
+          expectedIds: () => ['late'],
+          renderNow: () => {},
+          timeoutMs: 2_000,
+          quick: true,
+        })
+      ).settled,
+    ).toBe(true)
+    expect(frames.mock.calls.length).toBeGreaterThanOrEqual(2)
+
+    frames.mockClear()
+    const load = deferred()
+    trackRenderWork(load.promise)
+    setTimeout(() => load.resolve(), 20)
+    await settleScene(scene, {
+      expectedIds: () => [],
+      renderNow: () => {},
+      timeoutMs: 2_000,
+      quick: true,
+    })
+    expect(frames).toHaveBeenCalledTimes(2)
+
+    frames.mockClear()
+    Object.defineProperty(document, 'fonts', {
+      value: { ready: Promise.resolve(), status: 'loading' },
+      configurable: true,
+    })
+    await settleScene(scene, {
+      expectedIds: () => [],
+      renderNow: () => {},
+      timeoutMs: 2_000,
+      quick: true,
+    })
+    expect(frames).toHaveBeenCalledTimes(2)
+  })
+})

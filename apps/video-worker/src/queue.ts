@@ -12,5 +12,6 @@ export {
   VIDEO_TRANSCODE_QUEUE,
   videoOutputPrefix,
   type VideoTranscodeJobData,
+  type VideoTranscodeProgress,
   type VideoTranscodeResult,
 } from '@narrative/shared'

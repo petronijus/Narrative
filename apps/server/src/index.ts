@@ -44,6 +44,7 @@ import { createAgentRuntime, parseUrlFetchAllowedHosts } from './agent/runtime.j
 import { createAgentPrincipalKeys } from './agent/presence.js'
 import { agentPrincipalKeySecretFromEnv } from './agent/principalKeySecret.js'
 import { closeQueueConnection } from './media/enqueue.js'
+import { startVideoStillsWarming } from './media/videoStillsWarm.js'
 import { closeRenderQueue, dropStaleRenderJobs } from './render/queue.js'
 import { startPdfExportWorker } from './render/pdfExportQueue.js'
 import { shutdownServer } from './shutdown.js'
@@ -421,6 +422,7 @@ app.log.info(
 // ---------------------------------------------------------------------------
 
 let stopPdfExports: (() => Promise<void>) | null = null
+let stopVideoStillsWarming: (() => Promise<void>) | null = null
 
 // The order is shutdown.ts's: Hocuspocus stores its documents before anything
 // that may take long (in-flight requests, a running PDF export) is waited for.
@@ -441,6 +443,7 @@ const shutdown = async (signal: string) => {
     closeQueues: async () => {
       await closeQueueConnection()
       await closeRenderQueue()
+      await stopVideoStillsWarming?.()
     },
     log: {
       info: (message) => console.log(`[server] ${message}`),
@@ -496,6 +499,11 @@ void dropStaleRenderJobs(Date.now() - process.uptime() * 1000).then(
   },
   (err: unknown) => app.log.warn({ err }, 'render: could not check the render queue at start'),
 )
+
+// A new video's poster and thumbnail encoded by imgproxy as soon as the
+// video worker stored them (media/videoStillsWarm.ts; off without
+// IMGPROXY_WARM_ENDPOINT).
+stopVideoStillsWarming = startVideoStillsWarming(db)
 
 // Deck PDFs are jobs (render/pdfExportQueue.ts): this process runs them, as
 // it is the one that queues their slide renders and holds their render

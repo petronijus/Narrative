@@ -11,7 +11,10 @@
  *      drawn — a font that arrives re-rasterises its text, so this repeats
  *      until a frame starts no new raster;
  *   4. two animation frames later nothing new has started.
- * Then one last frame is rendered and the canvas holds the final pixels. The
+ * Then one last frame is rendered and the canvas holds the final pixels.
+ * With `quick`, a scene the caller already saw settled, unchanged since as
+ * far as it knows, is confirmed without those two frames when the first pass
+ * finds nothing to wait for (otherwise it settles as usual). The
  * result says how many loads failed on the way (their objects paint an error
  * mark or a fallback face): settled is about the canvas being final, not
  * about every asset existing.
@@ -33,6 +36,15 @@ export interface SettleOptions {
   timeoutMs: number
   /** Stop early (the page moved on to another slide, or unmounted). */
   signal?: AbortSignal
+  /**
+   * The caller saw this scene settled and nothing it knows of has changed
+   * since (the render page: no document update since that settle began).
+   * Then a first pass with every object mounted, no load in flight, the
+   * fonts loaded and no new raster after a draw is final at once — the two
+   * quiet frames only catch work a change started, and there was none
+   * (render page, performance.md R1: 2 frames of a slide switch).
+   */
+  quick?: boolean
 }
 
 export interface SettleResult {
@@ -62,6 +74,14 @@ export interface SettleResult {
 }
 
 const TIMEOUT = Symbol('timeout')
+
+/**
+ * Raster promises some settle has waited for and seen settle, for every later
+ * call: a text whose raster landed during the settle behind `ready` still
+ * holds that promise, and a `quick` confirmation must not take it for new
+ * work (it would wait two frames for nothing).
+ */
+const landedRasters = new WeakSet<Promise<unknown>>()
 
 export async function settleScene(scene: SettleScene, opts: SettleOptions): Promise<SettleResult> {
   const started = performance.now()
@@ -135,6 +155,15 @@ export async function settleScene(scene: SettleScene, opts: SettleOptions): Prom
   const gaveUp = (): SettleResult =>
     result(false, opts.signal?.aborted === true ? 'aborted' : 'timeout')
 
+  if (opts.quick === true && opts.signal?.aborted !== true) {
+    if (missing().length === 0 && pendingRenderWork() === 0 && document.fonts.status === 'loaded') {
+      phases.passes += 1
+      draw()
+      const fresh = freshRasters().filter((p) => !landedRasters.has(p))
+      if (fresh.length === 0 && pendingRenderWork() === 0) return result(true)
+    }
+  }
+
   for (;;) {
     phases.passes += 1
     // 1. The slide's objects are in the scene.
@@ -159,7 +188,10 @@ export async function settleScene(scene: SettleScene, opts: SettleOptions): Prom
       if ((await timed('rastersMs', () => bounded(() => Promise.allSettled(fresh)))) === TIMEOUT) {
         return gaveUp()
       }
-      for (const p of fresh) drawn.add(p)
+      for (const p of fresh) {
+        drawn.add(p)
+        landedRasters.add(p)
+      }
       draw()
       continue
     }

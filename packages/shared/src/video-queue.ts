@@ -51,6 +51,25 @@ export interface VideoTranscodeResult {
   presentHeight?: number
 }
 
+/**
+ * What the worker reports on a job while it runs (BullMQ progress): `stills`
+ * once the poster and the thumbnail are in the bucket and on the asset —
+ * the server then warms their imgproxy variants (performance.md R3,
+ * apps/server/src/media/videoStillsWarm.ts). It names the asset only: the
+ * server reads the keys from the asset's row, never from the queue.
+ */
+export interface VideoTranscodeProgress {
+  stage: 'stills'
+  assetId: string
+}
+
+/** Whether a job's progress value is the worker's `stills` report. */
+export function isVideoStillsProgress(value: unknown): value is VideoTranscodeProgress {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Partial<Record<keyof VideoTranscodeProgress, unknown>>
+  return v.stage === 'stills' && typeof v.assetId === 'string' && v.assetId !== ''
+}
+
 const BASE64URL_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
 
 /**

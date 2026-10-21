@@ -116,8 +116,10 @@ export { rotationFromDegrees, rotationToDegrees } from './rotation.js'
 
 export {
   VIDEO_TRANSCODE_QUEUE,
+  isVideoStillsProgress,
   videoOutputPrefix,
   type VideoTranscodeJobData,
+  type VideoTranscodeProgress,
   type VideoTranscodeResult,
 } from './video-queue.js'
 
