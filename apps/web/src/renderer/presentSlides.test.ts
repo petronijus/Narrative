@@ -14,9 +14,18 @@ vi.mock('pixi.js', () => ({
   RenderTexture: { create: () => ({ destroy: vi.fn() }) },
 }))
 
+// What each prepared slide's background was asked to paint.
+const backgrounds = vi.hoisted(() => [] as unknown[])
+vi.mock('./ArtboardBackground.js', () => ({
+  applyBackground: (args: { background: unknown }) => {
+    backgrounds.push(args.background)
+    return Promise.resolve()
+  },
+}))
+
 import { Container } from 'pixi.js'
 import type { Application } from 'pixi.js'
-import type { Slide, SlideObject } from '@narrative/shared'
+import { DEFAULT_BACKGROUND, type Slide, type SlideObject } from '@narrative/shared'
 import { SceneGraph } from './SceneGraph'
 import { ResourceManager, setDefaultResourceManager } from './ResourceManager'
 import { PresentSlideCache, type PresentSlideSpec } from './presentSlides'
@@ -165,6 +174,18 @@ describe('PresentSlideCache', () => {
 
     cache.setPlan([s1], ['s1'])
     expect(cache.isReady('s2')).toBe(false)
+  })
+
+  it('paints the default background on a slide that has none, as the editor does', async () => {
+    backgrounds.length = 0
+    const plain = spec('s1')
+    const coloured = spec('s2')
+    coloured.slide.background = { kind: 'color', color: 0x112233 }
+    cache.setPlan([plain, coloured], ['s1'])
+    await cache.whenReady(['s1', 's2'])
+    expect(backgrounds).toContainEqual(DEFAULT_BACKGROUND)
+    expect(backgrounds).toContainEqual({ kind: 'color', color: 0x112233 })
+    expect(backgrounds).not.toContain(undefined)
   })
 
   it('does not keep a scene it did not build (the slide the canvas mounted itself)', () => {

@@ -50,7 +50,7 @@
 import { Container, Graphics, RenderTexture, Sprite, Texture, type TextureSource } from 'pixi.js'
 import type { ColourResolverFn } from './colourResolver.js'
 import type { ImageVariant, Slide, SlideObject } from '@narrative/shared'
-import { perfCount, perfCountFor } from '@narrative/shared'
+import { DEFAULT_BACKGROUND, perfCount, perfCountFor } from '@narrative/shared'
 import { applyBackground } from './ArtboardBackground.js'
 import { SLIDE_HEIGHT, SLIDE_WIDTH } from './constants.js'
 import {
@@ -750,7 +750,10 @@ export class PresentSlideCache {
     const rm = this.rm
     void applyBackground({
       container: background,
-      background: spec.slide.background,
+      // A slide without one has the default, as the editor and the
+      // thumbnails draw it (useSlideBackground, thumbnails.ts) — not the
+      // canvas's black showing through.
+      background: spec.slide.background ?? DEFAULT_BACKGROUND,
       width: SLIDE_WIDTH,
       height: SLIDE_HEIGHT,
       ...(resolver !== null
