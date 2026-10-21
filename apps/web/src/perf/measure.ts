@@ -91,11 +91,21 @@ export function routeOf(url: string, pageOrigin: string): string {
   return `${prefix}${path}`
 }
 
+/**
+ * A media URL lookup: the batched `/api/media/urls` or the single
+ * `/api/media/:id/url`. A build whose API base is `/api` asks
+ * `/api/api/media/…` (the proxy strips one `/api`, the routes carry the
+ * other), and the dev build asks the API's own origin (`localhost:3001/api/…`).
+ */
+const MEDIA_URL_ROUTE = /(^|\/)api\/media\/(urls|:id\/url)$/
+/** An imgproxy request: under `/imgproxy/` on the page's origin, or a signed path on imgproxy's own (`…/plain/s3:…`). */
+const IMGPROXY_ROUTE = /^\/imgproxy\/|\/plain\/s3:/
+
 /** The counter a request adds to (`net.api`, `net.imgproxy`, …); every request also counts in `net.requests`. */
 export function netBucket(route: string): string {
-  if (route.startsWith('/api/media/') && route.endsWith('/url')) return 'net.mediaUrl'
+  if (MEDIA_URL_ROUTE.test(route)) return 'net.mediaUrl'
+  if (IMGPROXY_ROUTE.test(route)) return 'net.imgproxy'
   if (route.startsWith('/api/')) return 'net.api'
-  if (route.startsWith('/imgproxy/')) return 'net.imgproxy'
   if (route.startsWith('/storage/')) return 'net.storage'
   if (route === '/assets/*' || route === '/(dev module)') return 'net.code'
   if (route.startsWith('data:') || route.startsWith('blob:')) return 'net.inline'

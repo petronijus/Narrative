@@ -235,12 +235,15 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
     void (async () => {
       // 1. Media: every picture fetched, every video buffered on its first frame.
       setPreparation((p) => ({ ...p, phase: 'media' }))
-      await preloadDeckMedia(deck, {
+      const media = await preloadDeckMedia(deck, {
         videos: pool,
+        density: canvasInstance.sceneGraph.getPixelDensity(),
         signal: abort.signal,
         onProgress: (media) => setPreparation((p) => ({ ...p, media })),
       })
       if (cancelled) return
+      // Each picture drawn from the variant fetched for it, on every slide.
+      cache.setVariantFloor(media.variants)
       // 2. The slides, prepared off stage.
       setPreparation((p) => ({ ...p, phase: 'slides' }))
       presentation.prepare(startId)

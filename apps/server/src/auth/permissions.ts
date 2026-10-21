@@ -181,12 +181,7 @@ export async function resolveDeckAccess(
 
   if (userId) {
     const [row] = await db
-      .select({
-        deckRole: deckPermissions.role,
-        folderRole: folderPermissions.role,
-        isAdmin: users.isAdmin,
-        inDrafts: folders.isDrafts,
-      })
+      .select(deckGrantColumns)
       .from(decks)
       .leftJoin(
         deckPermissions,
@@ -202,11 +197,7 @@ export async function resolveDeckAccess(
       .limit(1)
     // Deck doesn't exist
     if (!row) return null
-    if (row.deckRole) best = { role: row.deckRole as DeckRole, reason: 'direct' }
-    if (row.folderRole) best = higher(best, { role: row.folderRole as DeckRole, reason: 'folder' })
-    // An instance admin owns every deck outside other people's Drafts (ADR 0014).
-    if (row.isAdmin === true && row.inDrafts !== true)
-      best = higher(best, { role: 'owner', reason: 'admin' })
+    best = accessFromGrants(row)
   }
 
   if (shareToken) {
@@ -216,6 +207,80 @@ export async function resolveDeckAccess(
   }
 
   return best
+}
+
+/** What `resolveDeckAccess` reads of a deck for a signed-in caller. */
+const deckGrantColumns = {
+  deckId: decks.id,
+  deckRole: deckPermissions.role,
+  folderRole: folderPermissions.role,
+  isAdmin: users.isAdmin,
+  inDrafts: folders.isDrafts,
+}
+
+/** The caller's access from their grants on a deck (before any share link). */
+function accessFromGrants(row: {
+  deckRole: string | null
+  folderRole: string | null
+  isAdmin: boolean | null
+  inDrafts: boolean | null
+}): DeckAccessResult | null {
+  let best: DeckAccessResult | null = null
+  if (row.deckRole) best = { role: row.deckRole as DeckRole, reason: 'direct' }
+  if (row.folderRole) best = higher(best, { role: row.folderRole as DeckRole, reason: 'folder' })
+  // An instance admin owns every deck outside other people's Drafts (ADR 0014).
+  if (row.isAdmin === true && row.inDrafts !== true)
+    best = higher(best, { role: 'owner', reason: 'admin' })
+  return best
+}
+
+/**
+ * `resolveDeckAccess` of many decks at once — one query for the caller's
+ * grants on all of them, one share-link lookup — for a read that spans
+ * several decks (GET /api/media/urls). Every id asked for has an entry: its
+ * access, or null (no access, or no such deck — for a signed-in caller a
+ * missing deck is null whatever the link says, as `resolveDeckAccess`).
+ */
+export async function resolveDecksAccess(
+  db: Database,
+  args: { deckIds: readonly string[]; userId: string | null; shareToken?: string | null },
+): Promise<Map<string, DeckAccessResult | null>> {
+  const { userId, shareToken } = args
+  const ids = [...new Set(args.deckIds)]
+  const out = new Map<string, DeckAccessResult | null>(ids.map((id) => [id, null]))
+  if (ids.length === 0) return out
+  /** The decks a share link may still raise (all of them without a signed-in caller). */
+  let existing: Set<string> | null = null
+
+  if (userId) {
+    const rows = await db
+      .select(deckGrantColumns)
+      .from(decks)
+      .leftJoin(
+        deckPermissions,
+        and(eq(deckPermissions.deckId, decks.id), eq(deckPermissions.userId, userId)),
+      )
+      .leftJoin(
+        folderPermissions,
+        and(eq(folderPermissions.folderId, decks.folderId), eq(folderPermissions.userId, userId)),
+      )
+      .leftJoin(users, eq(users.sub, userId))
+      .leftJoin(folders, eq(folders.id, decks.folderId))
+      .where(inArray(decks.id, ids))
+    existing = new Set(rows.map((r) => r.deckId))
+    for (const row of rows) out.set(row.deckId, accessFromGrants(row))
+  }
+
+  if (shareToken) {
+    const link = await findShareLink(db, shareToken)
+    if (link && out.has(link.deckId) && (existing === null || existing.has(link.deckId)))
+      out.set(
+        link.deckId,
+        higher(out.get(link.deckId) ?? null, { role: link.role, reason: 'share-link' }),
+      )
+  }
+
+  return out
 }
 
 // ---------------------------------------------------------------------------

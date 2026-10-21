@@ -24,9 +24,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { setDefaultImageUrlResolver, _resetDefaultImageUrlResolver } from '../imageUrl'
+import {
+  setDefaultImageUrlResolver,
+  _resetDefaultImageUrlResolver,
+  type ImageUrlResolver,
+} from '../imageUrl'
 import { setDefaultResourceManager, _resetDefaultResourceManager } from '../ResourceManager'
 import { imageRenderer } from './imageRenderer'
+import { withPixelDensity } from '../pixelDensityContext'
 
 // ---------------------------------------------------------------------------
 // Pixi.js mock
@@ -119,11 +124,33 @@ function makeResourceManager(texture = makeTexture()) {
   return {
     acquireTexture: vi.fn().mockResolvedValue(texture),
     releaseTexture: vi.fn(),
+    hasTexture: vi.fn().mockReturnValue(false),
   }
 }
 
+/** A resolver (imageUrl.ts) around `fn`: the source is 3000 × 2000 unless `size` says. */
+function asResolver(
+  fn: ReturnType<typeof vi.fn>,
+  size: { width: number | null; height: number | null } = { width: 3000, height: 2000 },
+) {
+  return Object.assign(fn, {
+    asset: vi.fn(async (assetId: string) => ({ assetId, ...size })),
+    prefetch: vi.fn(async () => undefined),
+    peek: vi.fn((assetId: string, variant: string) => `https://img.test/${variant}/${assetId}`),
+  }) as unknown as ReturnType<typeof vi.fn> & ImageUrlResolver
+}
+
 function makeResolver(url = 'https://imgproxy.example.com/image.jpg') {
-  return vi.fn().mockResolvedValue(url)
+  return asResolver(vi.fn().mockResolvedValue(url))
+}
+
+/** A resolver whose URLs name the variant: `https://img.test/<variant>/<id>`. */
+function variantResolver() {
+  return asResolver(
+    vi.fn(async ({ assetId, variant }: { assetId: string; variant?: string }) => {
+      return `https://img.test/${variant ?? 'display'}/${assetId}`
+    }),
+  )
 }
 
 import type { ImageObject } from '@narrative/shared'
@@ -224,7 +251,7 @@ describe('imageRenderer', () => {
     const deferred = new Promise<string>((res) => {
       resolveUrl = res
     })
-    const slowResolver = vi.fn().mockReturnValue(deferred)
+    const slowResolver = asResolver(vi.fn().mockReturnValue(deferred))
     setDefaultImageUrlResolver(slowResolver)
 
     const ir = imageRenderer
@@ -369,6 +396,194 @@ describe('imageRenderer', () => {
     expect(decodeFn).toHaveBeenCalled()
 
     delete proto.decode
+  })
+
+  describe('size variant (performance.md → L3)', () => {
+    const tick = () => new Promise((r) => setTimeout(r, 10))
+    /** 340 × 240 of a 3000 × 2000 photo: drawn 360 × 240 under cover. */
+    const small = { ...baseImage, width: 340, height: 240 }
+
+    beforeEach(() => {
+      resolver = variantResolver()
+      setDefaultImageUrlResolver(resolver)
+    })
+
+    it('draws a small picture from medium, a full-width one at 2× from display', async () => {
+      withPixelDensity(2, () => imageRenderer.mount(small))
+      withPixelDensity(2, () =>
+        imageRenderer.mount({ ...baseImage, id: 'big', assetId: 'big', width: 1920, height: 1080 }),
+      )
+      await tick()
+      expect(rm.acquireTexture).toHaveBeenCalledWith('https://img.test/medium/asset-abc')
+      expect(rm.acquireTexture).toHaveBeenCalledWith('https://img.test/display/big')
+    })
+
+    it('draws from display without a density (a scene that did not say), and keeps a pin', async () => {
+      imageRenderer.mount(small)
+      withPixelDensity(1, () =>
+        imageRenderer.mount({ ...small, id: 'o', assetId: 'pinned', variant: 'original' }),
+      )
+      await tick()
+      expect(rm.acquireTexture).toHaveBeenCalledWith('https://img.test/display/asset-abc')
+      expect(rm.acquireTexture).toHaveBeenCalledWith('https://img.test/original/pinned')
+    })
+
+    it('takes display when the source size is unknown', async () => {
+      setDefaultImageUrlResolver(asResolver(variantResolver(), { width: null, height: null }))
+      withPixelDensity(1, () => imageRenderer.mount(small))
+      await tick()
+      expect(rm.acquireTexture).toHaveBeenCalledWith('https://img.test/display/asset-abc')
+    })
+
+    it("takes the scene's floor, and a larger variant the GPU holds already", async () => {
+      withPixelDensity(
+        1,
+        () => imageRenderer.mount(small),
+        () => 'display',
+      )
+      await tick()
+      expect(rm.acquireTexture).toHaveBeenLastCalledWith('https://img.test/display/asset-abc')
+
+      rm.hasTexture.mockImplementation((url: string) => url === 'https://img.test/display/held')
+      withPixelDensity(1, () => imageRenderer.mount({ ...small, id: 'h', assetId: 'held' }))
+      await tick()
+      expect(rm.acquireTexture).toHaveBeenLastCalledWith('https://img.test/display/held')
+    })
+
+    it('loads display when the canvas density grows past medium, and swaps it in at the same drawn size', async () => {
+      rm.acquireTexture.mockImplementation(async (url: string) =>
+        url.includes('/medium/') ? makeTexture(1280, 853) : makeTexture(2560, 1707),
+      )
+      const node = withPixelDensity(1, () => imageRenderer.mount(small))
+      await tick()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mock access
+      const sprite = (node.children as any[])
+        .flatMap((c) => c.children ?? [])
+        .find((c) => c.texture)
+      expect(sprite.texture.width).toBe(1280)
+      sprite.width = 360
+      sprite.height = 240
+
+      // 360 × 3 = 1080 px: medium still holds it.
+      imageRenderer.setCanvasDensity!(node, 3, null)
+      await tick()
+      expect(rm.acquireTexture).toHaveBeenCalledTimes(1)
+
+      // 360 × 4 = 1440 px: display.
+      imageRenderer.setCanvasDensity!(node, 4, null)
+      await tick()
+      expect(rm.acquireTexture).toHaveBeenLastCalledWith('https://img.test/display/asset-abc')
+      expect(sprite.texture.width).toBe(2560)
+      expect([sprite.width, sprite.height]).toEqual([360, 240])
+      expect(rm.releaseTexture).toHaveBeenCalledWith('https://img.test/medium/asset-abc')
+
+      // Never back down while mounted.
+      imageRenderer.setCanvasDensity!(node, 1, null)
+      await tick()
+      expect(rm.acquireTexture).toHaveBeenCalledTimes(2)
+
+      imageRenderer.destroy(node)
+      expect(rm.releaseTexture).toHaveBeenLastCalledWith('https://img.test/display/asset-abc')
+    })
+
+    /**
+     * A ResourceManager that counts references per URL and lets the test
+     * decide when display's load lands.
+     */
+    function countingRm() {
+      const refs = new Map<string, number>()
+      let landDisplay: (() => void) | null = null
+      const m = {
+        refs,
+        land: () => landDisplay?.(),
+        acquireTexture: vi.fn(async (url: string) => {
+          refs.set(url, (refs.get(url) ?? 0) + 1)
+          if (url.includes('/display/')) {
+            await new Promise<void>((resolve) => {
+              const prev = landDisplay
+              landDisplay = () => {
+                prev?.()
+                resolve()
+              }
+            })
+            return makeTexture(2560, 1707)
+          }
+          return makeTexture(1280, 853)
+        }),
+        releaseTexture: vi.fn((url: string) => {
+          const n = refs.get(url) ?? 0
+          if (n <= 0) throw new Error(`released ${url} below zero`)
+          refs.set(url, n - 1)
+        }),
+        hasTexture: vi.fn(() => false),
+      }
+      return m
+    }
+    const held = (m: ReturnType<typeof countingRm>) =>
+      [...m.refs].filter(([, n]) => n > 0).map(([url, n]) => `${url}×${n}`)
+
+    it('two density commits during one upgrade: one display reference, medium released once', async () => {
+      const m = countingRm()
+      setDefaultResourceManager(m as never)
+      const node = withPixelDensity(1, () => imageRenderer.mount(small))
+      await tick()
+      imageRenderer.setCanvasDensity!(node, 4, null)
+      imageRenderer.setCanvasDensity!(node, 5, null)
+      await tick()
+      m.land()
+      await tick()
+      expect(held(m)).toEqual(['https://img.test/display/asset-abc×1'])
+      imageRenderer.destroy(node)
+      expect(held(m)).toEqual([])
+    })
+
+    it('an upgrade that lands after the node is gone gives its reference back', async () => {
+      const m = countingRm()
+      setDefaultResourceManager(m as never)
+      const node = withPixelDensity(1, () => imageRenderer.mount(small))
+      await tick()
+      imageRenderer.setCanvasDensity!(node, 4, null)
+      await tick()
+      imageRenderer.destroy(node)
+      m.land()
+      await tick()
+      expect(held(m)).toEqual([])
+    })
+
+    it('an upgrade that lands after the asset changed leaves the new picture alone', async () => {
+      const m = countingRm()
+      setDefaultResourceManager(m as never)
+      const node = withPixelDensity(1, () => imageRenderer.mount(small))
+      await tick()
+      imageRenderer.setCanvasDensity!(node, 4, null)
+      await tick()
+      imageRenderer.update(node, small, { ...small, assetId: 'other' })
+      await tick()
+      m.land()
+      await tick()
+      // At density 4 the new picture wants display too: its own load, its own reference.
+      expect(held(m)).toEqual(['https://img.test/display/other×1'])
+    })
+
+    it('a reload after an applyPatch asset change chooses with the whole object (its fit)', async () => {
+      const node = withPixelDensity(1, () =>
+        imageRenderer.mount({ ...small, width: 1000, height: 1000, fit: 'contain' }),
+      )
+      await tick()
+      // contain: a 3:2 photo in 1000 × 1000 is drawn 1000 wide — medium; under
+      // the synthetic object's default cover it would be 1500 — display.
+      imageRenderer.applyPatch!(node, { assetId: 'swapped' })
+      await tick()
+      expect(rm.acquireTexture).toHaveBeenLastCalledWith('https://img.test/medium/swapped')
+    })
+
+    it('loads display when a resize makes the picture larger than medium holds', async () => {
+      const node = withPixelDensity(1, () => imageRenderer.mount(small))
+      await tick()
+      imageRenderer.update(node, small, { ...small, width: 1500, height: 1000 })
+      await tick()
+      expect(rm.acquireTexture).toHaveBeenLastCalledWith('https://img.test/display/asset-abc')
+    })
   })
 
   it('empty assetId stays in placeholder state (broken object)', async () => {

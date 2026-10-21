@@ -8,10 +8,12 @@
  * scoped to one deck cannot reach another deck's media.
  */
 
+import type { ImageVariant } from '@narrative/shared'
 import type { BinarySource, DocumentRef } from './common.js'
 
 export type MediaKind = 'image' | 'video' | 'font'
-export type ImageVariant = 'thumb' | 'preview' | 'display' | 'original'
+/** The size variants of a picture (@narrative/shared imageVariants.ts). */
+export type { ImageVariant }
 
 export interface MediaUploadResult {
   assetId: string

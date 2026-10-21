@@ -70,6 +70,15 @@ describe('signImgproxyUrl', () => {
     expect(url).toContain('rs:fill:400:225:0/g:ce')
   })
 
+  it('includes the correct processing segments for the preview and medium variants', () => {
+    expect(signImgproxyUrl({ storageKey: STORAGE_KEY, variant: 'preview' })).toContain(
+      '/rs:fit:600:600:0/plain/',
+    )
+    expect(signImgproxyUrl({ storageKey: STORAGE_KEY, variant: 'medium' })).toContain(
+      '/rs:fit:1280:1280:0/plain/',
+    )
+  })
+
   it('includes the correct processing segment for display variant', () => {
     const url = signImgproxyUrl({ storageKey: STORAGE_KEY, variant: 'display' })
     expect(url).toContain('rs:fit:2560:2560:0')

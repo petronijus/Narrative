@@ -119,11 +119,21 @@ purge that gave up leaves stays until its owner's prefix is swept again.
 
 imgproxy URLs are signed by `apps/server` (media agent, M11 phase 2). The browser receives pre-signed URLs from the API and uses them directly as `<img src>`.
 
-Preset variants:
+Preset variants (`apps/server/src/media/imgproxyUrl.ts`; the caps are
+`@narrative/shared` `imageVariants.ts`). Every `fit` is a ceiling: imgproxy
+never enlarges, so a smaller source is served at its own size.
 
-- **thumbnail** — `rs:fit:400:0` — max 400 px wide, preserve aspect ratio
-- **display** — `rs:fit:1600:0` — max 1600 px wide, preserve aspect ratio
-- **original** — passthrough (use presigned MinIO URL directly, not imgproxy)
+- **thumb** — `rs:fill:400:225:0/g:ce` — 400 × 225 cover crop (deck-grid and component tiles)
+- **preview** — `rs:fit:600:600:0` — slide-panel thumbnails
+- **medium** — `rs:fit:1280:1280:0` — a picture that covers at most 1280 device pixels of the canvas
+- **display** — `rs:fit:2560:2560:0` — larger pictures, HiDPI, zoomed in
+- **original** — no resize directive
+
+The canvas chooses between `medium` and `display` per picture, by its drawn
+size × the canvas's density (`apps/web/src/renderer/imageVariant.ts`;
+docs/plans/performance.md → L3). Clients resolve many assets' URLs at once
+with `GET /api/media/urls?ids=…&variants=…`; new uploads have `preview`,
+`medium` and `display` encoded into the cache right away (`imgproxyWarm.ts`).
 
 Example signed URL pattern (Caddy-routed):
 

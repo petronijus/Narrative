@@ -296,7 +296,7 @@ another session takes an idle page recycled (its storage and tab replaced,
 `apps/render-worker/src/render.ts` `recyclePage`). The `ready` line ends with
 `concurrency=2 warm=2 free=<MB>MB`; without `free=` the worker cannot read
 the cgroup and the memory gate is off — check before relying on two jobs.
-The server warms new images' `preview` and `display` variants through
+The server warms new images' `preview`, `medium` and `display` variants through
 `IMGPROXY_WARM_ENDPOINT` (compose: `http://imgproxy-cache:80`). After the
 deploy: upload a large photo, wait five seconds, and its first view in the
 editor shows `X-Cache-Status: HIT` on the `display` request.

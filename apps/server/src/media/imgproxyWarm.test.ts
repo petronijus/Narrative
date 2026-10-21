@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createImgproxyWarmer, MAX_PENDING } from './imgproxyWarm.js'
+import { createImgproxyWarmer, MAX_PENDING, WARM_VARIANTS } from './imgproxyWarm.js'
 import { signImgproxyUrl } from './imgproxyUrl.js'
 
 const KEY = 'ab'.repeat(32)
@@ -36,12 +36,12 @@ function fakeFetch(opts: { hold?: boolean } = {}) {
 }
 
 describe('imgproxy warmer', () => {
-  it("requests a browser's signed paths of preview, then display, on the cache's address", async () => {
+  it("requests a browser's signed paths of preview, medium, then display, on the cache's address", async () => {
     const f = fakeFetch()
     const warmer = createImgproxyWarmer({ endpoint: 'http://cache.internal', fetchImpl: f.impl })
     expect(warmer.warm('decks/d1/uploads/a1/original.jpg')).toBe(true)
     await warmer.idle()
-    const browser = (variant: 'preview' | 'display') =>
+    const browser = (variant: 'preview' | 'medium' | 'display') =>
       signImgproxyUrl({
         storageKey: 'decks/d1/uploads/a1/original.jpg',
         variant,
@@ -50,6 +50,7 @@ describe('imgproxy warmer', () => {
     // The same path and signature a viewer's URL has: nginx keys its cache on it.
     expect(f.urls).toEqual([
       browser('preview').replace('https://narrative.test/imgproxy', 'http://cache.internal'),
+      browser('medium').replace('https://narrative.test/imgproxy', 'http://cache.internal'),
       browser('display').replace('https://narrative.test/imgproxy', 'http://cache.internal'),
     ])
   })
@@ -78,7 +79,7 @@ describe('imgproxy warmer', () => {
     }
     await warmer.idle()
     expect(f.maxInFlight()).toBe(1)
-    expect(f.urls).toHaveLength((MAX_PENDING + 1) * 2)
+    expect(f.urls).toHaveLength((MAX_PENDING + 1) * WARM_VARIANTS.length)
   })
 
   it('swallows failures and goes on with the next variant and image', async () => {
@@ -91,7 +92,7 @@ describe('imgproxy warmer', () => {
     warmer.warm('a')
     warmer.warm('b')
     await warmer.idle()
-    expect(urls).toHaveLength(4)
+    expect(urls).toHaveLength(2 * WARM_VARIANTS.length)
   })
 
   it('a missing signing key fails the warm quietly, not the upload', async () => {

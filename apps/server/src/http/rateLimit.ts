@@ -74,6 +74,8 @@
  *   - share by email (decks, folders) .... 60 / hour     (INVITE_RATE_LIMIT)
  *   - POST /access-tokens ................ 10 / hour     (TOKEN_CREATE_RATE_LIMIT;
  *       none under BYPASS_AUTH, tokenCreateRouteConfig)
+ *   - GET /api/media/urls ............... 300 / minute   (MEDIA_URLS_RATE_LIMIT;
+ *       none under BYPASS_AUTH, mediaUrlsRouteConfig)
  *   - agent endpoints ................... 240 / minute   (AGENT_RATE_LIMIT) —
  *       /api/commands and /api/mcp, mounted by the agent host; they opt in
  *       with `config: agentRouteRateLimit`.
@@ -202,6 +204,30 @@ export const inviteRouteRateLimit: { rateLimit: RateLimitOptions } = {
 /** Route `config` for POST /access-tokens. */
 export const tokenCreateRouteRateLimit: { rateLimit: RateLimitOptions } = {
   rateLimit: { max: TOKEN_CREATE_RATE_LIMIT.max, timeWindow: TOKEN_CREATE_RATE_LIMIT.timeWindowMs },
+}
+
+/**
+ * The batched media URL read (GET /api/media/urls, per caller): up to 100
+ * assets a request, each checked and signed. A deck open asks once per 100
+ * pictures and the editor once per task that mounts new ones, so 300 a
+ * minute is far above a person's use and bounds a script's.
+ */
+export const MEDIA_URLS_RATE_LIMIT = { max: 300, timeWindowMs: MINUTE_MS } as const
+
+/**
+ * Route `config` for GET /api/media/urls: MEDIA_URLS_RATE_LIMIT, none under
+ * BYPASS_AUTH — its synthetic `dev-user` is every parallel e2e browser at
+ * once (see tokenCreateRouteConfig).
+ */
+export function mediaUrlsRouteConfig(bypass: boolean): { rateLimit: RateLimitOptions | false } {
+  return bypass
+    ? { rateLimit: false }
+    : {
+        rateLimit: {
+          max: MEDIA_URLS_RATE_LIMIT.max,
+          timeWindow: MEDIA_URLS_RATE_LIMIT.timeWindowMs,
+        },
+      }
 }
 
 /**

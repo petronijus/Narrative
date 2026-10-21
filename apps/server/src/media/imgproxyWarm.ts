@@ -1,13 +1,13 @@
 /**
- * media/imgproxyWarm.ts — the `preview` and `display` variants of a new image
- * encoded right after its upload, so its first viewer does not wait for it.
+ * media/imgproxyWarm.ts — the `preview`, `medium` and `display` variants of a
+ * new image encoded right after its upload, so its first viewer does not wait for it.
  *
  * Open-source imgproxy has no result cache; the nginx sidecar in front of it
  * (infra/imgproxy-cache/nginx.conf) keeps each encoded variant, keyed by the
  * signed request URI. The first request of a variant still pays for its AVIF
  * encode — for `display` (2560 px) the slowest one — and that is usually the
  * person who just placed the picture on a slide. Here the server asks the
- * cache for both variants itself, as soon as the upload is a media asset: the
+ * cache for them itself, as soon as the upload is a media asset: the
  * same signed paths a browser gets (`signImgproxyUrl`), against the cache's
  * internal address, so nothing goes out through Cloudflare and back.
  *
@@ -30,8 +30,12 @@ import { subsystemLogger } from '../observability/logger.js'
 
 const log = subsystemLogger('imgproxy-warm')
 
-/** In the order a person meets them: the slide panel's, then the canvas's. */
-export const WARM_VARIANTS: readonly ImgproxyVariant[] = ['preview', 'display']
+/**
+ * In the order a person meets them: the slide panel's, then the canvas's —
+ * `medium` for a picture that covers up to 1280 device pixels (most of them),
+ * `display` for larger ones and HiDPI.
+ */
+export const WARM_VARIANTS: readonly ImgproxyVariant[] = ['preview', 'medium', 'display']
 /** Images waiting to be warmed; past this, new uploads are not warmed. */
 export const MAX_PENDING = 200
 /** One variant's request (a 2560-px AVIF of a large photo takes seconds). */

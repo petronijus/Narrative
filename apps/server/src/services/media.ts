@@ -17,6 +17,12 @@
 import { nanoid } from 'nanoid'
 import { and, eq } from 'drizzle-orm'
 import { PutObjectCommand } from '@aws-sdk/client-s3'
+import {
+  IMAGE_VARIANTS,
+  isImageVariant,
+  type MediaUrlsAsset,
+  type MediaUrlsResponse,
+} from '@narrative/shared'
 import type {
   BinarySource,
   FontUrlInfo,
@@ -44,7 +50,7 @@ import {
   mediaOriginalPath,
   type MediaOwner,
 } from '../media/mediaOwner.js'
-import { folderOfOwner, visibleIn } from '../media/visibleMedia.js'
+import { folderOfOwner, readPlacedMedia, visibleIn } from '../media/visibleMedia.js'
 import {
   classifyUpload,
   extensionFromMimeOrFilename,
@@ -59,6 +65,7 @@ import {
 } from '../media/uploadPolicy.js'
 import {
   resolveDeckAccess,
+  resolveDecksAccess,
   resolveFolderAccess,
   resolveFolderContentAccess,
   roleAtLeast,
@@ -91,10 +98,59 @@ export const VIDEO_PLAYBACK_URL_TTL_SEC = Number(
 )
 export const FONT_URL_TTL_SEC = Number(process.env['MEDIA_FONT_URL_TTL_SEC'] ?? 60 * 60)
 
-export const IMAGE_VARIANTS: readonly ImageVariant[] = ['thumb', 'preview', 'display', 'original']
+/** Folder-content checks `urls` runs at once (each a few queries). */
+const FOLDER_CHECKS_AT_ONCE = 4
 
-export function isImageVariant(v: string): v is ImageVariant {
-  return (IMAGE_VARIANTS as readonly string[]).includes(v)
+// The variants and their caps are shared with the web client's choice of one.
+export { IMAGE_VARIANTS, isImageVariant }
+
+/**
+ * Who may read a media row (`requireAssetReader`, `urls`): a deck's media
+ * the deck's viewers (a share link to it included); a component master's
+ * picture or video, and a folder's own, whoever may read that folder's
+ * content — a member, or anyone with access to one of its decks, share links
+ * included; anything else nobody (a component that is gone, a row with no
+ * owner).
+ */
+export type MediaReadGate =
+  { kind: 'deck'; deckId: string } | { kind: 'folder'; folderId: string } | { kind: 'nobody' }
+
+/**
+ * The gate of `row`. `componentFolderId` is the folder of the row's component
+ * (null when the row is no component's, or the component does not exist).
+ */
+export function mediaReadGate(
+  row: { deckId: string | null; componentId?: string | null; folderId?: string | null },
+  componentFolderId: string | null,
+): MediaReadGate {
+  if ((row.componentId ?? null) !== null) {
+    return componentFolderId !== null
+      ? { kind: 'folder', folderId: componentFolderId }
+      : { kind: 'nobody' }
+  }
+  if (row.deckId === null) {
+    const folderId = row.folderId ?? null
+    return folderId !== null ? { kind: 'folder', folderId } : { kind: 'nobody' }
+  }
+  return { kind: 'deck', deckId: row.deckId }
+}
+
+/** The server's media service: the commands' `MediaService` and the batched URL read of the editor. */
+export interface ServerMediaService extends MediaService {
+  /**
+   * Signed URLs of many images at once (`GET /api/media/urls`), with the
+   * access rules of `url`: one query for the rows, one for the caller's
+   * access to every deck behind them (resolveDecksAccess, one share-link
+   * lookup), and the folders behind them checked FOLDER_CHECKS_AT_ONCE at a
+   * time. Images only. An id the caller may not read, that is no image, or
+   * that does not exist, is listed in `unavailable` — they are not told apart.
+   */
+  urls(args: {
+    userId: string | null
+    shareToken?: string | null | undefined
+    assetIds: readonly string[]
+    variants: readonly ImageVariant[]
+  }): Promise<MediaUrlsResponse>
 }
 
 /** The largest file any media upload may be — what received bytes of unknown kind are capped at. */
@@ -126,7 +182,7 @@ const MAX_ANY_REMOTE_UPLOAD = Math.max(
 /** Bytes read from the start of a file to sniff its signature (sniffMime reads ≤ 512). */
 const SNIFF_BYTES = 4096
 
-export function createMediaService(deps: ServiceDeps): MediaService {
+export function createMediaService(deps: ServiceDeps): ServerMediaService {
   const { db } = deps
 
   async function requireDeckRole(
@@ -159,23 +215,41 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     shareToken: string | null | undefined,
   ): Promise<void> {
     const componentId = asset.componentId ?? null
-    if (componentId !== null) {
-      if (!(await canReadComponentMedia(db, componentId, userId, shareToken))) {
-        throw forbidden('Forbidden')
+    // A component's row: its folder looked up, then the folder gate
+    // (canReadComponentMedia; `urls` has the folder from its join).
+    const admitted =
+      componentId !== null
+        ? await canReadComponentMedia(db, componentId, userId, shareToken)
+        : await gateAdmits(mediaReadGate(asset, null), userId, shareToken)
+    if (!admitted) throw forbidden('Forbidden')
+  }
+
+  /** Whether the caller passes `gate` (mediaReadGate): the deck's viewer role, or the folder's content. */
+  async function gateAdmits(
+    gate: MediaReadGate,
+    userId: string | null,
+    shareToken: string | null | undefined,
+  ): Promise<boolean> {
+    switch (gate.kind) {
+      case 'nobody':
+        return false
+      case 'folder':
+        return (
+          (await resolveFolderContentAccess(db, {
+            folderId: gate.folderId,
+            userId: userId === '' ? null : userId,
+            shareToken: shareToken ?? null,
+          })) !== null
+        )
+      case 'deck': {
+        const access = await resolveDeckAccess(db, {
+          deckId: gate.deckId,
+          userId,
+          shareToken: shareToken ?? null,
+        })
+        return access !== null && roleAtLeast(access.role, 'viewer')
       }
-      return
     }
-    const folderId = asset.deckId === null ? (asset.folderId ?? null) : null
-    if (folderId !== null) {
-      const access = await resolveFolderContentAccess(db, {
-        folderId,
-        userId,
-        shareToken: shareToken ?? null,
-      })
-      if (access === null) throw forbidden('Forbidden')
-      return
-    }
-    await requireDeckRole(asset.deckId, userId, shareToken, 'viewer')
   }
 
   /**
@@ -429,11 +503,62 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     owner?: MediaOwner | undefined
   }): Promise<{ url: string }> {
     const asset = await getMediaAsset(db, args.assetId)
-    if (!asset || !(await shownBy(asset, args.owner))) {
+    // Images only: a video's or a font's file is no picture imgproxy serves
+    // (videos have media.status, fonts fontUrl).
+    if (!asset || asset.kind !== 'image' || !(await shownBy(asset, args.owner))) {
       throw notFound('Asset not found')
     }
     await requireAssetReader(asset, args.userId, args.shareToken)
     return { url: signImgproxyUrl({ storageKey: asset.storageKey, variant: args.variant }) }
+  }
+
+  async function urls(args: {
+    userId: string | null
+    shareToken?: string | null | undefined
+    assetIds: readonly string[]
+    variants: readonly ImageVariant[]
+  }): Promise<MediaUrlsResponse> {
+    const ids = [...new Set(args.assetIds)]
+    // Images only, as `url`.
+    const rows = (await readPlacedMedia(db, ids)).filter((row) => row.kind === 'image')
+    const gates = rows.map((row) => mediaReadGate(row, row.componentFolderId))
+    // The decks behind them in one query (and one share-link lookup); the
+    // folders a few at a time — a deck's pictures link from its one folder.
+    const deckIds = gates.flatMap((g) => (g.kind === 'deck' ? [g.deckId] : []))
+    const folderIds = [...new Set(gates.flatMap((g) => (g.kind === 'folder' ? [g.folderId] : [])))]
+    const deckAccess =
+      deckIds.length === 0
+        ? new Map<string, { role: 'owner' | 'editor' | 'viewer' } | null>()
+        : await resolveDecksAccess(db, {
+            deckIds,
+            userId: args.userId,
+            shareToken: args.shareToken ?? null,
+          })
+    const folderAdmits = new Map<string, boolean>()
+    for (let i = 0; i < folderIds.length; i += FOLDER_CHECKS_AT_ONCE) {
+      const slice = folderIds.slice(i, i + FOLDER_CHECKS_AT_ONCE)
+      const verdicts = await Promise.all(
+        slice.map((folderId) =>
+          gateAdmits({ kind: 'folder', folderId }, args.userId, args.shareToken),
+        ),
+      )
+      slice.forEach((folderId, k) => folderAdmits.set(folderId, verdicts[k]!))
+    }
+    const admitted = gates.map((gate) => {
+      if (gate.kind === 'nobody') return false
+      if (gate.kind === 'folder') return folderAdmits.get(gate.folderId) === true
+      const access = deckAccess.get(gate.deckId) ?? null
+      return access !== null && roleAtLeast(access.role, 'viewer')
+    })
+    const assets: Record<string, MediaUrlsAsset> = {}
+    rows.forEach((row, i) => {
+      if (!admitted[i]) return
+      const signed: MediaUrlsAsset['urls'] = {}
+      for (const variant of args.variants)
+        signed[variant] = signImgproxyUrl({ storageKey: row.storageKey, variant })
+      assets[row.id] = { urls: signed, width: row.width, height: row.height }
+    })
+    return { assets, unavailable: ids.filter((id) => assets[id] === undefined) }
   }
 
   async function fontUrl(args: {
@@ -652,5 +777,5 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     }
   }
 
-  return { upload, videoInfo, url, fontUrl, delete: remove, openUploadSession }
+  return { upload, videoInfo, url, urls, fontUrl, delete: remove, openUploadSession }
 }

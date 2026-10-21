@@ -181,6 +181,19 @@ export {
 } from './desktop.js'
 
 export * from './schema/index.js'
+export {
+  IMAGE_VARIANTS,
+  IMAGE_VARIANT_LONG_SIDE,
+  MEDIA_URLS_MAX_IDS,
+  SCREEN_IMAGE_VARIANTS,
+  imageVariantRank,
+  isImageVariant,
+  screenImageVariant,
+  type ImageVariant,
+  type MediaUrlsAsset,
+  type MediaUrlsResponse,
+  type ScreenImageVariant,
+} from './imageVariants.js'
 export { buildImagePdf, jpegInfo, type JpegInfo, type PdfOptions, type PdfPage } from './pdf.js'
 export {
   CREDENTIAL_PREFIXES,

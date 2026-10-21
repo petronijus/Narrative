@@ -13,9 +13,10 @@
  * Source URL format: s3://{bucket}/{storageKey}
  * imgproxy understands this when IMGPROXY_USE_S3=true.
  *
- * Variant → processing mapping:
+ * Variant → processing mapping (the caps: @narrative/shared imageVariants.ts):
  *   thumb   → rs:fill:400:225:0/g:ce  (400×225 cover crop, center gravity)
  *   preview → rs:fit:600:600:0        (fit inside 600×600, preserve aspect)
+ *   medium  → rs:fit:1280:1280:0      (fit inside 1280×1280, preserve aspect)
  *   display → rs:fit:2560:2560:0      (fit inside 2560×2560, preserve aspect)
  *   original → (no resize directive)
  *
@@ -27,6 +28,11 @@
  * `display` is capped at 2560 px (not the slide's native 1920) so a
  * full-bleed image stays crisp on HiDPI / retina screens and under
  * editor zoom, where the canvas rasterises at devicePixelRatio × zoom.
+ * `medium` (1280 px, a quarter of the pixels) is what the canvas draws a
+ * picture from when it covers at most 1280 device pixels of the canvas —
+ * most pictures on a slide that do not fill it (performance.md → L3; the
+ * choice: apps/web/src/renderer/imageVariant.ts). A zoom past that density
+ * loads `display`.
  *
  * Output format defaults to AVIF (see `extension` below) — ~30-50%
  * smaller than WebP at equal quality, and universally supported by the
@@ -49,8 +55,9 @@
  */
 
 import { createHmac } from 'node:crypto'
+import { IMAGE_VARIANT_LONG_SIDE, type ImageVariant } from '@narrative/shared'
 
-export type ImgproxyVariant = 'thumb' | 'preview' | 'display' | 'original'
+export type ImgproxyVariant = ImageVariant
 
 export interface SignImgproxyUrlArgs {
   /** S3 key relative to the bucket (no leading slash). */
@@ -84,9 +91,11 @@ function processingForVariant(variant: ImgproxyVariant): string {
     case 'thumb':
       return 'rs:fill:400:225:0/g:ce'
     case 'preview':
-      return 'rs:fit:600:600:0'
-    case 'display':
-      return 'rs:fit:2560:2560:0'
+    case 'medium':
+    case 'display': {
+      const side = IMAGE_VARIANT_LONG_SIDE[variant]
+      return `rs:fit:${side}:${side}:0`
+    }
     case 'original':
       return ''
     default: {

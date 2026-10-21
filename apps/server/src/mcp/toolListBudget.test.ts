@@ -152,6 +152,11 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * schema defaults, so a given value can be told from an omitted one) and
  * names `queued`; delivery's default left to the description: under
  * 200,000 in link mode.
+ * L3 (2026-10-20): no raise. media.url's `medium` variant (the enum, a
+ * sentence naming the variants' sizes, trimmed twice to fit, and an
+ * example): 199,999 bytes in link mode, 199,933 in url mode, 146 tools — one
+ * byte left. The next tool change needs the room first (the table and path
+ * tool merges, D4).
  */
 export const TOOL_LIST_BUDGET_BYTES = 200_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */

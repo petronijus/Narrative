@@ -20,6 +20,8 @@ import type { Slide, SlideObject } from '@narrative/shared'
 import { SceneGraph } from './SceneGraph'
 import { ResourceManager, setDefaultResourceManager } from './ResourceManager'
 import { PresentSlideCache, type PresentSlideSpec } from './presentSlides'
+import { imageRenderer } from './objectRenderers/imageRenderer'
+import { mountingPixelDensity, mountingVariantFloor } from './pixelDensityContext'
 
 // Prepared roots are render groups of their own.
 ;(Container.prototype as unknown as { enableRenderGroup(): void }).enableRenderGroup = () => {}
@@ -62,6 +64,51 @@ afterEach(() => {
 })
 
 describe('PresentSlideCache', () => {
+  it("mounts pictures for the canvas's density at the deck's variants, display for a scaled-up build", async () => {
+    const seen: Array<{ id: string; density: number | null; floor: string | undefined }> = []
+    const mount = vi.spyOn(imageRenderer, 'mount').mockImplementation((data) => {
+      seen.push({
+        id: data.id,
+        density: mountingPixelDensity(),
+        floor: mountingVariantFloor()?.(data),
+      })
+      return new Container()
+    })
+    try {
+      const picture = (id: string, assetId: string) =>
+        ({ ...rect(id), type: 'image', assetId }) as unknown as SlideObject
+      sceneGraph.setPixelDensity(2)
+      cache.setVariantFloor(
+        new Map([
+          ['big', 'display'],
+          ['small', 'medium'],
+        ]),
+      )
+      const s1 = spec('s1', [picture('p1', 'big'), picture('p2', 'small'), picture('p3', 'small')])
+      s1.slide.animations = [
+        {
+          id: 'a',
+          objectId: 'p3',
+          preset: 'zoomIn',
+          trigger: 'onClick',
+          duration: 0.5,
+          delay: 0,
+          easing: '',
+        },
+      ] as Slide['animations']
+      cache.setPlan([s1], ['s1'])
+      await cache.whenReady(['s1'])
+      expect(seen).toEqual([
+        { id: 'p1', density: 2, floor: 'display' },
+        { id: 'p2', density: 2, floor: 'medium' },
+        // zoomIn starts at 2×: display, whatever the deck's variant.
+        { id: 'p3', density: 2, floor: 'display' },
+      ])
+    } finally {
+      mount.mockRestore()
+    }
+  })
+
   it('builds every planned slide off stage and draws each into its warm-up target', async () => {
     const plan = [spec('s1'), spec('s2'), spec('s3')]
     cache.setPlan(plan, ['s1', 's2'])

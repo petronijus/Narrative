@@ -13,6 +13,17 @@
  *
  * Defaults: imageRect undefined ⇒ rendered as if equal to the object's
  * own x/y/width/height (sprite fills the frame, fit applied).
+ *
+ * Size variant (performance.md → L3; renderer/imageVariant.ts): the picture
+ * is drawn from the smallest imgproxy variant that has a texel for every
+ * pixel of the canvas it covers — `medium` (1280 px) or `display` (2560) —
+ * chosen once its source size is known (the resolver's batched answer), at
+ * the density of the canvas that mounted it (pixelDensityContext.ts). A
+ * larger variant of the same picture already on the GPU is taken instead of
+ * loading a second texture. When the picture grows on the canvas (a resize,
+ * a zoom: `setPixelDensity`) past what its texture holds, the larger variant
+ * is loaded beside it and swapped in at the same drawn size — no placeholder,
+ * no frame without the picture; it never goes back down while mounted.
  */
 
 import { Container, Graphics, Sprite, Texture } from 'pixi.js'
@@ -24,8 +35,16 @@ import type {
   NormalizedPathAnchor,
   ShapePoint,
 } from '@narrative/shared'
+import { SCREEN_IMAGE_VARIANTS, imageVariantRank, type ImageVariant } from '@narrative/shared'
 import { getDefaultImageUrlResolver } from '../imageUrl.js'
 import { getDefaultResourceManager } from '../ResourceManager.js'
+import { imageObjectVariant, pinnedVariant, type SourceSize } from '../imageVariant.js'
+import {
+  mountingPixelDensity,
+  mountingVariantFloor,
+  type VariantFloor,
+} from '../pixelDensityContext.js'
+import { trackRenderWork } from '../renderWork.js'
 import { applyFit } from '../mediaFit.js'
 import { setThumbnailReady } from '../thumbnailReady.js'
 import { applyFilterEffects, destroyFilterEffects, patchFilterEffects } from '../filterEffects.js'
@@ -63,6 +82,18 @@ const MASK_SHAPE_TAG = Symbol('imgMaskShape')
  * this tag every thumbnail re-render would orphan a GPU texture + its source.
  */
 const THUMB_TEXTURE_TAG = Symbol('imgThumbTexture')
+/** The density of the canvas the node is drawn on (device px per slide unit), null when unknown. */
+const DENSITY_TAG = Symbol('imgDensity')
+/** The mounting scene's variant floor (pixelDensityContext.ts), null for none. */
+const FLOOR_TAG = Symbol('imgFloor')
+/** The source's pixel size, once resolved (and corrected by the loaded texture's aspect). */
+const SOURCE_TAG = Symbol('imgSource')
+/** The variant the sprite's texture is of. */
+const VARIANT_TAG = Symbol('imgVariant')
+/** The variant an upgrade is loading, if one is. */
+const UPGRADE_TAG = Symbol('imgUpgrade')
+/** The object as last mounted / updated / patched: what a variant choice reads. */
+const DATA_TAG = Symbol('imgData')
 
 // ---------------------------------------------------------------------------
 // Type helpers
@@ -125,6 +156,42 @@ function getThumbTexture(node: Container): Texture | undefined {
 
 function setThumbTexture(node: Container, texture: Texture | undefined): void {
   asAny(node)[THUMB_TEXTURE_TAG] = texture
+}
+
+/** An upgrade in flight (ensureVariant); its identity tells it from a later one. */
+interface Upgrade {
+  variant: ImageVariant
+}
+
+interface VariantState {
+  density: number | null
+  floor: VariantFloor | null
+  source: SourceSize | null
+  loaded: ImageVariant | null
+  upgrading: Upgrade | null
+  data: ImageObject | null
+}
+
+function variantState(node: Container): VariantState {
+  const a = asAny(node)
+  return {
+    density: (a[DENSITY_TAG] as number | null | undefined) ?? null,
+    floor: (a[FLOOR_TAG] as VariantFloor | null | undefined) ?? null,
+    source: (a[SOURCE_TAG] as SourceSize | null | undefined) ?? null,
+    loaded: (a[VARIANT_TAG] as ImageVariant | null | undefined) ?? null,
+    upgrading: (a[UPGRADE_TAG] as Upgrade | null | undefined) ?? null,
+    data: (a[DATA_TAG] as ImageObject | null | undefined) ?? null,
+  }
+}
+
+function setVariantState(node: Container, patch: Partial<VariantState>): void {
+  const a = asAny(node)
+  if ('density' in patch) a[DENSITY_TAG] = patch.density
+  if ('floor' in patch) a[FLOOR_TAG] = patch.floor
+  if ('source' in patch) a[SOURCE_TAG] = patch.source
+  if ('loaded' in patch) a[VARIANT_TAG] = patch.loaded
+  if ('upgrading' in patch) a[UPGRADE_TAG] = patch.upgrading
+  if ('data' in patch) a[DATA_TAG] = patch.data
 }
 
 /** Bump the load generation and return the new (captured) value. */
@@ -432,8 +499,8 @@ function drawErrorIndicator(g: Graphics, width: number, height: number): void {
 
 function startLoad(container: Container, data: ImageObject): void {
   const assetId = data.assetId
-  const variant = data.variant ?? 'display'
   const box = { w: data.width, h: data.height }
+  setVariantState(container, { data, source: null, loaded: null, upgrading: null })
 
   // Invalidate any load still in flight from a previous asset. The older
   // closure will observe the bumped generation after its next await and
@@ -475,7 +542,18 @@ function startLoad(container: Container, data: ImageObject): void {
 
   void (async () => {
     let url: string
+    let variant: ImageVariant
     try {
+      // The source's size first (the batched answer that also resolves the
+      // screen variants' URLs), then the variant for this canvas.
+      const resolved = await resolver.asset(assetId)
+      if (isStale(container, myGen)) return
+      setVariantState(container, {
+        source: { width: resolved.width, height: resolved.height },
+      })
+      // The node's whole object: an applyPatch reload hands startLoad a
+      // synthetic one (its fit unknown) and restores the merged object.
+      variant = chooseVariant(container, variantState(container).data ?? data)
       url = await resolver({ assetId, variant })
     } catch {
       if (isStale(container, myGen)) return
@@ -508,6 +586,8 @@ function startLoad(container: Container, data: ImageObject): void {
     }
 
     setAcquiredUrl(container, url)
+    setVariantState(container, { loaded: variant })
+    correctSourceAspect(container, texture)
 
     const spriteWrap = new Container()
     const sprite = new Sprite(texture)
@@ -536,7 +616,130 @@ function startLoad(container: Container, data: ImageObject): void {
     // SceneGraph mutation, so the auto-render-off scheduler doesn't know
     // a redraw is needed. Poke it so the new image actually shows up.
     markRenderDirty()
+
+    // The canvas's density, the object's size or the source's true aspect
+    // may have moved on while it loaded.
+    ensureVariant(container)
   })()
+}
+
+// ---------------------------------------------------------------------------
+// Size variant: the choice, and the upgrade when the picture outgrows it
+// ---------------------------------------------------------------------------
+
+/**
+ * The variant `data` is drawn from on the node's canvas: the smallest that
+ * suffices (imageVariant.ts), raised to the scene's floor, and raised again to
+ * a larger screen variant of the same picture the GPU already holds — one
+ * texture serves both. The render page's cap applies in the resolver.
+ */
+function chooseVariant(container: Container, data: ImageObject): ImageVariant {
+  const state = variantState(container)
+  let variant = imageObjectVariant(data, state.source, state.density)
+  if (pinnedVariant(data) !== null) return variant
+  const floor = state.floor?.(data)
+  if (floor !== undefined && imageVariantRank(floor) > imageVariantRank(variant)) variant = floor
+  const resolver = getDefaultImageUrlResolver()
+  const rm = getDefaultResourceManager()
+  for (const larger of SCREEN_IMAGE_VARIANTS) {
+    if (imageVariantRank(larger) <= imageVariantRank(variant)) continue
+    const url = resolver.peek(data.assetId, larger)
+    if (url !== undefined && rm.hasTexture(url)) return larger
+  }
+  return variant
+}
+
+/**
+ * The asset row's width and height are the file's; a photo whose EXIF turns
+ * it is served turned (imgproxy rotates it), so the texture's aspect is the
+ * truth. The long side is the same either way.
+ */
+function correctSourceAspect(container: Container, texture: Texture): void {
+  const { source } = variantState(container)
+  const tw = texture.width
+  const th = texture.height
+  if (source === null || source.width === null || source.height === null || !(tw > 0 && th > 0))
+    return
+  const long = Math.max(source.width, source.height)
+  const portraitSource = source.height > source.width
+  const portraitTexture = th > tw
+  if (portraitSource === portraitTexture) return
+  const k = long / Math.max(tw, th)
+  setVariantState(container, { source: { width: tw * k, height: th * k } })
+}
+
+/**
+ * Load a larger variant when the picture now covers more pixels than its
+ * texture holds (a resize, a zoom, the source's turned aspect), and swap it
+ * in at the same drawn size once it is decoded. Never a smaller one.
+ */
+function ensureVariant(container: Container): void {
+  const state = variantState(container)
+  const data = state.data
+  if (data === null || data.assetId === '' || state.loaded === null) return
+  if (isAborted(container) || pinnedVariant(data) !== null) return
+  const wanted = chooseVariant(container, data)
+  if (imageVariantRank(wanted) <= imageVariantRank(state.loaded)) return
+  if (
+    state.upgrading !== null &&
+    imageVariantRank(state.upgrading.variant) >= imageVariantRank(wanted)
+  )
+    return
+  const myGen = asAny(container)[LOAD_GEN_TAG] as number
+  // This upgrade's own token: a later one replaces it, and only the upgrade
+  // holding it clears it again.
+  const token: Upgrade = { variant: wanted }
+  setVariantState(container, { upgrading: token })
+  const resolver = getDefaultImageUrlResolver()
+  const rm = getDefaultResourceManager()
+  // Counted until the swap, so the render page and present mode's
+  // preparation wait for the picture they will show (renderWork.ts).
+  void trackRenderWork(
+    (async () => {
+      const url = await resolver({ assetId: data.assetId, variant: wanted })
+      if (isStale(container, myGen)) return
+      if (url === getAcquiredUrl(container)) {
+        // The render page's cap: the same texture.
+        if (imageVariantRank(wanted) > imageVariantRank(variantState(container).loaded ?? 'thumb'))
+          setVariantState(container, { loaded: wanted })
+        return
+      }
+      const texture = await rm.acquireTexture(url)
+      const sprite = getSprite(container)
+      // Read again after the await: another upgrade, a new asset or the
+      // node's destruction may have come in between.
+      const current = getAcquiredUrl(container)
+      const loaded = variantState(container).loaded
+      if (
+        isStale(container, myGen) ||
+        sprite === undefined ||
+        sprite.destroyed ||
+        url === current ||
+        (loaded !== null && imageVariantRank(loaded) >= imageVariantRank(wanted))
+      ) {
+        // Nothing to swap: the reference this upgrade took goes back.
+        rm.releaseTexture(url)
+        return
+      }
+      const drawnW = sprite.width
+      const drawnH = sprite.height
+      sprite.texture = texture
+      sprite.width = drawnW
+      sprite.height = drawnH
+      setAcquiredUrl(container, url)
+      setVariantState(container, { loaded: wanted })
+      if (current !== undefined) rm.releaseTexture(current)
+      markRenderDirty()
+    })()
+      .catch((err: unknown) => {
+        // The picture stays as it is, sharp enough until the next try.
+        console.warn('[imageRenderer] could not load a larger variant', data.assetId, err)
+      })
+      .finally(() => {
+        if (variantState(container).upgrading === token)
+          setVariantState(container, { upgrading: null })
+      }),
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -562,6 +765,10 @@ export const imageRenderer = {
 
   mount(data: ImageObject): Container {
     const container = new Container()
+    setVariantState(container, {
+      density: mountingPixelDensity(),
+      floor: mountingVariantFloor(),
+    })
 
     const placeholder = new Graphics()
     drawPlaceholder(placeholder, data.width, data.height)
@@ -602,6 +809,7 @@ export const imageRenderer = {
     const imageRotationChanged = (prev.imageRotation ?? 0) !== (next.imageRotation ?? 0)
     const maskChanged = !isMaskEqual(prev.mask, next.mask)
 
+    setVariantState(node, { data: next })
     if (
       fitChanged ||
       sizeChanged ||
@@ -611,12 +819,24 @@ export const imageRenderer = {
       maskChanged
     ) {
       relayoutExistingSprite(node, next)
+      ensureVariant(node)
     }
 
     applyFilterEffects(node, next.shadow, next.blur)
   },
 
+  /**
+   * The canvas's density or the scene's floor changed (SceneGraph
+   * setPixelDensity / setVariantFloor): a picture that now needs more loads it.
+   */
+  setCanvasDensity(node: Container, density: number | null, floor: VariantFloor | null): void {
+    setVariantState(node, { density, floor })
+    ensureVariant(node)
+  },
+
   applyPatch(node: Container, patch: Partial<ImageObject>): void {
+    const stored = variantState(node).data
+    if (stored !== null) setVariantState(node, { data: { ...stored, ...patch } })
     if (patch.x !== undefined) {
       node.x = patch.x + node.pivot.x
     }
@@ -702,6 +922,7 @@ export const imageRenderer = {
       }
 
       relayoutExistingSprite(node, synthetic)
+      ensureVariant(node)
     }
 
     const assetChanged = patch.assetId !== undefined || patch.variant !== undefined
@@ -743,7 +964,10 @@ export const imageRenderer = {
         ph.visible = true
       }
 
+      const merged = variantState(node).data
       startLoad(node, synthetic)
+      // The variant choice reads the whole object (its fit, its imageRect).
+      if (merged !== null) setVariantState(node, { data: merged })
     }
 
     if ('shadow' in patch || 'blur' in patch) {

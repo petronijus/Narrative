@@ -1,7 +1,7 @@
 /**
  * media/routes.test.ts
  *
- * Tests for GET /api/media/:assetId/url and DELETE /api/media/:assetId.
+ * Tests for GET /api/media/:assetId/url, GET /api/media/urls and DELETE /api/media/:assetId.
  * Uses in-process Fastify instance with mocked DB and auth.
  *
  * Auth strategy:
@@ -11,13 +11,14 @@
  *   - signImgproxyUrl is mocked to return a deterministic URL.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import Fastify from 'fastify'
 import type { SQL } from 'drizzle-orm'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import type { FastifyInstance } from 'fastify'
 import type { Database } from '../db/client.js'
 import type { MediaAsset } from '../db/schema.js'
+import { MEDIA_URLS_MAX_IDS, type MediaUrlsResponse } from '@narrative/shared'
 import { registerAuthPlugin } from '../auth/fastifyAuth.js'
 import { registerMediaRoutes } from './routes.js'
 
@@ -50,8 +51,15 @@ vi.mock('./s3Client.js', () => ({
   MEDIA_BUCKET: 'narrative-media',
 }))
 
+// The batched URL read's one query; the rest of the module is real.
+vi.mock('./visibleMedia.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./visibleMedia.js')>()),
+  readPlacedMedia: vi.fn(),
+}))
+
 vi.mock('../auth/permissions.js', () => ({
   resolveDeckAccess: vi.fn(),
+  resolveDecksAccess: vi.fn(),
   resolveComponentAccess: vi.fn(),
   resolveFolderAccess: vi.fn(),
   resolveFolderContentAccess: vi.fn(),
@@ -60,10 +68,12 @@ vi.mock('../auth/permissions.js', () => ({
 
 import { getMediaAsset, getVideoAsset, deleteMediaAsset, getFolderFontAsset } from './assets.js'
 import { signImgproxyUrl } from './imgproxyUrl.js'
+import { readPlacedMedia } from './visibleMedia.js'
 import { presignGetUrl } from './s3Client.js'
 import {
   resolveComponentAccess,
   resolveDeckAccess,
+  resolveDecksAccess,
   resolveFolderAccess,
   resolveFolderContentAccess,
   roleAtLeast,
@@ -274,6 +284,227 @@ describe('GET /api/media/:assetId/url', () => {
 
     expect(res.statusCode).toBe(200)
     expect(res.headers['cache-control']).toBe('private, max-age=600')
+    expect(res.headers['vary']).toBe('Cookie')
+  })
+
+  it('answers images only: a video asset is 404', async () => {
+    vi.mocked(getMediaAsset).mockResolvedValue({ ...FIXTURE_ASSET, kind: 'video' })
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
+    vi.mocked(roleAtLeast).mockReturnValue(true)
+
+    const res = await app.inject({ method: 'GET', url: '/api/media/asset-test-01/url' })
+
+    expect(res.statusCode).toBe(404)
+    expect(signImgproxyUrl).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: GET /api/media/urls
+// ---------------------------------------------------------------------------
+
+describe('GET /api/media/urls — many assets in one request, the access rules of the single route', () => {
+  let app: FastifyInstance
+
+  /** A row as readPlacedMedia returns it: the asset with its component's folder. */
+  const placed = (
+    over: Partial<MediaAsset> & { id: string },
+    componentFolderId: string | null = null,
+  ) => ({
+    ...FIXTURE_ASSET,
+    storageKey: `decks/deck-alpha/uploads/${over.id}/original.jpg`,
+    ...over,
+    componentFolderId,
+  })
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.mocked(signImgproxyUrl).mockImplementation(
+      ({ storageKey, variant }) => `http://imgproxy.test/${variant}/${storageKey}`,
+    )
+    vi.mocked(roleAtLeast).mockImplementation(realRoleAtLeast)
+    app = await buildApp()
+  })
+
+  afterEach(() => {
+    // The other suites read the module mocks' defaults.
+    vi.mocked(signImgproxyUrl).mockImplementation(
+      () => 'http://imgproxy.test/SIGNED/path/to/image@webp',
+    )
+    vi.mocked(roleAtLeast).mockReset()
+    vi.mocked(resolveDeckAccess).mockReset()
+    vi.mocked(resolveDecksAccess).mockReset()
+    vi.mocked(resolveFolderContentAccess).mockReset()
+  })
+
+  /** The decks' access, one call for all of them. */
+  const decksAccess = (of: (deckId: string) => { role: 'viewer' | 'owner' } | null) =>
+    vi
+      .mocked(resolveDecksAccess)
+      .mockImplementation(
+        async (_db, { deckIds }) =>
+          new Map(
+            deckIds.map((id) => [
+              id,
+              of(id) === null ? null : { ...of(id)!, reason: 'direct' as const },
+            ]),
+          ),
+      )
+
+  it('answers every asked variant of each asset, with its size, checking the deck once', async () => {
+    vi.mocked(readPlacedMedia).mockResolvedValue([
+      placed({ id: 'a1', width: 3000, height: 2000 }),
+      placed({ id: 'a2', width: null, height: null }),
+      placed({ id: 'a3' }),
+    ])
+    decksAccess(() => ({ role: 'viewer' }))
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/media/urls?ids=a1,a2,a3,a1&variants=preview,medium,display',
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json<MediaUrlsResponse>()
+    expect(Object.keys(body.assets).sort()).toEqual(['a1', 'a2', 'a3'])
+    expect(body.assets['a1']).toEqual({
+      urls: {
+        preview: 'http://imgproxy.test/preview/decks/deck-alpha/uploads/a1/original.jpg',
+        medium: 'http://imgproxy.test/medium/decks/deck-alpha/uploads/a1/original.jpg',
+        display: 'http://imgproxy.test/display/decks/deck-alpha/uploads/a1/original.jpg',
+      },
+      width: 3000,
+      height: 2000,
+    })
+    expect(body.assets['a2']).toMatchObject({ width: null, height: null })
+    expect(body.unavailable).toEqual([])
+    // One query for the rows (each id once), one check for their deck.
+    expect(readPlacedMedia).toHaveBeenCalledOnce()
+    expect(vi.mocked(readPlacedMedia).mock.calls[0]?.[1]).toEqual(['a1', 'a2', 'a3'])
+    expect(resolveDecksAccess).toHaveBeenCalledOnce()
+    expect(resolveDecksAccess).toHaveBeenCalledWith(expect.anything(), {
+      deckIds: ['deck-alpha', 'deck-alpha', 'deck-alpha'],
+      userId: 'dev-user',
+      shareToken: null,
+    })
+    expect(res.headers['cache-control']).toBe('private, max-age=600')
+    expect(res.headers['vary']).toBe('Cookie')
+  })
+
+  it('lists unknown assets and those of a deck the caller cannot read as unavailable, alike', async () => {
+    vi.mocked(readPlacedMedia).mockResolvedValue([
+      placed({ id: 'mine' }),
+      placed({ id: 'theirs', deckId: 'deck-other' }),
+    ])
+    decksAccess((deckId) => (deckId === 'deck-alpha' ? { role: 'viewer' } : null))
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/media/urls?ids=mine,theirs,gone&variants=display',
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json<MediaUrlsResponse>()
+    expect(Object.keys(body.assets)).toEqual(['mine'])
+    expect(body.unavailable.sort()).toEqual(['gone', 'theirs'])
+    expect(signImgproxyUrl).toHaveBeenCalledTimes(1)
+    // A partial answer is not cached: what is missing may arrive.
+    expect(res.headers['cache-control']).toBe('private, no-store')
+  })
+
+  it('answers images only: a video or a font of the deck is unavailable', async () => {
+    vi.mocked(readPlacedMedia).mockResolvedValue([
+      placed({ id: 'pic' }),
+      placed({ id: 'clip', kind: 'video' }),
+      placed({ id: 'face', kind: 'font' }),
+    ])
+    decksAccess(() => ({ role: 'owner' }))
+
+    const res = await app.inject({ method: 'GET', url: '/api/media/urls?ids=pic,clip,face' })
+
+    const body = res.json<MediaUrlsResponse>()
+    expect(Object.keys(body.assets)).toEqual(['pic'])
+    expect(body.unavailable.sort()).toEqual(['clip', 'face'])
+  })
+
+  it('checks every folder behind the assets, a few at a time, never more than the folders', async () => {
+    const folders = Array.from({ length: 10 }, (_, i) => `folder-${i}`)
+    vi.mocked(readPlacedMedia).mockResolvedValue(
+      folders.flatMap((f, i) => [
+        placed({ id: `x${i}`, deckId: null, folderId: f }),
+        placed({ id: `y${i}`, deckId: null, componentId: `c${i}` }, f),
+      ]),
+    )
+    let running = 0
+    let most = 0
+    vi.mocked(resolveFolderContentAccess).mockImplementation(async () => {
+      running++
+      most = Math.max(most, running)
+      await new Promise((r) => setTimeout(r, 1))
+      running--
+      return { role: 'viewer', via: 'folder' }
+    })
+
+    const ids = folders.flatMap((_, i) => [`x${i}`, `y${i}`]).join(',')
+    const res = await app.inject({ method: 'GET', url: `/api/media/urls?ids=${ids}` })
+
+    expect(Object.keys(res.json<MediaUrlsResponse>().assets)).toHaveLength(20)
+    expect(resolveFolderContentAccess).toHaveBeenCalledTimes(10)
+    expect(most).toBeLessThanOrEqual(4)
+    expect(resolveDecksAccess).not.toHaveBeenCalled()
+  })
+
+  it("reads a master's and a folder's media with the folder's content, once per folder, a share link included", async () => {
+    vi.mocked(readPlacedMedia).mockResolvedValue([
+      placed({ id: 'c1', deckId: null, componentId: 'comp-1' }, 'folder-c'),
+      placed({ id: 'c2', deckId: null, componentId: 'comp-2' }, 'folder-c'),
+      placed({ id: 'f1', deckId: null, folderId: 'folder-c' }),
+      // A component that is gone: nobody reads its media.
+      placed({ id: 'orphan', deckId: null, componentId: 'comp-gone' }, null),
+    ])
+    vi.mocked(resolveFolderContentAccess).mockResolvedValue({ role: 'viewer', via: 'deck' })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/media/urls?ids=c1,c2,f1,orphan&variants=thumb&share_token=tok-1',
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json<MediaUrlsResponse>()
+    expect(Object.keys(body.assets).sort()).toEqual(['c1', 'c2', 'f1'])
+    expect(body.unavailable).toEqual(['orphan'])
+    expect(resolveFolderContentAccess).toHaveBeenCalledOnce()
+    expect(resolveFolderContentAccess).toHaveBeenCalledWith(expect.anything(), {
+      folderId: 'folder-c',
+      userId: 'dev-user',
+      shareToken: 'tok-1',
+    })
+    // A deck role would let everyone in: it is never consulted for them.
+    expect(resolveDecksAccess).not.toHaveBeenCalled()
+  })
+
+  it('refuses no ids, too many ids and an unknown variant before reading anything', async () => {
+    const tooMany = Array.from({ length: MEDIA_URLS_MAX_IDS + 1 }, (_, i) => `id${i}`).join(',')
+    for (const url of [
+      '/api/media/urls',
+      '/api/media/urls?ids=',
+      `/api/media/urls?ids=${tooMany}`,
+      `/api/media/urls?ids=${'x'.repeat(65)}`,
+      '/api/media/urls?ids=a1&variants=display,4k',
+    ]) {
+      const res = await app.inject({ method: 'GET', url })
+      expect(res.statusCode, url).toBe(400)
+    }
+    expect(readPlacedMedia).not.toHaveBeenCalled()
+  })
+
+  it('takes display when no variant is named, as the single route does', async () => {
+    vi.mocked(readPlacedMedia).mockResolvedValue([placed({ id: 'a1' })])
+    decksAccess(() => ({ role: 'owner' }))
+
+    const res = await app.inject({ method: 'GET', url: '/api/media/urls?ids=a1' })
+
+    expect(Object.keys(res.json<MediaUrlsResponse>().assets['a1']!.urls)).toEqual(['display'])
   })
 })
 

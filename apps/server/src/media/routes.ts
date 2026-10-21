@@ -11,6 +11,18 @@
  *     browser may keep one; a shared cache must not (it would hand one viewer's
  *     answer to another — component media is only for its folder's readers).
  *
+ *   GET  /api/media/urls?ids=<id,id,…>&variants=<variant,…>
+ *     The same signed URLs for many assets in one request (performance.md →
+ *     L3): the editor and present mode resolve a deck's pictures with it, at
+ *     most MEDIA_URLS_MAX_IDS ids a request. Same auth and access rules as
+ *     the single route, checked once per deck or folder the assets belong
+ *     to; an id the caller cannot have is listed in `unavailable` (unknown
+ *     and forbidden are not told apart). Same Cache-Control when every id is
+ *     answered (the client sorts the ids, so an unchanged deck's prefetch is
+ *     the same URL); `no-store` for a partial answer. Images only, as the
+ *     single route. Its own rate limit (MEDIA_URLS_RATE_LIMIT). Both routes
+ *     answer `Vary: Cookie`.
+ *
  *   GET  /api/media/:assetId/video-info
  *     Returns transcode status + signed poster/thumbnail URLs + progressive MP4 playback URL.
  *     Auth: a session or `?share_token=` (shareReadPreHandler). Deck access:
@@ -58,8 +70,10 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Database } from '../db/client.js'
-import { authPreHandler, shareReadPreHandler } from '../auth/fastifyAuth.js'
+import { authPreHandler, getAuthOpts, shareReadPreHandler } from '../auth/fastifyAuth.js'
+import { mediaUrlsRouteConfig } from '../http/rateLimit.js'
 import { resolveDeckAccess } from '../auth/permissions.js'
+import { MEDIA_URLS_MAX_IDS, type ImageVariant } from '@narrative/shared'
 import { createMediaService, isImageVariant, IMAGE_VARIANTS } from '../services/media.js'
 import {
   ALLOWED_FONT_MIME_TYPES,
@@ -79,6 +93,9 @@ import { sendServiceError } from '../services/errors.js'
 // (services/media.ts, services/folders.ts, services/decks.ts).
 
 const MAX_FONT_BYTES = MAX_FOLDER_FONT_BYTES
+
+/** An id in `?ids=` (the commands' IdSchema: 1–64 characters; the client escapes them, a comma separates them). */
+const isAssetId = (id: string): boolean => id.length >= 1 && id.length <= 64
 
 export interface MediaRoutesOpts {
   db: Database
@@ -171,11 +188,65 @@ export async function registerMediaRoutes(
         assetId: request.params.assetId,
         variant: variantParam,
       })
-      return reply.header('Cache-Control', 'private, max-age=600').send(result)
+      // The answer depends on who asks (the session cookie; a share token is
+      // in the URL): a cache must not hand one caller's to another.
+      return reply
+        .header('Cache-Control', 'private, max-age=600')
+        .header('Vary', 'Cookie')
+        .send(result)
     } catch (err) {
       return sendServiceError(reply, err)
     }
   })
+
+  // -------------------------------------------------------------------------
+  // GET /api/media/urls?ids=<id,…>&variants=<variant,…>
+  // -------------------------------------------------------------------------
+  app.get<{
+    Querystring: { ids?: string; variants?: string; share_token?: string }
+  }>(
+    '/api/media/urls',
+    {
+      preHandler: shareReadPreHandler,
+      config: mediaUrlsRouteConfig(getAuthOpts(app).bypass === true),
+    },
+    async (request, reply) => {
+      const ids = [...new Set((request.query.ids ?? '').split(',').filter((id) => id !== ''))]
+      if (ids.length === 0 || ids.length > MEDIA_URLS_MAX_IDS || !ids.every(isAssetId)) {
+        return reply.status(400).send({
+          error: `ids: 1 to ${MEDIA_URLS_MAX_IDS} asset ids, comma-separated`,
+        })
+      }
+      const variants = [
+        ...new Set((request.query.variants ?? 'display').split(',').filter((v) => v !== '')),
+      ]
+      if (variants.length === 0 || !variants.every(isImageVariant)) {
+        return reply.status(400).send({
+          error: `Invalid variants. Allowed: ${IMAGE_VARIANTS.join(', ')}`,
+        })
+      }
+      try {
+        const result = await createMediaService(routeDeps(app, db, request.log)).urls({
+          userId: request.user?.sub ?? null,
+          shareToken: request.query.share_token ?? null,
+          assetIds: ids,
+          variants: variants as ImageVariant[],
+        })
+        // A partial answer is not kept: an asset that arrives later (an upload
+        // finishing, access granted) must not stay missing for ten minutes
+        // under the same sorted-ids URL.
+        return reply
+          .header(
+            'Cache-Control',
+            result.unavailable.length > 0 ? 'private, no-store' : 'private, max-age=600',
+          )
+          .header('Vary', 'Cookie')
+          .send(result)
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
+    },
+  )
 
   // -------------------------------------------------------------------------
   // GET /api/media/:assetId/video-info

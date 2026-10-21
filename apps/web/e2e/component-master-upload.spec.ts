@@ -90,8 +90,12 @@ test('component master upload: a picture uploaded into a master is owned by the 
     const tusCreation = page.waitForRequest(
       (r) => r.method() === 'POST' && /\/api\/uploads\/?$/.test(new URL(r.url()).pathname),
     )
+    // The renderer resolves pictures in batches (GET /api/media/urls).
     const mediaUrlOk = page.waitForResponse(
-      (r) => /\/api\/media\/[^/]+\/url/.test(r.url()) && r.status() === 200,
+      async (r) =>
+        /\/api\/media\/urls\?/.test(r.url()) &&
+        r.status() === 200 &&
+        Object.keys(((await r.json()) as { assets: object }).assets).length > 0,
       { timeout: 45_000 },
     )
 
@@ -114,9 +118,9 @@ test('component master upload: a picture uploaded into a master is owned by the 
     const created = await creation.response()
     expect(created?.status(), `tus create: ${errors.join(' | ')}`).toBe(201)
 
-    // The renderer resolves the stored picture through /api/media/:id/url.
+    // The renderer resolves the stored picture through /api/media/urls.
     const urlResponse = await mediaUrlOk
-    const assetId = new URL(urlResponse.url()).pathname.split('/').at(-2)!
+    const assetId = Object.keys(((await urlResponse.json()) as { assets: object }).assets)[0]!
 
     let after = baseline
     const deadline = Date.now() + 30_000

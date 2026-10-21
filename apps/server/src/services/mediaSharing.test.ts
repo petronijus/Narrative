@@ -363,6 +363,7 @@ describe('MediaService scoping', () => {
       deckId: null,
       componentId: 'c1',
       storageKey: 'k',
+      kind: 'image',
     } as never)
     canReadComponentMedia.mockResolvedValue(true)
     await expect(

@@ -74,6 +74,15 @@ describe('routeOf / netBucket', () => {
 
   it('buckets routes', () => {
     expect(netBucket('/api/media/:id/url')).toBe('net.mediaUrl')
+    // The batched lookup; a build whose API base is /api; the dev API's own origin.
+    expect(netBucket('/api/media/urls')).toBe('net.mediaUrl')
+    expect(netBucket('/api/api/media/urls')).toBe('net.mediaUrl')
+    expect(netBucket('/api/api/media/:id/url')).toBe('net.mediaUrl')
+    expect(netBucket('localhost:3001/api/media/urls')).toBe('net.mediaUrl')
+    // imgproxy on its own origin (development).
+    expect(netBucket('localhost:8080/:id/rs:fit:1280:1280:0/plain/s3:/b/k.jpg@avif')).toBe(
+      'net.imgproxy',
+    )
     expect(netBucket('/api/decks/:id')).toBe('net.api')
     expect(netBucket('/imgproxy/:id')).toBe('net.imgproxy')
     expect(netBucket('/storage/media/x.jpg')).toBe('net.storage')

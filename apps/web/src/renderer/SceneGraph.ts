@@ -54,6 +54,7 @@ import type { ObjectBounds } from './types'
 import type { RenderScheduler } from './RenderScheduler'
 import { BatchStager, rectDistance, stagingOrder, type Rect } from './textResolutionStaging.js'
 import { AdaptiveBudget, LongTaskWatch } from './restageBudget.js'
+import { withPixelDensity, type VariantFloor } from './pixelDensityContext.js'
 
 interface SceneNode {
   container: Container
@@ -243,6 +244,16 @@ export class SceneGraph {
    */
   private slideBoundsW = 0
   private slideBoundsH = 0
+
+  /**
+   * Device pixels per slide unit of the canvas's backing store — the
+   * renderer's resolution (Canvas.tsx sets it at init and on every zoom
+   * commit). Pictures pick their size variant by it (imageVariant.ts); null
+   * until the canvas says, which draws them from `display`.
+   */
+  private pixelDensity: number | null = null
+  /** The least variant a picture of this scene wants (Canvas.tsx: a picture a build scales up). */
+  private variantFloor: VariantFloor | null = null
 
   /**
    * P2: bleed offset — pixi-world position of slide (0,0). Non-zero when
@@ -456,6 +467,42 @@ export class SceneGraph {
     node.container.alpha = outsideFadeAlpha(node.data, this.slideBoundsW, this.slideBoundsH)
   }
 
+  /** The canvas's device pixels per slide unit (see `pixelDensity`). */
+  getPixelDensity(): number | null {
+    return this.pixelDensity
+  }
+
+  /**
+   * The canvas now draws `density` device pixels per slide unit: objects
+   * mounted from now on are mounted for it, and every mounted object whose
+   * renderer cares is told (a picture that now covers more pixels than its
+   * texture holds loads a larger variant and swaps it in).
+   */
+  setPixelDensity(density: number | null): void {
+    if (density === this.pixelDensity) return
+    this.pixelDensity = density
+    this.retellCanvasDensity()
+  }
+
+  /**
+   * The least variant a picture wants (pixelDensityContext.ts `VariantFloor`),
+   * or null. Called again when what the floor reads changed (the slide's
+   * builds): mounted pictures that now want more load it.
+   */
+  setVariantFloor(floor: VariantFloor | null): void {
+    this.variantFloor = floor
+    this.retellCanvasDensity()
+  }
+
+  private retellCanvasDensity(): void {
+    for (const node of this.nodes.values())
+      getRenderer(node.data.type)?.setCanvasDensity?.(
+        node.container,
+        this.pixelDensity,
+        this.variantFloor,
+      )
+  }
+
   /** The artboard size the outside fade is computed against (0 × 0: none set). */
   getSlideBounds(): { width: number; height: number } {
     return { width: this.slideBoundsW, height: this.slideBoundsH }
@@ -479,7 +526,11 @@ export class SceneGraph {
     }
 
     perfCountFor('sg.mount', data.type)
-    const container = renderer.mount(data)
+    const container = withPixelDensity(
+      this.pixelDensity,
+      () => renderer.mount(data),
+      this.variantFloor,
+    )
     this.root.addChild(container)
     const node = { container, data }
     this.nodes.set(data.id, node)

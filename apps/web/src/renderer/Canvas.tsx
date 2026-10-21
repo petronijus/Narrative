@@ -49,6 +49,8 @@ import { computeSlideNumber } from '@narrative/shared'
 import { setRenderingSlideNumber } from './slideNumberContext.js'
 import { setRenderingSurface } from './colourResolver.js'
 import { applyBackground } from './ArtboardBackground.js'
+import { deckPictureAssetIds } from './deckPictures.js'
+import { scaledUpObjectIds } from './imageVariant.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import { disposeComponentDocCache } from '../state/componentDocCache.js'
 import { markFirstPaint, markPixiReady } from '../state/loadTimings.js'
@@ -294,6 +296,9 @@ export function Canvas({
       ) {
         sceneGraph.setSlideBounds(initialArtboard.width, initialArtboard.height)
       }
+      // Pictures pick their size variant by the backing store's density
+      // (imageVariant.ts): set before the buffered changes mount anything.
+      sceneGraph.setPixelDensity(app.renderer.resolution)
 
       // OverlayCompositor: DOM overlay sync nad Pixi canvasem.
       // overlayRootEl je sousedící <div> s position:absolute;inset:0;pointer-events:none.
@@ -438,6 +443,31 @@ export function Canvas({
     activeSlideId !== null ? computeSlideNumber(store.getSlides(), activeSlideId) : undefined,
   )
   setRenderingSlideNumber(currentSlideNumber)
+
+  const deckStore = useDeckStore()
+  const deckStoreRef = useRef(deckStore)
+  deckStoreRef.current = deckStore
+
+  // A picture a build of the active slide scales up past its rest size
+  // (zoomIn, popIn, an overshooting easing) is drawn from `display`, the
+  // variant it had before the canvas chose (imageVariant.ts). The floor reads
+  // the slide when a picture chooses; a change of the slide's builds tells
+  // the mounted pictures again.
+  const activeSlideIdRef = useRef(activeSlideId)
+  activeSlideIdRef.current = activeSlideId
+  const scaledUpKey = useDeckSelector((store) => {
+    const slide = activeSlideId !== null ? store.getSlide(activeSlideId) : undefined
+    return slide === undefined ? '' : [...scaledUpObjectIds(slide)].sort().join(',')
+  })
+  useEffect(() => {
+    const instance = instanceRef.current
+    if (instance === null) return
+    instance.sceneGraph.setVariantFloor((picture) => {
+      const id = activeSlideIdRef.current
+      const slide = id !== null ? deckStoreRef.current.getSlide(id) : undefined
+      return slide !== undefined && scaledUpObjectIds(slide).has(picture.id) ? 'display' : undefined
+    })
+  }, [scaledUpKey, pixiReady])
   useEffect(() => {
     const instance = instanceRef.current
     if (instance === null) return
@@ -466,7 +496,38 @@ export function Canvas({
   // do — as long as the deck store still has that slide at the version the
   // scene was built from; otherwise it is applied as updates (addObject of a
   // mounted id updates it).
-  const deckStore = useDeckStore()
+
+  // Every picture of the deck resolved in one batched request (or a few, a
+  // hundred assets each) once the deck is there: the slide panel's
+  // thumbnails and the canvas then find their URLs cached instead of each
+  // asking (renderer/imageUrl.ts; performance.md → L3). Pictures added later
+  // are resolved as they mount, a task's worth per request.
+  useEffect(() => {
+    let done = false
+    const prefetch = (): boolean => {
+      const slides = deckStore.getSlides()
+      if (slides.length === 0) return false
+      let resolver: ReturnType<typeof getDefaultImageUrlResolver>
+      try {
+        resolver = getDefaultImageUrlResolver()
+      } catch {
+        return false
+      }
+      void resolver.prefetch(deckPictureAssetIds(slides))
+      return true
+    }
+    if (prefetch()) return
+    const unsubscribe = deckStore.subscribe(() => {
+      if (done || !prefetch()) return
+      done = true
+      unsubscribe()
+    })
+    return () => {
+      done = true
+      unsubscribe()
+    }
+  }, [deckStore])
+
   const applySlideChanges = (
     sceneGraph: SceneGraph,
     changes: ObjectChangeSet,
@@ -633,6 +694,9 @@ export function Canvas({
       if (container !== null && cw > 0 && ch > 0) {
         renderer.resize(cw, ch)
       }
+      // A picture that now covers more pixels than its texture holds loads
+      // its larger variant and swaps it in (objectRenderers/imageRenderer.ts).
+      inst.sceneGraph.setPixelDensity(effectiveRes)
       inst.sceneGraph.restageTextResolution(effectiveRes, visibleCanvasRect(inst.app.canvas))
     }
 

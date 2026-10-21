@@ -23,6 +23,7 @@ import { pathRenderer } from './pathRenderer'
 import { tableRenderer } from './tableRenderer'
 import type { Container } from 'pixi.js'
 import type { SlideObject } from '@narrative/shared'
+import type { VariantFloor } from '../pixelDensityContext'
 
 export interface ObjectRenderer<T extends SlideObject = SlideObject> {
   type: T['type']
@@ -46,6 +47,15 @@ export interface ObjectRenderer<T extends SlideObject = SlideObject> {
    * If not provided, mount() is used for thumbnails as well.
    */
   thumbnailMount?(data: T): Container
+  /**
+   * Optional: the canvas the node is drawn on now has `density` device
+   * pixels per slide unit (a zoom committed a new renderer resolution), or
+   * its scene's variant floor changed (SceneGraph.setPixelDensity /
+   * setVariantFloor). The image renderer loads a larger variant of a picture
+   * that now needs one (renderer/imageVariant.ts); the values at mount come
+   * from pixelDensityContext.ts.
+   */
+  setCanvasDensity?(node: Container, density: number | null, floor: VariantFloor | null): void
   /**
    * Repaint every part of `node` whose colour this renderer resolves through
    * `resolveColour` (fills, strokes, text colours, table cells and borders)

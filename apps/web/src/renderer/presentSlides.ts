@@ -49,7 +49,7 @@
 
 import { Container, Graphics, RenderTexture, Sprite, Texture, type TextureSource } from 'pixi.js'
 import type { ColourResolverFn } from './colourResolver.js'
-import type { Slide, SlideObject } from '@narrative/shared'
+import type { ImageVariant, Slide, SlideObject } from '@narrative/shared'
 import { perfCount, perfCountFor } from '@narrative/shared'
 import { applyBackground } from './ArtboardBackground.js'
 import { SLIDE_HEIGHT, SLIDE_WIDTH } from './constants.js'
@@ -63,6 +63,8 @@ import { fontFamilyVersions, subscribeFontFamilyChanges } from './fontChanges.js
 import { fontSignature, serialiseThumbnailInputs } from './thumbnailKey.js'
 import { collectHtmlTextRasters } from './htmlTextRaster.js'
 import { getDefaultImageUrlResolver } from './imageUrl.js'
+import { withPixelDensity } from './pixelDensityContext.js'
+import { scaledUpObjectIds } from './imageVariant.js'
 import { getRenderer } from './objectRenderers/index.js'
 import { attachLiveVideo } from './objectRenderers/videoRenderer.js'
 import { pendingRenderWork, whenRenderWorkIdle } from './renderWork.js'
@@ -275,6 +277,13 @@ export class PresentSlideCache {
   /** The pending keep-warm turn (a timer, then an idle callback): cancels it. */
   private keepWarmCancel: (() => void) | null = null
   private destroyed = false
+  /**
+   * The variant each picture of the deck is drawn from on every slide: the
+   * largest any slide needs (present/preloadMedia.ts). Every prepared slide
+   * stays on the GPU, so a photo shown full-bleed on one slide and small on
+   * another is one texture, not two.
+   */
+  private variantFloor: ReadonlyMap<string, ImageVariant> = new Map()
   private readonly unsubscribeColours: () => void
   private readonly unsubscribeFonts: () => void
 
@@ -715,6 +724,11 @@ export class PresentSlideCache {
     this.entries.set(spec.slide.id, { spec, prepared: scene, stale })
   }
 
+  /** The pictures' variants for the deck (see `variantFloor`); slides built from now on use them. */
+  setVariantFloor(floor: ReadonlyMap<string, ImageVariant>): void {
+    this.variantFloor = floor
+  }
+
   /** Mount the slide off stage, painted as the scene graph would paint it as the active slide. */
   private mount(spec: PresentSlideSpec): PreparedSlide {
     const root = new Container()
@@ -752,13 +766,22 @@ export class PresentSlideCache {
     let paintedWith: ColourResolverFn | null = null
     try {
       setRenderingSlideNumber(spec.slideNumber)
+      const floor = this.variantFloor
+      // A build that scales a picture up wants display (imageVariant.ts);
+      // the preload's variants say so too, this covers builds edited since.
+      const scaledUp = scaledUpObjectIds(spec.slide)
       withRenderingSurface(spec.surface, () => {
         paintedWith = getColourResolver()
         for (const data of spec.slide.objects) {
           const renderer = getRenderer(data.type)
           if (renderer === undefined) continue
           perfCountFor('sg.mount', data.type)
-          const container = renderer.mount(data)
+          // For the canvas it will be shown on, at the deck's variants.
+          const container = withPixelDensity(
+            this.sceneGraph.getPixelDensity(),
+            () => renderer.mount(data),
+            (picture) => (scaledUp.has(picture.id) ? 'display' : floor.get(picture.assetId)),
+          )
           container.alpha = outsideFadeAlpha(data as SlideObject, bounds.width, bounds.height)
           root.addChild(container)
           nodes.push({ id: data.id, container, data })

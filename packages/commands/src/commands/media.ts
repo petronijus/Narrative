@@ -12,6 +12,7 @@
  */
 
 import { z } from 'zod'
+import { IMAGE_VARIANTS } from '@narrative/shared'
 import { defineCommand } from '../registry.js'
 import { requireServices } from '../services.js'
 import {
@@ -153,15 +154,13 @@ export const mediaUrl = defineCommand({
   title: 'Image URL',
   description:
     'A signed URL of an image the deck (or the targeted master) shows — its own, or one it links from its ' +
-    "folder (a stamped component's, the folder's own) — in a size variant: thumb (small), preview, display (default, " +
-    'slide size) or original. Use it to look at an image a slide shows, or to hand it to the user. For videos use ' +
+    "folder (a stamped component's, the folder's own) — in a size variant: thumb (small), preview, " +
+    'medium (1280 px), display (default, 2560 px) or original. Use it to look ' +
+    'at an image a slide shows, or to hand it to the user. For videos use ' +
     'media.status; to see a whole slide as it looks, query.render.',
   input: z.strictObject({
     assetId: AssetIdSchema,
-    variant: z
-      .enum(['thumb', 'preview', 'display', 'original'])
-      .default('display')
-      .describe('Size variant (default display)'),
+    variant: z.enum(IMAGE_VARIANTS).default('display').describe('Size variant (default display)'),
   }),
   output: z.object({ url: z.string() }),
   role: 'viewer',
@@ -170,10 +169,14 @@ export const mediaUrl = defineCommand({
   readOnly: true,
   undo: 'n/a',
   confirm: 'never',
-  routes: [GET('/api/media/:assetId/url')],
+  // GET /api/media/urls is the same capability for the editor's whole set of
+  // pictures in one request (performance.md → L3): an agent asks for the one
+  // image it looks at.
+  routes: [GET('/api/media/:assetId/url'), GET('/api/media/urls')],
   examples: [
     { title: 'URL of an image on the slide', input: { assetId: 'asset-fixture' } },
     { title: 'A thumbnail', input: { assetId: 'asset-fixture', variant: 'thumb' } },
+    { title: 'At 1280 px', input: { assetId: 'asset-fixture', variant: 'medium' } },
   ],
   async handler(ctx, input) {
     return requireServices(ctx).media.url({

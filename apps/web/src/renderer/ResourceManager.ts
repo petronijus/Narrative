@@ -346,6 +346,16 @@ export class ResourceManager {
     return this.textures.get(url)?.texture ?? null
   }
 
+  /**
+   * Whether a texture of `url` is loaded or loading — held, or released and
+   * still within its grace. An image object that may be drawn from a smaller
+   * variant takes a larger one of the same picture this says is here instead
+   * of loading a second texture (objectRenderers/imageRenderer.ts).
+   */
+  hasTexture(url: string): boolean {
+    return this.textures.has(url)
+  }
+
   // -------------------------------------------------------------------------
   // P12c: procedural texture cache
   // -------------------------------------------------------------------------
