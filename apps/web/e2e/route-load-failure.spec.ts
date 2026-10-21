@@ -5,10 +5,13 @@
  * unmounted the whole tree and the editor stayed white.
  *
  * The failure is a Playwright route abort on the module request (the dev
- * server serves each source file as its own module). Chrome caches a failed
- * module fetch for the life of the document, so these also pin down which
- * failures Retry can recover in place (the page's own chunk, through a
- * cache-busting URL) and which only Reload can (a failed dependency).
+ * server serves each source file as its own module). Whether a browser keeps
+ * a failed module fetch in the document's module map differs: Chrome 153
+ * (Playwright's chromium-1243) did, so a failed dependency stayed failed
+ * until a reload; Chrome 156 (chromium-1248, 2026-10-16) fetches it again on
+ * the next import, so Retry recovers it in place. The specs therefore do not
+ * lean on that cache: a load Retry cannot recover is one whose module is
+ * still unreachable when Retry runs.
  */
 
 import { expect, test, type Page } from './fixtures/test'
@@ -69,10 +72,16 @@ test.describe('route chunk load failure', () => {
     }
   })
 
-  test('a failed dependency needs a reload: Retry says so, Reload recovers', async ({ page }) => {
-    // A module the page imports, not the page itself: Chrome keeps the failed
-    // dependency in the module map, so no in-page retry can fetch it again.
-    await failFirstRequests(page, '**/src/pages/accessTokenList.ts*')
+  test('a dependency Retry cannot fetch needs a reload: Retry says so, Reload recovers', async ({
+    page,
+  }) => {
+    // A module the page imports, not the page itself, unreachable through the
+    // retry — in a browser that caches the failure the retry cannot fetch it
+    // again, in one that does not it fails again — and back before the reload.
+    let reachable = false
+    await page.route('**/src/pages/accessTokenList.ts*', (route) =>
+      reachable ? route.continue() : route.abort('internetdisconnected'),
+    )
     await page.goto('/settings/access-tokens')
 
     const card = failureCard(page)
@@ -82,6 +91,7 @@ test.describe('route chunk load failure', () => {
     await expect(card).toContainText('Retrying didn’t help')
     const reload = card.getByRole('button', { name: 'Reload' })
     await expect(reload).toBeFocused()
+    reachable = true
     await reload.click()
     await expect(page.getByRole('heading', { name: 'Access tokens', exact: true })).toBeVisible()
   })

@@ -9,10 +9,12 @@
  * rejection in its lazy object, so rendering it again only re-throws — a
  * retry needs a fresh lazy object, which is what this wrapper keeps.
  *
- * The browser caches too. Chrome (verified on 154, 2026-10-03) remembers a
- * failed module fetch in the document's module map: calling the same
- * `import()` again rejects at once without a request, and a module that
- * imports a failed dependency fails the same way. So a retry:
+ * The browser may cache too. Chrome 154 (verified 2026-10-03; 153 again
+ * 2026-10-21) remembers a failed module fetch in the document's module map:
+ * calling the same `import()` again rejects at once without a request, and a
+ * module that imports a failed dependency fails the same way. Chrome 156
+ * (verified 2026-10-21) fetches a failed module again on the next import.
+ * So a retry:
  *
  *   1. calls the original loader again — enough in a browser that does not
  *      cache failures, and the only path that re-runs Vite's CSS preloads;
@@ -20,8 +22,9 @@
  *      imports that URL with a cache-busting query — recovers a failed
  *      top-level chunk (its dependencies resolve to their usual URLs, so no
  *      module is instantiated twice);
- *   3. otherwise gives up: a failed *dependency* stays failed until the page
- *      reloads, which is why the error boundary always offers Reload.
+ *   3. otherwise gives up: in a caching browser a failed *dependency* stays
+ *      failed until the page reloads, which is why the error boundary always
+ *      offers Reload.
  *
  * Errors thrown by a route load are wrapped in `RouteLoadError`, so the
  * boundary tells "this page's code did not arrive" from a render bug without
