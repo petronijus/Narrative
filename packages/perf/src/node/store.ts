@@ -43,13 +43,16 @@ export interface Baselines {
 /**
  * The series a result belongs to: `<bench>@<mode>/<runtime>` — a dev, a prod
  * and a profiling build each keep their own baseline, as do Chromium, WebKit
- * and the desktop shells (`fill.solid.mount@prod/chromium-browser`).
+ * and the desktop shells (`fill.solid.mount@prod/chromium-browser`); a page
+ * at another device scale than 1 is a series of its own (`…/webkit-tauri-2x`).
  */
 export function baselineKey(benchId: string, fp: Pick<Fingerprint, 'build' | 'browser'>): string {
   const runtime =
     fp.browser === undefined
       ? 'node'
-      : `${fp.browser.engine}-${fp.browser.shell}${fp.browser.headed === true ? '-headed' : ''}`
+      : `${fp.browser.engine}-${fp.browser.shell}${fp.browser.headed === true ? '-headed' : ''}${
+          (fp.browser.deviceScale ?? 1) !== 1 ? `-${fp.browser.deviceScale}x` : ''
+        }`
   return `${benchId}@${fp.build.mode}/${runtime}`
 }
 

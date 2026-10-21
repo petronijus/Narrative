@@ -2,7 +2,8 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { buildEnv, clientEnvFiles } from './webBuild.js'
+import { repoRoot } from './budgetFiles.js'
+import { buildEnv, clientEnvDir, clientEnvFiles } from './webBuild.js'
 
 describe('the client variables of a perf build', () => {
   it("reads only VITE_* from the env files, in Vite's order", () => {
@@ -27,5 +28,13 @@ describe('the client variables of a perf build', () => {
     expect(env['VITE_BYPASS_AUTH']).toBe('true')
     expect(env['VITE_API_URL']).toBe('/api')
     expect(env['NODE_ENV']).toBe('production')
+  })
+
+  it('takes them from another checkout when NARRATIVE_PERF_CLIENT_ENV_DIR names one', () => {
+    expect(clientEnvDir({})).toBe(repoRoot())
+    expect(clientEnvDir({ NARRATIVE_PERF_CLIENT_ENV_DIR: '' })).toBe(repoRoot())
+    expect(clientEnvDir({ NARRATIVE_PERF_CLIENT_ENV_DIR: '/checkouts/main' })).toBe(
+      '/checkouts/main',
+    )
   })
 })

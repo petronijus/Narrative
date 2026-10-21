@@ -13,7 +13,9 @@
  * The client variables (`VITE_*`) come from this checkout's env files, also
  * for a worktree of another revision (`just perf-compare`): its `.env` is
  * gitignored and missing, and without `VITE_BYPASS_AUTH` its build showed
- * the sign-in page instead of the deck.
+ * the sign-in page instead of the deck. `NARRATIVE_PERF_CLIENT_ENV_DIR`
+ * names another checkout to take them from (a worktree run as a checkout of
+ * its own: `just perf` in the feat/desktop worktree).
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -107,9 +109,20 @@ function viteBin(webDir: string): string {
   return path.join(path.dirname(pkg), bin)
 }
 
-/** The client variables of this checkout (the process's repository) for `mode`. */
+/**
+ * The checkout whose env files give a build its client variables: this one
+ * (the process's repository), or `NARRATIVE_PERF_CLIENT_ENV_DIR` — a git
+ * worktree of a branch (`feat/desktop`) has no decrypted `.env` of its own and
+ * takes the main checkout's.
+ */
+export function clientEnvDir(env: NodeJS.ProcessEnv = process.env): string {
+  const dir = env['NARRATIVE_PERF_CLIENT_ENV_DIR']
+  return dir !== undefined && dir !== '' ? dir : repoRoot()
+}
+
+/** The client variables of this checkout for `mode`. */
 function checkoutClientEnv(mode: BuiltMode): Record<string, string> {
-  return clientEnvFiles(repoRoot(), viteMode(mode))
+  return clientEnvFiles(clientEnvDir(), viteMode(mode))
 }
 
 /** `vite build` of `webDir` (an apps/web) in `mode`; returns the outDir's absolute path. */

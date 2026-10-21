@@ -14,6 +14,11 @@
  *   PERF_RUNS, PERF_WARMUP   recorded / warm-up runs per side (default 10 / 2)
  *   PERF_STORE=0        print only, store nothing
  *   PERF_HEADED=1       the browser draws in a window (`--headed`); its own baseline series
+ *   PERF_SHELL=tauri    the page is the Tauri window (`--shell tauri`, tauriPage.ts); its own series
+ *   PERF_DEVICE_SCALE   the page's devicePixelRatio (default: 1 in a browser, the screen's in Tauri)
+ *   PERF_ANTIALIAS=off  every WebGL context without MSAA (a diagnostic A/B, W4): printed, never stored
+ *   PERF_LOW_POWER=1    run WebKit in macOS Low Power Mode on purpose (its 30 fps cap is the
+ *                       subject: performance.md → E, Low Power Mode): printed, never stored
  *   PERF_PROFILE=1      one run with a CPU profile (Chromium), written next to the results
  *   PERF_VERDICT_FILE   where to write the A/B verdicts (JSON) for perf-compare / perf-bisect
  *
@@ -49,6 +54,7 @@ import { collectFingerprint, machineName, openResultStore, readBudget } from '@n
 import { installReactPerfHook } from './reactHook'
 import { cdpProfiler, summariseProfile, type CpuProfile } from './profile'
 import type { Captured } from './page'
+import { isTauriPage, systemWebKitVersion, tauriPage } from './tauriPage'
 
 const REPO = fileURLToPath(new URL('../../../../../', import.meta.url))
 
@@ -83,13 +89,41 @@ export const PERF = {
   mode: (process.env['PERF_MODE'] ?? 'dev') as BuildMode,
   runs: num('PERF_RUNS', 10),
   warmup: num('PERF_WARMUP', 2),
-  store: process.env['PERF_STORE'] !== '0',
+  store:
+    process.env['PERF_STORE'] !== '0' &&
+    process.env['PERF_ANTIALIAS'] !== 'off' &&
+    process.env['PERF_LOW_POWER'] !== '1',
+  /** WebKit in Low Power Mode measured on purpose (refuseToRun lets it through). */
+  lowPower: process.env['PERF_LOW_POWER'] === '1',
   profile: process.env['PERF_PROFILE'] === '1',
   sides: sides(),
   gpu: process.env['PERF_GPU'] === '1',
   /** A window on the screen (`just perf --headed`), recorded in the fingerprint. */
   headed: process.env['PERF_HEADED'] === '1',
+  /** Where the page runs: a Playwright browser, or the Tauri window (`--shell tauri`). */
+  shell: (process.env['PERF_SHELL'] === 'tauri' ? 'tauri' : 'browser') as 'browser' | 'tauri',
+  /** The page's devicePixelRatio; null = the shell's own (1 in a Playwright context, the screen's in Tauri). */
+  deviceScale: process.env['PERF_DEVICE_SCALE'] ? num('PERF_DEVICE_SCALE', 1) : null,
   noMask: process.env['PERF_NO_MASK'] === '1',
+  antialiasOff: process.env['PERF_ANTIALIAS'] === 'off',
+}
+
+/**
+ * PERF_ANTIALIAS=off: WebGL contexts are made without MSAA, whatever the
+ * renderer asks (renderer/Canvas.tsx asks for `antialias: true`) — what
+ * multisampling costs at a device scale, without touching the renderer.
+ */
+const ANTIALIAS_OFF = `(() => {
+  const get = HTMLCanvasElement.prototype.getContext
+  HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+    if (type === 'webgl2' || type === 'webgl') attrs = { ...(attrs || {}), antialias: false }
+    return get.call(this, type, attrs)
+  }
+})();`
+
+/** The init scripts every page of a run gets besides the React hook. */
+function extraInitScripts(): string[] {
+  return PERF.antialiasOff ? [ANTIALIAS_OFF] : []
 }
 
 /** The bench ids of a spec that this run asked for. */
@@ -134,10 +168,38 @@ export async function sideContext(
   const context = await browser.newContext({
     baseURL: side.baseURL,
     viewport,
-    deviceScaleFactor: 1,
+    deviceScaleFactor: PERF.shell === 'browser' ? (PERF.deviceScale ?? 1) : 1,
   })
   await context.addInitScript(installReactPerfHook)
+  for (const script of extraInitScripts()) await context.addInitScript(script)
   return context
+}
+
+/**
+ * The page a side measures in: a new page of `context`, or — `--shell tauri`
+ * — the Tauri window on the side's origin (`context` then only seeds and
+ * cleans up: its `request` posts the scene).
+ */
+export async function perfPage(
+  context: BrowserContext,
+  side: SideSpec,
+  viewport: { width: number; height: number },
+): Promise<Page> {
+  if (PERF.shell === 'browser') return context.newPage()
+  return tauriPage(context, {
+    baseURL: side.baseURL,
+    viewport,
+    initScripts: extraInitScripts(),
+    ...(PERF.deviceScale !== null ? { deviceScale: PERF.deviceScale } : {}),
+  })
+}
+
+/** A bench the Tauri window cannot run, and why (null: it can). */
+export function tauriCannot(id: string): string | null {
+  if (PERF.shell !== 'tauri') return null
+  if (id === 'present.presenter.window') return 'the presenter view is a second window'
+  if (id.startsWith('deck.open.cold')) return 'a cold open needs a fresh profile per run'
+  return null
 }
 
 export interface SideState {
@@ -166,13 +228,35 @@ async function fingerprintFor(browser: Browser, state: SideState): Promise<Finge
     },
     cwd: REPO,
   })
-  const name = browser.browserType().name()
-  fp.browser = {
-    name,
-    version: browser.version(),
-    engine: name === 'webkit' ? 'webkit' : name === 'firefox' ? 'gecko' : 'chromium',
-    shell: 'browser',
-    ...(PERF.headed ? { headed: true as const } : {}),
+  const dpr = await state.page.evaluate(() => window.devicePixelRatio)
+  if (PERF.antialiasOff) {
+    const aa = await state.page.evaluate(
+      () =>
+        document.createElement('canvas').getContext('webgl2')?.getContextAttributes()?.antialias,
+    )
+    if (aa !== false)
+      throw new Error('PERF_ANTIALIAS=off did not take: a context still antialiases')
+    console.log('PERF antialias off (every WebGL context without MSAA; results not stored)')
+  }
+  if (isTauriPage(state.page)) {
+    // The system's WKWebView, in a window on the screen (always paced by the display).
+    fp.browser = {
+      name: 'webkit',
+      version: systemWebKitVersion(),
+      engine: 'webkit',
+      shell: 'tauri',
+      ...(dpr !== 1 ? { deviceScale: dpr } : {}),
+    }
+  } else {
+    const name = browser.browserType().name()
+    fp.browser = {
+      name,
+      version: browser.version(),
+      engine: name === 'webkit' ? 'webkit' : name === 'firefox' ? 'gecko' : 'chromium',
+      shell: 'browser',
+      ...(PERF.headed ? { headed: true as const } : {}),
+      ...(dpr !== 1 ? { deviceScale: dpr } : {}),
+    }
   }
   if (info.gl !== null) fp.gl = info.gl
   return fp
@@ -283,8 +367,14 @@ export async function runScenarios<S extends SideState>(o: {
   const fps = new Map<S, Fingerprint>()
   for (const s of o.states) {
     const fp = await fingerprintFor(o.browser, s)
-    const refused = refuseToRun(fp)
+    const lowPower = fp.power?.lowPowerMode === true
+    if (PERF.lowPower && !lowPower)
+      throw new Error('PERF_LOW_POWER=1 but Low Power Mode is off: switch it on for this run')
+    // PERF_LOW_POWER=1: the cap is what this run measures.
+    const refused = PERF.lowPower ? [] : refuseToRun(fp)
     if (refused.length > 0) throw new Error(`refusing to run: ${refused.join('; ')}`)
+    if (PERF.lowPower)
+      console.log('PERF Low Power Mode on, on purpose: results printed, not stored')
     fps.set(s, fp)
     for (const line of formatFingerprint(fp))
       console.log(`${line}${o.states.length > 1 ? ` [${s.side.name}]` : ''}`)
@@ -295,6 +385,11 @@ export async function runScenarios<S extends SideState>(o: {
 
   const failures: string[] = []
   for (const id of o.ids) {
+    const cannot = tauriCannot(id)
+    if (cannot !== null) {
+      console.log(`PERF skipped ${id} in the Tauri window: ${cannot}`)
+      continue
+    }
     try {
       verdicts.push(...(await runOne(id)))
     } catch (err) {

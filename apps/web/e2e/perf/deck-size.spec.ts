@@ -5,8 +5,8 @@
  * again), and on the 100-slide deck switching slides, dragging a slide to a
  * new place and adding one. Each slide holds 6 texts, 4 rectangles and 2
  * pictures (packages/perf/src/scenes.ts → deckOps). PERF_SLIDES changes the
- * size of the slide.* benches' deck (default 100; any other size is printed,
- * not stored).
+ * size of the slide.* benches' deck and of the `deck.open.*.100` benches'
+ * (default 100; any other size is printed, not stored).
  *
  * The open metrics are taken on the page's clock (ms from navigation start):
  * first paint and socket sync from state/loadTimings.ts, every object of the
@@ -20,6 +20,7 @@ import { expect, test } from '../fixtures/test'
 import {
   launchOptions,
   PERF,
+  perfPage,
   runScenarios,
   selected,
   sideContext,
@@ -162,13 +163,12 @@ test('deck size', async ({ browser }) => {
   const sizes = new Set<number>()
   for (const id of ids) {
     if (id.endsWith('.10')) sizes.add(10)
-    else if (id.startsWith('deck.open')) sizes.add(100)
     else sizes.add(SLIDES)
   }
   const states: DeckState[] = []
   for (const side of PERF.sides) {
     const context = await sideContext(browser, side, VIEWPORT)
-    const page = await context.newPage()
+    const page = await perfPage(context, side, VIEWPORT)
     const decks = new Map<number, Deck>()
     for (const n of sizes) {
       const t = Date.now()
@@ -204,12 +204,12 @@ test('deck size', async ({ browser }) => {
     browser,
     ids,
     states,
-    sceneIsDefault: SLIDES === 100 || !ids.some((i) => SLIDE_IDS.includes(i)),
+    sceneIsDefault: SLIDES === 100 || ids.every((i) => i.endsWith('.10')),
     runs: {
       'deck.open.cold.10': open(10, true),
       'deck.open.warm.10': open(10, false),
-      'deck.open.cold.100': open(100, true),
-      'deck.open.warm.100': open(100, false),
+      'deck.open.cold.100': open(SLIDES, true),
+      'deck.open.warm.100': open(SLIDES, false),
       'slide.switch.100': async (s, def) => {
         const deck = await onSlideDeck(s)
         const c = await capture(s.page, async (inputEnd) => {

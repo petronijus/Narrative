@@ -5,7 +5,8 @@
  * (apps/web/e2e/perf, which stores, compares and prints — lib/driver.ts).
  *
  *   perf [ids…] [--mode dev|prod|profiling] [--layer I|C] [--runs N] [--warmup N]
- *        [--browser chromium|webkit] [--no-build] [--swiftshader]
+ *        [--browser chromium|webkit] [--headed] [--shell tauri] [--device-scale N]
+ *        [--no-build] [--swiftshader]
  *   perf-compare <revA> <revB> [ids…] [--runs N]   (`.` = this working tree)
  *   perf-bisect <id> <good> <bad> [--runs N]
  *   perf-profile <id> [--mode profiling|prod|dev]
@@ -18,6 +19,12 @@
  * `--swiftshader` in software, as headless Chromium does by default — work
  * counts are the same either way, timings are not, and a crowded slide on
  * SwiftShader takes minutes per drag on a busy machine.
+ * `--shell tauri` measures in the Tauri desktop window instead (macOS: the
+ * system WKWebView; apps/desktop-tauri built with its `perf-driver` feature,
+ * e2e/perf/lib/tauriPage.ts) — the same build served the same way, the scene
+ * seeded by Playwright, native input; `--device-scale N` sets the page's
+ * devicePixelRatio (a Playwright context; in Tauri WebKit's override — the
+ * window's own is the screen's).
  * `--layer C` runs every bench with work counters, two runs each, in dev —
  * the counter gate of `just ci` (then `perf counters` compares the budgets).
  */
@@ -53,7 +60,10 @@ export function parseArgs(argv: readonly string[]): Args {
     if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=', 2) as [string, string | undefined]
       if (v !== undefined) flags.set(k, v)
-      else if (['mode', 'layer', 'runs', 'warmup', 'browser'].includes(k) && i + 1 < argv.length)
+      else if (
+        ['mode', 'layer', 'runs', 'warmup', 'browser', 'shell', 'device-scale'].includes(k) &&
+        i + 1 < argv.length
+      )
         flags.set(k, argv[++i]!)
       else flags.set(k, true)
     } else positional.push(a)
@@ -95,6 +105,8 @@ interface PlaywrightRun {
   browser: 'chromium' | 'webkit'
   /** A window on the screen instead of a headless browser (`--headed`). */
   headed?: boolean
+  /** The Tauri window instead of a Playwright page (`--shell tauri`). */
+  shell?: 'browser' | 'tauri'
   env?: NodeJS.ProcessEnv
 }
 
@@ -111,9 +123,11 @@ function playwright(root: string, o: PlaywrightRun): Promise<number> {
     PERF_GPU: '1',
     ...(o.browser === 'webkit' ? { PW_WEBKIT: '1' } : {}),
     ...(o.headed === true ? { PERF_HEADED: '1' } : {}),
+    ...(o.shell === 'tauri' ? { PERF_SHELL: 'tauri' } : {}),
     ...o.env,
   }
-  const project = o.browser === 'webkit' ? 'perf-webkit' : 'perf'
+  // In the Tauri window the browser only seeds the scene: Chromium, headless.
+  const project = o.browser === 'webkit' && o.shell !== 'tauri' ? 'perf-webkit' : 'perf'
   return new Promise((resolve, reject) => {
     const child = spawn(
       'pnpm',
@@ -123,7 +137,7 @@ function playwright(root: string, o: PlaywrightRun): Promise<number> {
         'test',
         'e2e/perf',
         `--project=${project}`,
-        ...(o.headed === true ? ['--headed'] : []),
+        ...(o.headed === true && o.shell !== 'tauri' ? ['--headed'] : []),
       ],
       {
         cwd: path.join(root, 'apps', 'web'),
@@ -133,6 +147,29 @@ function playwright(root: string, o: PlaywrightRun): Promise<number> {
     )
     child.on('error', reject)
     child.on('close', (code) => resolve(code ?? 1))
+  })
+}
+
+/**
+ * The Tauri shell's perf build (a debug build with the `perf-driver` feature;
+ * cargo's incremental build, seconds when nothing changed).
+ */
+function buildTauri(root: string): Promise<void> {
+  const cargoHome = path.join(os.homedir(), '.cargo', 'bin')
+  const env = { ...process.env, PATH: `${process.env['PATH'] ?? ''}:${cargoHome}` }
+  log('building the Tauri shell (cargo build --features perf-driver)')
+  return new Promise((resolve, reject) => {
+    const child = spawn('cargo', ['build', '--features', 'perf-driver'], {
+      cwd: path.join(root, 'apps', 'desktop-tauri', 'src-tauri'),
+      env,
+      stdio: 'inherit',
+    })
+    child.on('error', (err) =>
+      reject(new Error(`--shell tauri needs Rust (rustup.rs): ${err.message}`)),
+    )
+    child.on('close', (code) =>
+      code === 0 ? resolve() : reject(new Error(`cargo build failed (${code})`)),
+    )
   })
 }
 
@@ -172,8 +209,13 @@ async function perf(args: Args): Promise<number> {
   const layer = flag(args, 'layer')
   const m = layer === 'C' ? 'dev' : mode(args, 'prod')
   const browser = (flag(args, 'browser') ?? 'chromium') as 'chromium' | 'webkit'
+  const shell = flag(args, 'shell') ?? 'browser'
+  if (shell !== 'browser' && shell !== 'tauri')
+    throw new Error(`--shell ${shell}: browser or tauri`)
+  const deviceScale = flag(args, 'device-scale')
   const ids = resolveIds(args.positional, layer)
   await requireDevBackend()
+  if (shell === 'tauri' && !args.flags.has('no-build')) await buildTauri(root)
   const co = await checkout(root, WORKING_TREE, perfHome())
   const s = await serve(co, m, !args.flags.has('no-build'))
   try {
@@ -182,6 +224,7 @@ async function perf(args: Args): Promise<number> {
       mode: m,
       browser,
       headed: args.flags.has('headed'),
+      shell,
       sides: [
         { name: m, baseURL: s.url, ...(s.version !== undefined ? { version: s.version } : {}) },
       ],
@@ -190,6 +233,7 @@ async function perf(args: Args): Promise<number> {
         ...(flag(args, 'runs') !== undefined ? { PERF_RUNS: flag(args, 'runs') } : {}),
         ...(flag(args, 'warmup') !== undefined ? { PERF_WARMUP: flag(args, 'warmup') } : {}),
         ...(args.flags.has('swiftshader') ? { PERF_GPU: '0' } : {}),
+        ...(deviceScale !== undefined ? { PERF_DEVICE_SCALE: deviceScale } : {}),
       },
     })
   } finally {

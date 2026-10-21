@@ -33,6 +33,7 @@ import { expect, test } from '../fixtures/test'
 import {
   launchOptions,
   PERF,
+  perfPage,
   runScenarios,
   selected,
   sideContext,
@@ -351,12 +352,14 @@ test('present mode', async ({ browser }) => {
     : PERF.sides
   for (const side of sides) {
     const context = await sideContext(browser, side, VIEWPORT)
+    if (keepWarmAb && PERF.shell === 'tauri')
+      throw new Error('PERF_KEEP_WARM_AB runs in a browser: the Tauri window has one page')
     if (keepWarmAb && side.name === 'keep-warm off')
       await context.addInitScript(() => {
         ;(window as unknown as { __narrative_perf_keepWarm?: boolean }).__narrative_perf_keepWarm =
           false
       })
-    const page = await context.newPage()
+    const page = await perfPage(context, side, VIEWPORT)
     const decks = new Map<DeckKind, PresentDeck>()
     for (const kind of kinds) {
       const t = Date.now()
@@ -395,6 +398,12 @@ test('present mode', async ({ browser }) => {
           })
         }
         const interval = await refreshInterval(s.page)
+        // A covered or hidden window is throttled (WebKit drew a headed page
+        // every 765 ms behind another window, 2026-10-21): its frames say nothing.
+        if (interval > 40)
+          throw new Error(
+            `the page draws every ${Math.round(interval)} ms — its window is covered or hidden and throttled; keep it in front`,
+          )
         let advances: AdvanceRecord[] = []
         // An older build's harness (an A/B's "before") has no glLive: 0.
         const texturesAtReady = await s.page.evaluate(

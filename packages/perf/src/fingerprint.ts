@@ -65,6 +65,12 @@ export interface Fingerprint {
      * display as an app's window is; absent for a headless browser.
      */
     headed?: true
+    /**
+     * The page's devicePixelRatio when it is not 1: a Tauri window on a
+     * Retina screen draws 4× the pixels of a 1× Playwright page of the same
+     * size. Absent = 1 (every result before 2026-10-20).
+     */
+    deviceScale?: number
   }
   gl?: { vendor: string; renderer: string }
   /** ISO time the fingerprint was taken. */
@@ -145,6 +151,8 @@ export function comparability(
     if (ba.shell !== bb.shell) reasons.push(`different shells (${ba.shell} vs ${bb.shell})`)
     if ((ba.headed === true) !== (bb.headed === true))
       reasons.push(`a headed vs a headless browser`)
+    if ((ba.deviceScale ?? 1) !== (bb.deviceScale ?? 1))
+      reasons.push(`different device scales (${ba.deviceScale ?? 1}× vs ${bb.deviceScale ?? 1}×)`)
   }
   if (a.gl?.renderer !== b.gl?.renderer)
     reasons.push(

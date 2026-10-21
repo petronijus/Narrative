@@ -10,6 +10,7 @@ import { expect, test } from '../fixtures/test'
 import {
   launchOptions,
   PERF,
+  perfPage,
   runScenarios,
   selected,
   sideContext,
@@ -35,8 +36,9 @@ test('light slide', async ({ browser }) => {
 
   const states: Light[] = []
   for (const side of PERF.sides) {
-    const context = await sideContext(browser, side, { width: 1600, height: 1000 })
-    const page = await context.newPage()
+    const viewport = { width: 1600, height: 1000 }
+    const context = await sideContext(browser, side, viewport)
+    const page = await perfPage(context, side, viewport)
     const deckId = await createDeck(context.request, `perf light slide (${side.name})`)
     const { ops, boxes } = lightSlideOps()
     await applyOps(context.request, deckId, ops)

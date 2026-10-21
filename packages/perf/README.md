@@ -43,13 +43,26 @@ replaced baseline to `baselines.history.jsonl`.
 ## Running the benches
 
 `just perf [ids…] [--mode prod|dev|profiling] [--layer I|C] [--runs N]
-[--warmup N] [--browser chromium|webkit] [--swiftshader] [--headed] [--no-build]` (the
+[--warmup N] [--browser chromium|webkit] [--swiftshader] [--headed] [--shell tauri]
+[--device-scale N] [--no-build]` (the
 dev stack must be up). Chromium draws with the machine's GPU unless
 `--swiftshader`; counts do not depend on it, timings do.
 `--headed` draws in a window on the screen, paced by the display as the
 Tauri app's window is (a headless WebKit or Chromium paces itself); its
 results are a series of their own (`…/webkit-browser-headed`), never
 compared with a headless run.
+
+`--shell tauri` measures in the Tauri desktop window instead (macOS, the
+system WKWebView; `apps/desktop-tauri/README.md` → Measuring it): the same
+build and backend, the scene seeded by Playwright, native input; a series of
+its own (`…/webkit-tauri`, `…/webkit-tauri-2x` on a Retina screen — a page
+at a device scale other than 1 never compares with a 1× one). It cannot run
+`present.presenter.window` (a second window) or the cold opens (a fresh
+profile per run): those are skipped with the reason. `--device-scale N` sets
+the page's devicePixelRatio, in a Playwright context or the Tauri window.
+Two diagnostics print without storing: `PERF_ANTIALIAS=off` (WebGL without
+MSAA, through an init script) and `PERF_LOW_POWER=1` (WebKit in macOS Low
+Power Mode on purpose; otherwise refused).
 
 - **prod** (default) builds `apps/web` with NODE_ENV=production and
   production's relative endpoints (`VITE_API_URL=/api`,
@@ -58,6 +71,10 @@ compared with a headless run.
   `preview.proxy`) route `/api`, `/ws`, `/imgproxy`, `/storage` to the dev
   backend the way production's Caddyfile routes them — and points Playwright
   at it (`PW_BASE_URL`, `apps/web/playwright.config.ts`);
+  A build takes its client variables (`VITE_*`, `VITE_BYPASS_AUTH` among
+  them) from this checkout's env files; `NARRATIVE_PERF_CLIENT_ENV_DIR`
+  names another checkout's (a git worktree such as `feat/desktop`'s has no
+  decrypted `.env`, and without the bypass its build shows the sign-in page);
 - **profiling** is the same build with `react-dom/profiling` and kept
   function names (`vite build --mode profiling`): React render times and a
   readable CPU profile on a prod-like build;

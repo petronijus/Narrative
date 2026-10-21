@@ -16,6 +16,7 @@ import { caret } from '../fixtures/keys'
 import {
   launchOptions,
   PERF,
+  perfPage,
   runScenarios,
   selected,
   sideContext,
@@ -29,6 +30,7 @@ import {
   openDeck,
   screenCentre,
   settle,
+  waitVisible,
 } from './lib/page'
 import {
   applyOps,
@@ -82,8 +84,9 @@ test('crowded slide', async ({ browser }) => {
 
   const states: Crowded[] = []
   for (const side of PERF.sides) {
-    const context = await sideContext(browser, side, { width: 1800, height: 1100 })
-    const page = await context.newPage()
+    const viewport = { width: 1800, height: 1100 }
+    const context = await sideContext(browser, side, viewport)
+    const page = await perfPage(context, side, viewport)
     const deckId = await createDeck(context.request, `perf crowded slide (${side.name})`)
     const assets = await uploadPhotos(context.request, deckId, photoFiles())
     const { ops, boxes } = crowdedSlideOps(SCENE, assets)
@@ -239,9 +242,7 @@ test('crowded slide', async ({ browser }) => {
         const box = s.boxes.get('probe-text')!
         const p = await screenCentre(s.page, box)
         await s.page.mouse.dblclick(p.x, p.y)
-        await expect(
-          s.page.locator('[data-shortcut-scope="canvas"] [contenteditable="true"]').first(),
-        ).toBeVisible()
+        await waitVisible(s.page, '[data-shortcut-scope="canvas"] [contenteditable="true"]')
         await s.page.keyboard.press(caret.textEnd)
         await settle(s.page)
         const c = await capture(s.page, async (inputEnd) => {

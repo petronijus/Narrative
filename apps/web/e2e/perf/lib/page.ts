@@ -12,6 +12,7 @@ import type { Page } from '@playwright/test'
 import type { MetricSpec } from '@narrative/perf'
 import type { PerfHarnessApi, PerfRecording, SettleResult } from '../../../src/perf/harness'
 import { expect } from '../../fixtures/test'
+import { isTauriPage } from './tauriPage'
 
 declare global {
   interface Window {
@@ -236,6 +237,24 @@ export async function screenCentre(
   return q
 }
 
+/**
+ * Wait until an element matching `selector` is in the page with a size —
+ * `expect(locator).toBeVisible()` for any page, the Tauri window included
+ * (Playwright's matchers need its own Locator).
+ */
+export async function waitVisible(page: Page, selector: string, timeoutMs = 30_000): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate((sel) => {
+          const r = document.querySelector(sel)?.getBoundingClientRect()
+          return r !== undefined && r.width > 0 && r.height > 0
+        }, selector),
+      { timeout: timeoutMs, message: `${selector} never became visible` },
+    )
+    .toBe(true)
+}
+
 /** The object's current position as the canvas has it. */
 export async function objectXY(page: Page, id: string): Promise<{ x: number; y: number } | null> {
   return page.evaluate((i) => {
@@ -252,14 +271,28 @@ export async function objectXY(page: Page, id: string): Promise<{ x: number; y: 
  */
 export async function assertPerfOff(page: Page, deckId: string, mode: string): Promise<void> {
   if (mode === 'dev') return
+  const harnessChunk = /\/assets\/harness-[^/]*\.js/
   const fetched: string[] = []
   const onRequest = (r: { url(): string }): void => {
-    if (/\/assets\/harness-[^/]*\.js/.test(r.url())) fetched.push(r.url())
+    if (harnessChunk.test(r.url())) fetched.push(r.url())
   }
-  page.on('request', onRequest)
+  // A browser page reports every request; the Tauri window has no request
+  // events, and its Resource Timing (read below, as in any page) says the same.
+  const tauri = isTauriPage(page)
+  if (!tauri) page.on('request', onRequest)
   await page.goto(`/deck/${deckId}`)
-  await expect(page.locator('.artboard')).toBeVisible({ timeout: 60_000 })
+  await waitVisible(page, '.artboard', 60_000)
   await page.waitForTimeout(1500)
+  fetched.push(
+    ...(await page.evaluate(
+      (src) =>
+        performance
+          .getEntriesByType('resource')
+          .map((e) => e.name)
+          .filter((n) => new RegExp(src).test(n)),
+      harnessChunk.source,
+    )),
+  )
   const state = await page.evaluate(() => ({
     // PERF_COUNTS_KEY of @narrative/shared's perfCounters.ts.
     counts: (globalThis as Record<symbol, unknown>)[Symbol.for('narrative.perf.counts')] ?? null,
@@ -268,7 +301,7 @@ export async function assertPerfOff(page: Page, deckId: string, mode: string): P
       (window as unknown as { __narrative_selection_snapshot?: unknown })
         .__narrative_selection_snapshot !== undefined,
   }))
-  page.off('request', onRequest)
+  if (!tauri) page.off('request', onRequest)
   expect(fetched, 'the harness chunk was fetched without ?perf=1').toEqual([])
   expect(state, 'perf is off without ?perf=1').toEqual({
     counts: null,

@@ -32,6 +32,9 @@ use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_opener::OpenerExt;
 
+#[cfg(feature = "perf-driver")]
+mod perf_driver;
+
 /// The server's OAuth state cookie lives 10 minutes (apps/server/src/routes/auth.ts).
 const PENDING_TTL: Duration = Duration::from_secs(10 * 60);
 /// One page cannot open unlimited browser tabs.
@@ -51,7 +54,9 @@ struct Server {
 impl Server {
     /// `--server=dev|prod|<https origin>`, else `NARRATIVE_SERVER`, else the
     /// build's own: a release build the production server, a debug build the
-    /// local dev stack.
+    /// local dev stack. A debug build also takes a loopback `http://` origin:
+    /// a local production build (`vite preview`, which routes `/api` as
+    /// Caddy does — the perf harness's prod mode).
     fn from_args() -> Server {
         let default = if cfg!(debug_assertions) { "dev" } else { "prod" };
         let arg = std::env::args()
@@ -66,6 +71,11 @@ impl Server {
                 scheme: "narrative-dev",
             },
             "prod" => Server::hosted("https://narrative.bastla.com"),
+            other if cfg!(debug_assertions) && Server::loopback_http(other) => Server {
+                api: Url::parse(other).unwrap().join("/api").unwrap(),
+                origin: Url::parse(other).unwrap(),
+                scheme: "narrative-dev",
+            },
             other => Server::hosted(other),
         }
     }
@@ -76,6 +86,21 @@ impl Server {
         assert_eq!(origin.scheme(), "https", "--server: only https servers");
         let api = origin.join("/api").unwrap();
         Server { origin, api, scheme: "narrative" }
+    }
+
+    /// `http://localhost:<port>` or `http://127.0.0.1:<port>`, nothing more.
+    fn loopback_http(origin: &str) -> bool {
+        Url::parse(origin).is_ok_and(|u| {
+            u.scheme() == "http"
+                && matches!(u.host_str(), Some("localhost" | "127.0.0.1"))
+                && u.path() == "/"
+                && u.query().is_none()
+        })
+    }
+
+    /// Whether this is the local stack (the dev server, or a local build in front of it).
+    fn is_local(&self) -> bool {
+        self.origin.scheme() == "http"
     }
 
     fn api_path(&self, path: &str) -> String {
@@ -287,14 +312,29 @@ pub fn run() {
     let server = Server::from_args();
     eprintln!("[shell] server {} (api {}, scheme {})", server.origin, server.api, server.scheme);
 
-    tauri::Builder::default()
+    #[cfg(feature = "perf-driver")]
+    let perf = perf_driver::PerfConfig::from_env();
+    #[cfg(feature = "perf-driver")]
+    if perf.is_some() {
+        eprintln!("[shell] perf driver on (stdin input, page scripts)");
+    }
+    #[cfg(feature = "perf-driver")]
+    let driven = perf.is_some();
+    #[cfg(not(feature = "perf-driver"))]
+    let driven = false;
+
+    let mut builder = tauri::Builder::default();
+    if !driven {
         // First: a second launch (the OS opening a deep link) hands its URL to
-        // this instance and exits.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        // this instance and exits. A driven instance (a perf run) stands
+        // alone: it neither takes over nor hands over to the person's app.
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();
             }
-        }))
+        }));
+    }
+    builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .manage(server.clone())
@@ -313,13 +353,44 @@ pub fn run() {
                 }
             });
 
+            // A local build on its own port (not the dev server the capability
+            // file names) gets the bridge's two commands too.
+            if server.is_local() && server.origin.as_str() != "http://localhost:5173/" {
+                app.add_capability(
+                    tauri::ipc::CapabilityBuilder::new("local-server")
+                        .remote(format!("{}*", server.origin))
+                        .window("main")
+                        .local(false)
+                        .permission("allow-info")
+                        .permission("allow-sign-in"),
+                )?;
+            }
+
             let nav_server = server.clone();
             let opener = app.handle().clone();
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(server.origin.clone()))
+            #[allow(unused_mut)]
+            let mut size = (1440.0, 900.0);
+            #[cfg(feature = "perf-driver")]
+            if let Some(v) = perf.as_ref().and_then(|p| p.viewport) {
+                size = v;
+            }
+            #[allow(unused_mut)]
+            let mut window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(server.origin.clone()))
                 .title("Narrative")
-                .inner_size(1440.0, 900.0)
+                .inner_size(size.0, size.1)
                 .min_inner_size(960.0, 600.0)
-                .initialization_script(BRIDGE)
+                .initialization_script(BRIDGE);
+            #[cfg(feature = "perf-driver")]
+            if let Some(p) = perf.as_ref() {
+                // Borderless at the screen's top left: the content gets the
+                // bench's whole viewport (a title bar would take 32 px of it on
+                // a 14-inch screen, where macOS keeps windows below the menu bar).
+                window = window.position(0.0, 0.0).decorations(false).always_on_top(true);
+                for script in p.scripts() {
+                    window = window.initialization_script(script);
+                }
+            }
+            window
                 .on_navigation(move |url| {
                     if nav_server.owns(url) || url.scheme() == "about" {
                         return true;
@@ -331,6 +402,10 @@ pub fn run() {
                     false
                 })
                 .build()?;
+            #[cfg(feature = "perf-driver")]
+            if perf.is_some() {
+                perf_driver::start(app.handle().clone());
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -382,5 +457,15 @@ mod tests {
         assert_eq!(s.api_path("/auth/desktop/redeem"), "http://localhost:3001/auth/desktop/redeem");
         let p = Server::hosted("https://narrative.example");
         assert_eq!(p.api_path("/auth/start"), "https://narrative.example/api/auth/start");
+    }
+
+    #[test]
+    fn only_a_bare_loopback_origin_is_a_local_server() {
+        assert!(Server::loopback_http("http://localhost:4173"));
+        assert!(Server::loopback_http("http://127.0.0.1:4173/"));
+        assert!(!Server::loopback_http("http://example.com:4173"));
+        assert!(!Server::loopback_http("http://localhost.example.com"));
+        assert!(!Server::loopback_http("https://localhost:4173"));
+        assert!(!Server::loopback_http("http://localhost:4173/deck/x"));
     }
 }

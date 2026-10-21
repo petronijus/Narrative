@@ -78,6 +78,33 @@ The sign-in's deep link is registered at start on Linux; the second launch
 the browser makes hands the link to the running app (single-instance plugin)
 and exits.
 
+## Measuring it (the perf harness)
+
+`just perf <ids…> --shell tauri` runs the perf benches (`apps/web/e2e/perf`,
+`packages/perf/README.md`) in this window instead of a Playwright browser:
+it builds a **debug** shell with the `perf-driver` feature
+(`cargo build --features perf-driver`), serves the side's web build as
+`just perf` does, and starts the app on it (`--server=http://localhost:<port>`
+— a debug build takes a loopback http origin, a release build only https).
+Playwright still seeds the scene through the command API; the page is driven
+through `src/perf_driver.rs`:
+
+- scripts in the page: an initialization script connects each page to a
+  WebSocket of the driver on 127.0.0.1 and evaluates what it is sent
+  (`apps/web/e2e/perf/lib/tauriPage.ts`, Playwright's `evaluate`);
+- native input: keys, mouse and wheel arrive on the app's stdin and become
+  NSEvents sent through the window, so they cross WebKit's UI process as a
+  person's input does (trusted events, system timestamps);
+- the window's size and position, navigation, and — a diagnostic —
+  WebKit's device scale (`--device-scale 1` for a like-for-like comparison
+  with a 1× Playwright page; the window's own scale is the screen's).
+
+The feature is off by default, refuses to compile into a release build, and
+does nothing unless `NARRATIVE_PERF_DRIVER_PORT` is set; a driven instance
+skips the single-instance hand-over. macOS only so far (the input is
+AppKit's). The window must stay unoccluded while it runs: WebKit stops
+drawing a covered window, so the run measures nothing.
+
 ## Electron vs Tauri
 
 The measured comparison is in `docs/plans/desktop-tauri-evaluation.md`.

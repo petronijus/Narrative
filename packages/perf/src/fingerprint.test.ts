@@ -40,6 +40,16 @@ describe('comparability', () => {
     expect(r).toEqual({ ok: false, reasons: ['a headed vs a headless browser'] })
   })
 
+  it('never a 2× page against a 1× one; an absent scale is 1×', () => {
+    const browser = { name: 'webkit', version: '26', engine: 'webkit', shell: 'tauri' } as const
+    expect(
+      comparability(fp({ browser }), fp({ browser: { ...browser, deviceScale: 2 } }), { ab: true }),
+    ).toEqual({ ok: false, reasons: ['different device scales (1× vs 2×)'] })
+    expect(comparability(fp({ browser }), fp({ browser: { ...browser, deviceScale: 1 } }))).toEqual(
+      { ok: true },
+    )
+  })
+
   it('never across machines', () => {
     const r = comparability(fp(), fp({ machine: 'petronijus-pc' }))
     expect(r).toEqual({ ok: false, reasons: [expect.stringMatching(/different machines/)] })

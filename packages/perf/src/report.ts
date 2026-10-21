@@ -109,7 +109,11 @@ export function formatFingerprint(fp: Fingerprint): string[] {
   if (fp.power !== null)
     parts.push(`power ${fp.power.source}${fp.power.lowPowerMode === true ? ' LOW-POWER' : ''}`)
   if (fp.browser !== undefined)
-    parts.push(`${fp.browser.name} ${fp.browser.version} (${fp.browser.shell})`)
+    parts.push(
+      `${fp.browser.name} ${fp.browser.version} (${fp.browser.shell}${
+        fp.browser.headed === true ? ', headed' : ''
+      }${(fp.browser.deviceScale ?? 1) !== 1 ? `, ${fp.browser.deviceScale}×` : ''})`,
+    )
   if (fp.gl !== undefined) parts.push(fp.gl.renderer)
   return [`PERF env ${parts.join(' · ')}`, ...fingerprintWarnings(fp).map((w) => `PERF warn ${w}`)]
 }

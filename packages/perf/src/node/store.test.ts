@@ -119,6 +119,16 @@ describe('the result store', () => {
     ).toBe('present.advance.text@prod/webkit-browser-headed')
   })
 
+  it('a page at another device scale keeps a series of its own', () => {
+    const browser = { name: 'webkit', version: '26', engine: 'webkit', shell: 'tauri' } as const
+    expect(
+      baselineKey('present.advance.text', { ...FP, browser: { ...browser, deviceScale: 2 } }),
+    ).toBe('present.advance.text@prod/webkit-tauri-2x')
+    expect(
+      baselineKey('present.advance.text', { ...FP, browser: { ...browser, deviceScale: 1 } }),
+    ).toBe('present.advance.text@prod/webkit-tauri')
+  })
+
   it('refuses a baselines file of another machine', () => {
     const store = openResultStore({ machine: 'test-box', home })
     store.append({ ...structuredClone(FP_RESULT), fingerprint: FP })
