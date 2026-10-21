@@ -93,6 +93,11 @@ vi.mock('pixi.js', () => ({
 // objectRenderers mock — returns a minimal renderer that uses MockGraphics
 // ---------------------------------------------------------------------------
 
+// The HTMLText patches reach into Pixi's text system (and the grouped cell
+// rasters install a style scope on HTMLTextStyle at import), which the mock
+// above does not have; thumbnails draw no text here.
+vi.mock('./patchHTMLTextRace.js', () => ({ patchHTMLTextRace: vi.fn() }))
+
 vi.mock('./objectRenderers/index.js', () => ({
   getRenderer: vi.fn().mockImplementation((type: string) => {
     if (type === 'rectangle' || type === 'ellipse') {

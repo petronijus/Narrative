@@ -52,6 +52,7 @@ import {
   wireRedrawOnAsyncTextureUpdate,
 } from './textRenderer.js'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
+import { setHtmlTextRasterGroup } from '../htmlTextGroupRaster.js'
 import { resolveColour } from '../colourResolver.js'
 import {
   clampStops,
@@ -857,6 +858,9 @@ function mountCellNode(
   // collision when two cells happen to carry byte-identical content
   // (same comment as in textRenderer.buildHtmlForNode).
   htmlText.text = `<!--n:${htmlText.uid}-->${html}`
+  // The table's cells rasterise through shared SVGs, the faces embedded once
+  // per image (renderer/htmlTextGroupRaster.ts, performance.md → E5).
+  setHtmlTextRasterGroup(htmlText, parent)
   wireRedrawOnAsyncTextureUpdate(htmlText)
   scheduleAsyncTextureCatchup(
     htmlText as unknown as { __narrativeCatchupActive?: boolean; destroyed?: boolean },

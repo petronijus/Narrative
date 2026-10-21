@@ -45,9 +45,10 @@
  */
 
 import { extractFontFamilies, getFontCss, isSafari } from 'pixi.js'
-import type { HTMLTextStyle, Renderer } from 'pixi.js'
+import type { HTMLTextStyle, Renderer, Texture } from 'pixi.js'
 import { perfCount, perfCountersOn } from '@narrative/shared'
 import { markRenderDirty } from './RenderScheduler.js'
+import { createGroupRaster, htmlTextRasterGroup } from './htmlTextGroupRaster.js'
 
 const PATCHED = Symbol('narrativeHtmlTextPatched')
 
@@ -61,6 +62,8 @@ interface TextureLike {
   source: {
     resource: unknown
     uploadMethodId: string
+    pixelWidth: number
+    pixelHeight: number
     emit: (event: string, ...args: unknown[]) => void
   }
 }
@@ -88,6 +91,118 @@ async function countEmbeddedFonts(
   } catch {
     /* the raster reports its own failure */
   }
+}
+
+/** The SVG URL Pixi's `loadSVGImage` gives the pooled `<img>` of an HTMLText raster. */
+const PIXI_SVG_RASTER_URL = 'data:image/svg+xml;charset=utf8,'
+
+interface TextureSourceLike {
+  resource: unknown
+}
+
+/** The part of a pooled texture's source a raster fills. */
+interface RasterSource {
+  resource: unknown
+  uploadMethodId: string
+  pixelWidth: number
+  pixelHeight: number
+}
+
+/**
+ * The canvas a raster's texture is uploaded from: the raster's pixels at the
+ * top left of a canvas as large as the whole texture, transparent beyond.
+ *
+ * Text textures come from Pixi's `TexturePool` (`getPo2TextureFromSource`):
+ * power-of-two sizes, shared by every renderer, handed from one text to the
+ * next. An upload of only the raster's own rectangle leaves the rest of a
+ * reused texture as the previous text left it. The editor samples a text at
+ * mip level 0 and never reaches those texels (the 2 px margin Pixi keeps
+ * around the frame is the raster's own); a thumbnail, drawn ~8× smaller,
+ * reads the mip levels, which average them in — faint ghosts of other texts
+ * under a table's cells, different with every pool history
+ * (e2e/table-raster-pixels.spec.ts found them). Covering the whole texture
+ * leaves nothing stale to average.
+ */
+export function wholeTextureCanvas(
+  pixels: CanvasImageSource,
+  width: number,
+  height: number,
+  source: RasterSource,
+): HTMLCanvasElement | null {
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(width, source.pixelWidth)
+  canvas.height = Math.max(height, source.pixelHeight)
+  const ctx = canvas.getContext('2d')
+  if (ctx === null) return null
+  ctx.drawImage(pixels, 0, 0, width, height, 0, 0, width, height)
+  return canvas
+}
+
+interface DeferredUploads {
+  /** Rasters of this renderer's HTMLText system in flight. */
+  building: number
+  /** Sources whose upload from the pooled image was held back, to be uploaded by the raster. */
+  sources: WeakSet<object>
+  /** Sources a raster left holding the image: uploaded as Pixi would, never held back again. */
+  keepImage: WeakSet<object>
+  /** The texture system's own upload. */
+  upload: (source: unknown) => void
+  /** Canvases a raster is still filling: an upload from one waits for the raster. */
+  provisional: WeakSet<object>
+}
+
+const DEFERRED = new WeakMap<object, DeferredUploads>()
+
+/**
+ * Hold back the upload Pixi makes from the pooled `<img>` of an HTMLText
+ * raster (`getPo2TextureFromSource` emits `update`, `_buildTexturePromise`
+ * calls `initSource`, either uploads it, a mipmap with it). The raster then
+ * copies that image onto a canvas of its own and uploads that
+ * (`patchHTMLTextRace`), and the canvas is what the texture is drawn with:
+ * the first upload was never seen, and it doubled every text's uploads — and
+ * an SVG image is rasterised for each (performance.md → E5: 192 uploads for
+ * 96 table cells). Only sources holding Pixi's raster image while a raster
+ * of this renderer runs are held back; the raster uploads each one exactly
+ * once, the canvas or, when it keeps the image, the image.
+ *
+ * The texture system's listener is the instance's `onSourceUpdate`, read
+ * when a source is first initialised (`_initSource`), so this goes in before
+ * the renderer's first text.
+ */
+function deferPooledImageUploads(renderer: Renderer): DeferredUploads {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi's GlTextureSystem internals
+  const textures = (renderer as any).texture as
+    { onSourceUpdate?: (source: TextureSourceLike) => void } | undefined
+  const known = DEFERRED.get(renderer)
+  if (known !== undefined) return known
+  const upload = textures?.onSourceUpdate
+  const state: DeferredUploads = {
+    building: 0,
+    sources: new WeakSet(),
+    keepImage: new WeakSet(),
+    provisional: new WeakSet(),
+    upload: (source) => upload?.call(textures, source as TextureSourceLike),
+  }
+  DEFERRED.set(renderer, state)
+  if (textures === undefined || typeof upload !== 'function') return state
+  textures.onSourceUpdate = function (this: unknown, source: TextureSourceLike): void {
+    const r = source.resource
+    if (typeof r === 'object' && r !== null && state.provisional.has(r)) {
+      state.sources.add(source as object)
+      return
+    }
+    if (
+      state.building > 0 &&
+      !state.keepImage.has(source as object) &&
+      r instanceof HTMLImageElement &&
+      r.src.startsWith(PIXI_SVG_RASTER_URL)
+    ) {
+      state.sources.add(source as object)
+      return
+    }
+    upload.call(this, source)
+  }
+  return state
 }
 
 export function patchHTMLTextRace(
@@ -120,33 +235,54 @@ export function patchHTMLTextRace(
     return
   }
 
+  const wake = (): void => {
+    if (!opts.wakeRenderScheduler) return
+    try {
+      markRenderDirty()
+    } catch {
+      // Best-effort.
+    }
+  }
+  const deferred = deferPooledImageUploads(renderer)
   const original = system._buildTexturePromise.bind(system)
-  system._buildTexturePromise = async function (options: unknown): Promise<unknown> {
+  const rasterOne = async (options: unknown): Promise<unknown> => {
     perfCount(started)
     if (perfCountersOn()) void countEmbeddedFonts(options, fontKb, safariDelay)
-    const texture = (await original(options)) as TextureLike | undefined
+    deferred.building++
+    let texture: TextureLike | undefined
+    try {
+      texture = (await original(options)) as TextureLike | undefined
+    } finally {
+      deferred.building--
+    }
     perfCount(finished)
     if (texture === undefined || texture === null) return texture
     const src = texture.source
     if (src === undefined || src === null) return texture
+    // The upload Pixi would have made from the pooled image was held back
+    // (`deferPooledImageUploads`); whichever resource the texture ends up
+    // with, it is uploaded once, below.
+    const held = deferred.sources.delete(src)
+    const uploadAsIs = (): TextureLike => {
+      deferred.keepImage.add(src)
+      if (held) deferred.upload(src)
+      return texture
+    }
 
     const resource = src.resource
-    if (!(resource instanceof HTMLImageElement)) return texture
+    if (!(resource instanceof HTMLImageElement)) return uploadAsIs()
 
     const w = resource.naturalWidth
     const h = resource.naturalHeight
-    if (w === 0 || h === 0) return texture
+    if (w === 0 || h === 0) return uploadAsIs()
     perfCount(kpx, Math.round((w * h) / 1000))
 
     // Detach: copy the pooled <img>'s pixels to an independent
     // <canvas> and rebind the texture to it. The canvas is held only
     // by this texture, so the pool can reuse the <img> freely.
-    const canvas = document.createElement('canvas')
-    canvas.width = w
-    canvas.height = h
-    const ctx = canvas.getContext('2d')
-    if (ctx === null) return texture
-    ctx.drawImage(resource, 0, 0)
+    // As large as the whole pooled texture (`wholeTextureCanvas`).
+    const canvas = wholeTextureCanvas(resource, w, h, src)
+    if (canvas === null) return uploadAsIs()
     src.resource = canvas
     src.uploadMethodId = 'image'
     // Wake the GL upload so the renderer re-binds against the canvas.
@@ -167,14 +303,41 @@ export function patchHTMLTextRace(
     // gets at least one paint, regardless of how many other nodes
     // are racing to rasterise in the same frame. Skipped for offscreen
     // pipelines (thumbnails) which drive their own renders.
-    if (opts.wakeRenderScheduler) {
-      try {
-        markRenderDirty()
-      } catch {
-        // Best-effort.
-      }
-    }
+    wake()
     return texture
+  }
+  // A table's cells share their SVGs (renderer/htmlTextGroupRaster.ts); a
+  // cell rasterised alone goes through `rasterOne` like every other text.
+  const grouped = createGroupRaster(renderer, {
+    onRaster({ px, fontKb: kb, safariDelay: delayed }) {
+      perfCount(started)
+      perfCount(kpx, Math.round(px / 1000))
+      perfCount(fontKb, kb)
+      if (delayed) perfCount(safariDelay)
+    },
+    onReady() {
+      perfCount(finished)
+      wake()
+    },
+    single: (text) => rasterOne(text) as Promise<Texture>,
+    texture(pixels, width, height, make) {
+      // Pixi's pooled texture for the cell, its upload held until the
+      // canvas covers the whole texture; then one upload.
+      deferred.provisional.add(pixels)
+      const texture = make(pixels)
+      deferred.provisional.delete(pixels)
+      const src = texture.source as unknown as TextureLike['source']
+      deferred.sources.delete(src)
+      const whole = wholeTextureCanvas(pixels, width, height, src) ?? pixels
+      src.resource = whole
+      src.uploadMethodId = 'image'
+      deferred.upload(src)
+      return texture
+    },
+  })
+  system._buildTexturePromise = function (options: unknown): Promise<unknown> {
+    const group = htmlTextRasterGroup(options)
+    return group === undefined ? rasterOne(options) : grouped.request(options, group)
   }
   system[PATCHED] = true
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { crowdedSlideOps, deckOps, lightSlideOps } from './scenes.js'
+import { crowdedSlideOps, deckOps, lightSlideOps, tableSlideOps } from './scenes.js'
 
 describe('scenes', () => {
   it('the crowded slide: every object once, probes last, the same on every call', () => {
@@ -20,6 +20,15 @@ describe('scenes', () => {
     const { ops, boxes } = lightSlideOps()
     expect(ops).toHaveLength(13)
     expect([...boxes.keys()][0]).toBe('perf-text')
+  })
+
+  it('the table slide: a second slide, the table, its styles, then the text of every cell', () => {
+    const { ops, boxes } = tableSlideOps()
+    expect(tableSlideOps().ops).toEqual(ops)
+    expect(ops[0]!.command).toBe('slide.add')
+    expect(ops[1]!.command).toBe('object.create')
+    expect(ops.filter((o) => o.command === 'text.set')).toHaveLength(96)
+    expect([...boxes.keys()]).toEqual(['perf-table'])
   })
 
   it('a deck: the slides added first, then twelve objects per slide by index', () => {

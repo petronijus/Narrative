@@ -146,6 +146,8 @@ export const SCENES = {
   presentBuilds: { generator: 'present-builds', seed: 1, size: { slides: 4 } },
   /** Present mode: a 10 s 1080p H.264 video between two text slides (presentVideoOps). */
   presentVideo: { generator: 'present-video', seed: 1, size: { slides: 3, videoSeconds: 10 } },
+  /** One styled 12 × 8 table in Inter, every cell with text, and a title-only second slide (tableSlideOps). */
+  table: { generator: 'table-slide', seed: 1, size: { rows: 12, cols: 8 } },
 } as const satisfies Record<string, SceneRef>
 
 /** The driver binds this; anywhere else a run is a mistake. */
@@ -329,6 +331,54 @@ const PRESENT_VIDEO_WORK: readonly WorkCounter[] = [
 ]
 const PRESENT_ACTIONS = ['present.start', 'present.next', 'present.previous'] as const
 
+/**
+ * The table slide's gestures (performance.md → E5) also report the most draw
+ * calls one frame took (`frame.draws`): the table's cells, masks and fills as
+ * the GPU sees them. Timed, not budgeted — how Pixi batches depends on the
+ * GPU's texture units.
+ */
+const TABLE_METRICS: Readonly<Record<string, MetricSpec>> = {
+  ...GESTURE_METRICS,
+  'frame.draws': timedCount,
+}
+/** Showing the table slide: its cells mounted and rasterised, their textures uploaded. */
+const TABLE_MOUNT_WORK: readonly WorkCounter[] = [
+  'sg.mount',
+  'sg.destroy',
+  'text.raster.started',
+  'text.raster.kpx',
+  'text.raster.fontKb',
+  'text.measure.bounds',
+  'procedural.created',
+  'gl.texUpload',
+  'gl.texUploadKpx',
+  'y.tx.local',
+]
+/**
+ * Dragging the table: nothing rasterised, mounted or uploaded. The per-move
+ * counts of DRAG_WORK are timed here: WebKit coalesces pointer moves (53–59
+ * of 60 arrived), and the bench runs in both engines.
+ */
+const TABLE_DRAG_WORK: readonly WorkCounter[] = [
+  'text.raster.started',
+  'text.raster.kpx',
+  'text.autofit.measure',
+  'sg.mount',
+  'sg.destroy',
+  'procedural.created',
+  'gl.texUpload',
+  'y.listSlides',
+]
+/** Typing into one cell: one transaction per key; the rasters per key follow the frames. */
+const TABLE_TYPE_WORK: readonly WorkCounter[] = [
+  'sg.mount',
+  'sg.destroy',
+  'y.tx.local',
+  'procedural.created',
+  'thumb.render',
+  'net.requests',
+]
+
 export const INTERACTION_BENCHES: ReadonlyArray<BenchDef<never>> = [
   interaction('editor.idle.crowded', {
     scene: SCENES.crowded,
@@ -385,6 +435,27 @@ export const INTERACTION_BENCHES: ReadonlyArray<BenchDef<never>> = [
     ],
   }),
   interaction('viewport.zoom.wheel.light', { scene: SCENES.light, work: ZOOM_WORK }),
+  // The table slide (apps/web/e2e/perf/table-slide.spec.ts).
+  interaction('table.mount.styled', {
+    scene: SCENES.table,
+    time: TABLE_METRICS,
+    work: TABLE_MOUNT_WORK,
+  }),
+  interaction('table.cell.type', {
+    scene: SCENES.table,
+    time: TABLE_METRICS,
+    work: TABLE_TYPE_WORK,
+  }),
+  interaction('transform.move.table', {
+    scene: SCENES.table,
+    time: TABLE_METRICS,
+    work: TABLE_DRAG_WORK,
+  }),
+  interaction('viewport.zoom.commit.table', {
+    scene: SCENES.table,
+    time: TABLE_METRICS,
+    work: ZOOM_WORK,
+  }),
   interaction('transform.move.rect.light', { scene: SCENES.light, work: DRAG_WORK }),
   interaction('deck.open.cold.10', { scene: SCENES.deck10, time: OPEN_METRICS, work: OPEN_WORK }),
   interaction('deck.open.warm.10', { scene: SCENES.deck10, time: OPEN_METRICS, work: OPEN_WORK }),

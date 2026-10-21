@@ -21,6 +21,8 @@ export {
   deckOps,
   lightSlideOps,
   rnd,
+  tableSlideOps,
+  TABLE_SCENE,
   type Box,
   type CrowdedScene,
   type Op,

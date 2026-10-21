@@ -212,6 +212,94 @@ export function lightSlideOps(): { ops: Op[]; boxes: Map<string, Box> } {
   return { ops, boxes }
 }
 
+/** The table of the table slide (performance.md → E5): 12 rows × 8 columns. */
+export const TABLE_SCENE = {
+  id: 'perf-table',
+  rows: 12,
+  cols: 8,
+  box: { id: 'perf-table', x: 160, y: 140, width: 1600, height: 840 },
+} as const
+
+const TABLE_HEADERS = ['Segment', 'Summary', 'Q1', 'Q2', 'Q3', 'Q4', 'Growth', 'Share']
+
+/**
+ * The table slide: one styled 12 × 8 table in Inter, the way a quarterly
+ * report has it — a dark centred bold header row, banded rows, a bold first
+ * column, a wrapping summary column in italics, right-aligned figures, a
+ * totals row with a gradient fill, cells centred vertically — and a second
+ * slide with a title only (the mount bench switches to the table from it).
+ * Every cell has text. Ids: `perf-table`, `perf-title-2`.
+ */
+export function tableSlideOps(): { ops: Op[]; boxes: Map<string, Box>; second: Box } {
+  const { id, rows, cols, box } = TABLE_SCENE
+  const slide = { index: 0 }
+  const ops: Op[] = [{ command: 'slide.add', input: {} }]
+  const t = { slide, table: id }
+  ops.push({
+    command: 'object.create',
+    input: {
+      slide,
+      id,
+      object: {
+        type: 'table',
+        rows,
+        cols,
+        x: box.x,
+        y: box.y,
+        width: box.width,
+        height: box.height,
+        defaults: {
+          fontFamily: 'Inter',
+          fontSize: 18,
+          color: '#1f2937',
+          vAlign: 'middle',
+          padding: { top: 8, right: 12, bottom: 8, left: 12 },
+          border: { color: '#d0d7de', width: 1 },
+        },
+      },
+    },
+  })
+  const range = (r0: number, c0: number, r1: number, c1: number, style: Record<string, unknown>) =>
+    ops.push({
+      command: 'table.style.range',
+      input: { ...t, range: { from: { row: r0, col: c0 }, to: { row: r1, col: c1 } }, style },
+    })
+  for (let r = 2; r < rows - 1; r += 2) range(r, 0, r, cols - 1, { fill: '#f3f6fa' })
+  range(1, 0, rows - 1, 0, { fontWeight: 600 })
+  range(1, 1, rows - 2, 1, { italic: true, fontSize: 16, color: '#4b5563' })
+  range(1, 2, rows - 1, cols - 1, { align: 'right' })
+  range(0, 0, 0, cols - 1, { fill: '#1b2a4a', color: '#ffffff', fontWeight: 700, align: 'center' })
+  range(rows - 1, 0, rows - 1, cols - 1, {
+    fontWeight: 700,
+    fillStyle: {
+      kind: 'linearGradient',
+      angleDeg: 90,
+      stops: [
+        { offset: 0, color: 0xe8eef8, alpha: 1 },
+        { offset: 1, color: 0xc9d6e8, alpha: 1 },
+      ],
+    },
+  })
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++) {
+      let text: string
+      if (r === 0) text = TABLE_HEADERS[c]!
+      else if (r === rows - 1) text = c === 0 ? 'Total' : c === 1 ? sentence(r + 3, 3) : '9 876'
+      else if (c === 0) text = `${WORDS[(r * 5) % WORDS.length]} ${r}`
+      else if (c === 1) text = sentence(r * 3 + 1, 4 + (r % 3))
+      else if (c === cols - 1) text = `${(rnd(r * cols + c, 400) / 10).toFixed(1)} %`
+      else if (c === cols - 2) text = `+${(rnd(r * cols + c, 250) / 10).toFixed(1)} %`
+      else text = `${1 + rnd(r * cols + c, 9)} ${String(rnd(r * 31 + c, 1000)).padStart(3, '0')}`
+      ops.push({
+        command: 'text.set',
+        input: { target: { slide, object: id, cell: { row: r, col: c } }, text },
+      })
+    }
+  const second = { id: 'perf-title-2', x: 160, y: 80, width: 1600, height: 120 }
+  ops.push(textOp({ index: 1 }, { ...second, text: 'Next slide', fontSize: 64 }))
+  return { ops, boxes: new Map([[box.id, { ...box }]]), second }
+}
+
 /**
  * A deck of `slides` slides, each with 6 texts, 4 rectangles and 2 pictures
  * (ids `s<n>-…`). The deck's first slide exists already; the rest are added.
