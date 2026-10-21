@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { maskTokens, refuseLate, RenderJobError, renderPageUrl } from './render.js'
+import {
+  MAX_JOB_TIMINGS,
+  maskTokens,
+  pageSteps,
+  refuseLate,
+  RenderJobError,
+  renderPageUrl,
+} from './render.js'
 
 describe('renderPageUrl', () => {
   it('opens the deck render page on the first slide, drawing nothing on screen, with the token as share_token', () => {
@@ -66,5 +73,38 @@ describe('maskTokens', () => {
       maskTokens(`net::ERR at https://n.example/a?share_token=nrr_${'b'.repeat(43)}&x=1`),
     ).toBe('net::ERR at https://n.example/a?share_token=***&x=1')
     expect(maskTokens(`token nrr_${'c'.repeat(43)} expired`)).toBe('token nrr_*** expired')
+  })
+})
+
+describe('pageSteps', () => {
+  it('takes only plain step names with finite non-negative durations (G7 review)', () => {
+    expect(
+      pageSteps({
+        steps: [
+          ['sync', 0],
+          ['ready', 51],
+          ['ready;dur=0, x', 1],
+          ['Settle', 1],
+          ['', 1],
+          ['extract', -1],
+          ['encode', Number.NaN],
+          ['compose', Number.POSITIVE_INFINITY],
+          ['settle', '27'],
+          'extract',
+          ['extract', 79],
+        ],
+      }),
+    ).toEqual([
+      ['page.sync', 0],
+      ['page.ready', 51],
+      ['page.extract', 79],
+    ])
+    for (const bad of [undefined, null, {}, { steps: 'x' }]) expect(pageSteps(bad)).toEqual([])
+  })
+
+  it('takes no more than the room left', () => {
+    const steps = Array.from({ length: MAX_JOB_TIMINGS + 10 }, () => ['settle', 1])
+    expect(pageSteps({ steps })).toHaveLength(MAX_JOB_TIMINGS)
+    expect(pageSteps({ steps }, 3)).toHaveLength(3)
   })
 })

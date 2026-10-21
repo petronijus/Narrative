@@ -86,11 +86,13 @@ export {
   setSlideBrief,
   setSlideSpecKey,
   readSlideBrief,
+  readSlideMeta,
   listSlides,
   getSlideObjectsCtx,
   getSlideAnimationsCtx,
   getSlideNotesFragment,
 } from './slides.js'
+export type { SlideMeta } from './slides.js'
 
 // Slide-level primitives for the command layer (agentic layer A0)
 export { clearSlideTransitionDirection, getSlideNotesText } from './slideMeta.js'

@@ -146,6 +146,7 @@ export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>>
   readStylePack: 'reader',
   readSlideLayout: 'reader',
   readSlideBrief: 'reader',
+  readSlideMeta: 'reader',
   readDeckSpec: 'reader',
   // slide.applyLayout writes it.
   setSlideLayout: 'writer',

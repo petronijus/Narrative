@@ -332,6 +332,32 @@ function logTimings(log: (message: string) => void, data: RenderJobData, timings
   log(`${renderPageName(data.page)} timings ${maskTokens(JSON.stringify(timings))}`)
 }
 
+/** At most this many entries in a job's `timings` (RenderJobResult). */
+export const MAX_JOB_TIMINGS = 64
+
+const PAGE_STEP = /^[a-z][a-z0-9.]{0,40}$/
+
+/**
+ * The page's steps of one call (pages/renderTimings.ts `steps`) as the
+ * result's `page.<step>` entries: the page runs the web app, so only plain
+ * lower-case dotted step names with finite, non-negative durations are
+ * taken, and no more than `room` (the server checks them again,
+ * apps/server/src/render/jobTimings.ts).
+ */
+export function pageSteps(timings: unknown, room = MAX_JOB_TIMINGS): Array<[string, number]> {
+  const steps = (timings as { steps?: unknown } | undefined)?.steps
+  if (!Array.isArray(steps)) return []
+  const out: Array<[string, number]> = []
+  for (const s of steps) {
+    if (out.length >= room) break
+    if (!Array.isArray(s) || typeof s[0] !== 'string' || !PAGE_STEP.test(s[0])) continue
+    const ms: unknown = s[1]
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) continue
+    out.push([`page.${s[0]}`, ms])
+  }
+  return out
+}
+
 /**
  * A compare's "before": the slide drawn on a frozen page — one that holds the
  * document state the job carries and nothing live — as a PNG; null when the
@@ -408,7 +434,15 @@ async function runOnPage(
   signal: AbortSignal,
   log: (message: string) => void,
   beforePng: string | null | undefined,
+  /** The job's steps so far (`RenderJobResult.timings`); the page's and the uploads' are added. */
+  timings: Array<[string, number]>,
 ): Promise<RenderJobResult> {
+  const timedUpload = async (target: RenderTarget, base64: string): Promise<number> => {
+    const started = Date.now()
+    const size = await upload(target, base64, config, signal)
+    if (timings.length < MAX_JOB_TIMINGS) timings.push(['worker.upload', Date.now() - started])
+    return size
+  }
   if (data.kind === 'export') {
     const slides: RenderedSlide[] = []
     const failedFonts = new Set<string>()
@@ -423,7 +457,8 @@ async function runOnPage(
       )
       if (!outcome.ok) throw pageFailure(outcome)
       logTimings(log, data, outcome.value.timings)
-      const sizeBytes = await upload(target, outcome.value.base64, config, signal)
+      timings.push(...pageSteps(outcome.value.timings, MAX_JOB_TIMINGS - timings.length))
+      const sizeBytes = await timedUpload(target, outcome.value.base64)
       slides.push({
         slideId: target.slideId,
         index: outcome.value.slideIndex,
@@ -434,7 +469,7 @@ async function runOnPage(
       })
       for (const family of outcome.value.failedFonts) failedFonts.add(family)
     }
-    return { kind: 'export', slides, failedFonts: [...failedFonts].sort() }
+    return { kind: 'export', slides, failedFonts: [...failedFonts].sort(), timings }
   }
   const spec: PageLookSpec =
     data.look.mode === 'compare'
@@ -447,7 +482,8 @@ async function runOnPage(
   )
   if (!outcome.ok) throw pageFailure(outcome)
   logTimings(log, data, outcome.value.timings)
-  const sizeBytes = await upload(data.upload, outcome.value.base64, config, signal)
+  timings.push(...pageSteps(outcome.value.timings, MAX_JOB_TIMINGS - timings.length))
+  const sizeBytes = await timedUpload(data.upload, outcome.value.base64)
   return {
     kind: 'look',
     look: {
@@ -460,6 +496,7 @@ async function runOnPage(
       ...(spec.mode === 'compare' && spec.beforePng === null ? { newSlide: true } : {}),
     },
     failedFonts: outcome.value.failedFonts,
+    timings,
   }
 }
 
@@ -558,9 +595,11 @@ async function renderWithPage(
     }
     const started = Date.now()
     let how = 'session page'
-    if (warm === undefined && compare === null && data.keepPage !== false) {
+    if (warm === undefined && compare === null && data.keepPage !== false && deps.warm.full) {
       // A person's job with no page of its own takes an idle one of another
-      // session (background work leaves people's pages alone).
+      // session when no further page could be kept (background work leaves
+      // people's pages alone). With room it opens its own below, and that
+      // session's page stays warm for its next job (warmPages.ts).
       const spare = deps.warm.takeSpare()
       if (spare !== undefined) {
         context = spare.context
@@ -582,7 +621,8 @@ async function renderWithPage(
       how = 'new page'
     }
     await untilHooks(warm.page, stopAt)
-    deps.log(`${name}: ${how}, app ready in ${Date.now() - started} ms`)
+    const ready = Date.now() - started
+    deps.log(`${name}: ${how}, app ready in ${ready} ms`)
     const result = await runOnPage(
       warm.page,
       data,
@@ -590,6 +630,7 @@ async function renderWithPage(
       stopUpload.signal,
       deps.log,
       beforePng,
+      [['worker.page', ready]],
     )
     succeeded = true
     return result

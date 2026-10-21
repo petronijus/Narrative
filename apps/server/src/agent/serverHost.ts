@@ -31,6 +31,9 @@
  *      update, attributed to the run. The lease is released in `finally`.
  *   6. Log the op to `agent_ops` (seq, command, input, target, result or
  *      error) — failures included — and move the agent's presence peer.
+ *      The op row and the run's activity are written concurrently.
+ * A request timed with `x-narrative-timing: 1` records these steps as
+ * `host.*` phases (observability/phases.ts; a boolean check otherwise).
  * Errors come back as transport-neutral results (`code`, `message`,
  * `issues`, `opIndex`); transports map codes to their own status (see
  * routes/agent.ts for HTTP). An exception that is not a CommandError (a
@@ -96,6 +99,7 @@ import {
 import type { FastifyBaseLogger } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { runWithFetchAudit, type FetchAuditPolicy } from '../net/fetchAudit.js'
+import { phaseAuthorised, phaseEnd, phaseStart } from '../observability/phases.js'
 import type { AgentAccess } from './access.js'
 import {
   buildConfirmationSummary,
@@ -705,6 +709,8 @@ export class ServerHost {
       return this.deps.runs.currentRun(session, runTarget) ?? run
     }
 
+    // Phases of a timed request (observability/phases.ts; -1 = not timed, a no-op).
+    let t = phaseStart()
     try {
       // 1. Look up.
       const def = this.deps.registry.get(commandId)
@@ -718,10 +724,14 @@ export class ServerHost {
 
       // 2. Authorise — before any document is opened.
       const { role } = await this.admit(commandId, target, userId)
+      phaseEnd('host.admit', t)
+      // Only an authorised call's phases are ever reported (observability/phases.ts).
+      phaseAuthorised()
 
       // 2b. The user's confirmation, when this call needs one.
       // Invalid input: nothing to confirm — the runner refuses it below, after
       // the run is resolved, so the refusal is logged like any other.
+      t = phaseStart()
       const requirement = this.requirementOf(def, input) ?? NO_REQUIREMENT
       if (requirement.reasons.length > 0) {
         const proof = this.verifyConfirmation(def, requirement, req.confirmation, {
@@ -744,7 +754,10 @@ export class ServerHost {
         }
       }
 
+      phaseEnd('host.confirm', t)
+
       // 3. The run (agents only).
+      t = phaseStart()
       if (session !== undefined) {
         run = await this.deps.runs.runFor({
           userId,
@@ -754,6 +767,7 @@ export class ServerHost {
           ...(req.runId === undefined ? {} : { runId: req.runId }),
         })
       }
+      phaseEnd('host.run', t)
 
       const ctx: CommandContext = {
         actor: { userId, role, kind },
@@ -775,19 +789,26 @@ export class ServerHost {
       )
 
       // 6. Log.
+      t = phaseStart()
       const into = logRun()
       let seq: number | null = null
       if (into !== undefined) {
-        seq = await this.deps.runs.recordOp(into, {
-          command: commandId,
-          input,
-          target: { ...target },
-          result,
-          ...(fetchedHosts.length > 0 ? { fetchedHosts: [...fetchedHosts] } : {}),
-        })
+        // The op's row and the run's activity are independent writes (neither
+        // rejects): sent together, one database round trip instead of two.
+        const [logged] = await Promise.all([
+          this.deps.runs.recordOp(into, {
+            command: commandId,
+            input,
+            target: { ...target },
+            result,
+            ...(fetchedHosts.length > 0 ? { fetchedHosts: [...fetchedHosts] } : {}),
+          }),
+          this.deps.runs.touch(into),
+        ])
+        seq = logged
         await auditConfirmation(into.id, seq)
-        await this.deps.runs.touch(into)
       }
+      phaseEnd('host.audit', t)
       return { ok: true, command: commandId, result, runId: into?.id ?? null, seq }
     } catch (e) {
       const { error, correlationId } = toClientError(e)
@@ -797,19 +818,26 @@ export class ServerHost {
           'agent host: command failed',
         )
       }
+      t = phaseStart()
       const into = logRun()
       let seq: number | null = null
       if (into !== undefined) {
-        seq = await this.deps.runs.recordOp(into, {
-          command: commandId,
-          input,
-          target: { ...target },
-          error: hostError(error),
-          ...(fetchedHosts.length > 0 ? { fetchedHosts: [...fetchedHosts] } : {}),
-        })
+        // The op's row and the run's activity are independent writes (neither
+        // rejects): sent together, one database round trip instead of two.
+        const [logged] = await Promise.all([
+          this.deps.runs.recordOp(into, {
+            command: commandId,
+            input,
+            target: { ...target },
+            error: hostError(error),
+            ...(fetchedHosts.length > 0 ? { fetchedHosts: [...fetchedHosts] } : {}),
+          }),
+          this.deps.runs.touch(into),
+        ])
+        seq = logged
         await auditConfirmation(into.id, seq)
-        await this.deps.runs.touch(into)
       }
+      phaseEnd('host.audit', t)
       return {
         ok: false,
         command: commandId,
@@ -829,10 +857,16 @@ export class ServerHost {
     run: ActiveRun | undefined,
   ): Promise<unknown> {
     const documentName = documentNameOf(target)
+    let t = phaseStart()
     if (documentName === null || !commandUsesDocument(def)) {
       const prepared = await prepareInvocation(this.deps.registry, ctx, commandId, input)
+      phaseEnd('host.validate', t)
+      t = phaseStart()
       const output = await prepared.execute()
+      phaseEnd('host.execute', t)
+      t = phaseStart()
       await prepared.settle()
+      phaseEnd('host.settle', t)
       return output
     }
 
@@ -864,6 +898,7 @@ export class ServerHost {
     // what they read of the folder document while it is unchanged
     // (agent/folderReads.ts) — consulted only now, after step 2 authorised
     // this user on this target for this command.
+    t = phaseStart()
     const folderScope = createFolderReadScope(run === undefined ? null : this.folderCacheOf(run))
     const folderTokens =
       this.deps.folderTokens !== undefined &&
@@ -880,8 +915,12 @@ export class ServerHost {
       commandReadsStylePack(this.deps.registry, commandId, input)
         ? await this.deps.folderStylePack(target, folderScope)
         : undefined
+    phaseEnd('host.context', t)
 
+    // The first lease on a document nobody has open loads it from Postgres.
+    t = phaseStart()
     const lease = await this.deps.documents.acquire(documentName)
+    phaseEnd('host.load', t)
     try {
       const document = lease.document
       const deck: DeckMutationContext = { doc: document, slides: document.getArray('slides') }
@@ -894,18 +933,25 @@ export class ServerHost {
         batchForks: this.batchForks,
       }
       // Validation and the async `load` phase happen here, before any transaction.
+      t = phaseStart()
       const prepared = await prepareInvocation(this.deps.registry, docCtx, commandId, input)
+      phaseEnd('host.validate', t)
       if (buildKey !== null) {
         const decision = this.deckBuilds.hit(buildKey)
         if (!decision.allowed) throw tooManyBuilds(decision.retryAfterMs)
       }
       if (!prepared.synchronous) {
+        t = phaseStart()
         const output = await prepared.execute()
+        phaseEnd('host.execute', t)
+        t = phaseStart()
         await prepared.settle()
+        phaseEnd('host.settle', t)
         return output
       }
 
       try {
+        t = phaseStart()
         const activeRun = run!
         await this.deps.runs.beforeDocumentWrite(activeRun, lease)
         let output: unknown
@@ -928,9 +974,12 @@ export class ServerHost {
           // so the next op never merges into this one.
           this.deps.runs.afterDocumentWrite(activeRun, document, touched)
         }
+        phaseEnd('host.apply', t)
         // The write is committed: reconcile what `load` staged with the
         // world as it is now (a no-op unless the command has `settle`).
+        t = phaseStart()
         await prepared.settle()
+        phaseEnd('host.settle', t)
         return output
       } finally {
         // The write never ran (the run refused it, the connection failed

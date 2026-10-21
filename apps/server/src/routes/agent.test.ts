@@ -28,6 +28,7 @@ import { registerSameOriginPolicy } from '../http/sameOrigin.js'
 import { allowAllPatOwners, createMemoryPatStore } from '../test-support/memoryPatStore.js'
 import { createAgentWorld, type AgentWorld } from '../test-support/agentWorld.js'
 import { FAKE_INTERNAL_DETAIL, registryWithFakes } from '../test-support/fakeCommands.js'
+import { parseServerTiming } from '../observability/phases.js'
 import { COMMAND_ERROR_STATUS, parseCommandBody, registerAgentRoutes } from './agent.js'
 
 let world: AgentWorld
@@ -71,6 +72,77 @@ describe('POST /commands', () => {
       surface: 'api',
       clientName: 'deploy-script',
     })
+  })
+
+  it('answers the phases of a request that asks for them, and only then (G7)', async () => {
+    const body = {
+      target: { deckId: 'deck1' },
+      command: 'object.update',
+      input: { slide: 's1', object: 'r1', patch: { x: 3 } },
+    }
+    const plain = await post(body)
+    expect(plain.headers['server-timing']).toBeUndefined()
+    const timed = await app.inject({
+      method: 'POST',
+      url: '/commands',
+      headers: { 'x-narrative-timing': '1' },
+      payload: body,
+    })
+    expect(timed.statusCode).toBe(200)
+    const phases = parseServerTiming(String(timed.headers['server-timing']))
+    expect(Object.keys(phases)).toEqual(
+      expect.arrayContaining([
+        'http.pre',
+        'http.parse',
+        'host',
+        'http.serialize',
+        'host.admit',
+        'host.load',
+        'host.validate',
+        'host.apply',
+        'host.audit',
+      ]),
+    )
+    for (const ms of Object.values(phases)) expect(ms).toBeGreaterThanOrEqual(0)
+    // No slice of the time before the handler (the credential's check) is told apart.
+    expect(Object.keys(phases).filter((p) => p.startsWith('http.'))).toEqual([
+      'http.pre',
+      'http.parse',
+      'http.serialize',
+    ])
+  })
+
+  it('answers no phases for a call refused before it was authorised on its target (G7 review)', async () => {
+    const timed = (body: unknown) =>
+      app.inject({
+        method: 'POST',
+        url: '/commands',
+        headers: { 'x-narrative-timing': '1' },
+        payload: body as object,
+      })
+    const write = {
+      command: 'object.update',
+      input: { slide: 's1', object: 'r1', patch: { x: 1 } },
+    }
+    for (const body of [
+      { target: { deckId: 'deck2' }, ...write }, // viewer: forbidden
+      { target: { deckId: 'no-such-deck' }, ...write }, // unknown deck: forbidden
+      { target: { deckId: 'deck1' }, command: 'object.teleport', input: {} }, // unknown command
+      { ...write }, // no target
+      { target: { deckId: 'deck1' }, command: 7 }, // a body the route refuses
+    ]) {
+      const res = await timed(body)
+      expect(res.statusCode, JSON.stringify(body)).toBeGreaterThanOrEqual(400)
+      expect(res.headers['server-timing'], JSON.stringify(body)).toBeUndefined()
+    }
+    // Authorised on the deck, then refused by the command (an unknown object): its phases are the caller's.
+    const missing = await timed({
+      target: { deckId: 'deck1' },
+      command: 'object.update',
+      input: { slide: 's1', object: 'ghost', patch: { x: 1 } },
+    })
+    expect(missing.statusCode).toBe(404)
+    expect(missing.headers['server-timing']).toContain('host.admit')
   })
 
   it('runs a batch as one change', async () => {
@@ -340,6 +412,21 @@ describe('POST /commands with real credentials', () => {
     }
     expect(world.store.runs.size).toBe(0)
     expect((await rename({ ...session(1), origin: SPA })).statusCode).toBe(200)
+  })
+
+  it('answers no phases to a caller that is not authenticated (G7 review)', async () => {
+    for (const headers of [
+      {},
+      { authorization: 'Bearer nrt_not-a-real-token-0000000000000000' },
+      { authorization: `Bearer ${patToken}x` },
+    ]) {
+      const res = await rename({ ...headers, 'x-narrative-timing': '1' })
+      expect(res.statusCode, JSON.stringify(headers)).toBe(401)
+      expect(res.headers['server-timing']).toBeUndefined()
+    }
+    const ok = await rename({ authorization: `Bearer ${patToken}`, 'x-narrative-timing': '1' })
+    expect(ok.statusCode).toBe(200)
+    expect(ok.headers['server-timing']).toContain('http.pre')
   })
 
   it('needs no Origin for a personal access token, and still 401s without any credential', async () => {

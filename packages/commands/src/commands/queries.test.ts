@@ -3,10 +3,12 @@ import * as Y from 'yjs'
 import {
   getSlideNotesFragment,
   listSlides,
+  PARAGRAPH_SEP,
   setDeckMeta,
   setSlideLayout,
 } from '@narrative/slide-model'
 import { harness } from '../testing/harness.js'
+import { displayOf } from '../text/body.js'
 
 /** A value survives JSON unchanged iff it holds nothing but JSON (no Y types, no undefined, no class instances). */
 function jsonRoundTrip(value: unknown): unknown {
@@ -52,6 +54,108 @@ describe('query.deck', () => {
       guides: [{ id: 'gd1', orientation: 'vertical', position: 960 }],
       meta: {},
     })
+  })
+
+  it('outlines as listSlides with the original title scan did, malformed records included (G7)', () => {
+    // The outline used to copy every slide (listSlides) and read every text
+    // body; it now reads the Y.Maps. This is the old computation, as an oracle.
+    const oldTitle = (slide: ReturnType<typeof listSlides>[number]): string | undefined => {
+      let best: { size: number; y: number; text: string } | undefined
+      for (const o of slide.objects) {
+        if (o.type !== 'text') continue
+        const raw =
+          o.text instanceof Y.Text ? o.text.toString() : typeof o.text === 'string' ? o.text : ''
+        const first = displayOf(raw)
+          .display.split('\n\n')
+          .map((p) => p.replace(/\s+/g, ' ').trim())
+          .find((p) => p.length > 0)
+        if (first === undefined) continue
+        const size = typeof o.fontSize === 'number' ? o.fontSize : 0
+        if (best === undefined || size > best.size || (size === best.size && o.y < best.y))
+          best = { size, y: o.y, text: first }
+      }
+      if (best === undefined) return undefined
+      return best.text.length > 80 ? `${best.text.slice(0, 79)}…` : best.text
+    }
+    const h = harness()
+    h.run('slide.add', {})
+    const map = (fields: Record<string, unknown>): Y.Map<unknown> => {
+      const m = new Y.Map<unknown>()
+      for (const [k, v] of Object.entries(fields)) m.set(k, v)
+      return m
+    }
+    const objectsOf = (index: number) =>
+      h.deck.slides.get(index).get('objects') as Y.Array<Y.Map<unknown>>
+    h.deck.doc.transact(() => {
+      objectsOf(2).push([
+        map({
+          id: 'blank',
+          type: 'text',
+          text: new Y.Text(`   ${PARAGRAPH_SEP}  `),
+          fontSize: 90,
+          y: 10,
+        }),
+        map({
+          id: 'str',
+          type: 'text',
+          text: `Plain string title${PARAGRAPH_SEP}`,
+          fontSize: 60,
+          y: 300,
+        }),
+        map({
+          id: 'low',
+          type: 'text',
+          text: new Y.Text('Lower, same size'),
+          fontSize: 60,
+          y: 500,
+        }),
+        map({
+          id: 'top',
+          type: 'text',
+          text: new Y.Text(`\n${PARAGRAPH_SEP} Top,  same size `),
+          fontSize: 60,
+          y: 200,
+        }),
+        map({
+          id: 'tie',
+          type: 'text',
+          text: new Y.Text('Same place, later'),
+          fontSize: 60,
+          y: 200,
+        }),
+        map({ id: 'untyped' }),
+        map({ id: 'numtype', type: 123 }),
+        map({ id: 'r', type: 'rectangle', x: 0, y: 0, width: 1, height: 1 }),
+      ])
+      objectsOf(3).push([
+        map({
+          id: 'long',
+          type: 'text',
+          text: new Y.Text('word '.repeat(40)),
+          fontSize: 'big',
+          y: 0,
+        }),
+      ])
+      const anims = h.deck.slides.get(0).get('animations') as Y.Array<Y.Map<unknown>>
+      anims.push([map({ id: 'broken', objectId: 'x' })])
+    })
+    const out = h.run<{
+      slides: Array<{ title?: string; objectCount: number; animationCount: number }>
+    }>('query.deck', {})
+    const expected = listSlides(h.deck).map((s) => ({
+      ...(oldTitle(s) === undefined ? {} : { title: oldTitle(s) }),
+      objectCount: s.objects.length,
+      animationCount: s.animations.length,
+    }))
+    expect(
+      out.slides.map(({ title, objectCount, animationCount }) => ({
+        ...(title === undefined ? {} : { title }),
+        objectCount,
+        animationCount,
+      })),
+    ).toEqual(expected)
+    expect(out.slides[2]!.title).toBe('Top, same size')
+    expect(out.slides[3]!.title).toHaveLength(80)
   })
 
   it("reads the deck's meta and each slide's pack layout (A4)", () => {

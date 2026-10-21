@@ -60,6 +60,8 @@ export interface McpWorld {
       onElicit?: (request: ElicitRequest) => ElicitResult | Promise<ElicitResult>
       /** `notifications/elicitation/complete` the server sent (URL mode). */
       onElicitationComplete?: (elicitationId: string) => void
+      /** Extra request headers (e.g. `x-narrative-timing`). */
+      headers?: Record<string, string>
     },
   ): Promise<Client>
   /** Owners the OAuth sign-in policy refuses (to simulate a removed user). */
@@ -200,7 +202,7 @@ export async function createMcpWorld(
         )
       }
       const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
-        requestInit: { headers: { Authorization: `Bearer ${token}` } },
+        requestInit: { headers: { ...clientOpts.headers, Authorization: `Bearer ${token}` } },
       })
       // exactOptionalPropertyTypes vs the SDK's own Transport interface (see mcp/sessions.ts).
       await client.connect(transport as unknown as Transport)

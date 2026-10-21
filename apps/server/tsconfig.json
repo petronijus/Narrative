@@ -12,6 +12,8 @@
       "@narrative/slide-model": ["../../packages/slide-model/src/index.ts"],
       "@narrative/commands": ["../../packages/commands/src/index.ts"],
       "@narrative/commands/playbooks": ["../../packages/commands/src/playbooks/index.ts"],
+      "@narrative/perf": ["../../packages/perf/src/index.ts"],
+      "@narrative/perf/node": ["../../packages/perf/src/node/index.ts"],
       "@narrative/perf/stats": ["../../packages/perf/src/stats.ts"]
     }
   },

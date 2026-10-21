@@ -108,6 +108,8 @@ import { readDocCopy } from './liveDocs.js'
 import { MAX_BEFORE_STATE_BYTES } from './runs.js'
 import { attachmentDisposition, safeFilename } from '../pptx/exportDeck.js'
 import { EXPORT_URL_TTL_SEC, MAX_INLINE_EXPORT_BYTES } from './pptx.js'
+import { phaseAdd, phaseEnd, phaseStart } from '../observability/phases.js'
+import { reportedWorkerSteps } from '../render/jobTimings.js'
 
 /** The largest slide PNG a PDF page is made from (a photo-heavy 1920×1080 slide, with slack). */
 const MAX_PDF_PAGE_PNG_BYTES = 16_000_000
@@ -649,7 +651,11 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     deckId: string
     view: RenderView
   }): Promise<RenderLookResult> {
+    // Phases of a timed request (observability/phases.ts): the live document's
+    // copy, the job (queue and worker), the PNG read back.
+    let t = phaseStart()
     const deck = await liveDeck(args)
+    phaseEnd('render.live', t)
     let spec: Exclude<RenderLookSpec, { mode: 'thumbnail' }>
     let weight: number
     let staged: string | null = null
@@ -682,8 +688,12 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
     }
     const key = `${exportsPrefix(deck.card)}look.png`
     let result: RenderJobResult
+    t = phaseStart()
     try {
       result = await runJob(args.userId, deck, weight, { kind: 'look', look: spec, key })
+      phaseEnd('render.job', t)
+      // The worker's own steps (RenderJobResult.timings) inside that job.
+      for (const [step, ms] of reportedWorkerSteps(result.timings)) phaseAdd(`render.${step}`, ms)
     } finally {
       if (staged !== null) {
         const stale = staged
@@ -693,7 +703,10 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
       }
     }
     if (result.kind !== 'look') throw failed('The renderer answered another job', 503)
+    t = phaseStart()
     const bytes = await readStoredPng(key, MAX_LOOK_BYTES)
+    const base64 = Buffer.from(bytes).toString('base64')
+    phaseEnd('render.read', t)
     const indexOf = new Map(deck.slides.map((s, i) => [s.id, i]))
     const overflow = result.look.overflow ?? []
     return {
@@ -712,7 +725,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService & {
       ...(overflow.length > MAX_OVERFLOW_REPORTED ? { overflowTruncated: true } : {}),
       ...(result.look.newSlide === true ? { newSlide: true } : {}),
       failedFonts: result.failedFonts,
-      image: { mimeType: 'image/png', base64: Buffer.from(bytes).toString('base64') },
+      image: { mimeType: 'image/png', base64 },
     }
   }
 

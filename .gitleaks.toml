@@ -11,3 +11,7 @@ regexes = ['''suMEL2lykgqwQ5l03rNxzW''', '''Nr0FXJtfxptAS_duWznRdk''']
 [[allowlists]]
 description = "Committed env templates (placeholders, no real values)"
 paths = ['''(^|/)\.env(\.[a-z]+)?\.example$''']
+
+[[allowlists]]
+description = "The server-timing key fixture of the phases tests (observability/phases.test.ts)"
+regexes = ['''k3y-for-the-perf-probe-0123456789''']

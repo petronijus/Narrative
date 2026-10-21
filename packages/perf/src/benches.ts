@@ -8,10 +8,12 @@
  */
 
 import { INTERACTION_BENCHES } from './catalog/interaction.js'
+import { AGENT_BENCHES } from './catalog/server.js'
 import { SYSTEM_BENCHES } from './catalog/system.js'
 import type { BenchDef } from './defineBench.js'
 
 export const ALL_BENCHES: ReadonlyArray<BenchDef<never>> = [
   ...INTERACTION_BENCHES,
   ...SYSTEM_BENCHES,
+  ...AGENT_BENCHES,
 ]

@@ -9,6 +9,9 @@
  *     token; never a cookie). Rate limit: AGENT_RATE_LIMIT per PAT / OAuth
  *     grant. Requests with an `Origin` header from anywhere but Narrative's
  *     own origins are refused (the transport spec's DNS-rebinding rule).
+ *     A timed request (`x-narrative-timing`, observability/phases.ts): a tool
+ *     call the ServerHost authorised gets its phases in the tool result's
+ *     `_meta` (mcp/server.ts).
  *
  * Registration reads nothing from `deps.mcp`; handlers do, when a request
  * arrives (the route guard registers routes against stubs).
@@ -17,6 +20,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { getAuthOpts } from '../auth/fastifyAuth.js'
 import { AGENT_RATE_LIMIT } from '../http/rateLimit.js'
+import { requestClock, runTimed, timingHooks } from '../observability/phases.js'
 import {
   addResourceMetadataToChallenge,
   mcpAuthPreHandler,
@@ -73,6 +77,7 @@ export async function registerMcpRoutes(app: FastifyInstance, deps: McpRouteDeps
         keyGenerator: lazyKey,
       },
     },
+    onRequest: timingHooks.onRequest,
     preHandler: [
       originGuard,
       async (req, reply) => {
@@ -83,7 +88,9 @@ export async function registerMcpRoutes(app: FastifyInstance, deps: McpRouteDeps
     onSend: async (req, reply, payload) =>
       addResourceMetadataToChallenge(deps.mcp.config)(req, reply, payload),
     handler: async (req, reply) => {
-      await deps.mcp.sessions.handle(req, reply)
+      const clock = requestClock(req)
+      clock?.lap('http.pre')
+      await runTimed(clock, () => deps.mcp.sessions.handle(req, reply))
     },
   })
 

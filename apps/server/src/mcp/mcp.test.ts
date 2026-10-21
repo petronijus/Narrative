@@ -22,6 +22,7 @@ import { ToolCatalog } from './tools.js'
 import { createMcpWorld, type McpWorld } from '../test-support/mcpWorld.js'
 import { eventually } from '../test-support/agentWorld.js'
 import { FAKE_INTERNAL_DETAIL } from '../test-support/fakeCommands.js'
+import { MCP_TIMING_META_KEY } from '../observability/phases.js'
 
 let w: McpWorld
 let token1: string
@@ -50,6 +51,47 @@ async function tools(client: Client): Promise<Map<string, Tool>> {
   const { tools: list } = await client.listTools()
   return new Map(list.map((t) => [t.name, t]))
 }
+
+describe('server timing (G7, observability/phases.ts)', () => {
+  it("returns a timed tool call's phases in _meta, and nothing for an untimed one", async () => {
+    const args = { deckId: 'deck1', slide: 's1', object: 'r1', patch: { x: 5 } }
+    const plain = await call(await w.client(token1), 'object_update', args)
+    expect(plain.isError).not.toBe(true)
+    expect(plain._meta?.[MCP_TIMING_META_KEY]).toBeUndefined()
+    const timedClient = await w.client(token1, { headers: { 'x-narrative-timing': '1' } })
+    const timed = await call(timedClient, 'object_update', args)
+    expect(timed.isError).not.toBe(true)
+    const phases = timed._meta?.[MCP_TIMING_META_KEY] as Record<string, number>
+    expect(Object.keys(phases)).toEqual(
+      expect.arrayContaining([
+        'http.pre',
+        'mcp.dispatch',
+        'mcp.args',
+        'mcp.confirm',
+        'host',
+        'mcp.result',
+        'host.admit',
+        'host.apply',
+      ]),
+    )
+    // The command's own output is untouched.
+    expect(timed.structuredContent).toEqual(plain.structuredContent)
+  })
+
+  it('reports nothing for a call refused before it was authorised on its target (G7 review)', async () => {
+    const timedClient = await w.client(token1, { headers: { 'x-narrative-timing': '1' } })
+    for (const deckId of ['deck2', 'no-such-deck']) {
+      const refused = await call(timedClient, 'object_update', {
+        deckId,
+        slide: 's1',
+        object: 'r1',
+        patch: { x: 5 },
+      })
+      expect(refused.isError).toBe(true)
+      expect(refused._meta?.[MCP_TIMING_META_KEY]).toBeUndefined()
+    }
+  })
+})
 
 describe('tools are generated from the registry', () => {
   it('lists one tool per command, named by the reversible mapping', async () => {

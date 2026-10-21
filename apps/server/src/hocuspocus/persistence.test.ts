@@ -28,6 +28,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as Y from 'yjs'
+import { Document } from '@hocuspocus/server'
 import { PostgresPersistence } from './persistence.js'
 
 // ---------------------------------------------------------------------------
@@ -226,11 +227,21 @@ function snapshotObjects(doc: Y.Doc): Array<Record<string, unknown>> {
 // Tests
 // ---------------------------------------------------------------------------
 
+/** The document Hocuspocus hands the load hook: its own Y.Doc subclass, with the broadcast buffer. */
+function liveDoc(name = 'test'): Document {
+  return new Document(name)
+}
+
+/** Updates the document has buffered for its next broadcast (Hocuspocus internals, read in tests only). */
+function pendingBroadcast(document: Document): number {
+  return (document as unknown as { pendingUpdates: unknown[] }).pendingUpdates.length
+}
+
 describe('PostgresPersistence', () => {
-  let doc: Y.Doc
+  let doc: Document
 
   beforeEach(() => {
-    doc = new Y.Doc()
+    doc = liveDoc()
   })
 
   it('onLoadDocument returns void for empty deck (no rows)', async () => {
@@ -281,6 +292,22 @@ describe('PostgresPersistence', () => {
     expect(doc.getArray('objects').length).toBe(5)
   })
 
+  it('onLoadDocument leaves nothing buffered for broadcast, so the first write merges no snapshot (G7)', async () => {
+    const writer = new Y.Doc()
+    const db = makeFakeDb()
+    for (let i = 0; i < 3; i++) {
+      addObject(writer, `row-${i}`)
+      db._seedRow('deck-flush', Y.encodeStateAsUpdate(writer))
+    }
+    const persistence = new PostgresPersistence({ db: db as never })
+    await persistence.onLoadDocument(makePayload('deck:deck-flush', doc) as never)
+    expect(pendingBroadcast(doc)).toBe(0)
+    // A write in the same turn (an agent's first command) is the only update buffered.
+    addObject(doc, 'agent-write')
+    expect(pendingBroadcast(doc)).toBe(1)
+    expect(doc.getArray('objects').length).toBe(4)
+  })
+
   it('onStoreDocument writes one snapshot and keeps the table bounded across cycles', async () => {
     const db = makeFakeDb()
     const persistence = new PostgresPersistence({ db: db as never })
@@ -319,7 +346,7 @@ describe('PostgresPersistence', () => {
     expect(db._rowCountFor('deck-compact')).toBe(1)
 
     // And it loads back to the full state (4 seeds + 1 edit).
-    const reload = new Y.Doc()
+    const reload = liveDoc()
     const p2 = new PostgresPersistence({ db: db as never })
     await p2.onLoadDocument(makePayload('deck:deck-compact', reload) as never)
     expect(snapshotObjects(reload)).toEqual(snapshotObjects(doc))
@@ -334,7 +361,7 @@ describe('PostgresPersistence', () => {
     addObject(doc, 'rt-2', { type: 'text', value: 'hello' })
     await persistence.onStoreDocument(makePayload('deck:roundtrip', doc) as never)
 
-    const reload = new Y.Doc()
+    const reload = liveDoc()
     await persistence.onLoadDocument(makePayload('deck:roundtrip', reload) as never)
 
     expect(snapshotObjects(reload)).toEqual(snapshotObjects(doc))
@@ -365,7 +392,7 @@ describe('PostgresPersistence', () => {
 
     // The doc still loads to the LAST GOOD state (good-1, good-2) — the failed
     // store did not corrupt or empty anything.
-    const reload = new Y.Doc()
+    const reload = liveDoc()
     await persistence.onLoadDocument(makePayload('deck:deck-atomic', reload) as never)
     expect(snapshotObjects(reload)).toEqual(snapshotObjects(writer))
     expect(reload.getArray('objects').length).toBe(2)
@@ -519,7 +546,7 @@ describe('PostgresPersistence', () => {
       db._seedRow('over-limit', Y.encodeStateAsUpdate(big))
 
       // Load it — this seeds lastStoredBytes with the (over-cap) size.
-      const loaded = new Y.Doc()
+      const loaded = liveDoc()
       await persistence.onLoadDocument(makePayload('deck:over-limit', loaded) as never)
 
       // A re-store at the SAME (still over-cap) size is allowed because it is

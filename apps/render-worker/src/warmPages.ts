@@ -9,11 +9,15 @@
  *     person and deck for a few minutes (apps/server/src/render/sessions.ts),
  *     and the next job of that token and deck switches slides in place on
  *     the page its last job left (`take`);
- *   - a spare: a job of any other session takes the oldest idle page instead
- *     (`takeSpare`) and render.ts recycles it — the old document unloaded,
- *     the origin's storage and cookies cleared, then the new deck's URL
- *     loaded in the same tab. The page keeps its renderer process (and the
- *     code it compiled), never anything of the deck or token before.
+ *   - a spare: a job of any other session, when the pool has no room for one
+ *     more page (`full`), takes the oldest idle page instead (`takeSpare`)
+ *     and render.ts recycles it — the old document unloaded, the origin's
+ *     storage and cookies cleared, then the new deck's URL loaded in the same
+ *     tab. The page keeps its renderer process (and the code it compiled),
+ *     never anything of the deck or token before. With room, the job opens a
+ *     page of its own and the other session keeps its page for its next job:
+ *     two sessions taking turns used to recycle each other's page on every
+ *     job (docs/plans/performance.md G7).
  *
  * Bounded: at most `max` pages (the oldest goes first), each closed after
  * `idleMs` without a job, and with the browser (a closed context drops out by
@@ -116,6 +120,11 @@ export class WarmPages {
 
   get size(): number {
     return this.pages.size
+  }
+
+  /** No room for another kept page: a job without a page of its own recycles a spare (see the header). */
+  get full(): boolean {
+    return this.pages.size >= this.opts.max
   }
 
   /** Close the oldest idle page (memory for a job); false when none is kept. */

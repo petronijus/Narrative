@@ -165,6 +165,13 @@ load:
 perf-commands *args: _services
     LOG_LEVEL="${LOG_LEVEL:-warn}" pnpm --filter server run perf:commands "$@"
 
+# The same over real HTTP against the running dev server: the command API and MCP with a token made for the run,
+# per phase (Server-Timing / the tool result's _meta), cold and warm, query.render's queue wait and worker time, on
+# the 10- and 100-slide scenes; stored as layer S benches `command.*` (apps/server/perf/agentLatency.ts:
+# `--sizes 10,100 --surfaces api,mcp --runs 15 --cold 8 --no-render --only <id part> --no-store --json out.json`)
+perf-agent *args: _stack
+    pnpm --silent --filter server run perf:agent "$@"
+
 # Lighthouse (desktop) on a seeded deck's /deck/:id of a production build in front of the dev backend, 5 runs,
 # compared with this machine's baseline: a regression fails (bench deck.open.lighthouse; nothing is uploaded)
 lighthouse *args: _stack

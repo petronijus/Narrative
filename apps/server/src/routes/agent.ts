@@ -35,6 +35,9 @@
  *     200 `{ ok: true, result, runId }`; failures `{ ok: false, error: { code,
  *     message, issues, opIndex? }, runId }` with the status of `code` (below).
  *     A batch is `ops.apply`: document commands only, atomic by default.
+ *     A timed request (`x-narrative-timing`, observability/phases.ts) gets its
+ *     phases back in `Server-Timing` once the call was authorised on its
+ *     target, never on a 401, 403 or 429.
  *
  *   GET  /decks/:id/agent-runs            (Agent activity popover, deck editor)
  *   GET  /components/:id/agent-runs       (the same popover, component master editor)
@@ -51,6 +54,7 @@ import type { CommandErrorCode, CommandInvocation, CommandTarget } from '@narrat
 import { authPreHandler, requireTokenScope } from '../auth/fastifyAuth.js'
 import { agentRouteRateLimit } from '../http/rateLimit.js'
 import { requireSameOrigin } from '../http/sameOrigin.js'
+import { requestClock, runTimed, timingHooks } from '../observability/phases.js'
 import type { AgentRuntime } from '../agent/runtime.js'
 import type { HostResult } from '../agent/serverHost.js'
 
@@ -215,9 +219,12 @@ export async function registerAgentRoutes(
     '/commands',
     {
       config: agentRouteRateLimit,
+      ...timingHooks,
       preHandler: [requireSameOrigin, requireTokenScope('api', { allowSession: true })],
     },
     async (req, reply) => {
+      const clock = requestClock(req)
+      clock?.lap('http.pre')
       const userId = req.user?.sub
       if (userId === undefined) return reply.status(401).send({ error: 'Unauthorized' })
       let body: ParsedBody
@@ -227,20 +234,24 @@ export async function registerAgentRoutes(
         if (e instanceof BodyError) return badRequest(reply, e.message)
         throw e
       }
-      const outcome = await deps.agent.host.execute({
-        actor: { userId, kind: 'agent' },
-        surface: 'api',
-        sessionKey: apiSessionKey(req, userId),
-        ...(apiCredentialKey(req) === null ? {} : { credentialKey: apiCredentialKey(req)! }),
-        target: body.target,
-        ...(body.invocation === undefined ? {} : { invocation: body.invocation }),
-        ...(body.batch === undefined ? {} : { batch: body.batch }),
-        ...(body.runId === undefined ? {} : { runId: body.runId }),
-        ...(body.clientName === undefined ? {} : { clientName: body.clientName }),
-        ...(body.confirm === undefined
-          ? {}
-          : { confirmation: { commands: body.confirm, via: 'explicit' as const } }),
-      })
+      clock?.lap('http.parse')
+      const outcome = await runTimed(clock, () =>
+        deps.agent.host.execute({
+          actor: { userId, kind: 'agent' },
+          surface: 'api',
+          sessionKey: apiSessionKey(req, userId),
+          ...(apiCredentialKey(req) === null ? {} : { credentialKey: apiCredentialKey(req)! }),
+          target: body.target,
+          ...(body.invocation === undefined ? {} : { invocation: body.invocation }),
+          ...(body.batch === undefined ? {} : { batch: body.batch }),
+          ...(body.runId === undefined ? {} : { runId: body.runId }),
+          ...(body.clientName === undefined ? {} : { clientName: body.clientName }),
+          ...(body.confirm === undefined
+            ? {}
+            : { confirmation: { commands: body.confirm, via: 'explicit' as const } }),
+        }),
+      )
+      clock?.lap('host')
       return sendHostResult(reply, outcome)
     },
   )

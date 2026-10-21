@@ -13,12 +13,18 @@
  * Jobs carry a BullMQ priority (lower runs first; the service passes the
  * slides the caller has in flight), so one person's long jobs do not keep
  * everyone else's waiting.
+ *
+ * A timed request (observability/phases.ts) also gets the finished job's
+ * `render.queueWait` (added → the worker took it) and `render.worker` (the
+ * worker's time), read off the job record before it is removed — one more
+ * Redis read, only then.
  */
 
 import { Queue, QueueEvents } from 'bullmq'
 import { Redis as IORedis } from 'ioredis'
 import { RENDER_QUEUE, type RenderJobData, type RenderJobResult } from '@narrative/shared'
 import { subsystemLogger } from '../observability/logger.js'
+import { currentClock, phaseAdd } from '../observability/phases.js'
 
 const log = subsystemLogger('render-queue')
 
@@ -162,6 +168,7 @@ export const bullRenderQueue: RenderQueue = {
         data.deadline,
         () => new RenderTimeoutError(),
       )
+      if (currentClock() !== undefined) await recordJobTimes(queue, job.id)
       // The record holds the render session's token, which outlives the job:
       // it goes once its result is in, not minutes later.
       await job.remove().catch(() => undefined)
@@ -190,6 +197,24 @@ export const bullRenderQueue: RenderQueue = {
       unavailable('answer'),
     )
   },
+}
+
+/** The finished job's queue wait and worker time, as phases of the timed request (see the header). */
+async function recordJobTimes(
+  queue: Queue<RenderJobData, RenderJobResult>,
+  jobId: string | undefined,
+): Promise<void> {
+  if (jobId === undefined) return
+  // Bounded like every Redis call here: a stalled read costs the timed
+  // request at most REDIS_CALL_TIMEOUT_MS, and the job is removed after it.
+  const done = await within(
+    queue.getJob(jobId),
+    Date.now() + REDIS_CALL_TIMEOUT_MS,
+    unavailable('return the finished job'),
+  ).catch(() => undefined)
+  if (done?.processedOn === undefined || done.finishedOn === undefined) return
+  phaseAdd('render.queueWait', done.processedOn - done.timestamp)
+  phaseAdd('render.worker', done.finishedOn - done.processedOn)
 }
 
 /**

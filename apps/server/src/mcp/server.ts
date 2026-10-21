@@ -7,6 +7,11 @@
  * — the one execution path, which authorises per target, opens runs, logs
  * ops and attributes writes — with `surface: 'mcp'`, the session's user and
  * the session's key. Nothing here writes a document.
+ *
+ * A timed request (observability/phases.ts) whose call the host authorised
+ * gets the call's phases in the result's `_meta["narrative/serverTiming"]`:
+ * the SDK's transport has written its headers before the tool runs, so
+ * there is no Server-Timing. A refused call carries none.
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -25,6 +30,12 @@ import {
 import { commandIdForToolName } from '@narrative/commands'
 import type { AgentConfirmations } from '../agent/confirmations.js'
 import type { HostConfirmation, ServerHost } from '../agent/serverHost.js'
+import {
+  MCP_TIMING_META_KEY,
+  currentClock,
+  phaseLap,
+  reportablePhases,
+} from '../observability/phases.js'
 import { clientElicitation, obtainConfirmation } from './confirm.js'
 import { GuidanceError, type Guidance } from './guidance.js'
 import { errorResult, hostResultToToolResult } from './results.js'
@@ -125,6 +136,8 @@ export function createSessionServer(identity: SessionIdentity, deps: SessionServ
   server.setRequestHandler(
     CallToolRequestSchema,
     async (request, extra): Promise<CallToolResult> => {
+      // Session lookup, the SDK's JSON-RPC dispatch (a no-op unless timed).
+      phaseLap('mcp.dispatch')
       deps.onActivity?.()
       const entry = deps.catalog.get(request.params.name)
       if (entry === undefined)
@@ -138,6 +151,7 @@ export function createSessionServer(identity: SessionIdentity, deps: SessionServ
         throw e
       }
       const input = entry.def.id === 'ops.apply' ? opsWithCommandIds(split.input) : split.input
+      phaseLap('mcp.args')
 
       const sessionId = identity.sessionId ?? extra.sessionId ?? null
       const sessionKey = sessionId === null ? undefined : `mcp:${sessionId}`
@@ -174,6 +188,8 @@ export function createSessionServer(identity: SessionIdentity, deps: SessionServ
         }
       }
 
+      phaseLap('mcp.confirm')
+
       const outcome = await deps.host.execute({
         actor,
         surface: 'mcp',
@@ -185,7 +201,13 @@ export function createSessionServer(identity: SessionIdentity, deps: SessionServ
         ...(split.runId === undefined ? {} : { runId: split.runId }),
         ...(confirmation === undefined ? {} : { confirmation }),
       })
-      return hostResultToToolResult(outcome, { write: entry.def.undo !== 'n/a' })
+      phaseLap('host')
+      const result = hostResultToToolResult(outcome, { write: entry.def.undo !== 'n/a' })
+      const clock = currentClock()
+      clock?.lap('mcp.result')
+      const phases = reportablePhases(clock)
+      if (phases === null) return result
+      return { ...result, _meta: { ...result._meta, [MCP_TIMING_META_KEY]: phases } }
     },
   )
 

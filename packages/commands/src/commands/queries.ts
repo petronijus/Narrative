@@ -13,12 +13,14 @@ import {
   getDeckGuidesCtx,
   getPlainString,
   getSlideNotesText,
+  PARAGRAPH_SEP,
   listDeckGuides,
-  listSlides,
   readDeckMeta,
   readDeckSpec,
+  readSlideMeta,
   yMapToAnimationStep,
   type AnimationsMutationContext,
+  type SlideMeta,
 } from '@narrative/slide-model'
 import { DeckSpecSchema, MAX_SPEC_BYTES } from '../stylePack/deckSpec.js'
 import {
@@ -38,7 +40,6 @@ import {
   resolveSlide,
 } from '../refs.js'
 import { ObjectOutputSchema, objectForModel, toJsonForModel } from '../read/plain.js'
-import { displayOf } from '../text/body.js'
 
 const query = {
   domain: 'query',
@@ -94,28 +95,109 @@ function timedStepsForModel(anims: AnimationsMutationContext): Array<Record<stri
   }))
 }
 
+/** What the title guess reads of a text box. */
+interface TitleCandidate {
+  text: unknown
+  fontSize: unknown
+  y: number
+}
+
+/**
+ * The first paragraph of a text body that has any text, whitespace collapsed
+ * and trimmed — the paragraphs `displayOf` shows (U+2029 ends one; a trailing
+ * one ends the body) — or undefined when every paragraph is blank.
+ */
+function firstParagraph(text: unknown): string | undefined {
+  const raw = text instanceof Y.Text ? getPlainString(text) : typeof text === 'string' ? text : ''
+  const body = raw.endsWith(PARAGRAPH_SEP) ? raw.slice(0, -1) : raw
+  for (const paragraph of body.replaceAll(PARAGRAPH_SEP, '\n\n').split('\n\n')) {
+    const p = paragraph.replace(/\s+/g, ' ').trim()
+    if (p.length > 0) return p
+  }
+  return undefined
+}
+
+/**
+ * The likely title among a slide's text boxes, in stacking order: the largest
+ * box with any text (ties go to the topmost, then to the first). A box's text
+ * is read only when the box would win — reading every body of a 100-slide
+ * deck was most of query.deck's time (performance.md G7).
+ */
+function bestTitle(texts: readonly TitleCandidate[]): string | undefined {
+  let best: { size: number; y: number; text: string } | undefined
+  for (const o of texts) {
+    const size = typeof o.fontSize === 'number' ? o.fontSize : 0
+    if (best !== undefined && !(size > best.size || (size === best.size && o.y < best.y))) continue
+    const first = firstParagraph(o.text)
+    if (first === undefined) continue
+    best = { size, y: o.y, text: first }
+  }
+  if (best === undefined) return undefined
+  return best.text.length > TITLE_MAX ? `${best.text.slice(0, TITLE_MAX - 1)}…` : best.text
+}
+
 /**
  * A slide's likely title: the text of its largest text box (ties go to the
  * topmost), first paragraph, trimmed. Undefined when the slide has no text.
  */
 export function titleGuess(slide: Slide): string | undefined {
-  let best: { size: number; y: number; text: string } | undefined
-  for (const o of slide.objects) {
-    if (o.type !== 'text') continue
-    const raw =
-      o.text instanceof Y.Text ? getPlainString(o.text) : typeof o.text === 'string' ? o.text : ''
-    const first = displayOf(raw)
-      .display.split('\n\n')
-      .map((p) => p.replace(/\s+/g, ' ').trim())
-      .find((p) => p.length > 0)
-    if (first === undefined) continue
-    const size = typeof o.fontSize === 'number' ? o.fontSize : 0
-    if (best === undefined || size > best.size || (size === best.size && o.y < best.y)) {
-      best = { size, y: o.y, text: first }
+  const texts: TitleCandidate[] = []
+  for (const o of slide.objects)
+    if (o.type === 'text') texts.push({ text: o.text, fontSize: o.fontSize, y: o.y })
+  return bestTitle(texts)
+}
+
+/** What query.deck says of one slide. */
+interface SlideOutline {
+  id: string
+  meta: SlideMeta
+  title: string | undefined
+  objectCount: number
+  animationCount: number
+}
+
+/**
+ * One slide's outline read straight off its Y.Map. `listSlides` would copy
+ * every object of the deck to count them; this counts what it would keep (a
+ * Y.Map with a `type`; a well-formed animation step) and reads only the text
+ * boxes' title fields.
+ */
+function outlineOf(map: Y.Map<unknown>): SlideOutline {
+  const objects = map.get('objects')
+  const texts: TitleCandidate[] = []
+  let objectCount = 0
+  if (objects instanceof Y.Array) {
+    for (let i = 0; i < objects.length; i++) {
+      const o: unknown = objects.get(i)
+      if (!(o instanceof Y.Map)) continue
+      const type: unknown = o.get('type')
+      if (typeof type !== 'string') continue
+      objectCount++
+      if (type === 'text')
+        texts.push({ text: o.get('text'), fontSize: o.get('fontSize'), y: o.get('y') as number })
     }
   }
-  if (best === undefined) return undefined
-  return best.text.length > TITLE_MAX ? `${best.text.slice(0, TITLE_MAX - 1)}…` : best.text
+  const animations = map.get('animations')
+  let animationCount = 0
+  if (animations instanceof Y.Array) {
+    for (let i = 0; i < animations.length; i++) {
+      const a: unknown = animations.get(i)
+      if (!(a instanceof Y.Map)) continue
+      try {
+        yMapToAnimationStep(a)
+        animationCount++
+      } catch {
+        // Malformed step — listSlides skips it too.
+      }
+    }
+  }
+  return {
+    id: map.get('id') as string,
+    meta: readSlideMeta(map),
+    title: bestTitle(texts),
+    objectCount,
+    animationCount,
+  }
 }
 
 /** The pack layout a slide follows (A4.4). */
@@ -176,14 +258,22 @@ export const queryDeck = defineCommand({
       .optional()
       .describe('The deck holds a spec that is not a valid one: build it again'),
   }),
-  implementedWith: ['listSlides', 'listDeckGuides', 'readDeckMeta', 'readDeckSpec'],
+  implementedWith: [
+    'readSlideMeta',
+    'yMapToAnimationStep',
+    'getPlainString',
+    'listDeckGuides',
+    'readDeckMeta',
+    'readDeckSpec',
+  ],
   examples: [
     { title: 'Outline the deck', input: {} },
     { title: 'Outline the deck with the spec it was built from', input: { spec: true } },
   ],
   handler(ctx, input) {
     const deck = requireDeck(ctx)
-    const slides = listSlides(deck)
+    const slides: SlideOutline[] = []
+    for (let i = 0; i < deck.slides.length; i++) slides.push(outlineOf(deck.slides.get(i)))
     // The stored spec as a spec, or not at all: any client may write the
     // document, and what is returned here goes into a model's context.
     const stored = readDeckSpec(deck.doc)
@@ -196,22 +286,19 @@ export const queryDeck = defineCommand({
     const specSlides = spec?.slides.length
     return {
       slideCount: slides.length,
-      slides: slides.map((s, index) => {
-        const title = titleGuess(s)
-        return {
-          id: s.id,
-          index,
-          ...(s.name !== undefined ? { name: s.name } : {}),
-          ...(title !== undefined ? { title } : {}),
-          ...(s.indent !== undefined ? { indent: s.indent } : {}),
-          ...(s.skipped === true ? { skipped: true } : {}),
-          ...(s.collapsed === true ? { collapsed: true } : {}),
-          transition: s.transition.kind,
-          objectCount: s.objects.length,
-          animationCount: s.animations.length,
-          ...(s.layout !== undefined ? { layout: s.layout } : {}),
-        }
-      }),
+      slides: slides.map(({ id, meta: s, title, objectCount, animationCount }, index) => ({
+        id,
+        index,
+        ...(s.name !== undefined ? { name: s.name } : {}),
+        ...(title !== undefined ? { title } : {}),
+        ...(s.indent !== undefined ? { indent: s.indent } : {}),
+        ...(s.skipped === true ? { skipped: true } : {}),
+        ...(s.collapsed === true ? { collapsed: true } : {}),
+        transition: s.transition.kind,
+        objectCount,
+        animationCount,
+        ...(s.layout !== undefined ? { layout: s.layout } : {}),
+      })),
       guides: listDeckGuides(getDeckGuidesCtx(deck.doc)),
       meta: readDeckMeta(deck.doc),
       ...(specSlides !== undefined ? { specSlides } : {}),
@@ -262,7 +349,12 @@ export const querySlide = defineCommand({
       .optional(),
     notes: z.string(),
   }),
-  implementedWith: ['listSlides', 'yMapToPlainObject', 'getParagraphDeltas', 'getSlideNotesText'],
+  implementedWith: [
+    'readSlideMeta',
+    'yMapToPlainObject',
+    'getParagraphDeltas',
+    'getSlideNotesText',
+  ],
   examples: [
     { title: 'Read the first slide', input: { slide: { index: 0 } } },
     { title: 'Read a slide by id', input: { slide: 's2' } },
@@ -270,7 +362,9 @@ export const querySlide = defineCommand({
   handler(ctx, input) {
     const deck = requireDeck(ctx)
     const ref = resolveSlide(deck, input.slide)
-    const slide = listSlides(deck)[ref.index]!
+    // This slide's own fields only: listSlides would copy every object of the
+    // deck to read one slide (2.5 ms on a 100-slide deck, performance.md G7).
+    const slide = { id: ref.id, ...readSlideMeta(ref.map) }
     const objects = objectsOf(deck, ref)
     const anims = animationsOf(deck, ref)
     const objectList: Array<Record<string, unknown>> = []

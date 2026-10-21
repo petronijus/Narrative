@@ -10,6 +10,7 @@
 export * from './benches.js'
 export * from './budgets.js'
 export * from './catalog/interaction.js'
+export * from './catalog/server.js'
 export * from './catalog/system.js'
 export * from './defineBench.js'
 export * from './fingerprint.js'

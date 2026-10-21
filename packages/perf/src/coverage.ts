@@ -276,7 +276,6 @@ export const COMMAND_EXEMPTIONS: Readonly<Record<string, string>> = {
   'object.align': NOT_YET_BENCHED,
   'object.alignToSlide': NOT_YET_BENCHED,
   'object.copyTo': NOT_YET_BENCHED,
-  'object.create': NOT_YET_BENCHED,
   'object.crop.set': NOT_YET_BENCHED,
   'object.delete': NOT_YET_BENCHED,
   'object.distribute': NOT_YET_BENCHED,
@@ -298,15 +297,9 @@ export const COMMAND_EXEMPTIONS: Readonly<Record<string, string>> = {
   'object.rotate': NOT_YET_BENCHED,
   'object.slideNumber.set': NOT_YET_BENCHED,
   'object.ungroup': NOT_YET_BENCHED,
-  'object.update': NOT_YET_BENCHED,
-  // ops
-  'ops.apply': NOT_YET_BENCHED,
   // query
   'query.check': NOT_YET_BENCHED,
-  'query.deck': NOT_YET_BENCHED,
   'query.object': NOT_YET_BENCHED,
-  'query.render': NOT_YET_BENCHED,
-  'query.slide': NOT_YET_BENCHED,
   // share
   'share.invites.cancel': NOT_YET_BENCHED,
   'share.invites.list': NOT_YET_BENCHED,

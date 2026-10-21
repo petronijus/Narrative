@@ -240,22 +240,25 @@ describe('renderJob and the session page', () => {
         // The session's next job: the same page, no load.
         await renderJob(browser!, job(d, 'nrr_a', 's2'), deps)
         expect([pageLoads(d), deck(d).uploads, warm.size]).toEqual([1, 2, 1])
-        // Another session never gets that page as it is: it takes it as a
-        // spare, recycled — the render page loaded again, for its own token.
+        // Another session never gets that page as it is. With room for a
+        // second page it opens its own, and session A keeps its page warm.
         await renderJob(browser!, job(d, 'nrr_b', 's1'), deps)
-        expect([pageLoads(d), warm.size]).toEqual([2, 1])
-        // A failed job closes its page (here the recycled spare it took).
+        expect([pageLoads(d), warm.size]).toEqual([2, 2])
+        await renderJob(browser!, job(d, 'nrr_a', 's2'), deps)
+        expect([pageLoads(d), warm.size]).toEqual([2, 2])
+        // A failed job closes its page (here A's own).
         await expect(renderJob(browser!, job(d, 'nrr_a', 'bad'), deps)).rejects.toMatchObject({
           reason: 'not-settled',
         })
-        expect([pageLoads(d), warm.size]).toEqual([3, 0])
+        expect([pageLoads(d), warm.size]).toEqual([2, 1])
         await renderJob(browser!, job(d, 'nrr_a', 's1'), deps)
-        expect([pageLoads(d), warm.size]).toEqual([4, 1])
+        expect([pageLoads(d), warm.size]).toEqual([3, 2])
         // Background work takes no spare and closes its page: the people's
         // warm pages stay as they were.
         await renderJob(browser!, { ...job(d, 'nrr_c', 's1'), keepPage: false }, deps)
-        expect([pageLoads(d), warm.size]).toEqual([5, 1])
+        expect([pageLoads(d), warm.size]).toEqual([4, 2])
         expect(warm.take('nrr_a', `deck:${d}`)).toBeDefined()
+        expect(warm.take('nrr_b', `deck:${d}`)).toBeDefined()
       } finally {
         warm.closeAll('test')
       }

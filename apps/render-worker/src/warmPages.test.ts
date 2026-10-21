@@ -50,6 +50,19 @@ describe('WarmPages', () => {
     expect(pages.take('nrr_a', 'deck:d1')).toBeUndefined()
   })
 
+  it('is full once it keeps `max` pages: only then does a job recycle a spare (G7)', () => {
+    const pages = new WarmPages({ max: 2, idleMs: 60_000, log })
+    expect(pages.full).toBe(false)
+    pages.keep('nrr_a', fakePage('deck:d1'))
+    // Room for a second session's page: it opens its own, A's stays warm.
+    expect(pages.full).toBe(false)
+    pages.keep('nrr_b', fakePage('deck:d2'))
+    expect(pages.full).toBe(true)
+    expect(pages.take('nrr_a', 'deck:d1')).toBeDefined()
+    expect(pages.full).toBe(false)
+    expect(new WarmPages({ max: 0, idleMs: 60_000, log }).full).toBe(true)
+  })
+
   it('watches a page kept job after job with one close listener', () => {
     const pages = new WarmPages({ max: 1, idleMs: 60_000, log })
     const a = fakePage('deck:d1')

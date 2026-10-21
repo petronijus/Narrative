@@ -11,6 +11,7 @@
     "test": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts",
     "test:integration": "node --env-file=../../.env ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.ts",
     "perf:commands": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs perf/commands.ts",
+    "perf:agent": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs perf/agentLatency.ts",
     "db:generate": "echo 'Refusing: migrations here are hand-written. drizzle-kit generate emits a destructive full-schema migration (snapshots are intentionally not maintained). See apps/server/drizzle/README.md' >&2 && exit 1",
     "db:migrate": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/db/migrate.ts",
     "db:migrate-demo": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/scripts/migrateDemoUserDecks.ts",

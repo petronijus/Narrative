@@ -219,10 +219,28 @@ export interface RenderedLook {
  * A job's result. `failedFonts`: font families with a face that failed to
  * load — text in them shows a fallback face. Fonts load once for the page, so
  * this is the job's, not a slide's.
+ *
+ * `timings`: where the worker's time went, `[step, ms]` in order —
+ * `worker.page` (the page: the session's own, a recycled one or a new one,
+ * until its app is ready), the page's own steps as `page.<step>`
+ * (apps/web pages/renderTimings.ts: `sync`, then `ready`, `settle` and
+ * `extract` per slide, then `encode` or `compose`) and `worker.upload` per
+ * picture. The server reports them as phases of a timed request
+ * (docs/plans/performance.md G7); absent from a worker older than that.
  */
 export type RenderJobResult =
-  | { kind: 'export'; slides: RenderedSlide[]; failedFonts: string[] }
-  | { kind: 'look'; look: RenderedLook; failedFonts: string[] }
+  | {
+      kind: 'export'
+      slides: RenderedSlide[]
+      failedFonts: string[]
+      timings?: Array<[string, number]>
+    }
+  | {
+      kind: 'look'
+      look: RenderedLook
+      failedFonts: string[]
+      timings?: Array<[string, number]>
+    }
 
 /** Why a slide could not be rendered — the render page's error reasons, and the worker's own. */
 export type RenderFailureReason =

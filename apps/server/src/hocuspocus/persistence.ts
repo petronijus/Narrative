@@ -288,10 +288,28 @@ export class PostgresPersistence implements Extension {
       'loaded snapshot rows',
     )
 
+    // The rows just applied went through the document's own `update` listener
+    // into its broadcast buffer (Hocuspocus batches updates until the next
+    // `setImmediate`). Left there, they are merged with whatever is written
+    // before that tick — an agent's first command on a deck nobody had open
+    // writes in the same turn — so the first write paid a `Y.mergeUpdates` of
+    // the whole document (≈ 10 ms on a 100-slide deck, docs/plans/
+    // performance.md G7) to broadcast state its connections sync anyway.
+    // Flushed now, while no connection is attached yet, the buffer is emptied
+    // without encoding anything.
+    data.document.flush()
+
     // DOS-1: seed the growth baseline with the freshly-loaded size, so a doc
     // that is ALREADY over the cap at load time is not treated as "growth" on
-    // its first store (only further net growth past the cap is refused).
-    this.lastStoredBytes.set(data.documentName, Y.encodeStateAsUpdate(doc).byteLength)
+    // its first store (only further net growth past the cap is refused). One
+    // row (the usual case: stores compact) is a full snapshot whose length is
+    // that size; only several rows need the document encoded to know it.
+    this.lastStoredBytes.set(
+      data.documentName,
+      rows.length === 1 && applied === 1
+        ? rows[0]!.update.byteLength
+        : Y.encodeStateAsUpdate(doc).byteLength,
+    )
 
     return doc
   }
