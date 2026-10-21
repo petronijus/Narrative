@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ChevronLeft, Copy, MoreVertical, Pencil, Plus, Trash2, Users } from 'lucide-react'
 import { useApi } from '../api/client.js'
+import { pruneLocalCopiesOnce } from '../state/localDocPrune.js'
 import { UserMenu } from '../ui/UserMenu.js'
 import { Button } from '@/components/ui/button'
 import { MoveDeckModal } from '../ui/MoveDeckModal.js'
@@ -129,6 +130,8 @@ function FolderDecksInner() {
       // The folder list first: a folder the user is not (or no longer) a
       // member of sends them home, before its deck list would answer 403.
       const fetchedFolders = await api.listFolders()
+      // Local copies of what the user no longer reaches go (ADR 0017).
+      pruneLocalCopiesOnce(api, fetchedFolders)
       const found = fetchedFolders.find((f) => f.id === folderId)
       if (found === undefined) {
         // Unknown folder id, or one shared with them no more → back to home

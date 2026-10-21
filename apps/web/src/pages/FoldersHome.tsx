@@ -26,6 +26,7 @@ import {
   Users,
 } from 'lucide-react'
 import { useApi } from '../api/client.js'
+import { pruneLocalCopiesOnce } from '../state/localDocPrune.js'
 import { UserMenu } from '../ui/UserMenu.js'
 import { Button } from '@/components/ui/button'
 import type { FolderSummary } from '../api/client.js'
@@ -65,6 +66,9 @@ export function FoldersHome() {
       // one.  In P1 we can't distinguish it by flag (the type has no isDrafts),
       // so we rely on server ordering.
       setFolders(data)
+      // Local document copies of folders, decks and masters the user no
+      // longer reaches go (ADR 0017; at idle, once per page load).
+      pruneLocalCopiesOnce(api, data)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load folders')

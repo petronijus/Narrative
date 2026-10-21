@@ -6,7 +6,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
-import { whenProviderSaved } from './providerSaved.js'
+import { whenProviderReadySaved, whenProviderSaved } from './providerSaved.js'
 
 /** The slice of a provider `whenProviderSaved` reads, with its events. */
 function fakeProvider(state: { synced: boolean; unsynced: number }) {
@@ -76,5 +76,36 @@ describe('whenProviderSaved', () => {
     vi.advanceTimersByTime(1_000)
     await expect(saved).rejects.toThrow('has not confirmed')
     expect(listeners()).toBe(0)
+  })
+})
+
+describe('whenProviderReadySaved', () => {
+  it('waits for the provider, then for its acknowledgements', async () => {
+    vi.useFakeTimers()
+    const state = { synced: true, unsynced: 1 }
+    const { provider, emit } = fakeProvider(state)
+    let resolveReady: (p: HocuspocusProvider) => void = () => undefined
+    const ready = new Promise<HocuspocusProvider>((r) => (resolveReady = r))
+    let saved = false
+    const waiting = whenProviderReadySaved(ready, 1000).then(() => (saved = true))
+    await vi.advanceTimersByTimeAsync(300)
+    resolveReady(provider)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(saved).toBe(false)
+    state.unsynced = 0
+    emit('unsyncedChanges')
+    await waiting
+    expect(saved).toBe(true)
+  })
+
+  it('gives up when the provider never comes (the document closed while its copy was read)', async () => {
+    vi.useFakeTimers()
+    const waiting = whenProviderReadySaved(new Promise<HocuspocusProvider>(() => undefined), 1000)
+    const outcome = waiting.then(
+      () => 'saved',
+      () => 'rejected',
+    )
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(await outcome).toBe('rejected')
   })
 })

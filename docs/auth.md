@@ -95,6 +95,36 @@ Both must have the same value, or the editor logs
 `Hocuspocus: authentication token required`. Never set it in production; when
 it is on, keep the dev ports bound to `127.0.0.1`.
 
+## Local document copies in the browser
+
+The editor keeps a copy of each deck, folder token document and component
+master it opened in IndexedDB, so a repeat open paints at once and syncs only
+what changed ([ADR 0017](./adr/0017-local-document-copies.md)). A copy holds
+only state the server confirmed, belongs to the signed-in user (keyed by
+their sub), and goes when access does:
+
+- signing out deletes every copy and stops the open documents of every tab
+  from writing more (the other tabs reload); a page with no session
+  (`/auth/me` 401) deletes every copy; signing in as someone else deletes
+  the previous person's;
+- a refused connection (access revoked, the deck deleted) deletes that
+  document's copy, and a copy shown before the refusal is replaced by an
+  empty document;
+- the home and folder pages delete copies of folders, masters and decks the
+  user no longer reaches;
+- a copy the server has not confirmed for 30 days is deleted;
+- share-link visits and the render pages keep none; a device can turn
+  copies off altogether (`setLocalDocsDisabledOnDevice`; no menu item yet).
+
+At rest a copy is as exposed as the browser profile: unencrypted in the
+profile's IndexedDB files, not securely erased when deleted, kept until the
+next visit when the browser is closed without signing out. A copy the server
+cannot vouch for — older than a document the server **replaced**, older than
+a **restore** of the database, or holding items the server does not have —
+is refused (`stale-document`) or dropped before anything of it reaches the
+server. A restore must follow
+[`deploy.md` → Restoring the database](./deploy.md#restoring-the-database).
+
 ## Agents and scripts
 
 - **Personal access tokens** (account menu → Access tokens) carry scopes:

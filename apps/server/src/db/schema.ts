@@ -34,6 +34,7 @@ import {
   primaryKey,
   boolean,
   integer,
+  bigint,
   bigserial,
   jsonb,
   uniqueIndex,
@@ -107,6 +108,12 @@ export const folders = pgTable(
      * the partial unique index "one Drafts per owner").
      */
     isDrafts: boolean('is_drafts').notNull().default(false),
+    /**
+     * The epoch of the folder's token document (ADR 0017, migration 0041):
+     * bumped by whatever replaces the document's state instead of editing it
+     * through the sync server (hocuspocus/documentEpoch.ts).
+     */
+    docEpoch: integer('doc_epoch').notNull().default(1),
   },
   (t) => [index('folders_owner_user_id_idx').on(t.ownerUserId)],
 )
@@ -140,6 +147,12 @@ export const decks = pgTable(
     thumbnailUpdatedAt: timestamp('thumbnail_updated_at'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    /**
+     * The epoch of the deck's document (ADR 0017, migration 0041):
+     * bumped by whatever replaces the document's state instead of editing it
+     * through the sync server (hocuspocus/documentEpoch.ts).
+     */
+    docEpoch: integer('doc_epoch').notNull().default(1),
   },
   (t) => [index('decks_folder_id_idx').on(t.folderId)],
 )
@@ -483,6 +496,12 @@ export const components = pgTable(
     thumbnailKey: text('thumbnail_key'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    /**
+     * The epoch of the component's master document (ADR 0017, migration 0041):
+     * bumped by whatever replaces the document's state instead of editing it
+     * through the sync server (hocuspocus/documentEpoch.ts).
+     */
+    docEpoch: integer('doc_epoch').notNull().default(1),
   },
   (t) => [
     index('components_folder_id_idx').on(t.folderId),
@@ -1000,3 +1019,22 @@ export const appDataMigrations = pgTable('app_data_migrations', {
   report: jsonb('report'),
   lastError: text('last_error'),
 })
+
+/**
+ * The instance's restore generation (ADR 0017, migration 0042): one row.
+ * Every local document copy a browser holds is stamped
+ * `<generation>.<doc_epoch>`; the sync server refuses a stamp whose
+ * generation is below `floor`. `generation` advances after every backup
+ * (infra/scripts/backup.sh, which also writes it to the restore marker);
+ * a boot that finds the database below the marker moves both past it
+ * (hocuspocus/instanceGeneration.ts). Unix seconds of the last advance.
+ */
+export const instanceGeneration = pgTable(
+  'instance_generation',
+  {
+    id: integer('id').primaryKey().default(1),
+    generation: bigint('generation', { mode: 'number' }).notNull(),
+    floor: bigint('floor', { mode: 'number' }).notNull(),
+  },
+  (t) => [check('instance_generation_single_row', sql`${t.id} = 1`)],
+)

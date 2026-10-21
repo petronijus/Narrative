@@ -28,6 +28,13 @@
  * not reset the count, so a caller holding one valid session cannot use it to
  * clear the counter between guesses.
  *
+ * Document epoch (ADR 0017): once access is granted, the document's epoch
+ * and the instance's restore generation are read and the epoch to tell is
+ * kept in the context (hocuspocus/documentEpoch.ts sends it); a token
+ * claiming an epoch that is no longer current for what the client's Y.Doc
+ * holds is refused with the reason `stale-document` — not counted as a
+ * failed attempt, it is an honest client with an old copy.
+ *
  * Doc name routing (M16 P2):
  *   `deck:<id>`      → deck access via resolveDeckAccess
  *   `folder:<id>`    → resolveFolderContentAccess: a folder member, or a guest
@@ -48,11 +55,18 @@ import {
 } from '../auth/permissions.js'
 import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../auth/session.js'
 import { devSubFromCookieHeader } from '../auth/devIdentity.js'
-import { looksLikeNarrativeCredential } from '@narrative/shared'
+import { claimedDocumentEpoch, looksLikeNarrativeCredential } from '@narrative/shared'
 import { isRenderToken } from '../auth/renderTokens.js'
 import { clientIpFromHeaders } from '../http/clientIp.js'
 import { createFixedWindowLimiter, type FixedWindowLimiter } from '../http/fixedWindowLimiter.js'
 import { subsystemLogger } from '../observability/logger.js'
+import {
+  DOC_EPOCH_CONTEXT_KEY,
+  StaleDocumentError,
+  claimIsCurrent,
+  epochToTell,
+  readDocumentEpoch,
+} from './documentEpoch.js'
 
 const log = subsystemLogger('hocuspocus')
 
@@ -236,8 +250,10 @@ export function createOnAuthenticate(deps: WsAuthDeps) {
       // to protect) and cannot be guessed; its refusals — a page holding a
       // token that just expired — must not lock the render worker's one
       // address out for everyone (auth/renderTokens.ts).
+      // A stale epoch is an honest client holding an old copy (ADR 0017).
       const shareToken = data.requestParameters.get('share_token')
-      if (shareToken === null || !isRenderToken(shareToken)) failures.hit(ip)
+      const counted = !(err instanceof StaleDocumentError)
+      if (counted && (shareToken === null || !isRenderToken(shareToken))) failures.hit(ip)
       throw err
     }
     const additions: Record<string, unknown> = {}
@@ -250,6 +266,25 @@ export function createOnAuthenticate(deps: WsAuthDeps) {
 
 function createAuthenticate(deps: WsAuthDeps) {
   const { db } = deps
+
+  /**
+   * After the access check: the document's epoch into the context, and a
+   * claim of another epoch for what the client holds refused (ADR 0017).
+   */
+  async function checkEpoch(data: WsAuthPayload): Promise<void> {
+    const current = await readDocumentEpoch(db, data.documentName)
+    // The owner was deleted between the access check and now.
+    if (current === null) throw new Error('Forbidden')
+    const claimed = claimedDocumentEpoch(data.token)
+    if (claimed !== null && !claimIsCurrent(claimed, current)) {
+      log.info(
+        { doc: data.documentName, claimed, current },
+        'refused a connection holding a stale document',
+      )
+      throw new StaleDocumentError(data.documentName, claimed, current)
+    }
+    data.context[DOC_EPOCH_CONTEXT_KEY] = epochToTell(current)
+  }
 
   return async function authenticate(data: WsAuthPayload): Promise<void> {
     const { documentName, connectionConfig } = data
@@ -275,6 +310,7 @@ function createAuthenticate(deps: WsAuthDeps) {
       // folder's decks), which writes over its own direct connection. A
       // browser writing raw updates would bypass both.
       connectionConfig.readOnly = true
+      await checkEpoch(data)
 
       log.info(
         { doc: documentName, user: displayId, role: access.role, reason: access.via },
@@ -299,6 +335,7 @@ function createAuthenticate(deps: WsAuthDeps) {
       if (access.reason === 'render' && shareToken) data.context.shareToken = shareToken
 
       connectionConfig.readOnly = access.role === 'viewer'
+      await checkEpoch(data)
 
       log.info(
         { doc: documentName, user: displayId, role: access.role, reason: access.reason },
@@ -338,6 +375,7 @@ function createAuthenticate(deps: WsAuthDeps) {
     // Mark connection as readOnly for viewer role.
     // Hocuspocus won't accept update messages from readOnly connections.
     connectionConfig.readOnly = access.role === 'viewer'
+    await checkEpoch(data)
 
     log.info(
       { doc: documentName, user: displayId, role: access.role, reason: access.reason },

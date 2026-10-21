@@ -900,6 +900,46 @@ ssh petr@192.0.2.147 '/opt/narrative/infra/scripts/backup.sh \
   /opt/narrative/infra/.env.prod'
 ```
 
+After each dump `backup.sh` advances the instance's restore generation
+(`instance_generation`, migration 0042) and writes it to
+`/opt/narrative/backups/marker/generation`, mounted read-only into the
+server (`INSTANCE_MARKER_PATH`). Deploys never touch `backups/`, so the
+marker survives every release. A backup whose marker step fails exits
+non-zero — treat it as a failed backup.
+
+### Restoring the database
+
+Browsers keep local copies of the documents they opened (ADR 0017). Copies
+confirmed after the backup hold content the restored database no longer
+has; without the steps below they would merge it back in. **Every step is
+mandatory, in this order:**
+
+1. Stop the server (`docker compose … stop server`) — nothing may connect
+   to the restored database before step 3.
+2. Restore the dump into Postgres.
+3. Advance generation and floor past everything ever issued (values are unix
+   seconds, so "now" is above all of them):
+
+   ```sql
+   UPDATE instance_generation
+      SET generation = GREATEST(generation + 1, extract(epoch from now())::bigint),
+          floor      = GREATEST(generation + 1, extract(epoch from now())::bigint)
+    WHERE id = 1;
+   ```
+
+   On the same VM, with the marker in place, the server's boot check does
+   this by itself (it logs "the database is behind its restore marker");
+   the step is still required — it is the only guard when the marker is
+   gone or the database is restored onto another host.
+
+4. Start the server. Every browser's copies are now refused once
+   (`stale-document`), deleted, and the documents open from the server.
+
+A restore of **one** document (rows replaced under one deck, folder or
+component) bumps that document's epoch instead, in the transaction that
+replaces the rows (`bumpDocumentEpoch`, `apps/server/src/hocuspocus/documentEpoch.ts`),
+after closing its live connections.
+
 ## Troubleshooting
 
 ### Deploy fails at "Pulling prebuilt app images from GHCR…"

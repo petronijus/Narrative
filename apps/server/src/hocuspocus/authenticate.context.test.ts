@@ -25,11 +25,13 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 /**
  * resolveDeckAccess's read, answered slowly: the deck left-joined to the
  * user's deck_permissions row with `role` and no role in the deck's folder —
- * so the deck grant alone decides.
+ * so the deck grant alone decides. The same row answers the document epoch's
+ * read (ADR 0017): epoch 1.
  */
 function slowDb(role: 'editor' | 'viewer'): Database {
   const rowsFor = (table: string): unknown[] => {
-    if (table === 'decks') return [{ deckRole: role, folderRole: null }]
+    if (table === 'decks')
+      return [{ deckRole: role, folderRole: null, docEpoch: 1, generation: 100, floor: 50 }]
     return []
   }
   const select = () => {
@@ -44,6 +46,7 @@ function slowDb(role: 'editor' | 'viewer'): Database {
         return chain
       },
       leftJoin: () => chain,
+      innerJoin: () => chain,
       where: () => chain,
       limit: answer,
       // A query awaited without a limit.
@@ -116,6 +119,7 @@ describe('onAuthenticate context', () => {
       deckId: 'deck:d1',
       deckIdResolved: 'd1',
       role: 'viewer',
+      docEpoch: '100.1',
     })
     expect(data.connectionConfig.readOnly).toBe(true)
   })

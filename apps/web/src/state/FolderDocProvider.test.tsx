@@ -29,6 +29,12 @@ vi.mock('@hocuspocus/provider', () => ({
         sync: () => opts.onSynced?.(),
       })
     }
+    on() {}
+    off() {}
+    attach() {}
+    destroy() {}
+  },
+  HocuspocusProviderWebsocket: class {
     destroy() {}
   },
 }))

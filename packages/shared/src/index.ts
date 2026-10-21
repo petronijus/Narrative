@@ -110,6 +110,21 @@ export {
   sanitizePeerLabel,
 } from './awareness.js'
 
+export {
+  CONNECT_TOKEN_SENTINEL,
+  DOCUMENT_EPOCH_MESSAGE_TYPE,
+  STALE_DOCUMENT_REASON,
+  claimedDocumentEpoch,
+  connectToken,
+  formatDocumentEpoch,
+  isDocumentEpoch,
+  parseDocumentEpoch,
+  parseDocumentEpochMessage,
+  type DocumentEpoch,
+  type DocumentEpochMessage,
+  type DocumentEpochParts,
+} from './documentEpoch.js'
+
 export { sanitizeHref } from './sanitize.js'
 
 export { rotationFromDegrees, rotationToDegrees } from './rotation.js'

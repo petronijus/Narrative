@@ -12,6 +12,16 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+// The document epoch (ADR 0017) is read after the access check: every
+// document is at epoch 1 here.
+vi.mock('./documentEpoch.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./documentEpoch.js')>()
+  return {
+    ...original,
+    readDocumentEpoch: vi.fn(async () => ({ docEpoch: 1, generation: 100, floor: 50 })),
+  }
+})
+
 vi.mock('../auth/permissions.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../auth/permissions.js')>()
   return {

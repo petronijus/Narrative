@@ -63,6 +63,15 @@ services:
       # REQUIRED in prod (server refuses to start without it, >= 32 chars).
       # Generate: openssl rand -base64 48
       AGENT_PRINCIPAL_KEY_SECRET: ${AGENT_PRINCIPAL_KEY_SECRET:?AGENT_PRINCIPAL_KEY_SECRET env var is required}
+      # The restore marker (ADR 0017): backup.sh writes the instance's restore
+      # generation here after every dump, outside Postgres; a boot that finds
+      # the database below it was restored and refuses every local document
+      # copy browsers took before (apps/server/src/hocuspocus/instanceGeneration.ts).
+      INSTANCE_MARKER_PATH: /var/lib/narrative/marker/generation
+    volumes:
+      # backups/ is never synced by a deploy (deploy.sh / remote-release.sh
+      # exclude it), so the marker outlives every release; read-only here.
+      - ${RESTORE_MARKER_DIR:-../backups/marker}:/var/lib/narrative/marker:ro
     ports:
       # Bind to 127.0.0.1 only — Caddy reverse-proxies
       - '127.0.0.1:${API_PORT:-3001}:3001'

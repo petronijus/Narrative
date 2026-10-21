@@ -29,8 +29,8 @@ const { providers } = vi.hoisted(() => {
 vi.mock('@hocuspocus/provider', () => {
   class MockHocuspocusProvider {
     destroyed = false
-    listeners = new Map<string, Set<() => void>>()
-    on(event: string, cb: () => void) {
+    listeners = new Map<string, Set<(payload?: unknown) => void>>()
+    on(event: string, cb: (payload?: unknown) => void) {
       let set = this.listeners.get(event)
       if (set === undefined) {
         set = new Set()
@@ -38,14 +38,17 @@ vi.mock('@hocuspocus/provider', () => {
       }
       set.add(cb)
     }
-    off(event: string, cb: () => void) {
+    off(event: string, cb: (payload?: unknown) => void) {
       this.listeners.get(event)?.delete(cb)
     }
     emit(event: string) {
       const set = this.listeners.get(event)
       if (set === undefined) return
-      for (const cb of set) cb()
+      // As the real provider: `synced` carries `{ state }`.
+      const payload = event === 'synced' ? { state: true } : undefined
+      for (const cb of set) cb(payload)
     }
+    attach() {}
     destroy() {
       this.destroyed = true
     }
@@ -53,7 +56,10 @@ vi.mock('@hocuspocus/provider', () => {
       providers.push(this as unknown as MockProvider)
     }
   }
-  return { HocuspocusProvider: MockHocuspocusProvider }
+  class MockSocket {
+    destroy() {}
+  }
+  return { HocuspocusProvider: MockHocuspocusProvider, HocuspocusProviderWebsocket: MockSocket }
 })
 
 import {

@@ -23,6 +23,10 @@
  * ids and emails from what read-only / share-link connections receive;
  * agentPrincipal.ts sends each signed-in editor its agent principal key.
  *
+ * Local copies (ADR 0017): onAuthenticate reads the document's epoch and
+ * refuses a client whose document holds another one; documentEpoch.ts tells
+ * every established connection the epoch.
+ *
  * Doc name routing (M16 P2):
  *   `deck:<id>`   → deck access via resolveDeckAccess (existing path)
  *   `folder:<id>` → its members, and read-only the guests of its decks
@@ -40,6 +44,7 @@ import { PEER_ADDRESS_HEADER, createOnAuthenticate } from './authenticate.js'
 import { awarenessOwnershipExtension } from './awarenessOwnership.js'
 import { awarenessRedactionExtension } from './awarenessRedaction.js'
 import { agentPrincipalExtension } from './agentPrincipal.js'
+import { documentEpochExtension } from './documentEpoch.js'
 import type { AgentPrincipalKeys } from '../agent/presence.js'
 
 const log = subsystemLogger('hocuspocus')
@@ -101,6 +106,9 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions): Server {
       awarenessRedactionExtension({ log }),
       // Tells each signed-in editor its agent principal key (ADR 0011 point 8).
       agentPrincipalExtension({ principalKeys: opts.principalKeys }),
+      // Tells each connection its document's epoch, which guards the
+      // browser's local copies (ADR 0017).
+      documentEpochExtension(),
     ],
 
     // Doc lifecycle — Hocuspocus auto-unloads docs when their last connection

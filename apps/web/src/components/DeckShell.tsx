@@ -159,6 +159,7 @@ export function DeckShell() {
                 deckId={id}
                 presence={!isRenderWorker}
                 hydrate={!isRender}
+                localCopy={!isRender}
                 {...(frozenDoc !== null ? { doc: frozenDoc } : {})}
               >
                 <DeckTokensBridge>

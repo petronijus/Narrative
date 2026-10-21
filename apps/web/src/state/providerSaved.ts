@@ -44,3 +44,28 @@ export function whenProviderSaved(
     provider.on('synced', check)
   })
 }
+
+/**
+ * {@link whenProviderSaved} for a provider that may not exist yet — created
+ * once the document's local copy is read (state/localDocCopy.ts). Rejects
+ * after `timeoutMs` in all, also when the provider never comes (the document
+ * closed first).
+ */
+export function whenProviderReadySaved(
+  providerReady: Promise<HocuspocusProvider>,
+  timeoutMs = SAVE_TIMEOUT_MS,
+): Promise<void> {
+  const started = Date.now()
+  return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error('The server has not confirmed your latest changes yet; try again'))
+    }, timeoutMs)
+    void providerReady.then((provider) => {
+      window.clearTimeout(timer)
+      whenProviderSaved(provider, Math.max(0, timeoutMs - (Date.now() - started))).then(
+        resolve,
+        reject,
+      )
+    })
+  })
+}

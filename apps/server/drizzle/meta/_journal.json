@@ -288,6 +288,20 @@
       "when": 1792483200000,
       "tag": "0040_media_owner_sweeps",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792525757573,
+      "tag": "0041_document_epochs",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1792540000000,
+      "tag": "0042_instance_generation",
+      "breakpoints": true
     }
   ]
 }

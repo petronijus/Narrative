@@ -32,6 +32,7 @@ import { runMigrations } from './db/runMigrations.js'
 import { runDataMigrations } from './services/dataMigrations.js'
 import { checkMovedMediaAfterStore } from './services/localiseMedia.js'
 import { createHocuspocusServer } from './hocuspocus/index.js'
+import { checkForRestore } from './hocuspocus/instanceGeneration.js'
 import { createDeckThumbnailScheduler } from './services/deckThumbnails.js'
 import { startOwnerSweeps } from './media/ownerSweeps.js'
 import { registerHttpRoutes } from './http/registerRoutes.js'
@@ -467,6 +468,16 @@ process.on('unhandledRejection', (reason) => {
 })
 process.on('uncaughtException', (err) => {
   app.log.error({ err }, 'uncaughtException')
+})
+
+// ADR 0017: a database restored from a backup must refuse every local
+// document copy browsers took after that backup. Before the sync server
+// accepts a connection: compare the instance's restore generation with the
+// marker backup.sh writes outside Postgres (hocuspocus/instanceGeneration.ts).
+await checkForRestore({
+  db,
+  log: app.log,
+  markerPath: process.env['INSTANCE_MARKER_PATH'] || undefined,
 })
 
 // ---------------------------------------------------------------------------

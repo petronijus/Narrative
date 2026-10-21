@@ -31,7 +31,7 @@ import { HOCUSPOCUS_URL } from '../lib/endpoints.js'
 import type { StylePack } from '@narrative/shared'
 import { createContext, useContext, useEffect, useRef, useState, useMemo } from 'react'
 import * as Y from 'yjs'
-import { HocuspocusProvider } from '@hocuspocus/provider'
+import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider'
 import { hasNoTokens, readFolderTokens, readStylePack } from '@narrative/slide-model'
 import { useApi } from '../api/client.js'
 import type { TokenUsage } from '../api/client.js'
@@ -39,6 +39,7 @@ import { FolderDocContext, emptyTokensSnapshot } from './FolderDocContext.js'
 import type { FolderTokensSnapshot, FolderDocContextValue } from './FolderDocContext.js'
 import { FolderTokenWriter, overlayTokens } from './folderTokenWriter.js'
 import { hocuspocusAuthOptions } from './hocuspocusAuth.js'
+import { localCopyUserFor, openDocumentCopy } from './localDocCopy.js'
 
 /** The writer the subtree changes tokens with; null until the folder is known. */
 const FolderTokenWriterContext = createContext<FolderTokenWriter | null>(null)
@@ -91,11 +92,14 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
   const api = useApi()
   const [value, setValue] = useState<FolderDocContextValue | null>(null)
   const [writer, setWriter] = useState<FolderTokenWriter | null>(null)
-  const providerRef = useRef<HocuspocusProvider | null>(null)
+  const openRef = useRef<object | null>(null)
+  // Bumped when the server refused what the document holds (ADR 0017): the
+  // folder document opens again, empty.
+  const [generation, setGeneration] = useState(0)
 
   useEffect(() => {
     if (folderId === null) return
-    if (providerRef.current !== null) return
+    if (openRef.current !== null) return
 
     const doc = new Y.Doc()
     let synced = false
@@ -118,20 +122,40 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
     // The session cookie, or on a share-link visit the page's share_token,
     // exactly like the deck's document (state/hocuspocusAuth.ts).
     const authOptions = hocuspocusAuthOptions(HOCUSPOCUS_URL, window.location.search)
-    const provider = new HocuspocusProvider({
-      name: `folder:${folderId}`,
-      document: doc,
-      ...authOptions,
-      onSynced() {
-        synced = true
-        refresh()
-      },
-      onAuthenticationFailed() {
-        refused = true
-        refresh()
-      },
+    const documentName = `folder:${folderId}`
+    // A local copy of the folder's tokens (ADR 0017), read before the provider
+    // exists; the subtree renders it until the sync — `synced` stays false.
+    const copy = openDocumentCopy({
+      doc,
+      documentName,
+      user: localCopyUserFor(window.location.search),
+      onRebuild: () => setGeneration((g) => g + 1),
     })
-    providerRef.current = provider
+    let provider: HocuspocusProvider | null = null
+    const token = {}
+    openRef.current = token
+    // The socket opens now, while a local copy is read; the provider joins it.
+    const socket = new HocuspocusProviderWebsocket({ url: authOptions.url })
+    copy.whenReady(() => {
+      if (openRef.current !== token) return
+      provider = new HocuspocusProvider({
+        name: documentName,
+        document: doc,
+        websocketProvider: socket,
+        token: copy.token,
+        onSynced() {
+          synced = true
+          refresh()
+        },
+        onAuthenticationFailed({ reason }: { reason: string }) {
+          if (copy.rebuildsOn(reason)) return
+          refused = true
+          refresh()
+        },
+      })
+      copy.attach(provider)
+      provider.attach()
+    })
 
     // observeDeep on the root tokens Y.Map covers all nested changes.
     const tokensMap = doc.getMap<unknown>('tokens')
@@ -140,13 +164,15 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
     return () => {
       tokensMap.unobserveDeep(refresh)
       tokenWriter?.dispose()
-      provider.destroy()
+      copy.close()
+      provider?.destroy()
+      socket.destroy()
       doc.destroy()
-      providerRef.current = null
+      openRef.current = null
       setValue(null)
       setWriter(null)
     }
-  }, [api, folderId])
+  }, [api, folderId, generation])
 
   // Stable placeholder so we don't `new Y.Doc()` on every render before
   // the real provider's first sync.

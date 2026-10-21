@@ -19,10 +19,18 @@
  * Tokens are never held in the SPA. The "token" field is gone from the
  * context — the cookie is sent automatically by the browser on same-origin
  * (prod) or same-site cross-origin fetch with credentials:'include' (dev).
+ *
+ * Local document copies (ADR 0017) belong to the signed-in user: the user is
+ * handed to state/localDocCopy.ts the moment it is known (before the routes
+ * that open documents render), another user's copies are deleted, and no
+ * session — signing out, a 401 — deletes every copy.
  */
 
 import { desktopBridge } from '../desktop/bridge.js'
 import { API_URL } from '../lib/endpoints.js'
+import { setLocalCopyUser, stopAllLocalCopyWrites } from './localDocCopy.js'
+import { clearLocalDocs, retainOnlyLocalDocsOf } from './localDocStore.js'
+import { announceSession, listenForSessionChanges } from './authBroadcast.js'
 import {
   createContext,
   useCallback,
@@ -99,9 +107,27 @@ function bypassUser(): AuthUser {
   return { sub, name: sub, email: `${sub}@dev.narrative.test` }
 }
 
+/**
+ * The page now belongs to `user` (or to nobody): local copies are kept for
+ * them only. Called where the user becomes known, before the state update
+ * that renders the routes — their effects open documents before this
+ * provider's own effects would run.
+ */
+function adoptLocalCopies(user: AuthUser | null): void {
+  setLocalCopyUser(user?.sub ?? null)
+  // The other tabs: one running for someone else stops writing and reloads.
+  announceSession(user?.sub ?? null)
+  void (user === null ? clearLocalDocs() : retainOnlyLocalDocsOf(user.sub))
+}
+
 export function AuthProvider({ children }: { children: ReactNode }): ReactElement {
   const bypass = isBypassEnabled()
-  const [user, setUser] = useState<AuthUser | null>(() => (bypass ? bypassUser() : null))
+  const [user, setUser] = useState<AuthUser | null>(() => {
+    if (!bypass) return null
+    const synthesised = bypassUser()
+    setLocalCopyUser(synthesised.sub)
+    return synthesised
+  })
   const [isLoading, setIsLoading] = useState(!bypass)
 
   // -------------------------------------------------------------------------
@@ -111,6 +137,8 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
   useEffect(() => {
     if (bypass) {
       console.warn('[auth] VITE_BYPASS_AUTH=true — using synthesised dev-user. DO NOT DEPLOY.')
+      // The same identity the initial state synthesised (from the same cookie).
+      adoptLocalCopies(bypassUser())
       return
     }
 
@@ -121,12 +149,23 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
         if (cancelled) return
         if (res.ok) {
           const data = (await res.json()) as AuthUser
+          if (cancelled) return
+          adoptLocalCopies(data)
           setUser(data)
         } else {
+          // No session (401): nobody's copies stay on this browser.
+          if (res.status === 401) adoptLocalCopies(null)
+          else {
+            setLocalCopyUser(null)
+            listenForSessionChanges()
+          }
           setUser(null)
         }
       })
       .catch(() => {
+        // Unknown (offline, a server error): keep no copies for now, delete none.
+        setLocalCopyUser(null)
+        listenForSessionChanges()
         if (!cancelled) setUser(null)
       })
       .finally(() => {
@@ -170,6 +209,12 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
       // Even if the request fails (network blip), forget the user locally —
       // we're about to redirect to /auth/login anyway.
     }
+    // Every local copy goes with the session (ADR 0017), before the page does:
+    // this tab's open documents stop writing, the other tabs are told.
+    stopAllLocalCopyWrites()
+    setLocalCopyUser(null)
+    announceSession(null)
+    await clearLocalDocs()
     setUser(null)
     window.location.assign('/auth/login')
   }, [])

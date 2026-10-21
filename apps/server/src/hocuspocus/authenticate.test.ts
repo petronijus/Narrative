@@ -13,6 +13,16 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+// The document epoch (ADR 0017) is read after the access check: every
+// document is at epoch 1 here.
+vi.mock('./documentEpoch.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./documentEpoch.js')>()
+  return {
+    ...original,
+    readDocumentEpoch: vi.fn(async () => ({ docEpoch: 1, generation: 100, floor: 50 })),
+  }
+})
+
 vi.mock('../auth/permissions.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../auth/permissions.js')>()
   return {
@@ -51,11 +61,14 @@ import {
 } from './authenticate.js'
 import { createFixedWindowLimiter } from '../http/fixedWindowLimiter.js'
 import type { Database } from '../db/client.js'
+import { STALE_DOCUMENT_REASON, connectToken } from '@narrative/shared'
+import { StaleDocumentError, readDocumentEpoch } from './documentEpoch.js'
 
 const deckAccess = vi.mocked(resolveDeckAccess)
 const folderAccess = vi.mocked(resolveFolderContentAccess)
 const componentAccess = vi.mocked(resolveComponentAccess)
 const sessions = vi.mocked(lookupSession)
+const epochs = vi.mocked(readDocumentEpoch)
 
 /** A syntactically valid PAT (it is never verified — the WS does not look it up). */
 const PAT = `nrt_${'k'.repeat(43)}`
@@ -96,6 +109,7 @@ beforeEach(() => {
   deckAccess.mockResolvedValue({ role: 'editor', reason: 'direct' })
   folderAccess.mockResolvedValue({ role: 'owner', via: 'folder' })
   componentAccess.mockResolvedValue({ role: 'owner', reason: 'folder' })
+  epochs.mockResolvedValue({ docEpoch: 1, generation: 100, floor: 50 })
 })
 
 describe('personal access tokens are refused on the WebSocket', () => {
@@ -164,6 +178,7 @@ describe('browser paths', () => {
       deckId: 'deck:d1',
       deckIdResolved: 'd1',
       role: 'editor',
+      docEpoch: '100.1',
     })
     expect(data.connectionConfig.readOnly).toBe(false)
   })
@@ -249,6 +264,103 @@ describe('browser paths', () => {
     const data = payload()
     await onAuthenticate({ bypass: true })(data)
     expect(data.context.userId).toBe('dev-user')
+  })
+})
+
+describe('document epoch (ADR 0017)', () => {
+  const at = (docEpoch: number, generation = 100, floor = 50) => ({ docEpoch, generation, floor })
+
+  it('tells the current epoch, for an empty document and for any current claim', async () => {
+    epochs.mockResolvedValue(at(3))
+    for (const token of [
+      connectToken(null),
+      connectToken('100.3'),
+      connectToken('50.3'),
+      connectToken('77.3'),
+    ]) {
+      const additions = await onAuthenticate()(payload({ token, requestHeaders: COOKIE }))
+      expect(additions['docEpoch']).toBe('100.3')
+    }
+    expect(epochs).toHaveBeenCalledWith(expect.anything(), 'deck:d1')
+  })
+
+  it('refuses a stale document epoch with the stale-document reason, after the access check', async () => {
+    epochs.mockResolvedValue(at(2))
+    const data = payload({ token: connectToken('100.1'), requestHeaders: COOKIE })
+    const refusal = await onAuthenticate()(data).catch((err: unknown) => err)
+    expect(refusal).toBeInstanceOf(StaleDocumentError)
+    expect((refusal as StaleDocumentError).reason).toBe(STALE_DOCUMENT_REASON)
+    expect(deckAccess).toHaveBeenCalled()
+  })
+
+  it('refuses a generation below the floor (issued before a restore) or above the current one', async () => {
+    epochs.mockResolvedValue(at(1, 300, 200))
+    for (const epoch of ['199.1', '100.1', '301.1']) {
+      await expect(
+        onAuthenticate()(payload({ token: connectToken(epoch), requestHeaders: COOKIE })),
+      ).rejects.toBeInstanceOf(StaleDocumentError)
+    }
+    const additions = await onAuthenticate()(
+      payload({ token: connectToken('200.1'), requestHeaders: COOKIE }),
+    )
+    expect(additions['docEpoch']).toBe('300.1')
+  })
+
+  it('checks folder and component documents too', async () => {
+    epochs.mockResolvedValue(at(5))
+    for (const documentName of ['folder:f1', 'component:c1']) {
+      await expect(
+        onAuthenticate()(
+          payload({ documentName, token: connectToken('100.4'), requestHeaders: COOKIE }),
+        ),
+      ).rejects.toBeInstanceOf(StaleDocumentError)
+      const additions = await onAuthenticate()(
+        payload({ documentName, token: connectToken('100.5'), requestHeaders: COOKIE }),
+      )
+      expect(additions['docEpoch']).toBe('100.5')
+    }
+  })
+
+  it('never reveals the epoch to a connection without access', async () => {
+    deckAccess.mockResolvedValue(null)
+    await expect(
+      onAuthenticate()(payload({ token: connectToken('100.9'), requestHeaders: COOKIE })),
+    ).rejects.toThrow('Forbidden')
+    expect(epochs).not.toHaveBeenCalled()
+  })
+
+  it('refuses a document whose owner is gone by the time its epoch is read', async () => {
+    epochs.mockResolvedValue(null)
+    await expect(onAuthenticate()(payload({ requestHeaders: COOKIE }))).rejects.toThrow('Forbidden')
+  })
+
+  it('does not count stale refusals as failed attempts', async () => {
+    epochs.mockResolvedValue(at(2))
+    const hook = onAuthenticate({
+      failedAuthLimiter: createFixedWindowLimiter({ max: 2, windowMs: 60_000 }),
+    })
+    for (let i = 0; i < 5; i++) {
+      await expect(
+        hook(payload({ token: connectToken('100.1'), requestHeaders: COOKIE })),
+      ).rejects.toBeInstanceOf(StaleDocumentError)
+    }
+    // Still not throttled: the current claim connects.
+    const additions = await hook(payload({ token: connectToken('100.2'), requestHeaders: COOKIE }))
+    expect(additions['docEpoch']).toBe('100.2')
+  })
+
+  it('treats a token in another format as no claim (older pages keep connecting)', async () => {
+    epochs.mockResolvedValue(at(7))
+    for (const token of [
+      'cookie;epoch=7',
+      'cookie;epoch=0.7',
+      'cookie;epoch=abc',
+      'whatever',
+      '',
+    ]) {
+      const additions = await onAuthenticate()(payload({ token, requestHeaders: COOKIE }))
+      expect(additions['docEpoch']).toBe('100.7')
+    }
   })
 })
 

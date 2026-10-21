@@ -49,7 +49,11 @@ the desktop app (Electron, offline work) in `docs/plans/desktop-app.md`
 - Documents are written on the server only through the sync server
   (`apps/server/src/services/liveDocs.ts`), never as rows under a loaded
   document; one-time document migrations go in
-  `apps/server/src/services/dataMigrations.ts`.
+  `apps/server/src/services/dataMigrations.ts`. Anything that replaces a
+  document's state instead of editing it (a restore, a rebuild) bumps its
+  epoch (`hocuspocus/documentEpoch.ts`), and a restore of the database
+  follows `docs/deploy.md` → Restoring the database, or browsers' local
+  copies merge the old content back (ADR 0017).
 - All code, comments, docs, logs, commit messages and UI strings are in
   English.
 - Secrets: `.env` and `infra/.env.prod` are SOPS-encrypted in the private

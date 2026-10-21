@@ -148,9 +148,12 @@ Each phase ships on its own and is useful without the next.
   itself. Caddy serves `sw.js` with `Cache-Control: no-cache`; CSP gets
   `worker-src 'self'`. `versionGuard` and the SW agree on one version
   (`/version.json`).
-- **Yjs persistence**: `y-indexeddb` next to every `HocuspocusProvider`,
-  database name scoped by user id and document name (a shared machine never
-  mixes two people's decks). Load from IndexedDB first, then sync.
+- **Yjs persistence**: built for the web app in L4 (2026-10-20,
+  [ADR 0017](../adr/0017-local-document-copies.md)) — not `y-indexeddb`: a
+  copy of what the server confirmed next to every `HocuspocusProvider`, keyed
+  by user and document name, loaded before the provider connects, guarded by
+  the document epoch. D1 still has to decide showing a copy with no server
+  contact at all (offline), and D2 adds the journal of pending edits.
 - **"Available offline"** per deck (and per folder): downloads the deck doc,
   its folder doc, the component masters it stamps, every image variant the
   renderer uses, the fonts, and video posters; full videos optional (open

@@ -21,6 +21,12 @@ import type { DeckSummary, FolderSummary } from '../api/client'
 
 vi.mock('@hocuspocus/provider', () => ({
   HocuspocusProvider: class {
+    on() {}
+    off() {}
+    attach() {}
+    destroy() {}
+  },
+  HocuspocusProviderWebsocket: class {
     destroy() {}
   },
 }))

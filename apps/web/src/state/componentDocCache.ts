@@ -35,17 +35,26 @@
 
 import { HOCUSPOCUS_URL } from '../lib/endpoints.js'
 import * as Y from 'yjs'
-import { HocuspocusProvider } from '@hocuspocus/provider'
+import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider'
 import { hocuspocusAuthOptions } from './hocuspocusAuth.js'
-import { whenProviderSaved } from './providerSaved.js'
+import { whenProviderReadySaved, whenProviderSaved } from './providerSaved.js'
+import { localCopyUserFor, openDocumentCopy, type DocumentCopy } from './localDocCopy.js'
 
 /** How long to keep a component doc alive after the last subscriber leaves. */
 const LINGER_MS = 30_000
 
 interface CacheEntry {
   componentId: string
+  /** How the entry was opened, for a rebuild (ADR 0017). */
+  opts: AcquireOptions
   doc: Y.Doc
-  provider: HocuspocusProvider
+  /** Null until the local copy, if any, is in the document (state/localDocCopy.ts). */
+  provider: HocuspocusProvider | null
+  /** Opened at once; the provider joins it (ADR 0017: overlaps the copy's read). */
+  socket: HocuspocusProviderWebsocket
+  /** Resolves with the provider once it exists. */
+  providerReady: Promise<HocuspocusProvider>
+  copy: DocumentCopy
   refCount: number
   /** True once Hocuspocus reports its first sync round-trip. */
   synced: boolean
@@ -76,18 +85,17 @@ const cache = new Map<string, CacheEntry>()
  * on first call; otherwise bumps ref count. Cancels any pending linger
  * destroy if one was scheduled.
  */
-export function acquireComponentDoc(
-  componentId: string,
-  opts: {
-    /**
-     * The page's query string: a `share_token` in it authenticates the
-     * connection (the render page of the master's card, agentic A3).
-     */
-    search?: string
-    /** Publish this client in the master's awareness (default true; the render page: false). */
-    presence?: boolean
-  } = {},
-): void {
+interface AcquireOptions {
+  /**
+   * The page's query string: a `share_token` in it authenticates the
+   * connection (the render page of the master's card, agentic A3).
+   */
+  search?: string
+  /** Publish this client in the master's awareness (default true; the render page: false). */
+  presence?: boolean
+}
+
+export function acquireComponentDoc(componentId: string, opts: AcquireOptions = {}): void {
   const existing = cache.get(componentId)
   if (existing !== undefined) {
     existing.refCount += 1
@@ -98,37 +106,10 @@ export function acquireComponentDoc(
     return
   }
 
-  const doc = new Y.Doc()
-  bumpDebugCounter(1)
-  // Sentinel triggers HocuspocusProvider's auth-frame; server reads the
-  // real session from the `narrative_session` cookie on the WS upgrade.
-  // See `docs/adr/0005-server-side-session-cookies.md`.
-  const provider = new HocuspocusProvider({
-    name: `component:${componentId}`,
-    document: doc,
-    ...hocuspocusAuthOptions(HOCUSPOCUS_URL, opts.search ?? ''),
-    // No awareness: the render worker's browser must not show up as a peer.
-    ...(opts.presence === false ? { awareness: null } : {}),
-    onAuthenticationFailed() {
-      const failed = cache.get(componentId)
-      if (failed === undefined) return
-      failed.refused = true
-      for (const listener of [...failed.statusListeners]) listener()
-    },
-    // A refusal is over once the server lets the connection in again (a
-    // passing failure, e.g. the connection throttle).
-    onAuthenticated() {
-      const entry = cache.get(componentId)
-      if (entry === undefined || !entry.refused) return
-      entry.refused = false
-      for (const listener of [...entry.statusListeners]) listener()
-    },
-  })
-
+  const opened = openEntryDoc(componentId, opts, () => entry)
   const entry: CacheEntry = {
     componentId,
-    doc,
-    provider,
+    opts,
     refCount: 1,
     synced: false,
     refused: false,
@@ -142,17 +123,151 @@ export function acquireComponentDoc(
     syncedHandler: () => {
       entry.synced = true
       entry.refused = false
-      for (const listener of [...entry.statusListeners]) listener()
+      tellStatus(entry)
       // First sync delivers the initial state — fire listeners so the
       // renderer re-extracts a fresh snapshot from the freshly-populated doc.
       scheduleListenerFlush(entry)
     },
+    doc: opened.doc,
+    copy: opened.copy,
+    socket: opened.socket,
+    provider: null,
+    providerReady: opened.providerReady,
   }
-
-  doc.on('update', entry.docObserver)
-  provider.on('synced', entry.syncedHandler)
-
   cache.set(componentId, entry)
+  opened.start()
+}
+
+function tellStatus(entry: CacheEntry): void {
+  for (const listener of [...entry.statusListeners]) listener()
+}
+
+/** The parts of an entry that belong to one document and its connection. */
+interface EntryDoc extends Pick<CacheEntry, 'doc' | 'copy' | 'socket' | 'providerReady'> {
+  /** Connect, once the parts are the entry's (now, or after the local copy is read). */
+  start(): void
+}
+
+/**
+ * A new document and its connection for a cache entry — on acquire, and
+ * again when the server refused what the document held (ADR 0017: a stale
+ * epoch, or a refused master showing its local copy), after which
+ * subscribers are told and read the new document through `getComponentDoc`.
+ * `entryOf` is called only from callbacks and `start`, once the entry holds
+ * these parts.
+ */
+function openEntryDoc(
+  componentId: string,
+  opts: AcquireOptions,
+  entryOf: () => CacheEntry,
+): EntryDoc {
+  const documentName = `component:${componentId}`
+  const doc = new Y.Doc()
+  bumpDebugCounter(1)
+  /** This document is still the entry's (not rebuilt, not destroyed). */
+  const current = (): boolean => cache.get(componentId) === entryOf() && entryOf().doc === doc
+  const copy = openDocumentCopy({
+    doc,
+    documentName,
+    // The render page (a render token in `search`) keeps no copy.
+    user: localCopyUserFor(opts.search ?? ''),
+    onRebuild: () => {
+      if (!current()) return
+      const entry = entryOf()
+      closeEntryDoc(entry)
+      entry.synced = false
+      entry.refused = false
+      const next = openEntryDoc(componentId, opts, entryOf)
+      entry.doc = next.doc
+      entry.copy = next.copy
+      entry.socket = next.socket
+      entry.provider = null
+      entry.providerReady = next.providerReady
+      next.start()
+      tellStatus(entry)
+      scheduleListenerFlush(entry)
+    },
+  })
+  let resolveProvider: (p: HocuspocusProvider) => void = () => undefined
+  const providerReady = new Promise<HocuspocusProvider>((resolve) => {
+    resolveProvider = resolve
+  })
+  // The socket opens now, while a local copy is read; the provider joins it.
+  const socket = new HocuspocusProviderWebsocket({
+    url: hocuspocusAuthOptions(HOCUSPOCUS_URL, opts.search ?? '').url,
+  })
+  // The local copy, when there is one, reaches subscribers like a sync does.
+  // (No update can arrive before the entry exists: the first comes from the
+  // copy, after `ready`, or from the provider.)
+  const onUpdate = (): void => entryOf().docObserver()
+  doc.on('update', onUpdate)
+  doc.on('destroy', () => doc.off('update', onUpdate))
+
+  const start = (): void =>
+    copy.whenReady(() => {
+      if (!current()) return
+      const entry = entryOf()
+      // Sentinel triggers HocuspocusProvider's auth-frame; server reads the
+      // real session from the `narrative_session` cookie on the WS upgrade.
+      // See `docs/adr/0005-server-side-session-cookies.md`.
+      const provider = new HocuspocusProvider({
+        name: documentName,
+        document: doc,
+        websocketProvider: socket,
+        // Claims the epoch of what the document holds (ADR 0017, point 4).
+        token: copy.token,
+        // No awareness: the render worker's browser must not show up as a peer.
+        ...(opts.presence === false ? { awareness: null } : {}),
+        onAuthenticationFailed({ reason }: { reason: string }) {
+          if (copy.rebuildsOn(reason) || !current()) return
+          entry.refused = true
+          tellStatus(entry)
+        },
+        // A refusal is over once the server lets the connection in again (a
+        // passing failure, e.g. the connection throttle).
+        onAuthenticated() {
+          if (!current() || !entry.refused) return
+          entry.refused = false
+          tellStatus(entry)
+        },
+      })
+      provider.on('synced', entry.syncedHandler)
+      copy.attach(provider)
+      provider.attach()
+      entry.provider = provider
+      resolveProvider(provider)
+    })
+  return { doc, copy, socket, providerReady, start }
+}
+
+/** Close the entry's copy, connection and document (the entry itself stays). */
+function closeEntryDoc(entry: CacheEntry): void {
+  entry.copy.close()
+  const provider = entry.provider
+  if (provider !== null) {
+    try {
+      provider.off('synced', entry.syncedHandler)
+    } catch {
+      // Hocuspocus emits don't always have a stable off() — ignore.
+    }
+    try {
+      provider.destroy()
+    } catch {
+      // ignore
+    }
+  }
+  entry.provider = null
+  try {
+    entry.socket.destroy()
+  } catch {
+    // ignore
+  }
+  try {
+    entry.doc.destroy()
+  } catch {
+    // ignore
+  }
+  bumpDebugCounter(-1)
 }
 
 /**
@@ -193,7 +308,10 @@ export function getComponentDoc(componentId: string): Y.Doc | null {
  */
 export function whenComponentDocSaved(componentId: string): Promise<void> {
   const entry = cache.get(componentId)
-  return entry === undefined ? Promise.resolve() : whenProviderSaved(entry.provider)
+  if (entry === undefined) return Promise.resolve()
+  return entry.provider !== null
+    ? whenProviderSaved(entry.provider)
+    : whenProviderReadySaved(entry.providerReady)
 }
 
 /** Returns 'synced' once the first server round-trip lands, else 'pending'. */
@@ -310,27 +428,7 @@ function destroyEntry(entry: CacheEntry): void {
     entry.rafHandle = null
   }
   entry.listeners.clear()
-  try {
-    entry.doc.off('update', entry.docObserver)
-  } catch {
-    // Already torn down — ignore.
-  }
-  try {
-    entry.provider.off('synced', entry.syncedHandler)
-  } catch {
-    // Hocuspocus emits don't always have a stable off() — ignore.
-  }
-  try {
-    entry.provider.destroy()
-  } catch {
-    // ignore
-  }
-  try {
-    entry.doc.destroy()
-  } catch {
-    // ignore
-  }
-  bumpDebugCounter(-1)
+  closeEntryDoc(entry)
   cache.delete(entry.componentId)
 }
 

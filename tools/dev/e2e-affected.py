@@ -85,8 +85,10 @@ SYNC = [
     "multi-window-slide-sync",
     "sync-after-slide-switch",
     "share-link-folder-tokens",
+    "local-doc-copies",
 ]
 ACCESS = [
+    "local-doc-copies",
     "destructive-flows",
     "share-link-folder-tokens",
     "access-tokens",
@@ -139,6 +141,9 @@ AREAS: list[tuple[str, list[str]]] = [
     # What a complete picture of the deck waits for: present mode and the render page.
     ("apps/web/src/state/useDeckInputs.ts", PRESENT + ["render-page", "render-export"]),
     ("apps/web/src/renderer/*", RENDER),
+    # The E7 text engine spike (docs/plans/performance.md → E7): a dev-only page, no user path.
+    ("apps/web/src/renderer/experimental/*", ["text-engine-spike"]),
+    ("apps/web/text-engine-spike.html", ["text-engine-spike"]),
     # Which slide a change set belongs to: the canvas (and present mode's scene swaps).
     ("apps/web/src/state/useSlideObjectChanges.ts", RENDER + PRESENT),
     # Animation targets: present mode's builds and the editor's timeline preview.
