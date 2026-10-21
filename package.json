@@ -23,6 +23,7 @@
     "load:hotedit": "tsx tests/load/hotEdit.ts",
     "load:awareness": "tsx tests/load/awarenessFlood.ts",
     "load:growth": "tsx tests/load/docGrowth.ts",
+    "load:deckscale": "tsx tests/load/deckScale.ts",
     "agent:eval": "tsx --tsconfig tests/agent-eval/tsconfig.json tests/agent-eval/run.ts",
     "agent:probe:list-changed": "tsx tests/agent-eval/probes/listChanged.ts"
   },

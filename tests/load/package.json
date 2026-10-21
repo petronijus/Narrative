@@ -8,10 +8,13 @@
     "hotedit": "node --import tsx hotEdit.ts",
     "awareness": "node --import tsx awarenessFlood.ts",
     "growth": "node --import tsx docGrowth.ts",
-    "all": "node runAll.mjs"
+    "all": "node runAll.mjs",
+    "deckscale": "node --import tsx deckScale.ts"
   },
   "dependencies": {
     "@hocuspocus/common": "^4.7.1",
+    "@narrative/shared": "workspace:*",
+    "@narrative/slide-model": "workspace:*",
     "lib0": "^0.2.110",
     "ws": "^8.18.1",
     "y-protocols": "^1.0.6",

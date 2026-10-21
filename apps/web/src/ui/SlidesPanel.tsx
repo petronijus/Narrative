@@ -31,6 +31,7 @@ import {
   useMemo,
   type ReactElement,
 } from 'react'
+import { useStableHandler } from './useStableHandler.js'
 import { useSlidesSelector } from '../state/useSlides.js'
 import { sameArray } from '../state/useDeckStore.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
@@ -1351,6 +1352,20 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
     }
   }, [activeSlideId])
 
+  // B3 (docs/plans/performance.md): the rows are memoised, and handlers that
+  // depend on the active slide or the selection are new functions on every
+  // switch — every row re-rendered for the two that changed. The rows get
+  // stable handlers that run the latest ones.
+  const rowOnActivate = useStableHandler(handleActivate)
+  const rowOnToggleCollapsed = useStableHandler(handleToggleCollapsed)
+  const rowOnPointerDown = useStableHandler(handlePointerDown)
+  const rowOnDuplicate = useStableHandler(handleDuplicate)
+  const rowOnDelete = useStableHandler(handleDelete)
+  const rowOnTransition = useStableHandler(handleTransition)
+  const rowOnRename = useStableHandler(handleRename)
+  const rowOnToggleSkip = useStableHandler(handleToggleSkip)
+  const rowOnExportPng = useStableHandler(handleExportPng)
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
@@ -1518,15 +1533,15 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
                       dropIndicatorBelow={dropIndicatorBelow}
                       thumbnails={thumbnails}
                       readOnly={isViewer}
-                      onActivate={handleActivate}
-                      onToggleCollapsed={handleToggleCollapsed}
-                      onPointerDown={isViewer ? NOOP_POINTER_DOWN : handlePointerDown}
-                      onDuplicate={handleDuplicate}
-                      onDelete={handleDelete}
-                      onTransition={handleTransition}
-                      onRename={handleRename}
-                      onToggleSkip={handleToggleSkip}
-                      onExportPng={handleExportPng}
+                      onActivate={rowOnActivate}
+                      onToggleCollapsed={rowOnToggleCollapsed}
+                      onPointerDown={isViewer ? NOOP_POINTER_DOWN : rowOnPointerDown}
+                      onDuplicate={rowOnDuplicate}
+                      onDelete={rowOnDelete}
+                      onTransition={rowOnTransition}
+                      onRename={rowOnRename}
+                      onToggleSkip={rowOnToggleSkip}
+                      onExportPng={rowOnExportPng}
                       editRequestId={editRequestId}
                       onConsumeEditRequest={consumeEditRequest}
                     />

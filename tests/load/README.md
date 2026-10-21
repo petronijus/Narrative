@@ -11,8 +11,8 @@ just dev     # the dev stack, BYPASS_AUTH on (the default .env)
 just load    # every scenario, one after another (runAll.mjs)
 ```
 
-One scenario: `pnpm load:hotedit`, `pnpm load:awareness`, `pnpm load:growth`
-from the repo root.
+One scenario: `pnpm load:hotedit`, `pnpm load:awareness`, `pnpm load:growth`,
+`pnpm load:deckscale` from the repo root.
 
 `tests/load` is not a workspace package: its `package.json` lists what the
 harness imports, all of it hoisted to the root `node_modules` by the apps
@@ -31,8 +31,11 @@ a change: `node node_modules/typescript/bin/tsc -p tests/load/tsconfig.json
 
 Each scenario creates its own deck through the API (`POST /decks`) and
 deletes it at the end, pass or fail, so it reads nobody's data and leaves
-nothing behind. Its objects live under a root type of the harness's own
-(`load:objects`, `load:slides`), never the slide model's.
+nothing behind. The first three keep their objects under a root type of the
+harness's own (`load:objects`, `load:slides`), never the slide model's;
+deckScale writes real slide-model decks (it imports `@narrative/slide-model`
+and `@narrative/shared`, hoisted to the root `node_modules` as the
+workspace's own packages).
 
 ## Scenarios
 
@@ -62,6 +65,21 @@ the initial sync of 5 fresh clients.
 
 Thresholds: initial sync avg < 3000 ms; encoded size < 1 MB; every client
 converges.
+
+### deckScale — real slide-model decks of 100 and 300 slides
+
+Builds each deck with the slide model's writers (`addSlide`, `addObjects`) in
+its own layout: 12 objects a slide — six texts with rich-text bodies, four
+rectangles, two ellipses — like the perf benches' decks. Then, per size:
+the encoded size; the initial sync of 5 fresh clients and the bytes each
+received; an edit round — 3 editors each move objects of the first slide
+100 times (`updateObject`, 30 ms apart), every other editor recording how
+long each edit took to arrive (sent → applied); convergence of every
+replica's `listSlides()` (structural). `DECK_SCALE_SIZES=100,300` changes
+the sizes.
+
+Thresholds: initial sync avg < 3000 ms and edit latency avg < 50 ms at every
+size; every replica converges; every edit arrives.
 
 ## Output
 

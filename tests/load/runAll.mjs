@@ -67,6 +67,12 @@ function checkRegressions(scenario, parsed, baselineForScenario) {
     // docGrowth: the sync clients' average, and the built document.
     ['initial_sync_ms', parsed.sync?.avg_ms],
     ['doc_size_bytes', parsed.encoded_size_bytes],
+    // deckScale: the largest slide-model deck's sync, edit latency and size,
+    // and the 100-slide deck's sync.
+    ['initial_sync_largest_ms', parsed.sync_largest_avg_ms],
+    ['edit_latency_largest_avg_ms', parsed.edit_latency_largest_avg_ms],
+    ['doc_size_largest_bytes', parsed.doc_size_largest_bytes],
+    ['initial_sync_100_ms', parsed.sync_100_avg_ms],
   ]
   for (const [key, current] of candidates) {
     const baseline = baselineForScenario[key]
@@ -96,6 +102,7 @@ const scenarios = [
   { name: 'hotEdit', file: 'hotEdit.ts' },
   { name: 'awarenessFlood', file: 'awarenessFlood.ts' },
   { name: 'docGrowth', file: 'docGrowth.ts' },
+  { name: 'deckScale', file: 'deckScale.ts' },
 ]
 
 const results = []
