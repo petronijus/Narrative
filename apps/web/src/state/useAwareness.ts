@@ -45,7 +45,7 @@ export function useAwareness(): AwarenessSnapshot {
   // Cached snapshot — invalidovaný při každém awareness 'change' eventu.
   // Platné pouze do dalšího change eventu. Po invalidaci getSnapshot znovu
   // spočítá a uloží novou referenci.
-  const cachedRef = useRef<AwarenessSnapshot | null>(null)
+  const cachedRef = useRef<{ entries: unknown[]; snapshot: AwarenessSnapshot } | null>(null)
 
   const subscribe = useCallback(
     (onStoreChange: () => void) => {
@@ -55,6 +55,15 @@ export function useAwareness(): AwarenessSnapshot {
         onStoreChange()
       }
       awareness.on('change', handler)
+      // The snapshot cached at render predates this listener: a change in
+      // between (peers arriving with the sync of a deck painted from its
+      // local copy, ADR 0017) fired no handler, and React's check after
+      // subscribing would get the stale cache back. Drop it if the states
+      // are no longer the ones it was built from.
+      const cached = cachedRef.current
+      if (cached !== null && !sameEntries(cached.entries, stateEntries(awareness))) {
+        cachedRef.current = null
+      }
       return () => {
         awareness.off('change', handler)
       }
@@ -65,7 +74,7 @@ export function useAwareness(): AwarenessSnapshot {
   const getSnapshot = useCallback((): AwarenessSnapshot => {
     // Vrátíme cached snapshot pokud stále platný (nebyl invalidován)
     if (cachedRef.current !== null) {
-      return cachedRef.current
+      return cachedRef.current.snapshot
     }
 
     const localClientId = awareness.clientID
@@ -82,11 +91,25 @@ export function useAwareness(): AwarenessSnapshot {
     const remotePeers = peers.filter((p) => !p.isLocal)
     const snapshot: AwarenessSnapshot = { peers, remotePeers, localClientId }
 
-    cachedRef.current = snapshot
+    cachedRef.current = { entries: stateEntries(awareness), snapshot }
     return snapshot
   }, [awareness])
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+/**
+ * The states as they are now, by identity: client id, state object, … —
+ * y-protocols puts in a new state object for every state it applies.
+ */
+function stateEntries(awareness: { getStates(): Map<number, unknown> }): unknown[] {
+  const out: unknown[] = []
+  for (const [clientId, state] of awareness.getStates()) out.push(clientId, state)
+  return out
+}
+
+function sameEntries(a: unknown[], b: unknown[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i])
 }
 
 /**

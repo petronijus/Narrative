@@ -7,6 +7,8 @@
  *     server has answered (the WebSocket is held, so nothing can sync);
  *   - a deck whose share was revoked shows nothing once the server refuses
  *     it, and its copy is deleted;
+ *   - notes changed on the server while the tab was away show in the editor
+ *     and in present mode, over the copy's older notes;
  *   - a share-link visit keeps no copy;
  *   - another person signing in in the same browser deletes the previous
  *     person's copies, and a tab still open for the previous person stops
@@ -46,6 +48,24 @@ async function seedDeck(page: Page, slides: number): Promise<string> {
     expect(((await r.json()) as { ok: boolean }).ok, 'slide.add').toBe(true)
   }
   return id
+}
+
+/** Replace a slide's speaker notes on the server (the `slide.notes.set` command). */
+async function setNotesOnServer(
+  page: Page,
+  deckId: string,
+  slideId: string,
+  markdown: string,
+): Promise<void> {
+  const r = await page.request.post(`${API_BASE}/commands`, {
+    headers: { Origin: WEB_ORIGIN },
+    data: { target: { deckId }, command: 'slide.notes.set', input: { slide: slideId, markdown } },
+  })
+  expect(((await r.json()) as { ok: boolean }).ok, 'slide.notes.set').toBe(true)
+}
+
+function notesPanel(page: Page) {
+  return page.locator('.panel', { hasText: 'Speaker notes' })
 }
 
 function rows(page: Page) {
@@ -147,6 +167,75 @@ test.describe('local document copies', () => {
       await owner.context().close()
       await member.context().close()
     }
+  })
+
+  test('notes changed on the server while the tab was away show over the copy, in the editor and in present mode', async ({
+    page,
+  }) => {
+    test.setTimeout(120_000)
+    const deckId = await seedDeck(page, 1)
+    await page.goto(`/deck/${deckId}`)
+    await expect(rows(page)).not.toHaveCount(0, { timeout: 30_000 })
+    await expect.poll(() => indexed(page, 'dev-user'), { timeout: 15_000 }).toContain(deckId)
+    const slideId = await rows(page).first().getAttribute('data-slide-id')
+    expect(slideId, 'the slide row names its slide').not.toBeNull()
+
+    // The copy holds the slide with its notes: written while the editor is open.
+    await setNotesOnServer(page, deckId, slideId!, 'Notes in the copy')
+    await expect(notesPanel(page).getByLabel('Speaker notes editor').first()).toContainText(
+      'Notes in the copy',
+      { timeout: 15_000 },
+    )
+    // Past the copy's debounce and an idle callback: the notes are in it.
+    await page.waitForTimeout(3_000)
+
+    // The tab goes elsewhere; the notes change on the server meanwhile.
+    await page.goto('/')
+    await setNotesOnServer(page, deckId, slideId!, 'Notes from the server')
+
+    // The editor paints the copy, then syncs: the server's notes win.
+    await page.goto(`/deck/${deckId}`)
+    await expect(notesPanel(page).getByLabel('Speaker notes editor').first()).toContainText(
+      'Notes from the server',
+      { timeout: 15_000 },
+    )
+    await page.waitForTimeout(3_000)
+
+    // And present mode, from a copy that is older again.
+    await page.goto('/')
+    await setNotesOnServer(page, deckId, slideId!, 'Notes for the presenter')
+    await page.goto(`/deck/${deckId}/present`)
+    await page.waitForSelector('[data-testid="slide-container"]', { timeout: 30_000 })
+    await page.keyboard.press('n')
+    const presenter = page.getByRole('region', { name: 'Presenter view' })
+    await expect(presenter).toContainText('Notes for the presenter', { timeout: 15_000 })
+    await expect(presenter).not.toContainText('No notes')
+  })
+
+  test('the presenter notes follow their slide when someone else moves it', async ({ page }) => {
+    // A move replaces the slide's map (and its notes fragment) under the same
+    // id: the notes shown must come from the new one, as later edits do.
+    test.setTimeout(120_000)
+    const deckId = await seedDeck(page, 1)
+    await page.goto(`/deck/${deckId}`)
+    await expect(rows(page)).toHaveCount(2, { timeout: 30_000 })
+    const slideId = await rows(page).first().getAttribute('data-slide-id')
+    expect(slideId, 'the slide row names its slide').not.toBeNull()
+    await setNotesOnServer(page, deckId, slideId!, 'Notes before the move')
+
+    await page.goto(`/deck/${deckId}/present`)
+    await page.waitForSelector('[data-testid="slide-container"]', { timeout: 30_000 })
+    await page.keyboard.press('n')
+    const presenter = page.getByRole('region', { name: 'Presenter view' })
+    await expect(presenter).toContainText('Notes before the move', { timeout: 15_000 })
+
+    const move = await page.request.post(`${API_BASE}/commands`, {
+      headers: { Origin: WEB_ORIGIN },
+      data: { target: { deckId }, command: 'slide.move', input: { slides: [slideId], toIndex: 2 } },
+    })
+    expect(((await move.json()) as { ok: boolean }).ok, 'slide.move').toBe(true)
+    await setNotesOnServer(page, deckId, slideId!, 'Notes after the move')
+    await expect(presenter).toContainText('Notes after the move', { timeout: 15_000 })
   })
 
   test('a share-link visit keeps no copy', async ({ page, browser }) => {

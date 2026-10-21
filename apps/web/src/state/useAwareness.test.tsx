@@ -180,6 +180,37 @@ describe('useAwareness', () => {
     expect(screen.getByTestId('peer-count').textContent).toBe('1')
   })
 
+  it('shows a change made after its render read the states and before it subscribed', () => {
+    fakeAwareness = makeFakeAwareness(new Map([[1, makeState('peer-a')]]), 1)
+    // Rendered after the reader, in the same commit: its change lands once
+    // the reader has read the states and before any effect subscribed — no
+    // listener exists to hear it (the sync of a deck painted from its
+    // local copy arriving in that gap).
+    let changed = false
+    function ChangeDuringRender() {
+      if (!changed) {
+        changed = true
+        fakeAwareness._setStates(
+          new Map([
+            [1, makeState('peer-a')],
+            [2, makeState('peer-b')],
+          ]),
+        )
+        fakeAwareness._emit()
+      }
+      return null
+    }
+    render(
+      <SlideDocContext
+        value={createMockSlideDocValue({ awareness: fakeAwareness as unknown as Awareness })}
+      >
+        <AwarenessReadout />
+        <ChangeDuringRender />
+      </SlideDocContext>,
+    )
+    expect(screen.getByTestId('peer-count').textContent).toBe('2')
+  })
+
   it('skips peers with invalid state', () => {
     // Jeden validní, jeden s neplatným state (chybí user field)
     const badState = { selectedObjectIds: [], cursor: null } as unknown as PeerAwarenessState

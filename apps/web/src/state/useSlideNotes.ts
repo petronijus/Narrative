@@ -77,22 +77,40 @@ export function useSlideNotes(): UseSlideNotesResult {
   const [text, setText] = useState<string>(() => serialiseFragment(fragment))
 
   useEffect(() => {
-    const slide = findSlide(deckCtx, activeSlideId)
+    // The slide's Y.Map is not fixed for an id: a reorder (moveSlide clones
+    // it), a collaborator's replacement or a sync landing on a deck painted
+    // from its local copy (ADR 0017) puts a new map — with a new fragment —
+    // under the same id, and the slide may not be there yet at all. So the
+    // slide list is watched too, and the map is looked up again on each of
+    // its changes; the one found is watched for its fragment, which it
+    // gains when someone writes its first notes (slide.notes.set, here or
+    // in a collaborator's editor).
+    let slide: Y.Map<unknown> | undefined
+    const onSlideChange = (event: Y.YMapEvent<unknown>): void => {
+      if (event.keysChanged.has('notes')) resolve()
+    }
     const resolve = (): void => {
-      const next = activeSlideId === null ? null : getSlideNotesFragment(deckCtx, activeSlideId)
+      const nextSlide = findSlide(deckCtx, activeSlideId)
+      if (nextSlide !== slide) {
+        slide?.unobserve(onSlideChange)
+        slide = nextSlide
+        slide?.observe(onSlideChange)
+      }
+      const notes = slide?.get('notes')
+      const next = notes instanceof Y.XmlFragment ? notes : null
       setHasSlide(slide !== undefined)
       setFragment(next)
       setText(serialiseFragment(next))
     }
+    const onSlidesChange = (): void => resolve()
+    deckCtx.slides.observe(onSlidesChange)
+    // Subscribed first, read second: nothing that lands between the
+    // render's read and this effect goes unseen.
     resolve()
-    if (slide === undefined) return
-    // The slide gains its fragment later when someone writes its first
-    // notes (slide.notes.set, here or in a collaborator's editor).
-    const onSlideChange = (event: Y.YMapEvent<unknown>): void => {
-      if (event.keysChanged.has('notes')) resolve()
+    return () => {
+      deckCtx.slides.unobserve(onSlidesChange)
+      slide?.unobserve(onSlideChange)
     }
-    slide.observe(onSlideChange)
-    return () => slide.unobserve(onSlideChange)
   }, [deckCtx, activeSlideId])
 
   useEffect(() => {
@@ -101,6 +119,11 @@ export function useSlideNotes(): UseSlideNotesResult {
       setText(serialiseFragment(fragment))
     }
     fragment.observeDeep(onChange)
+    // The text was read when the fragment was resolved, a commit earlier; an
+    // update applied in between (the server's sync landing on a document a
+    // local copy painted, ADR 0017) fired no observer. Read it again now that
+    // one is subscribed.
+    onChange()
     return () => {
       fragment.unobserveDeep(onChange)
     }

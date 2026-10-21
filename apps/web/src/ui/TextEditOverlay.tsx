@@ -143,6 +143,8 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
    *  restore the user's selection after an Inspector control round-
    *  trips focus through one of its inputs. */
   const lastRangeRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 })
+  /** The Y.Text the editor's HTML was last built from (the observer below). */
+  const builtFromRef = useRef<Y.Text | null>(null)
   const onEndRef = useRef(onEnd)
   onEndRef.current = onEnd
 
@@ -205,6 +207,7 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
     const el = editorRef.current
     if (el === null) return
     el.innerHTML = buildOverlayHtml(obj)
+    builtFromRef.current = obj.text instanceof Y.Text ? obj.text : null
     setFaded(true)
     el.focus()
     // For freshly-created text (toolbar drop), select everything so the first
@@ -237,7 +240,12 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
   }, [obj.text])
 
   // ── Y.Text → DOM observer (peer edits + Inspector inline format) ─────
-  useEffect(() => {
+  // A layout effect, like the mount above that builds the HTML: a passive
+  // one subscribed a task after that read, and a change landing in between
+  // (a peer's edit, the sync of a deck painted from its local copy — ADR
+  // 0017) fired nothing, leaving the editor on stale text that the next
+  // keystroke then diffed against.
+  useLayoutEffect(() => {
     const yText = obj.text instanceof Y.Text ? obj.text : null
     if (yText === null) return
     const onYTextChange = (): void => {
@@ -265,6 +273,7 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
         savedEnd = domPositionToCharIndex(el, r.endContainer, r.endOffset)
       }
       el.innerHTML = buildOverlayHtml(obj)
+      builtFromRef.current = yText
       lastPlainRef.current = editableString(obj.text)
       if (savedStart !== null && savedEnd !== null) {
         const a = charIndexToDomPosition(el, savedStart)
@@ -281,6 +290,10 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
       }
     }
     yText.observe(onYTextChange)
+    // The object's Y.Text was replaced (its object map was: a collaborator's
+    // replacement, a sync swapping the map under the same id): the editor
+    // shows the old one's text, and nothing will ever tell it otherwise.
+    if (builtFromRef.current !== yText) onYTextChange()
     return () => {
       yText.unobserve(onYTextChange)
     }
