@@ -424,6 +424,21 @@ the Log entry or ADR that holds its numbers.
   - Seen on the way, not perf work: Arabic draws unjoined in the render
     worker's image (D2, pre-existing); WebKit rasterised some Inter texts
     blank on their first rasters (E7 spike page, not confirmed in the editor).
+  - [ADR 0017](../adr/0017-local-document-copies.md) (L4, proposed) and its
+    AGENTS.md hard rule (whatever replaces a document's state calls
+    `bumpDocumentEpoch`): approve; and whether to build a per-device "don't
+    keep copies on this device" control in the account menu (editor-only).
+  - Production (VM 103): a timed restart / VM boot after the next deploy
+    (downtime); `METRICS_TOKEN` is unset (the `/metrics` warning in the
+    server log); the old v0.13.2 / v0.14.0 images still on disk; client
+    session metrics sample every session by default (G4) — keep or lower.
+  - **L4 deploy note**: the production compose gains a server volume and
+    `INSTANCE_MARKER_PATH`; the first `backup.sh` run writes the instance
+    marker ([deploy.md → Restoring the database](../deploy.md)).
+  - Local leftovers of the round: the dev `narrative-imgproxy-cache`
+    container started for R3, and `~/Documents/Dev/Narrative-desktop` (a
+    local merge a69f7fdc plus W1's uncommitted files, all of which are now on
+    this branch) — stop / clean up.
 
 ## Log
 
