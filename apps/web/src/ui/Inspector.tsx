@@ -30,7 +30,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   type ChangeEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
@@ -83,15 +82,10 @@ import { TableInspector } from './lazyEditorParts.js'
 import { AlignButtonGroup } from './AlignButtonGroup.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
 import { FontWeightSelect } from './FontWeightSelect.js'
-import {
-  readActiveSelectionAttrs,
-  getActiveTextSelection,
-  subscribeActiveTextSelection,
-  refocusActiveTextEdit,
-} from './textEditSelection.js'
+import { refocusActiveTextEdit } from './textEditSelection.js'
 import { useTextFormat } from './useTextFormat.js'
+import { useTextRunAttrs } from './useTextRunAttrs.js'
 import {
-  currentParagraphAttrs,
   setListKind,
   setBulletChar,
   setNumberFormat,
@@ -102,7 +96,7 @@ import { useSelection } from '../state/SelectionContext.js'
 import { triggerOptionsFor } from './animationTriggers.js'
 import {
   useActiveObjectsCtx,
-  useSlideObject,
+  useSlideObjectFields,
   useSlideObjects,
   useSlideObjectsNow,
   useSlideObjectsSelector,
@@ -110,7 +104,6 @@ import {
 import { useAnimations } from '../state/useAnimations.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlidesSelector } from '../state/useSlides.js'
-import * as Y from 'yjs'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { useNavigate } from 'react-router-dom'
@@ -748,8 +741,11 @@ export function Section({
 export function Inspector() {
   const { selectedIds, selectedId } = useSelection()
   // The selected object by id (performance.md → E6): the inspector renders
-  // when that object changes, not when another object on the slide does.
-  const selectedObject = useSlideObject(selectedId)
+  // when one of that object's fields changes, not when another object on the
+  // slide does, nor when only the content of its Y.Text does (typing). The
+  // one section that shows the body's runs and paragraphs, Typography,
+  // follows the text itself (`useTextRunAttrs`).
+  const selectedObject = useSlideObjectFields(selectedId)
   const mutationCtx = useActiveObjectsCtx()
   const objectsNow = useSlideObjectsNow()
   const { animations } = useAnimations()
@@ -1107,10 +1103,11 @@ export function Inspector() {
 
 /**
  * Two snapshots of an object that differ at most in where it sits (`x`, `y`).
- * An object holding a Yjs type (a text's Y.Text, a table's cells) is never
- * "the same" once its snapshot changed: the deck store rebuilds a snapshot
- * when anything under the object changed, and a change inside the Y.Text —
- * a format, a typed word — leaves every field identical by reference.
+ * A Yjs type the object holds (a text's Y.Text) compares by identity, like
+ * every other field (`sameObjectFields`): a change inside it — a typed word,
+ * a format — is not a change of these sections' props. The only section that
+ * shows what is inside, Typography, reads it through `useTextRunAttrs`,
+ * which follows the text itself.
  */
 function sameObjectButPosition(a: SlideObject, b: SlideObject): boolean {
   if (a === b) return true
@@ -1119,10 +1116,8 @@ function sameObjectButPosition(a: SlideObject, b: SlideObject): boolean {
   const keys = Object.keys(ra)
   if (keys.length !== Object.keys(rb).length) return false
   for (const k of keys) {
-    const v = ra[k]
-    if (v instanceof Y.AbstractType) return false
     if (k === 'x' || k === 'y') continue
-    if (!Object.prototype.hasOwnProperty.call(rb, k) || v !== rb[k]) return false
+    if (!Object.prototype.hasOwnProperty.call(rb, k) || ra[k] !== rb[k]) return false
   }
   return true
 }
@@ -4286,12 +4281,12 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
     })
   }, [newPresetOpen, textStylesList])
 
-  // Re-render whenever the active text-edit selection changes so the
-  // Bold / Italic / Underline buttons can highlight based on the run
-  // under the caret instead of just the box-wide field.
-  const activeSel = useSyncExternalStore(subscribeActiveTextSelection, getActiveTextSelection)
-  const selAttrs =
-    activeSel !== null && activeSel.objectId === obj.id ? readActiveSelectionAttrs(obj.id) : null
+  // The run under the caret (so Bold / Italic / Underline, size and colour
+  // show it instead of just the box-wide field) and the list state of the
+  // targeted paragraph(s): follows the selection and the body, and
+  // re-renders this section only when either value changes — not on every
+  // keystroke or caret move (performance.md → E6).
+  const { selAttrs, paraAttrs } = useTextRunAttrs(obj)
   const boxBold =
     obj.fontWeight === 'bold' || (typeof obj.fontWeight === 'number' && obj.fontWeight >= 600)
   const boxItalic = obj.italic === true
@@ -4299,10 +4294,6 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
   const effectiveBold = selAttrs?.fontWeight !== undefined ? selAttrs.fontWeight >= 600 : boxBold
   const effectiveItalic = selAttrs?.italic !== undefined ? selAttrs.italic : boxItalic
   const effectiveUnderline = selAttrs?.underline !== undefined ? selAttrs.underline : boxUnderline
-  // Per-paragraph list state for the targeted paragraph(s) — recomputed on
-  // selection change (activeSel dep above triggers the re-render).
-  const paraAttrs = currentParagraphAttrs(obj)
-  void activeSel
 
   // M16 P2: linked text style — stored in textStyleId field (cast via unknown
   // because the shared type doesn't have this field yet; state-sync agent owns schema).

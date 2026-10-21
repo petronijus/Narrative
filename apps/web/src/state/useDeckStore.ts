@@ -86,6 +86,48 @@ export function useActiveSlideObject(objectId: string | null): SlideObject | und
 }
 
 /**
+ * Two snapshots of an object with the same fields: the same keys, each value
+ * the same by identity. A Yjs type the object holds (a text's Y.Text) is the
+ * same live instance across snapshots, so a change *inside* it — a typed
+ * word, an inline format, a list indent — leaves the fields the same, while
+ * any write of a key does not (the store hands out the value a Y.Map holds,
+ * by reference, so an unchanged key keeps its identity; a write gives a new
+ * value even when it is equal, which errs on the side of re-rendering).
+ */
+export function sameObjectFields(a: SlideObject | undefined, b: SlideObject | undefined): boolean {
+  if (a === b) return true
+  if (a === undefined || b === undefined) return false
+  const ra = a as unknown as Record<string, unknown>
+  const rb = b as unknown as Record<string, unknown>
+  const keys = Object.keys(ra)
+  if (keys.length !== Object.keys(rb).length) return false
+  for (const k of keys) {
+    if (!Object.prototype.hasOwnProperty.call(rb, k) || ra[k] !== rb[k]) return false
+  }
+  return true
+}
+
+/**
+ * One object of the active slide by id, re-rendering only when one of its
+ * fields changes (`sameObjectFields`) — not when the content of a Yjs type it
+ * holds does: typing into a text box does not re-render the reader
+ * (performance.md → E6). The snapshot returned may therefore be older than
+ * the document; its Yjs types are the live ones. A reader that shows what is
+ * inside them (the text, its runs or paragraphs) subscribes to that itself
+ * (`ui/useTextRunAttrs.ts`); every other reader can use this.
+ */
+export function useActiveSlideObjectFields(objectId: string | null): SlideObject | undefined {
+  const { activeSlideId } = useActiveSlide()
+  return useDeckSelector(
+    (store) =>
+      activeSlideId === null || objectId === null
+        ? undefined
+        : store.getObject(activeSlideId, objectId),
+    sameObjectFields,
+  )
+}
+
+/**
  * The active slide's objects that pass `keep`, in z-order: re-renders only
  * when that set changes or one of its objects does (an overlay of locked
  * objects does not re-render while another object is dragged).

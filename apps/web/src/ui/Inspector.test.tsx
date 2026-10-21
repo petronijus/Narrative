@@ -231,6 +231,7 @@ vi.mock('../state/useSlideObjects', () => ({
   }),
   useActiveObjectsCtx: () => ({ doc: new Y.Doc(), objects: new Y.Doc().getArray('objects') }),
   useSlideObject: (id: string | null) => mockObjects.find((o) => o.id === id),
+  useSlideObjectFields: (id: string | null) => mockObjects.find((o) => o.id === id),
   useSlideObjectsNow: () => () => mockObjects,
   useSlideObjectsSelector: <T,>(select: (objects: SlideObject[]) => T) => select(mockObjects),
 }))

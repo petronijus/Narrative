@@ -20,6 +20,7 @@ import { useActiveSlide } from './ActiveSlideContext.js'
 import { useCallback } from 'react'
 import {
   useActiveSlideObject,
+  useActiveSlideObjectFields,
   useActiveSlideObjects,
   useDeckSelector,
   useDeckStore,
@@ -65,6 +66,15 @@ export function useActiveObjectsCtx(): ObjectsMutationContext | null {
 /** One object of the active slide by id: re-renders only when that object changes. */
 export function useSlideObject(objectId: string | null): SlideObject | undefined {
   return useActiveSlideObject(objectId)
+}
+
+/**
+ * One object of the active slide by id: re-renders only when one of its
+ * fields changes, not when the content of its Y.Text does
+ * (`useActiveSlideObjectFields`, performance.md → E6).
+ */
+export function useSlideObjectFields(objectId: string | null): SlideObject | undefined {
+  return useActiveSlideObjectFields(objectId)
 }
 
 /**

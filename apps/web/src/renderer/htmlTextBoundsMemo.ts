@@ -24,6 +24,20 @@
  * measurement taken while a face was still loading is therefore never
  * reused past its arrival.
  *
+ * SHARED BETWEEN NODES (performance.md → E4). Pixi's measurement reads the
+ * node's markup and style and nothing else of the node
+ * (`measureHtmlText(this.text, this._style)`), so two nodes with the same
+ * inputs measure the same. The last {@link SHARED_MEASUREMENTS_LIMIT}
+ * measurements are kept by their inputs, and a node that misses its own memo
+ * takes one of those before measuring. The case it is for: the editor's
+ * autofit (ui/AutofitHeights) lays a person's growing box out on a node of
+ * its own in the tick of the keystroke, so the stored height joins the
+ * keystroke's undo step; the canvas's node lays the same box out a frame
+ * later — the same markup and CSS — and now takes that layout instead of a
+ * second synchronous one. The write-back's own re-measure (a changed
+ * `height` is not in the CSS) hits as well. A hit gives the very numbers the
+ * measurement gave, so the canvas and the stored height cannot disagree.
+ *
  * Installed on the prototype after the measurement counter
  * (htmlTextMeasureCounter.ts), so `text.measure.bounds` counts the
  * measurements actually made. Pixi's method runs unchanged on every miss.
@@ -57,9 +71,33 @@ interface MeasuredText {
 
 let generation = 0
 
+/** How many measurements are shared between nodes (the most recent ones). */
+export const SHARED_MEASUREMENTS_LIMIT = 256
+
+/**
+ * Measurements by their inputs (anchor, CSS, markup), oldest first; every
+ * entry is of the current generation (cleared when it moves on).
+ */
+const shared = new Map<string, Entry>()
+
+function sharedKey(text: string, css: string, anchorX: number, anchorY: number): string {
+  // The CSS's length keeps the key unambiguous: the markup follows it, whole.
+  return `${anchorX}|${anchorY}|${css.length}|${css}|${text}`
+}
+
+function share(key: string, entry: Entry): void {
+  shared.delete(key)
+  shared.set(key, entry)
+  if (shared.size > SHARED_MEASUREMENTS_LIMIT) {
+    const oldest = shared.keys().next().value
+    if (oldest !== undefined) shared.delete(oldest)
+  }
+}
+
 /** Every measurement taken so far is void (the page's faces changed). */
 export function invalidateHtmlTextMeasurements(): void {
   generation++
+  shared.clear()
 }
 
 if (typeof document !== 'undefined' && typeof document.fonts?.addEventListener === 'function') {
@@ -92,10 +130,22 @@ export function installHtmlTextBoundsMemo(target: object = HTMLText.prototype): 
       bounds.maxY = memo.maxY
       return
     }
+    const text = this.text
+    const key = sharedKey(text, css, anchor._x, anchor._y)
+    const known = shared.get(key)
+    if (known !== undefined) {
+      bounds.minX = known.minX
+      bounds.maxX = known.maxX
+      bounds.minY = known.minY
+      bounds.maxY = known.maxY
+      share(key, known)
+      this[MEMO] = known
+      return
+    }
     ;(original as (this: MeasuredText) => void).call(this)
-    this[MEMO] = {
+    const entry: Entry = {
       generation,
-      text: this.text,
+      text,
       css,
       anchorX: anchor._x,
       anchorY: anchor._y,
@@ -104,6 +154,8 @@ export function installHtmlTextBoundsMemo(target: object = HTMLText.prototype): 
       minY: bounds.minY,
       maxY: bounds.maxY,
     }
+    this[MEMO] = entry
+    share(key, entry)
   }
   proto[INSTALLED] = true
 }

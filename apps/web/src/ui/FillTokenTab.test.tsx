@@ -62,6 +62,8 @@ vi.mock('../state/useSlideObjects', async () => {
     useActiveObjectsCtx: () => ctx,
     useSlideObject: (id: string | null) =>
       (mockObjects as Array<{ id: string }>).find((o) => o.id === id),
+    useSlideObjectFields: (id: string | null) =>
+      (mockObjects as Array<{ id: string }>).find((o) => o.id === id),
     useSlideObjectsNow: () => () => mockObjects,
     useSlideObjectsSelector: <T,>(select: (objects: typeof mockObjects) => T) =>
       select(mockObjects),
