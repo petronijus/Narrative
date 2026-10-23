@@ -45,8 +45,8 @@ export const InsertObjectsSchema = z
   .min(1)
   .max(MAX_INSERT_OBJECTS)
   .describe(
-    'Objects exactly as query.slide / query.object return them (their ids are replaced with new ones; a text ' +
-      "body's `paragraphs`, when present, win over its plain `text`); each is checked like object.create input",
+    "As query.slide / query.object return them; a text body's `paragraphs`, when present, win over its plain " +
+      '`text`',
   )
 
 const Finite = z.number().finite()

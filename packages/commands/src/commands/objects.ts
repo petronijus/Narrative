@@ -46,13 +46,12 @@ export const objectDuplicate = defineCommand({
   id: 'object.duplicate',
   title: 'Duplicate objects',
   description:
-    'Copy objects on the same slide, offset by `offset` slide pixels (default 20, 20), on top of the stacking order, ' +
-    'in one undo step. Copies get new ids and keep every property, rich text included. A duplicated group becomes ' +
-    'its own new group (the original group is untouched); copying a single member of a group gives an ungrouped ' +
-    "copy. A cropped image's crop moves with its copy, so the copy shows the same part of the picture. A copy of a " +
-    'locked object is locked too. Animations are not ' +
-    'copied (add them with animation.add). To another slide use object.copyTo; into another deck, read the ' +
-    'objects with query.slide / query.object and send them to object.insertFromDeck there (fromDeck = this deck).',
+    'Copy objects on the same slide, moved by `offset` slide px (default 20, 20), on top, in one undo step. ' +
+    'Copies get new ids and every property, rich text included. A whole group becomes a new group; a single ' +
+    "member gives an ungrouped copy. A cropped image's copy shows the same part; a locked object's copy is " +
+    'locked. Animations are not copied (animation.add). To another slide: object.copyTo; into another deck: ' +
+    'read them (query.slide / query.object) and send them to object.insertFromDeck there (fromDeck = this ' +
+    'deck).',
   input: z
     .object({
       slide: SlideRefSchema,
@@ -88,11 +87,11 @@ export const objectCopyTo = defineCommand({
   title: 'Copy objects to a slide',
   description:
     'Copy objects to another slide of this deck (`toSlide`; omitted = the same slide), exact and whole — rich ' +
-    "text, tables, crops, fills — on top of the target's stacking order, in one undo step. Copies get new ids; " +
-    'a group copied whole becomes its own new group, a lone member of a group comes out ungrouped; animations are ' +
-    'not copied. Placement: by default copies keep their position on another slide and move 20, 20 on the same ' +
-    'one; `offset` moves them by a delta, `at` puts the centre of their combined box on a slide point. Into ' +
-    'another deck: read them with query.slide and use object.insertFromDeck there (fromDeck = this deck).',
+    "text, tables, crops, fills — on top of the target's stacking order, in one undo step. Copies get new " +
+    'ids; a whole group becomes a new group, a lone member comes out ungrouped; animations are not copied. ' +
+    'They keep their position on another slide and move 20, 20 on the same one; `offset` moves them by a ' +
+    'delta, `at` puts the centre of their combined box on a slide point. Into another deck: read them with ' +
+    'query.slide and use object.insertFromDeck there (fromDeck = this deck).',
   input: z
     .object({
       slide: SlideRefSchema,
@@ -158,11 +157,10 @@ export const objectMove = defineCommand({
   id: 'object.move',
   title: 'Move objects',
   description:
-    'Move objects by a delta in slide pixels (the slide is 1920 x 1080, origin top-left, y down). ' +
-    'This is the correct way to move anything: a cropped image keeps its crop. ' +
-    'To place an object at absolute coordinates, set x/y with object.update (a crop follows there too) or compute ' +
-    'the delta from its current x/y (query.object). To line objects up use object.align; to an edge or the ' +
-    'centre of the slide, object.alignToSlide.',
+    'Move objects by a delta in slide px. The correct way to move anything: a cropped image keeps its crop. ' +
+    'To an absolute position: set x/y with object.update (a crop follows there too) or compute the delta from ' +
+    'its x/y (query.object). Line objects up: object.align; to an edge or the centre of the slide: ' +
+    'object.alignToSlide.',
   input: z
     .object({
       slide: SlideRefSchema,
@@ -198,11 +196,9 @@ export const objectLayer = defineCommand({
   id: 'object.layer',
   title: 'Change stacking order',
   description:
-    'Change where objects sit in the stacking (z) order of their slide: `front` / `back` move them to the very ' +
-    'top / bottom, `forward` / `backward` move them past one neighbour. Several objects move as a block and keep ' +
-    'their relative order. To put one object at an exact stacking position use `toIndex` ' +
-    '(0 = backmost), which requires exactly one object. Other objects shift around the moved ' +
-    'ones as needed.',
+    'Change where objects sit in the stacking (z) order of their slide: `front` / `back` to the very top / ' +
+    'bottom, `forward` / `backward` past one neighbour; several move as a block in their order. `toIndex` (0 ' +
+    '= backmost) puts exactly one object at an exact position.',
   input: z
     .object({
       slide: SlideRefSchema,
@@ -254,9 +250,9 @@ export const objectGroup = defineCommand({
   id: 'object.group',
   title: 'Group objects',
   description:
-    'Group two or more objects so they are selected, moved and duplicated together. Groups do not nest: every ' +
-    'listed object leaves its current group for the new one, while members of that old group you did not list stay ' +
-    "in it — to merge whole groups, list all their members (query.slide shows each object's groupId).",
+    'Group two or more objects so they are selected, moved and duplicated together. Groups do not nest: each ' +
+    'listed object leaves its group for the new one, unlisted members of that group stay in it — to merge ' +
+    'whole groups, list all their members (query.slide shows groupId).',
   input: z
     .object({ slide: SlideRefSchema, objects: z.array(ObjectIdSchema).min(2).max(500) })
     .strict(),
@@ -279,8 +275,8 @@ export const objectUngroup = defineCommand({
   id: 'object.ungroup',
   title: 'Ungroup objects',
   description:
-    'Remove the given objects from their group. To dissolve a whole group, pass all its members ' +
-    '(query.slide lists objects with their groupId).',
+    'Remove the given objects from their group. A whole group: pass all its members (query.slide shows ' +
+    'groupId).',
   input: z.object({ slide: SlideRefSchema, objects: ObjectIdsSchema }).strict(),
   output: EmptyOutput,
   implementedWith: ['ungroupObjects'],
@@ -303,9 +299,8 @@ export const objectAlign = defineCommand({
   idempotent: true,
   title: 'Align objects to each other',
   description:
-    "Align two or more objects to the edges or centre of their combined bounding box (e.g. 'left' moves every " +
-    "object's left edge to the leftmost edge). Rotation is ignored; cropped images keep their crop. " +
-    'To align objects to the slide itself use object.alignToSlide.',
+    "Align two or more objects to the edges or centre of their combined box ('left' moves every left edge to " +
+    'the leftmost). Rotation is ignored; crops move with their images. To the slide: object.alignToSlide.',
   input: z
     .object({
       slide: SlideRefSchema,
@@ -337,8 +332,8 @@ export const objectDistribute = defineCommand({
   idempotent: true,
   title: 'Distribute objects evenly',
   description:
-    'Space three or more objects so the gaps between neighbours are equal, horizontally or vertically. ' +
-    'The two outermost objects stay where they are. Rotation is ignored; cropped images keep their crop.',
+    'Space three or more objects so the gaps between neighbours are equal, horizontally or vertically; the ' +
+    'two outermost stay put. Rotation is ignored; crops move with their images.',
   input: z
     .object({
       slide: SlideRefSchema,

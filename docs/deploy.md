@@ -394,6 +394,162 @@ pack** tab ("This folder has no style pack" until one is imported); a slide with
 box set to grow with its text, in Inter, renders: right-click → **Export as
 PNG** downloads within seconds (before 0.11.0 it timed out).
 
+## Releasing the performance round — 0.16.0
+
+The performance programme ([plan](./plans/performance.md), its Log has every
+number) merged from `perf/crowded-slide`. The version is the session's call
+at `just bump` (a minor: local document copies and new routes); this section
+says 0.16.0.
+
+**What changes on the VM:**
+
+- **Migrations 0038–0042**, all quick and additive: 0038 drops three
+  redundant indexes of the update tables, 0039 the 1080p present rendition's
+  columns on `media_assets`, 0040 `media_owner_sweeps` (a deleted owner's
+  second media sweep survives a restart), 0041 `doc_epoch` on decks, folders
+  and components, 0042 `instance_generation` (one row). ADR 0017's local
+  document copies depend on 0041/0042.
+- **Compose** (`docker-compose.prod.yml`, base): the server mounts the
+  restore marker directory read-only and reads `INSTANCE_MARKER_PATH`; it
+  gets `METRICS_TOKEN` passed through (new, below); `stop_grace_period: 30s`
+  (the server stores open documents before it exits, so a restart can take
+  up to 30 s longer than before); MinIO cleans up abandoned multipart
+  uploads after 24 h (its container is recreated: a few seconds without
+  media).
+- **Caddy**: precompressed, immutable hashed assets (zstd/gzip, D1), and
+  `/api/metrics` answers 404 at the edge. The deploy reloads it.
+- **Images**: about a third of their old size (server 1.42 GB → ~0.4 GB on
+  the VM's count, D2); the server and the video worker run as `node`, not
+  root. Entry points and the migrator path are unchanged.
+- **deploy.sh**: creates the restore marker directory before the first
+  container mounts it, writes the first marker after the migrations, keeps
+  the outgoing server's logs in `backups/logs/` (see "What the deploy
+  script does").
+
+**Before the deploy** (from the MacBook, with the private overlay; the VM
+steps need Petr's consent for the host):
+
+1. **Drift check** — the VM's `infra/.env.prod` is edited by hand at times
+   and is not a copy of the SOPS source (`ADMIN_EMAILS`, for one, is not in
+   the source). Compare variable **names** only:
+
+   ```bash
+   key="$(op document get "SOPS age key (dev repos)" --account my)"
+   diff <(SOPS_AGE_KEY="$(printf '%s' "$key" | grep '^AGE-SECRET-KEY')" \
+            sops --input-type binary --output-type binary -d private/config/env.prod.sops \
+            | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | sort -u) \
+        <(ssh narrative "sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' /opt/narrative/infra/.env.prod | sort -u")
+   ```
+
+   `>` lines exist only on the VM: fold them into the source
+   (`scripts/secrets-edit.sh prod`) after the release. **Never** replace the
+   VM's file with a fresh decrypt (`secrets-decrypt.sh prod` + scp) while
+   this shows a `>` line — the copy would drop them.
+
+2. **`METRICS_TOKEN` onto the VM.** It is in the SOPS source since
+   2026-10-23 (`private/config/env.prod.sops`, 64 hex characters). Append
+   that one line to the VM's file — the value goes through the pipe only,
+   and the VM keeps a copy of its previous file in `backups/env/` (outside
+   the synced tree: a copy next to the file would be deleted by the next
+   deploy's `rsync --delete`):
+
+   ```bash
+   key="$(op document get "SOPS age key (dev repos)" --account my)"
+   SOPS_AGE_KEY="$(printf '%s' "$key" | grep '^AGE-SECRET-KEY')" \
+     sops --input-type binary --output-type binary -d private/config/env.prod.sops \
+     | grep '^METRICS_TOKEN=' \
+     | ssh narrative 'set -eu; f=/opt/narrative/infra/.env.prod
+         if grep -q "^METRICS_TOKEN=" "$f"; then echo "METRICS_TOKEN already set — left as it is"; exit 0; fi
+         mkdir -p -m 700 /opt/narrative/backups/env
+         cp -p "$f" "/opt/narrative/backups/env/.env.prod.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+         [ -z "$(tail -c 1 "$f")" ] || echo >> "$f"
+         echo "# Bearer token of /metrics (docs/ops.md -> Metrics), added 2026-10-23" >> "$f"
+         cat >> "$f"
+         grep -c "^METRICS_TOKEN=[0-9a-f]\{64\}$" "$f"'
+   ```
+
+   The last line prints `1`. Without this step the release still works;
+   `/metrics` just stays unregistered (the server's `METRICS_TOKEN is unset`
+   warning).
+
+3. **The backups directory and the cron's user.** The marker goes to
+   `/opt/narrative/backups/marker` (unless `.env.prod` sets `BACKUP_DIR` or
+   `RESTORE_MARKER_DIR`); `deploy.sh` runs as `petr` and creates it. If the
+   nightly `backup.sh` runs as another user, that user must be able to
+   write there:
+
+   ```bash
+   ssh narrative 'crontab -l 2>/dev/null | grep backup.sh; sudo -n crontab -l 2>/dev/null | grep backup.sh; ls -ld /opt/narrative/backups /opt/narrative/backups/marker 2>&1'
+   ```
+
+**The deploy, timed** (plan D3: the restart's downtime and the server's
+boot). In a second terminal, from the release's checkout, before `just
+deploy`:
+
+```bash
+infra/scripts/availability-probe.py --out ~/narrative-deploy-v0.16.0.jsonl
+```
+
+(two to four public requests a second; Ctrl-C after the deploy has finished
+prints the outage, the slowest answers and when the new version answered;
+`--summary <file>` prints it again later). Then `just deploy v0.16.0` as
+usual.
+
+**After the deploy:**
+
+```bash
+curl -s https://narrative.bastla.com/version.json                                  # v0.16.0+…
+curl -s -o /dev/null -w '%{http_code}\n' https://narrative.bastla.com/api/metrics   # 404
+ssh narrative 'bash -s' << 'EOF'
+cd /opt/narrative
+infra/scripts/boot-timing.py --previous "$(ls -1t backups/logs/server-*.log.gz | head -n 1)"
+cat backups/marker/generation
+docker exec narrative-server sh -c \
+  'wget -qO- --header "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:3001/metrics' \
+  | grep -c '^narrative_'
+EOF
+```
+
+- `boot-timing.py` prints container start → first log line → restore check
+  → MCP ready → Hocuspocus / Fastify listening → first `GET /health` 200 →
+  Docker healthy, plus the old process's SIGTERM → last line. It must say
+  `/metrics registered: yes`, and for the restore check "marker found,
+  database not behind it" (the deploy wrote the first marker); "no restore
+  marker" means the deploy's marker step warned. Run it within a minute of
+  the deploy for the "Docker healthy" row; `--json` for the Log. Record the
+  numbers in the plan's D3 entry beside 2026-10-20's (15.08 s to listening
+  after a VM boot) together with the probe's outage.
+- The marker prints a unix-seconds generation; the metric count is > 0.
+- **Old images** (Petr, 2026-10-23: remove v0.13.2 and v0.14.0). The
+  deploy's own prune keeps v0.16.0 + two previous, so v0.13.2 is usually
+  gone already and v0.14.0 is still in the window. A dry run first, then the
+  removal; an image any container (running or stopped) uses is never
+  removed, and neither are `latest` and the current tag:
+
+  ```bash
+  ssh narrative 'cd /opt/narrative && docker system df &&
+    infra/scripts/prune-images.sh --current v0.16.0 --keep 2 --drop v0.13.2 --drop v0.14.0 --dry-run'
+  ssh narrative 'cd /opt/narrative &&
+    infra/scripts/prune-images.sh --current v0.16.0 --keep 2 --drop v0.13.2 --drop v0.14.0 &&
+    docker images --filter "reference=ghcr.io/petronijus/narrative-*" --format "{{.Repository}}:{{.Tag}}  {{.Size}}"'
+  ```
+
+  The VM's rollback window is then v0.15.0 (every tag stays in GHCR).
+
+- **Client session metrics**: real sessions report from this release on
+  (G4). After a day of use, on the VM: `docker logs narrative-server 2>&1 |
+infra/scripts/client-metrics.py` (docs/ops.md → Client session metrics).
+- **Editor checks**: open a deck twice — the second open paints from the
+  local copy (ADR 0017); present a deck with photos — after "ready" every
+  advance is instant; a table edits without a stall.
+
+**Rollback** as in "Rollback" below. The migrations are additive and v0.15.0
+ignores the new columns and tables; it never reads the copies browsers kept,
+but it also never bumps a document's epoch. So before rolling **forward**
+again after a rollback, advance generation and floor as in "Restoring the
+database" step 3: every copy taken before the rollback is then refused once
+and the documents open from the server.
+
 ## Access
 
 The VM is reachable only through the Proxmox host (`pve`), which is the jump
@@ -504,8 +660,17 @@ Deploy dokončen.
    relative `/api` and `/ws` (resolved against the page, so the image is
    domain-independent); only `VITE_BUILD_VERSION` is stamped in at build
    time by `build-push.sh`
-5. Runs Drizzle DB migrations
-6. `docker compose up -d --remove-orphans` — once listening, the server also
+5. Creates the restore marker directory (`backups/marker`, ADR 0017) if
+   it is missing — before any container mounts it, or Docker would create
+   it as root's and the nightly `backup.sh` could not write the marker —
+   then runs Drizzle DB migrations, then writes the first restore marker if
+   there is none (`infra/scripts/restore-marker.sh --if-missing`; a failure
+   only warns: the next backup writes it)
+6. Follows the running server's logs into `backups/logs/server-<old
+tag>-<time>.log.gz` (the newest 20 kept) until `up -d` has replaced the
+   container: its client session reports and its shutdown lines would go
+   with it (`infra/scripts/boot-timing.py --previous` reads them). Then
+   `docker compose up -d --remove-orphans` — once listening, the server also
    runs any pending one-time **data** migrations in the background
    (`apps/server/src/services/dataMigrations.ts`; completed ones are rows in
    `app_data_migrations`, migration 0026). These change documents rather
@@ -678,6 +843,11 @@ scp infra/.env.prod narrative:/opt/narrative/infra/.env.prod
 ssh narrative 'cd /opt/narrative && ./infra/scripts/deploy.sh prod'
 ```
 
+Before such a whole-file copy, compare the variable names on both sides
+(the drift check in "Releasing the performance round"): a variable set only
+on the VM would be lost. To carry one new variable, append its line instead
+(the `METRICS_TOKEN` step there).
+
 An ad-hoc edit made on the VM (e.g. `USE_SHARED_TUNNEL=1`) goes back into
 `env.prod.sops` with `secrets-edit.sh prod`, or the next rebuild loses it.
 
@@ -692,6 +862,7 @@ Key secrets and where they come from:
 | `MINIO_ROOT_USER/PASS`       | Chosen at setup                                                                                                                                                                                                                                                      |
 | `IMGPROXY_KEY/SALT`          | `openssl rand -hex 32` each (generated at setup)                                                                                                                                                                                                                     |
 | `RESEND_API_KEY`             | Resend dashboard                                                                                                                                                                                                                                                     |
+| `METRICS_TOKEN`              | `openssl rand -hex 32` (since 0.16.0). Bearer token of `GET /metrics`; unset = the endpoint is not registered. Passed to the server by `docker-compose.prod.yml`; read on the VM with `docker exec` (docs/ops.md → Metrics) — Caddy never forwards `/api/metrics`.   |
 | `AGENT_PRINCIPAL_KEY_SECRET` | `openssl rand -base64 48` (≥ 32 chars; required — the server refuses to start without it). HMAC key of the "working for" key agent peers carry in awareness; rotating it needs no migration (open editors relabel their agent by display name until they reconnect). |
 
 The per-IP rate-limit pre-limit (3000 requests/minute) does not apply to agent
@@ -710,6 +881,8 @@ override):
 | `MCP_OAUTH_REDIRECT_URIS`       | empty                             | Extra OAuth callbacks besides the built-in claude.ai and Claude Code ones: comma-separated https URLs (exact), or http URLs on `localhost` / `127.0.0.1` (any port). Checked at start.                                |
 | `MCP_OAUTH_CIMD_HOSTS`          | `claude.ai`                       | Hosts whose OAuth Client ID Metadata Documents are accepted (comma-separated; `none` = none). Checked at start.                                                                                                       |
 | `MCP_OAUTH_DCR_ENABLED`         | `false`                           | `true` enables OAuth dynamic client registration (not needed for Claude Code / claude.ai). Checked at start.                                                                                                          |
+| `BACKUP_DIR`                    | `/opt/narrative/backups`          | Where `backup.sh` writes its dumps; the restore marker lives in `<BACKUP_DIR>/marker` and the server mounts that (see Backups).                                                                                       |
+| `RESTORE_MARKER_DIR`            | `<BACKUP_DIR>/marker`             | The restore marker's directory, for the scripts and the server's volume alike (ADR 0017).                                                                                                                             |
 | `AGENT_URL_FETCH_ALLOWED_HOSTS` | empty                             | Hostnames agent URL downloads may reach without the user confirming the host (comma-separated, exact, no port). Empty: every URL download is confirmed. Such a download may only be redirected to other listed hosts. |
 
 If `.env.prod` is lost, regenerate all secrets, update the Postgres
@@ -906,6 +1079,17 @@ After each dump `backup.sh` advances the instance's restore generation
 server (`INSTANCE_MARKER_PATH`). Deploys never touch `backups/`, so the
 marker survives every release. A backup whose marker step fails exits
 non-zero — treat it as a failed backup.
+
+The marker step is `infra/scripts/restore-marker.sh` (backup.sh calls it;
+deploy.sh calls it with `--if-missing` for a VM's first marker). The
+directory is `RESTORE_MARKER_DIR`, else `<BACKUP_DIR>/marker`, else
+`/opt/narrative/backups/marker` — the same resolution in the scripts and in
+the server's volume (`docker-compose.prod.yml`), so setting `BACKUP_DIR`
+in `.env.prod` moves both together. The advance and the write run under a
+lock on the directory and the file only ever moves up, so a backup and a
+deploy at the same moment cannot leave the marker behind the database. The
+user the cron runs `backup.sh` as must be able to write the directory
+(deploy.sh creates it as the deploying user, `petr`).
 
 ### Restoring the database
 

@@ -1,8 +1,9 @@
 # ADR 0019 — The render page switches decks in place only behind a page-wide session reset
 
-**Status**: Proposed (2026-10-20, renderer agent). Not built. Needs the
-tech-lead, `state-sync` (who owns half the state involved) and
-`security-reviewer` before any code.
+**Status**: Closed by its own measurement (2026-10-23, F5): neither the
+page-wide reset nor the slim render entry is built — see Outcome. Accepted
+by Petr on 2026-10-23 as "measure the slim render entry first, the page-wide
+reset only if needed"; proposed 2026-10-20 by the renderer agent.
 **Scope**: `apps/web/src/pages/DeckRender.tsx` and `components/DeckShell.tsx`
 (the render page), module-level state in `apps/web/src/renderer/`,
 `state/` and `lib/`; `apps/render-worker/src/render.ts` (`recyclePage`) and
@@ -96,3 +97,38 @@ CSP failures of ADR 0007.
   a reason — a cost for every area, enforced by the guard.
 - The render page's slide switch itself (the same deck) is unaffected: it
   was cut on 2026-10-20 without touching isolation (performance.md, R1).
+
+## Outcome (2026-10-23, F5 — measured, not built)
+
+Measured as step 5 asks: the production bundle (built like the image)
+behind the production Caddyfile, the render worker's production image under
+VM 103's compose limits (`--cpus 2`, 1200 MB, no swap, the hardening, the
+sandbox required), MacBook M3 Pro; the worker now logs this split for every
+page it loads (`apps/render-worker/src/loadSplit.ts`). Numbers and runs:
+`plans/performance.md` → Log, 2026-10-23 F5.
+
+- **"App ready" is ~0.3–0.6 s**, not the 0.93 s of 2026-10-18 (that run was
+  under far heavier machine load): a recycled page p50 ~480 ms, a new one
+  ~550 ms. Its parts, recycled page: HTML 3–8 ms, scripts 60–130, boot
+  (evaluating the bundle, React, the route guard) 220–310, deck inputs
+  47–140 (Pixi's start, 27–100 ms, runs inside them); the session check
+  answers before the chunks are evaluated, never gating.
+- A CPU profile of a load: vendor-pixi ~100 ms, vendor-react 18–52, the
+  entry chunk (router, auth, App shell — what a slim entry would drop)
+  **12–18 ms**, Yjs 4–18.
+- So an in-place switch could save **~0.35–0.45 s** (HTML + scripts + boot,
+  part of Pixi's start), only on the first job of a render session (its next
+  jobs keep their page); a slim entry **≤ ~50 ms**. Neither is worth its
+  cost: the reset's silent cross-tenant risk and a guard on every area, or a
+  second HTML entry with its own routing in Caddy, Vite and the export frame.
+- **What a cold job really paid for was the page's first capture**:
+  1.4–1.8 s, of which ~1.1 s was SwiftShader compiling Pixi's batch shader —
+  one branch per texture slot, 32 slots under SwiftShader — and every later
+  capture paid those branches per pixel too. Fixed without touching
+  isolation: the render page batches at most 4 textures per draw
+  (`renderer/batchTextures.ts`, byte-identical pictures). A cold one-slide
+  PNG p50 2.9 → 1.3 s, a warm one 1.3 → 0.7 s, a 30-slide PDF −28 % in an
+  interleaved A/B.
+
+Reopen only if the app load grows back to a second or more of a cold job,
+and then with steps 1–4 as written.

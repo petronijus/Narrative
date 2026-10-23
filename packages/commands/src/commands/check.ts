@@ -38,13 +38,12 @@ export const queryCheck = defineCommand({
     "Check slides against the deck's folder style pack, as the brand's QA does: text that does not fit (measured " +
     'with the real fonts; a growing box against what is below it), partial overlaps, content outside the ' +
     'margins, text colours outside the pack, a background of another variant, missing footer or page number, ' +
-    'placeholder text, empty picture regions, and the editorial rules (capitals, italics, bullet glyphs, title ' +
-    'periods and length, the accent budget, typography, emoji); on the whole deck, one layout on most slides. ' +
-    'Each finding names its slide, object (and table ' +
-    'cell), the rule and an error or warning level; fix the errors before you report a slide done. `fit: false` ' +
-    `skips the measurement (a few seconds per 20 slides; at most ${MAX_MEASURE_SLIDES} slides measured at once). ` +
-    'A font that did not load leaves the fit unverified ' +
-    '(`fitVerified: false`, an error). Any reader of the deck.',
+    'placeholder text, empty picture regions, the editorial rules (capitals, italics, bullet glyphs, title ' +
+    'periods and length, the accent budget, typography, emoji), and on the whole deck one layout on most ' +
+    'slides. Each finding names its slide, object (and table cell), rule and level (error / warning); fix the ' +
+    'errors before you report a slide done. `fit: false` skips the measurement (a few seconds per 20 slides; ' +
+    `at most ${MAX_MEASURE_SLIDES} measured at once). A font that did not load leaves the fit unverified ` +
+    '(`fitVerified: false`, an error). Any deck reader.',
   input: z.strictObject({
     slides: z
       .union([z.literal('all'), z.array(SlideRefSchema).min(1).max(MAX_MEASURE_SLIDES)])

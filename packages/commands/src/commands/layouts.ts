@@ -137,14 +137,13 @@ export const slideApplyLayout = defineCommand({
   title: 'Lay a slide out with a pack layout',
   description:
     'Lay a slide out with one of its folder\'s style pack layouts (style.pack.get "layouts" lists them by ' +
-    "purpose and slots): each slot becomes a box in the brand's text style and place, a picture, or the pack's " +
-    "component; the pack's footer, page number and decoration are drawn. `content` fills slots by name: text " +
-    '(a string or { paragraphs }) or a picture { assetId }. On a slide that has a layout already, the text and ' +
-    'pictures already on the slide move into the slots of the same name, else of their `role` (top to bottom, ' +
-    'left to right; set roles with object.update first to lay out a plain slide); `unplaced` lists what stayed ' +
-    'where it was. `archetype` instead of `layoutId` takes the layout the pack maps to that kind of slide. ' +
-    '`surface`: where the layout offers a choice (a photo tone). The pack must have been compiled. Undo: one ' +
-    'step.',
+    "purpose and slots): each slot becomes a box in the brand's text style and place, a picture, or the " +
+    "pack's component; the pack's footer, page number and decoration are drawn. `content` fills slots by " +
+    'name: text (a string or { paragraphs }) or a picture { assetId }. On a slide with a layout already, its ' +
+    'text and pictures move into the slots of the same name, else of their `role` (top to bottom, left to ' +
+    'right; on a plain slide set roles with object.update first); `unplaced` lists what stayed. `archetype` ' +
+    'instead of `layoutId` takes the layout the pack maps to that kind of slide. `surface`: where the layout ' +
+    'offers a choice (a photo tone). The pack must be compiled. Undo: one step.',
   input: z
     .strictObject({
       slide: SlideRefSchema,
@@ -390,19 +389,17 @@ export const styleDeckApply = defineCommand({
   title: "Re-style a deck with its folder's pack",
   description:
     "Re-lay every slide of the deck that follows a pack layout with its folder's style pack, keeping each " +
-    "slot's content, and redraw the pack's footer, page numbers and decoration. `variant` sets the deck's " +
-    'variant, one value per pack axis (style.pack.get "summary" lists them) — its colours follow; `fields` ' +
-    "fills the footer's fields (null clears one); `lang` picks the footer language; `guides` (default true) " +
-    "adds the pack's grid as guides. A slide whose layout this pack does not have is left as it is and " +
-    'listed; one on a surface its layout no longer offers goes to the default (listed). ' +
-    '`spec` instead builds the whole deck from a deck spec (the build-deck playbook), checked against the ' +
-    'pack first. Building again keeps the slides of unchanged spec slides, edits included, and builds the ' +
-    'rest fresh; slides not built from a spec are refused unless `replace: true`. Not in ops.apply. The deck keeps the ' +
-    'spec (query.deck { spec: true }) to build again; it is deck content every viewer has (spec: null ' +
-    'forgets it). `relayout: "archetype"` also restyles slides on another ' +
-    "pack's layout: each takes this pack's layout for its archetype, its " +
-    "content by slot and role, its colours and text styles this pack's by purpose; `slides` limits it. " +
-    'Undo: one step.',
+    "slot's content, and redraw the pack's footer, page numbers and decoration. `variant`: one value per pack " +
+    'axis (style.pack.get "summary" lists them), its colours follow; `fields` fills footer fields (null ' +
+    "clears one); `lang` picks the footer language; `guides` (default true) adds the pack's grid as guides. A " +
+    'slide whose layout the pack lacks is left as it is, one on a surface its layout no longer offers goes to ' +
+    'the default; both are listed. `spec` instead builds the whole deck from a deck spec (the build-deck ' +
+    'playbook), checked against the pack first; building again keeps the slides of unchanged spec slides, ' +
+    'edits included, and builds the rest fresh; slides not built from a spec are refused unless `replace: ' +
+    'true`. The deck keeps the spec to build again (query.deck { spec: true }), as deck content every viewer ' +
+    'has (spec: null forgets it). `relayout: "archetype"` also restyles slides on another pack\'s layout: each ' +
+    "takes this pack's layout for its archetype, its content by slot and role, this pack's colours and text " +
+    'styles by purpose; `slides` limits it. Not in ops.apply. Undo: one step.',
   input: z
     .strictObject({
       variant: z.record(z.string().min(1).max(48), z.string().min(1).max(48)).optional(),
@@ -541,8 +538,9 @@ export const styleDeckApply = defineCommand({
       ? await loadNotesMarkdown()
       : null
     // Every picture the spec names must be one the deck shows (its own or
-    // its folder's), as media.url answers for it. Checked on the server,
-    // which has the media service; the editor builds no specs.
+    // its folder's), as media.url answers for it: not_found for one that is
+    // not, unknown or not readable alike. Checked on the server, which has
+    // the media service; the editor builds no specs.
     const missingPictures: string[] = []
     const media = ctx.services?.media
     if (media !== undefined) {
@@ -566,8 +564,7 @@ export const styleDeckApply = defineCommand({
           .then(
             () => true,
             (e: unknown) => {
-              if (e instanceof CommandError && (e.code === 'not_found' || e.code === 'forbidden'))
-                return false
+              if (e instanceof CommandError && e.code === 'not_found') return false
               throw e
             },
           )

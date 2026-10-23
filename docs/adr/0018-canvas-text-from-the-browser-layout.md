@@ -1,7 +1,7 @@
 # ADR 0018 — Canvas text: the browser lays it out, a worker paints the glyph runs
 
-**Status**: Proposed (2026-10-20, renderer; for the tech-lead and Petr). Not
-built: the measured spike is on branch `perf/crowded-slide`
+**Status**: Accepted (Petr, 2026-10-23; proposed 2026-10-20 by renderer) —
+the port is being built on `perf/crowded-slide`. Before it: the measured spike is on branch `perf/crowded-slide`
 (`apps/web/src/renderer/experimental/textEngine/`, the dev-only page
 `/text-engine-spike.html`, `e2e/text-engine-spike.spec.ts`).
 **Scope**: every text the canvas draws — text boxes, table cells, component
@@ -91,7 +91,7 @@ costs ~13 µs per thousand pixels on the main thread (444 ms for the zoom's
 32.7 Mpx; copying the bitmap into a canvas first: 360 ms). (a1)'s style-only
 model halves the WebKit mount (296 / 178 / 144 ms).
 
-## Decision (proposed)
+## Decision
 
 1. **Canvas text is drawn from glyph runs, not from an SVG.** A text's
    look stays defined by its markup and CSS (`buildHtml`,
@@ -175,3 +175,84 @@ model halves the WebKit mount (296 / 178 / 144 ms).
 
 Size: L (three to five weeks with the gate). Each step measured with the
 crowded-slide and present benches before and after.
+
+## Implementation (the port, from 2026-10-23)
+
+Built in `apps/web/src/renderer/runText/` behind a page-wide flag
+(`runText/flag.ts`: `textEngine` = `html` | `runs`, from
+`globalThis.__narrative_textEngine`, `?textEngine=`, localStorage
+`narrative:textEngine`, the build's `VITE_TEXT_ENGINE`, default `html` until
+the gate passes).
+
+**The node stays an `HTMLText`; what is behind it changes.** Plan step 1
+proposed a `RunText` node in its place. The port keeps Pixi's `HTMLText` as
+the scene node instead: its markup and its `HTMLTextStyle` (whose `cssStyle`
+is the text's CSS) are exactly what the decision keeps as the definition of a
+text's look, and every consumer of a canvas text reads the node's contract —
+`textNode.height` and the anchor (alignment, autofit, the clip mask, the
+realignment, the edit overlay's offsets), `_gpuData[uid].texturePromise` /
+`.texture` (thumbnails, present mode's preparation, the render page's settle,
+the zoom staging). Swapping what produces those, rather than the node, moves
+every consumer at once and leaves none to drift:
+
+- **Raster** — the renderer's `htmlText` system's public
+  `getTexturePromise` / `returnTexturePromise` are wrapped per renderer
+  (`runTextSystem.ts` → `installRunText`, after `patchHTMLTextRace` in
+  `Canvas.tsx` and `thumbnails.ts`): the text's layout (`layoutCache.ts`),
+  painted in a worker (`textRasterPool.ts`, `textRasterWorker.ts`,
+  `paintRuns.ts`), uploaded at once as an exact-size `ImageSource` texture
+  this module owns and destroys when the pipe hands it back (never put into
+  Pixi's `TexturePool`).
+- **Measurement** — `HTMLText.updateBounds` (already wrapped by
+  `htmlTextBoundsMemo.ts`) takes the same layout's size
+  (`setHtmlTextMeasurer`): a text's bounds and its pixels come from one
+  layout, laid out once (`readRuns.ts` in `layoutHost.ts`'s contained host).
+- **Fonts** — the registry (`fontChanges.ts`) keeps every face's bytes and
+  feeds them to the pool (`subscribeHtmlTextFaces`), which posts each face to
+  every worker before any later paint; a worker paints only after the faces
+  posted before the paint have loaded.
+- **Fallback, per text** — what the run painter cannot draw as the engine
+  does is named by the layout (`layout.unsupported`) or by a failed paint, and
+  that text is rasterised by the system's original HTMLText path (the race
+  patch and the table grouping around it). A worker that never starts (a CSP
+  that blocks it fails silently: no `ready` within 4 s) or crashes is
+  replaced by painting on the page with the document's fonts.
+
+The gate (`e2e/text-runs-parity.spec.ts` over `e2e/fixtures/textCorpus.ts`;
+`window.__narrative_runText.compare()`, `runText/fidelityProbe.ts`) draws
+every text on the canvas both ways in the page and compares them channel by
+channel, per slide, zoom and DPR.
+
+### What the painter reproduces, and from where
+
+The layout is the browser's; what the painter adds is drawn by each engine's
+own rules, read from the engines' sources (Chromium 156.0.8078.4, the
+Playwright build the gate runs; WebKit main of October 2026) and held to by
+the gate:
+
+- **Baselines** are rounded to a whole CSS px of the layout before the
+  resolution scales them (the SVG raster scales the laid-out line).
+- **Word positions**: Chromium's layout kerns across spaces and its canvas
+  does not, so where a fragment has spaces each word is placed where the
+  layout put it (range rects are exact in Chromium). WebKit's layout and
+  canvas agree; its rects of partial ranges are snapped to whole px
+  (`enclosingIntRect`), those of whole text boxes are not — WebKit draws
+  each line fragment as its collapsed string from the box's start, word
+  positions only for preserved tabs.
+- **Collapsed whitespace**: a run of spaces is drawn as one space, and a
+  leading space only where the layout gave it a box.
+- **Underlines** (`decorations.ts`): Blink — thickness `auto` = size / 10
+  (≥ 1), offset = rounded ascent + max(1, ⌈T / 2⌉), painted with the top
+  rounded and the height floored in the text's own px, ink skipped where the
+  glyph outlines cross the unsnapped line inset by ½ px (against the
+  unrounded ascent's baseline), clipped out without antialiasing, widened by
+  min(T, 13). WebKit — thickness = size / 16, offset = ascent + max(1,
+  ⌈size / 16 / 2⌉), origin rounded then the top rounded up to a device px,
+  the height unsnapped (≥ ½), faded by the scale below 1, ink skipped per
+  glyph, widened by min(height, font height / 5). Glyph crossings are found
+  on a mask of the glyphs 16× finer than a CSS px; CJK is drawn through, as
+  both engines do.
+- **Text stroke** (`-webkit-text-stroke`, `paint-order: stroke`): under the
+  fill, miter joins; Blink's miter limit is Skia's default 4, WebKit's 10.
+- **Bidi**: a fragment with right-to-left letters is split into the boxes the
+  layout made of it, each drawn in its direction from its edge.

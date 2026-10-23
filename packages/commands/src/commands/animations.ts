@@ -95,8 +95,8 @@ export const WritableAnimationTriggerSchema = AnimationTriggerSchema.exclude(['o
  * trigger, which no schema lists, is said here.
  */
 const LEGACY_TRIGGER_DOC =
-  'Steps of older decks may read back as trigger onEnter (legacy: starts with the slide wherever it sits); it ' +
-  'cannot be chosen, and a step keeps it until its trigger is changed.'
+  'Steps of older decks may read as trigger onEnter (legacy: starts with the slide); it cannot be chosen, and ' +
+  'stays until the trigger is changed.'
 
 function validateParams(
   preset: AnimationPreset,
@@ -147,9 +147,10 @@ export const animationAdd = defineCommand({
   id: 'animation.add',
   title: 'Add animation',
   description:
-    "Append an animation step for an object to the end of its slide's timeline. Omitted fields take the editor " +
-    'defaults: trigger afterPrevious, duration 0.6 s, delay 0 s, easing "power2.out"; moveTo targets the slide ' +
-    'centre (960, 540) and rotateTo turns to 180°. Use animation.reorder to move the step, animation.update to change it.',
+    "Append an animation step for an object to the end of its slide's timeline. Omitted fields take the " +
+    'editor defaults: trigger afterPrevious, duration 0.6 s, delay 0 s, easing "power2.out"; moveTo targets ' +
+    'the slide centre (960, 540), rotateTo turns to 180°. Move it: animation.reorder; change it: ' +
+    'animation.update.',
   input: z.strictObject({
     slide: SlideRefSchema,
     object: ObjectIdSchema.describe('The object to animate (on the same slide)'),
@@ -208,9 +209,9 @@ export const animationUpdate = defineCommand({
   title: 'Update animation',
   description:
     'Change an animation step: preset, trigger, duration (s), delay (s), easing, params. `params` is MERGED into ' +
-    'the current params (a key set to null is removed; params: null clears them all). Changing `preset` drops ' +
-    'params the new preset does not use and fills its defaults (moveTo: slide centre, rotateTo: 180°). The ' +
-    'animated object cannot be changed here. ' +
+    'the current ones (a key set to null is removed; params: null clears them all). A new `preset` drops params ' +
+    'it does not use and fills its defaults (moveTo: slide centre, rotateTo: 180°). The animated object cannot ' +
+    'be changed here. ' +
     LEGACY_TRIGGER_DOC,
   input: z.strictObject({
     slide: SlideRefSchema,
@@ -286,8 +287,8 @@ export const animationRemove = defineCommand({
   id: 'animation.remove',
   title: 'Remove animations',
   description:
-    "Remove animation steps from a slide's timeline; the objects themselves stay. Deleting an object with " +
-    'object.delete already removes its steps.',
+    "Remove animation steps from a slide's timeline; the objects stay. object.delete already removes a " +
+    "deleted object's steps.",
   input: z.strictObject({
     slide: SlideRefSchema,
     animations: z.array(AnimationIdSchema).min(1).max(500),
@@ -311,8 +312,8 @@ export const animationReorder = defineCommand({
   id: 'animation.reorder',
   title: 'Reorder animations',
   description:
-    "Set the play order of a slide's animation steps. `order` must list every step id of the slide exactly once " +
-    '(query.slide lists them). Triggers are kept, so an afterPrevious step now follows its new predecessor.',
+    "Set the play order of a slide's animation steps: `order` lists every step id of the slide exactly once " +
+    '(query.slide lists them). Triggers are kept, so an afterPrevious step follows its new predecessor.',
   input: z.strictObject({
     slide: SlideRefSchema,
     order: z.array(AnimationIdSchema).min(1).max(500),
@@ -418,15 +419,13 @@ export const animationRetime = defineCommand({
   idempotent: true,
   title: 'Retime animations',
   description:
-    "Place animation steps at absolute times on the slide's timeline — `start` in seconds from the moment the " +
-    'slide appears (the `start` query.slide reports for each step), and optionally a new `duration`. Steps not ' +
-    'listed keep their start. The play order follows the times, and every step gets the trigger and delay that ' +
-    'put it there after its new predecessor: afterPrevious when it starts at or after the previous step ends, ' +
-    "withPrevious when it overlaps it. An onClick step stays onClick and starts at the previous step's end at the " +
-    'earliest (the other steps keep their times); a legacy onEnter step becomes afterPrevious or withPrevious. ' +
-    "Returns every step's resulting time " +
-    'and trigger in play order. To change a trigger, delay or duration and let the following steps move with it, ' +
-    'use animation.update instead.',
+    "Place animation steps at absolute times on the slide's timeline — `start` in seconds from when the slide " +
+    'appears (as query.slide reports it), optionally a new `duration`. Unlisted steps keep their start. The ' +
+    'play order follows the times, and each step gets the trigger and delay that put it there after its new ' +
+    'predecessor: afterPrevious when it starts at or after the previous step ends, withPrevious when it ' +
+    "overlaps. An onClick step stays onClick, at the previous step's end at the earliest; a legacy onEnter " +
+    "step becomes afterPrevious or withPrevious. Returns every step's time and trigger in play order. To " +
+    'change a trigger, delay or duration and let the following steps move with it: animation.update.',
   input: z.strictObject({
     slide: SlideRefSchema,
     timing: z
@@ -524,10 +523,10 @@ export const animationRetarget = defineCommand({
   idempotent: true,
   title: 'Retarget animations',
   description:
-    'Make animation steps animate another object on the same slide. Each step keeps its id, its place in the ' +
-    'play order, its trigger, timing, preset and params — a moveTo still ends at the same slide position. Use ' +
-    'it when an object was replaced (a new picture in place of the old one) instead of removing and re-adding ' +
-    'its steps — and before deleting the old object, since object.delete removes the steps of what it deletes.',
+    'Make animation steps animate another object on the same slide. Each keeps its id, place in the play ' +
+    'order, trigger, timing, preset and params (a moveTo still ends at the same slide position). Use it when ' +
+    'an object was replaced (a new picture in place of the old) instead of re-adding its steps — and before ' +
+    'deleting the old object, since object.delete removes its steps.',
   input: z.strictObject({
     slide: SlideRefSchema,
     animations: z.array(AnimationIdSchema).min(1).max(500),

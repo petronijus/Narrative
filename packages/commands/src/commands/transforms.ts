@@ -142,13 +142,12 @@ export const objectResize = defineCommand({
   id: 'object.resize',
   title: 'Resize object',
   description:
-    'Resize one object. Give `width` and/or `height` (slide px) and the `anchor` that stays put (default ' +
-    "topLeft; center grows it evenly on all sides) — measured along the object's own axes, so a rotated object " +
-    'resizes like dragging its handle. `keepAspect` derives the missing side from the current proportions (with ' +
-    'only one side given it defaults to true when the object is aspect-locked). Alternatively give the whole new ' +
-    'box, `x`, `y`, `width` and `height` (top-left of the unrotated box), instead of an anchor. A cropped image ' +
-    'keeps showing the same part of the picture: the crop scales with the frame. A line, arrow or path scales its ' +
-    'points (not its stroke width). Text reflows, it is not scaled.',
+    'Resize one object: `width` and/or `height` (slide px) and the `anchor` that stays put (default topLeft; ' +
+    'center grows it evenly), along its own axes, so a rotated object resizes like dragging its handle. ' +
+    '`keepAspect` derives the missing side from the current proportions (default true with one side given on ' +
+    'an aspect-locked object). Or the whole new box: `x`, `y` (top-left of the unrotated box), `width`, ' +
+    '`height`, without an anchor. A cropped image keeps showing the same part: the crop scales with the ' +
+    'frame. A line, arrow or path scales its points (not its stroke width). Text reflows, it is not scaled.',
   input: z
     .strictObject({
       slide: SlideRefSchema,
@@ -257,9 +256,9 @@ export const objectRotate = defineCommand({
   id: 'object.rotate',
   title: 'Rotate objects',
   description:
-    'Rotate objects about their own centres, in DEGREES (clockwise positive): `degrees` is the new angle, or with ' +
-    '`relative: true` an amount added to the current one. A cropped image turns with its crop. object.update ' +
-    'sets the raw `rotation`, which is in radians.',
+    'Rotate objects about their centres, in DEGREES (clockwise positive): `degrees` is the new angle, or with ' +
+    '`relative: true` added to the current one. A cropped image turns with its crop. The raw `rotation` of ' +
+    'object.update is in radians.',
   input: z.strictObject({
     slide: SlideRefSchema,
     objects: ObjectIdsSchema,
@@ -311,9 +310,9 @@ export const objectFlip = defineCommand({
   id: 'object.flip',
   title: 'Flip objects',
   description:
-    'Mirror objects in place: `horizontal` flips left-right, `vertical` top-bottom. A flip toggles (flipping twice ' +
-    'restores the original). A rotated object mirrors on the slide, as in the editor: its angle is negated along ' +
-    'with the flip, so flipping both ways equals a 180 degree turn. For text the letters mirror too.',
+    'Mirror objects in place: `horizontal` left-right, `vertical` top-bottom; flipping twice restores them. A ' +
+    'rotated object mirrors on the slide, as in the editor: its angle is negated with the flip, so both ways ' +
+    'equals a 180 degree turn. Text mirrors its letters too.',
   input: z.strictObject({
     slide: SlideRefSchema,
     objects: ObjectIdsSchema,
@@ -358,11 +357,10 @@ export const objectAlignToSlide = defineCommand({
   id: 'object.alignToSlide',
   title: 'Align to slide',
   description:
-    'Move objects to an edge or the centre of the slide (1920 x 1080): `horizontal` left | center | right, ' +
-    '`vertical` top | middle | bottom (give one or both). Several objects move together as a block — their ' +
-    'combined outline is aligned and their layout among themselves stays; align them to each other with ' +
-    "object.align. What is aligned is what you see: a rotated object's rotated outline touches the edge. A crop " +
-    'moves with its image.',
+    'Move objects to an edge or the centre of the slide: `horizontal` left | center | right, `vertical` top | ' +
+    'middle | bottom (one or both). Several move as a block: their combined outline is aligned, their layout ' +
+    "among themselves kept (to each other: object.align). What you see is aligned: a rotated object's rotated " +
+    'outline touches the edge. A crop moves with its image.',
   input: z
     .strictObject({
       slide: SlideRefSchema,
@@ -485,12 +483,12 @@ export const objectCropSet = defineCommand({
   id: 'object.crop.set',
   title: 'Crop image',
   description:
-    'Change which part of a picture an image object shows; the object (its frame) stays where it is. In frame-' +
-    "relative px (0,0 = the frame's top-left): `set` places the whole picture at `picture` {x, y, width, height} " +
-    '(e.g. width 2x the frame = zoomed in 2x); `pan` shifts the picture by dx/dy; `zoom` scales it by `factor` ' +
-    'around a point (default the frame centre; > 1 zooms in); `rotate` turns the picture inside the frame ' +
-    '(degrees, or `relative`); `reset` removes the crop and the turn so the picture fills the frame. To change the frame itself while keeping the picture put, set x/y/width/height together with the ' +
-    'current imageRect in one object.update.',
+    'Change which part of a picture an image object shows; the frame stays where it is. Frame-relative px ' +
+    "(0,0 = the frame's top-left): `set` places the whole picture at `picture` (width 2x the frame = zoomed " +
+    'in 2x); `pan` shifts it by dx/dy; `zoom` scales it by `factor` (> 1 zooms in); `rotate` turns it inside ' +
+    'the frame (degrees, or `relative`); `reset` removes crop and turn so the picture fills the frame. To ' +
+    'change the frame and keep the picture put, set x/y/width/height together with the current imageRect in ' +
+    'one object.update.',
   input: z.strictObject({ slide: SlideRefSchema, image: ObjectIdSchema, crop: CropOpSchema }),
   output: z.object({
     picture: PictureSchema.nullable().describe('The resulting picture box, null = no crop'),

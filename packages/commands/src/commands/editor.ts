@@ -58,12 +58,12 @@ export const editorContext = defineCommand({
   id: 'editor.context',
   title: "Read the user's editor context",
   description:
-    'Read what the user is looking at in their open editor on this deck: the active slide (id and 0-based ' +
-    'index) and the ids of the objects they have selected. Call it whenever the user says "this", "here", ' +
-    '"these", "the selected…" or "the current slide", then pass the returned ids to the edit commands — edit ' +
-    'commands never act on "the selection" themselves. `open: false` means the user has no editor open on the ' +
-    'deck (ask them which slide or object they mean). With several tabs open, the top-level fields describe ' +
-    'the most recently active tab and `editors` lists all of them. Reads presence only; changes nothing.',
+    'What the user is looking at in their open editor on this deck: the active slide (id and 0-based index) ' +
+    'and the ids of the selected objects. Call it whenever the user says "this", "here", "these", "the ' +
+    'selected…" or "the current slide", then pass the ids to the edit commands — they never act on "the ' +
+    'selection" themselves. `open: false`: no editor open on the deck (ask which slide or object they mean). ' +
+    'With several tabs, the top-level fields are the most recently active one and `editors` lists all. Reads ' +
+    'presence only.',
   input: z.object({}).strict(),
   output: z.object({
     open: z.boolean(),
@@ -94,15 +94,13 @@ export const editorShow = defineCommand({
   id: 'editor.show',
   title: "Show something in the user's editor",
   description:
-    "Point the user's open editor(s) on this deck at a slide and, optionally, highlight objects on it — e.g. " +
-    'after an edit, to show the user what you changed ("here is the new chart"). Each tab switches to that ' +
-    'slide and selects the objects, flashing an outline around them for a moment; a show without `objects` ' +
-    "clears the tab's selection. Nothing in the document changes and other people are not affected; only the " +
-    "calling user's own tabs receive it. If the user is busy in a tab — typing in a text box, cropping an " +
-    'image, editing path points or a table cell — that tab does not move: it shows a "Show" notice instead ' +
-    'and switches only if the user clicks it within 20 seconds, so do not assume they are looking at it. ' +
-    "`delivered` is the number of the user's tabs the request reached, not views that changed; 0 means no " +
-    'editor open on the deck — tell them where to look instead, or give them editor.present.link.',
+    "Point the user's open editor tabs on this deck at a slide and optionally highlight objects on it — e.g. " +
+    'after an edit, to show what you changed. Each tab switches to the slide and selects the objects, ' +
+    'flashing an outline; without `objects` it clears the selection. Changes nothing in the document; only ' +
+    "the calling user's own tabs receive it. A tab where the user is busy (typing, cropping, editing path " +
+    'points or a table cell) does not move: it shows a "Show" notice and switches only if they click it ' +
+    'within 20 s — do not assume they are looking. `delivered` counts the tabs reached, not views changed; 0 ' +
+    '= no editor open on the deck: tell them where to look, or give them editor.present.link.',
   input: z
     .object({
       slide: SlideRefSchema.describe('The slide to show'),
@@ -152,10 +150,9 @@ export const editorPresentLink = defineCommand({
   id: 'editor.present.link',
   title: 'Link to present mode',
   description:
-    'Get the URL that opens this deck in present mode, starting at a given slide (default: the first). Give ' +
-    'it to the user when they want to present or preview the deck full screen; opening it needs their normal ' +
-    'access to the deck. Presenting itself (next slide, fullscreen, presenter view) is done by the person, not ' +
-    'by an agent. Changes nothing.',
+    'The URL that opens this deck in present mode at a given slide (default: the first), for the user to ' +
+    'present or preview full screen with their normal access. Presenting (next slide, fullscreen, presenter ' +
+    'view) is done by the person, not by an agent. Changes nothing.',
   input: z
     .object({
       slide: SlideRefSchema.optional().describe('The slide to start at (default: the first slide)'),

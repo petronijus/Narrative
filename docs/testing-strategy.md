@@ -323,6 +323,66 @@
 | Desktop shell (unit)       | `apps/desktop/{src,scripts}/**/*.test.ts`                                                                                                                             | The Electron main process without Electron: server and settings rules, navigation and permission policy, deep links, the sign-in controller, IPC schemas, the menu template, opened files, update signatures against real `ssh-keygen` output and a throwaway `ssh-agent`, the bundles (preloads require only `electron`) and the packaging config (fuses) | Since D0 (ADR 0015); the Electron e2e specs follow with D0 step 9                                            |
 | Property-based             | `packages/slide-model/src/*.property.test.ts`                                                                                                                         | CRDT convergence: random op sequences from N clients converge; table-structure invariants under random insert/delete/merge                                                                                                                                                                                                                                 | Active (Tier B.1; tables in A0)                                                                              |
 
+## Choosing a test environment
+
+Every package's unit tests run in Node except two: `apps/web` and
+`packages/animation` default to **jsdom** (`apps/web/vite.config.ts` and
+`packages/animation/vitest.config.ts` → `test.environment`). In the web
+suite a file that needs no DOM says so on its first line:
+
+```ts
+// @vitest-environment node
+```
+
+It then runs without jsdom, which vitest otherwise builds afresh for every
+file (per-file isolation), and the setup file (`apps/web/src/test-setup.ts`)
+skips Testing Library and the jest-dom matchers. Building jsdom was about
+half the web suite's time on 2026-10-23; 63 of its 135 files run in Node
+since (V4 in `docs/plans/performance.md`).
+
+**Give a new web test `node` only when all of this holds:**
+
+- neither the test nor what it imports touches the DOM — `document`,
+  `window`, DOM classes (`HTMLElement`, `Image`, `KeyboardEvent`, …),
+  `localStorage`, `indexedDB`, `location`, `requestAnimationFrame`, Testing
+  Library;
+- the code it tests does not ask which environment it is in —
+  `typeof document`, `typeof window`, `navigator.userAgent` or `.platform`,
+  `typeof requestAnimationFrame` — unless the test hands it the answer
+  (a visibility source, a worker factory, a pool size) or mocks the module
+  that asks. jsdom and Node answer these differently: jsdom's user agent
+  reads as WebKit (no `Chrome`), Node's says `Node.js` and its
+  `navigator.platform` is the host's. Such a test passes in both and checks
+  a different branch in each (`GROUP_RASTER_SUPPORTED` in
+  `renderer/htmlTextGroupRaster.ts` is false under jsdom, true under Node;
+  its test reads the constant, so it holds in both);
+- it does not run GSAP: GSAP drives its ticker with `requestAnimationFrame`
+  and registers its plugins only when `window` exists, so in Node it takes
+  a path no browser takes. That is why every `packages/animation` test stays
+  on jsdom (the whole suite is 1.8 s).
+
+Then run the file both ways (`pnpm vitest run <file>` with and without the
+docblock): the same tests must pass and none may be skipped. A wrong `node`
+usually fails loudly (`document is not defined`); the silent case is the
+feature detection above. Node also resolves a package's `node` export where
+jsdom resolves its `browser` one (nanoid, lib0) — fine for logic, not for a
+test of that package's browser behaviour.
+
+Why jsdom stays the default rather than a Node default with jsdom opt-in:
+a new file without a docblock gets the environment the code is written
+for, so a forgotten docblock costs time, never a wrong pass; a Node default
+would make the silent case above every new file's default. A config split
+by glob (vitest `projects` by directory, or `.ts` vs `.tsx`) does not follow
+the code either: DOM and DOM-free tests sit side by side in `renderer/` and
+`state/`, and half of the `.ts` files need jsdom.
+
+Not adopted (measured 2026-10-23, three runs each): `pool: 'vmThreads'` —
+3–4 failures, a different set per run (a `BroadcastChannel` from one file's
+context delivers to another's, `location` cannot be redefined) — and
+`isolate: false` — 11–31 failures per run (one file's `vi.mock('pixi.js')`
+reaches the next file in the same worker). Both share module state between
+files; per-file isolation stays.
+
 ## What was just cleaned up
 
 | Before                                                                                    | After                                                                            |
@@ -468,6 +528,27 @@ Whether the suite _passes_ with those vars set was not measured during the
 0.9.x arc — do not claim it either way without running it. The durable fixes:
 default to system Chrome when the bundled browser is absent, or run the suite
 in a container with a supported base image.
+
+### Network changes: the one failure that is retried
+
+The suite does not retry flakes: `retries` is 1 in the browser projects
+(`chromium`, `serial`, `webkit`) only so that a failure caused by a network
+change under the browser can be retried. Chrome aborts every request in
+flight, `localhost` included, with `net::ERR_NETWORK_CHANGED` when the OS
+reports one (a USB-tethered phone re-attaching on the MacBook, SETUP.md →
+Common first-run failures). The `test` of `e2e/fixtures/test.ts` watches the
+host's interfaces and each context's failed requests
+(`e2e/fixtures/networkChange.ts`); a failed attempt leaves its retry a note of
+what it saw (under the project's output directory). The retry runs only when
+that attempt coincided with a network change — annotated `network-change`,
+with an attachment listing each event — and the test is then reported flaky,
+not failed. Any other failure's retry stops at once with "failed without a
+network change: not retried", so the test fails as it did the first time.
+Only `ERR_NETWORK_CHANGED` (and the system sleeping) counts from the browser:
+specs abort requests with `internetdisconnected` and take contexts offline on
+purpose. A failure before the fixture could judge it (a `beforeAll`, a worker
+crash) is not retried. The perf scenarios do not retry; they discard and
+re-run a disturbed sample instead (`packages/perf/README.md` → Run validity).
 
 ### Known flaky unit tests
 

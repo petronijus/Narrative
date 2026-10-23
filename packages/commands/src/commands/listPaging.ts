@@ -43,9 +43,7 @@ export const ListCursorSchema = z
   .string()
   .min(1)
   .max(MAX_CURSOR_CHARS)
-  .describe(
-    "The previous page's `nextCursor`, to get the next page. Send the same filters as that call.",
-  )
+  .describe("The previous page's `nextCursor` (with that call's filters)")
 
 export const ListQuerySchema = z
   .string()

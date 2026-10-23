@@ -43,16 +43,15 @@ export const deckList = defineCommand({
   domain: 'deck',
   title: 'List decks',
   description:
-    'Find decks: the decks the user can open — their own and those shared with them — most recently changed ' +
-    "first, one page at a time. Each item is { id, title, folderId, updatedAt, role } (role = the user's role on " +
-    'it: owner / editor / viewer); `updatedAt` is the last change to its content, title or folder. Narrow it ' +
-    'with `query` (title contains, ignoring case) or `folderId` (one of your folders; folder.list gives their ids) ' +
-    'rather than paging through everything. A page holds `limit` decks (default 50, at most 200); when ' +
-    '`nextCursor` is not null there are more — call again with `cursor: nextCursor` and the same filters. For a ' +
-    "deck's full record use deck.get; to read its slides use query.deck.",
+    'Find decks the user can open — their own and those shared with them — most recently changed first, one ' +
+    "page at a time: { id, title, folderId, updatedAt, role } each (role = the user's: owner / editor / " +
+    'viewer; `updatedAt` = last change to content, title or folder). Narrow it with `query` (title contains, ' +
+    'ignoring case) or `folderId` (folder.list) rather than paging through everything. A page holds `limit` ' +
+    'decks (default 50, at most 200); while `nextCursor` is not null there are more: call again with `cursor: ' +
+    'nextCursor` and the same filters. The full record: deck.get; the slides: query.deck.',
   input: z.strictObject({
     query: ListQuerySchema.optional().describe(
-      'Only decks whose title contains this text, ignoring case (plain text, no wildcards)',
+      'Title contains it, ignoring case (plain text, no wildcards)',
     ),
     folderId: IdSchema.optional().describe('Only decks in this folder (it must be yours)'),
     limit: ListLimitSchema,
@@ -102,8 +101,8 @@ export const deckGet = defineCommand({
   domain: 'deck',
   title: 'Deck details',
   description:
-    "The deck's record: title, folder, owner, thumbnail URL, created / updated times and the caller's role on " +
-    'it. It says nothing about the content — for slides and objects use query.deck and query.slide.',
+    "The deck's record: title, folder, owner, thumbnail URL, created / updated times and the caller's role. " +
+    'Nothing about the content: query.deck and query.slide.',
   input: z.strictObject({}),
   output: DeckWithRoleOutput,
   role: 'viewer',
@@ -125,10 +124,10 @@ export const deckCreate = defineCommand({
   domain: 'deck',
   title: 'Create deck',
   description:
-    'Create a new, empty deck owned by the user — in `folderId` (a folder where they are editor or owner: folder.list `role`) or, without it, ' +
-    'in their Drafts folder. The deck already holds one empty slide (`firstSlideId`), so you can start editing it ' +
-    'at once: target the returned `id` with slide.add, object.create, text.set and the other document commands. To ' +
-    'start from a PowerPoint file use deck.importPptx instead. Undo: deck.delete.',
+    'Create an empty deck owned by the user — in `folderId` (where they are editor or owner: folder.list ' +
+    '`role`), else in their Drafts. It holds one empty slide (`firstSlideId`): target the returned `id` with ' +
+    'slide.add, object.create, text.set and the other document commands. From a PowerPoint file: ' +
+    'deck.importPptx. Undo: deck.delete.',
   input: z.strictObject({
     title: TitleSchema.optional().describe('Deck title (default "Untitled Deck")'),
     folderId: IdSchema.optional().describe('Folder to create it in (default: Drafts)'),
@@ -163,12 +162,11 @@ export const deckDuplicate = defineCommand({
   title: 'Duplicate deck',
   description:
     'Copy this deck whole into a NEW deck the user owns: every slide (objects, rich text, tables, animations, ' +
-    "speaker notes, outline), the deck guides and the media the slides show (into another folder, the folder's " +
-    'linked component media is copied too). Lands in `folderId` (a folder where the user is editor or ' +
-    "owner), else this deck's folder when the user may edit it, else Drafts; in another folder, token " +
-    'references are rebound as deck.moveToFolder does. Sharing is not copied. Needs editor access to this deck. ' +
-    'Returns the new deck — target its `id` to edit the copy. To copy only some slides into an existing deck use ' +
-    'deck.insertFrom. Undo: deck.delete on the copy.',
+    'speaker notes, outline), the guides and the media the slides show (into another folder, linked component ' +
+    "media too). Lands in `folderId` (where the user is editor or owner), else this deck's folder if the user " +
+    'may edit it, else Drafts; in another folder, token references are rebound as deck.moveToFolder does. ' +
+    'Sharing is not copied. Needs deck editor. Returns the new deck: target its `id` to edit the copy. Some ' +
+    'slides into an existing deck: deck.insertFrom. Undo: deck.delete on the copy.',
   input: z.strictObject({
     title: TitleSchema.optional().describe('Title of the copy (default: "<title> (copy)")'),
     folderId: IdSchema.optional().describe(
@@ -211,8 +209,8 @@ export const deckRename = defineCommand({
   domain: 'deck',
   title: 'Rename deck',
   description:
-    "Change the deck's title (what the deck list and the browser tab show). Slide names are slide.rename; text " +
-    'on slides is text.set. Undo: rename it back.',
+    "Change the deck's title (the deck list's and the browser tab's). Slide names: slide.rename; slide text: " +
+    'text.set. Undo: rename it back.',
   input: z.strictObject({ title: TitleSchema }),
   output: DeckOutput,
   role: 'editor',
@@ -238,9 +236,9 @@ export const deckDelete = defineCommand({
   domain: 'deck',
   title: 'Delete deck',
   description:
-    'Permanently delete the deck: its slides, speaker notes, collaborators, share links and uploaded media. Cannot ' +
-    'be undone, and people who have it open lose it — always confirm with the user first, naming the deck. Owner ' +
-    'only. To remove slides use slide.delete; to tidy up, deck.moveToFolder.',
+    'Permanently delete the deck: its slides, speaker notes, collaborators, share links and uploaded media. ' +
+    'People who have it open lose it — always confirm with the user first, naming the deck. Owner only. To ' +
+    'remove slides: slide.delete; to tidy up: deck.moveToFolder.',
   input: z.strictObject({}),
   output: z.object({ deleted: z.literal(true) }),
   role: 'owner',
@@ -262,14 +260,13 @@ export const deckMoveToFolder = defineCommand({
   domain: 'deck',
   title: 'Move deck to folder',
   description:
-    'Move the deck into another folder (folder.list). Media it links from its current folder (a stamped ' +
-    "component's pictures and videos, the folder's own) is copied into it first, so the new folder can load it; " +
-    'if a copy fails nothing moves. Design tokens are rebound: each colour / text-style / effect reference points ' +
-    'at the destination token of the same name (case and spacing ignored); a colour without one becomes its ' +
-    'literal colour, a text style without one is detached (the text keeps its look). Returns the media copied / ' +
-    'unresolved and the references rebound, literalised and detached. Moving back re-links neither, so confirm ' +
-    "with the user first. Its active share links follow it and then show the new folder's component media too. " +
-    'Needs the owner role on the deck and the editor role in both folders.',
+    'Move the deck into another folder (folder.list). Media it links from its current folder (stamped ' +
+    "components' pictures and videos, the folder's own) is copied first so the new folder can load it; if a " +
+    'copy fails nothing moves. Token references are rebound to the destination token of the same name (case ' +
+    'and spacing ignored); a colour without one becomes its literal colour, a text style without one is ' +
+    'detached (the text keeps its look). Returns the media copied / unresolved and the references rebound, ' +
+    'literalised and detached. Moving back re-links neither, so confirm with the user first. Its share links ' +
+    "follow and then show the new folder's component media too. Needs deck owner and editor in both folders.",
   input: z.strictObject({
     folderId: IdSchema.describe('Destination folder id'),
   }),
@@ -338,9 +335,9 @@ export const deckActiveEditors = defineCommand({
   domain: 'deck',
   title: 'Who is editing',
   description:
-    'Which decks of a folder people have open right now, and who — for example before a large change, to warn ' +
-    'the user that colleagues are working in the deck. Decks nobody has open are left out. Any member of the ' +
-    "folder; the folder's owners get user ids and emails, other members names and stable pseudonymous ids.",
+    'Which decks of a folder people have open right now, and who — e.g. before a large change, to warn the ' +
+    'user colleagues are in the deck. Decks nobody has open are left out. Any folder member; owners get user ' +
+    'ids and emails, other members names and stable pseudonymous ids.',
   input: z.strictObject({}),
   output: z.object({
     decks: z.array(
@@ -380,9 +377,9 @@ export const deckFontsList = defineCommand({
   domain: 'deck',
   title: 'Deck fonts',
   description:
-    'Fonts bound to this deck itself — copies kept when a folder font the deck may use was deleted from the folder — ' +
-    "with family, weight, style and a download URL. The fonts most decks use are their folder's: see " +
-    'folder.fonts.list. A family listed here or there can be used as fontFamily in text.',
+    'Fonts bound to this deck itself — copies kept when a folder font it may use was deleted from the folder ' +
+    "— with family, weight, style and a download URL. Most fonts are the folder's: folder.fonts.list. A " +
+    'family listed in either can be used as fontFamily.',
   input: z.strictObject({}),
   output: z.object({ fonts: z.array(FontFaceOutput) }),
   role: 'viewer',

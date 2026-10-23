@@ -77,16 +77,13 @@ export const agentStartRun = defineCommand({
   id: 'agent.startRun',
   title: 'Start an agent run',
   description:
-    "Start a new run on this deck (or component master) for the user's current request, and return its runId. " +
-    'Call it once at the start of every new user request that will change the document ("make slide 3 ' +
-    'shorter", "restyle the deck"), ' +
-    'before the first edit, with the request in a short sentence. Everything you change afterwards belongs to ' +
-    'this run, is listed under it in the Agent activity popover the user sees in the editor (deck or master), ' +
-    'and can be undone ' +
-    'as one unit with agent.revert — so one run per request is what makes "undo that" precise. ' +
-    'Without it your edits still land in an automatic run per session and document (split after 10 minutes ' +
-    'of inactivity), which lumps separate requests together. Starting a run closes your previous run on the ' +
-    'same deck or master; it changes nothing in the document.',
+    "Start a run on this deck (or master) for the user's current request and return its runId. Call it once " +
+    'at the start of every new request that will change the document ("make slide 3 shorter"), before the ' +
+    'first edit. Everything you change afterwards belongs to the run, is listed under it in the Agent ' +
+    'activity popover the user sees in the editor, and is undone as one unit by agent.revert — so one run per ' +
+    'request makes "undo that" precise. Without it your edits land in an automatic run per session and ' +
+    'document (split after 10 minutes idle), which lumps requests together. Closes your previous run on the ' +
+    'same document; changes nothing in it.',
   input: z
     .object({
       request: z
@@ -128,11 +125,10 @@ export const agentRuns = defineCommand({
   id: 'agent.runs',
   title: 'List agent runs',
   description:
-    'List the recent agent runs on this deck (or component master), newest first: who asked, the request, when, how many commands ' +
-    'ran and how many of them changed something, the status (open, closed, reverted) and whether the run can ' +
-    'still be reverted (with the reason when it cannot). Covers runs of every agent session and user on the ' +
-    'document, not just yours. Use it to find the runId to pass to agent.revert, or to tell the user what ' +
-    'agents did to it. Read-only.',
+    'Recent agent runs on this deck (or master), newest first: who asked, the request, when, how many ' +
+    'commands ran and how many changed something, the status (open, closed, reverted) and whether it can ' +
+    'still be reverted (or why not). All agent sessions and users on the document, not just yours. Use it to ' +
+    'find the runId for agent.revert, or to tell the user what agents did.',
   input: z
     .object({
       limit: z
@@ -172,14 +168,13 @@ export const agentRevert = defineCommand({
   id: 'agent.revert',
   title: 'Revert an agent run',
   description:
-    "Undo an agent run's changes to this deck (or component master): the whole run, or only its last N changes (`lastOps`). Only " +
-    "that run's changes are undone — edits people (or other runs) made in the meantime stay, although an " +
-    'object the run created disappears together with anything added to it. Use it when the user asks to ' +
-    'undo what you did; find the runId with agent.runs (or keep the one agent.startRun returned). It is the ' +
-    'safety net, so it never asks for confirmation. It only works while the deck or master is loaded on the server ' +
-    '(someone has it open, or a run on it is active): once the document unloads, or after a server restart, ' +
-    'the run reports it is no longer revertible and the changes have to be undone by editing. Deck renames, ' +
-    'sharing and other server-side actions of the run are not undone — only document edits.',
+    "Undo an agent run's changes to this deck (or master): the whole run, or its last N changes (`lastOps`). " +
+    'Only that run is undone — edits people or other runs made meanwhile stay, although an object the run ' +
+    'created disappears with anything added to it. Use it when the user asks to undo what you did. The safety ' +
+    'net: it never asks for confirmation. It works only while the document is loaded on the server (open ' +
+    'somewhere, or a run on it active); after it unloads or a server restart the run reports it is no longer ' +
+    'revertible and the changes must be undone by editing. Server-side actions of the run (renames, sharing, ' +
+    '…) are not undone — only document edits.',
   input: z
     .object({
       runId: RunIdSchema,

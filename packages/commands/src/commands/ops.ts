@@ -15,11 +15,11 @@ export function createOpsApply(registry: CommandRegistry) {
     title: 'Apply several edits at once',
     description:
       'Run a list of document commands on one deck as ONE change: collaborators receive one update and it is ' +
-      'one step to revert. With `atomic: true` (default) either every op succeeds or nothing changes — all inputs ' +
-      'are validated first, then the ops run in order, each seeing the result of the previous ones. ' +
-      'With `atomic: false` failing ops are reported in `results` and skipped. Only commands that edit the deck ' +
-      'document can be batched (not export, share, media upload or other server-side commands). ' +
-      'Prefer this over many single calls whenever you make more than one edit.',
+      'one step to revert. `atomic: true` (default): every op succeeds or nothing changes — all inputs are ' +
+      'validated first, then the ops run in order, each seeing the previous ones. `atomic: false`: failing ops ' +
+      'are reported in `results` and skipped. Only commands that edit the deck document (not export, share, ' +
+      'upload or other server-side commands). Prefer it to many single calls whenever you make more than one ' +
+      'edit.',
     input: z
       .object({
         ops: z

@@ -154,17 +154,12 @@ const CELL_STYLE_KEYS: ReadonlySet<string> = new Set(
 
 export const CellStyleInputSchema = partialOf(InputTableCell, CELL_NON_STYLE, true)
   .refine(nonEmpty, { message: 'Pass at least one style field' })
-  .describe(
-    'Cell overrides: fill, fillAlpha, fillStyle, color, fontSize, fontWeight, italic, underline, lineHeight, ' +
-      'letterSpacing, textTransform, align, vAlign, padding. `null` removes an override so the cell falls back to ' +
-      'the table defaults.',
-  )
+  .describe('Cell overrides; `null` removes one, so the cell falls back to the table defaults')
 
 export const TableDefaultsPatchSchema = partialOf(InputTableDefaults, new Set(), true)
   .refine(nonEmpty, { message: 'Pass at least one field' })
   .describe(
-    'Table-wide defaults every cell inherits: fontFamily, fontSize, fontWeight, color, align, vAlign, fill, border ' +
-      '(the default grid line), padding (all four sides), … `null` clears an optional default.',
+    'Table-wide defaults every cell inherits (`border`: the default grid line); `null` clears an optional one',
   )
 
 export const TableDefaultsCreateSchema = partialOf(InputTableDefaults, new Set(), false).describe(
@@ -296,10 +291,10 @@ export const tableInsert = defineCommand({
   id: 'table.insert',
   title: 'Insert table',
   description:
-    'Insert an empty table of `rows` x `cols` cells (default 3 x 3) on a slide. Position and size are slide px ' +
-    '(slide 1920 x 1080); without a size each cell is 120 x 60 px, split evenly. `defaults` restyles every cell at ' +
-    'once (font, colours, padding, grid line). Fill cells afterwards with text.set using target.cell, and style ' +
-    'them with table.style.*; do not use object.update for table structure.',
+    'Insert an empty table of `rows` x `cols` cells (default 3 x 3) on a slide, in slide px; without a size ' +
+    'each cell is 120 x 60, split evenly. `defaults` restyles every cell at once (font, colours, padding, ' +
+    'grid line). Fill cells with text.set (target.cell), style them with table.style.*; never object.update ' +
+    'for table structure.',
   input: z.strictObject({
     slide: SlideRefSchema,
     x: FiniteNumberSchema.optional(),
@@ -360,10 +355,10 @@ function trackCommands(axis: 'row' | 'col') {
     id: `table.${axis}.insert`,
     title: `Insert table ${nouns}`,
     description:
-      `Insert \`count\` (default 1) blank ${nouns} so the first new one sits at \`index\` (0-based; omit to append ` +
-      `at the ${axis === 'row' ? 'bottom' : 'right'}). The table grows by the new ${nouns}, each as ` +
-      `${axis === 'row' ? 'tall' : 'wide'} as the current average. Inserting strictly inside a merged cell extends ` +
-      `the merge, as in PowerPoint. To set an exact size use table.resize${axis === 'row' ? 'Row' : 'Column'}.`,
+      `Insert \`count\` (default 1) blank ${nouns}, the first at \`index\` (0-based; omitted = at the ` +
+      `${axis === 'row' ? 'bottom' : 'right'}). The table grows by them, each as ` +
+      `${axis === 'row' ? 'tall' : 'wide'} as the current average. Inside a merged cell it extends the merge, as ` +
+      `in PowerPoint. An exact size: table.resize${axis === 'row' ? 'Row' : 'Column'}.`,
     input: z.strictObject({
       slide: SlideRefSchema,
       table: TableIdSchema,
@@ -402,9 +397,9 @@ function trackCommands(axis: 'row' | 'col') {
     id: `table.${axis}.delete`,
     title: `Delete table ${nouns}`,
     description:
-      `Delete \`count\` (default 1) ${nouns} starting at \`index\` (0-based). The table shrinks by their size. ` +
-      `Merged cells crossing them shrink; a merge whose top-left cell is deleted hands its text and style to the ` +
-      `next cell of the merge. A table keeps at least one ${noun} — to remove the whole table use object.delete.`,
+      `Delete \`count\` (default 1) ${nouns} from \`index\` (0-based); the table shrinks by their size. Merges ` +
+      `crossing them shrink; a merge whose top-left cell goes hands its text and style to the next cell. At least ` +
+      `one ${noun} stays — the whole table: object.delete.`,
     input: z.strictObject({
       slide: SlideRefSchema,
       table: TableIdSchema,
@@ -448,9 +443,9 @@ export const tableSetSize = defineCommand({
   idempotent: true,
   title: 'Set table size',
   description:
-    'Give a table exactly `rows` x `cols` cells (pass either or both): rows are added or removed at the bottom, ' +
-    'columns at the right, and the table grows or shrinks with them (each new one as big as the current average). ' +
-    'Removed cells lose their text. To add or remove at a position use table.row.* / table.col.*.',
+    'Give a table exactly `rows` x `cols` cells (either or both): rows are added or removed at the bottom, ' +
+    'columns at the right, the table growing or shrinking with them (each new one the current average). ' +
+    'Removed cells lose their text. At a position: table.row.* / table.col.*.',
   input: z
     .strictObject({
       slide: SlideRefSchema,
@@ -499,10 +494,9 @@ function resizeCommand(axis: 'row' | 'col') {
     id: isCol ? 'table.resizeColumn' : 'table.resizeRow',
     title: isCol ? 'Resize table column' : 'Resize table row',
     description:
-      `Set one ${noun}'s ${dim} in slide px as drawn. By default the other ${noun}s keep their size and the table ` +
-      `${isCol ? 'widens or narrows' : 'grows or shrinks'} by the difference. With \`keepTableSize: true\` the ` +
-      `table keeps its ${dim} and the difference comes from the next ${noun} (the previous one for the last ${noun}) ` +
-      `— what dragging a boundary in the editor does. No ${noun} may end up smaller than ${MIN_TRACK_PX} px.`,
+      `Set one ${noun}'s drawn ${dim} in slide px. By default the other ${noun}s keep their size and the table ` +
+      `changes ${dim} by the difference; \`keepTableSize: true\` takes it from the next ${noun} (the previous one ` +
+      `for the last), as dragging a boundary does. No ${noun} ends below ${MIN_TRACK_PX} px.`,
     input: z.strictObject({
       slide: SlideRefSchema,
       table: TableIdSchema,
@@ -578,9 +572,9 @@ export const tableMerge = defineCommand({
   id: 'table.merge',
   title: 'Merge table cells',
   description:
-    'Merge a rectangle of cells into one cell. The range grows until it contains every merged cell it touches ' +
-    '(whole merges only, as in PowerPoint), so check the returned origin and spans. The top-left cell shows its ' +
-    'text; the other cells keep theirs hidden, and it reappears after table.split.',
+    'Merge a rectangle of cells into one. The range grows to contain every merged cell it touches (whole ' +
+    'merges only, as in PowerPoint): check the returned origin and spans. The top-left cell shows its text; ' +
+    'the others keep theirs hidden until table.split.',
   input: z.strictObject({ slide: SlideRefSchema, table: TableIdSchema, range: CellRangeSchema }),
   output: z.object({
     origin: z.object({ row: z.number(), col: z.number() }),
@@ -622,8 +616,8 @@ export const tableSplit = defineCommand({
   id: 'table.split',
   title: 'Split merged cell',
   description:
-    'Split a merged cell back into its individual cells. `cell` may be the merged cell itself or any cell it ' +
-    'covers. Each cell shows again whatever text it kept while hidden. Fails with conflict when the cell is not merged.',
+    'Split a merged cell back into its cells (`cell`: the merged cell or any cell it covers); each shows the ' +
+    'text it kept while hidden. Fails with conflict when the cell is not merged.',
   input: z.strictObject({ slide: SlideRefSchema, table: TableIdSchema, cell: CellAddressSchema }),
   output: EmptyOutput,
   implementedWith: ['splitTableCell', 'getTableMergeInfo'],
@@ -659,8 +653,8 @@ export const tableStyleCell = defineCommand({
   title: 'Style a table cell',
   description:
     'Set or clear style overrides on one cell (fill, text colour, font size/weight, alignment, padding, …). ' +
-    'Colours: "#RRGGBB", 0xRRGGBB or a colour token ref. `null` removes an override. For many cells use ' +
-    'table.style.range, for the whole table table.style.table, for borders table.border.*, for the text itself text.set.',
+    '`null` removes an override. Many cells: table.style.range; the whole table: table.style.table; borders: ' +
+    'table.border.*; the text: text.set.',
   input: z.strictObject({
     slide: SlideRefSchema,
     table: TableIdSchema,
@@ -702,8 +696,8 @@ export const tableStyleRange = defineCommand({
   idempotent: true,
   title: 'Style a range of table cells',
   description:
-    'Set or clear the same style overrides on every visible cell of a rectangle (e.g. colour a header row or a ' +
-    'column). Cells hidden inside a merge are skipped; the merged cell itself is styled. Same fields as table.style.cell.',
+    'Set or clear the same style overrides on every visible cell of a rectangle (e.g. colour a header row): ' +
+    'cells hidden in a merge are skipped, the merged cell is styled. Fields as table.style.cell.',
   input: z.strictObject({
     slide: SlideRefSchema,
     table: TableIdSchema,
@@ -766,11 +760,12 @@ export const tableStyleTable = defineCommand({
   readsFolderFonts: true,
   title: 'Style a whole table',
   description:
-    'Change the table-wide defaults every cell inherits unless it has its own override: font family/size/weight, ' +
-    'text colour, alignment, fill, the default grid line (`border`) and padding. `null` clears an optional default. ' +
-    'Cell overrides set with table.style.cell/range still win — unless `overrideCells: true`. To recolour cells ' +
-    'that have their own gradient, also pass "fillStyle": null. A new fontFamily without fontWeight keeps a ' +
-    'cut the family has; on a table linked to a text style the fields you set stop following it.',
+    'Change the table-wide defaults every cell inherits unless it has its own override: font ' +
+    'family/size/weight, text colour, alignment, fill, the default grid line (`border`) and padding. `null` ' +
+    'clears an optional default. Cell overrides (table.style.cell/range) still win — unless `overrideCells: ' +
+    'true`. To recolour cells that have their own gradient, also pass "fillStyle": null. A new fontFamily ' +
+    'without fontWeight keeps a cut the family has; on a table linked to a text style the fields you set stop ' +
+    'following it.',
   input: z.strictObject({
     slide: SlideRefSchema,
     table: TableIdSchema,
@@ -842,10 +837,10 @@ export const tableBorderPreset = defineCommand({
   idempotent: true,
   title: 'Apply a table border preset',
   description:
-    'Draw grid lines on a range of cells (default: the whole table) with a preset: all, outer (perimeter), inside ' +
-    '(inner lines), insideH / insideV, top / bottom / left / right (that edge of the range), or none (hide the ' +
-    'lines, overriding the default grid). `color` and `width` (px) are required except for none. ' +
-    'For one individual line use table.border.segment.',
+    'Draw grid lines on a range of cells (default: the whole table) with a preset: all, outer, inside, ' +
+    'insideH / insideV, top / bottom / left / right (that edge of the range), or none (hides them, overriding ' +
+    'the default grid). `color` and `width` (px) are required except for none. One line: ' +
+    'table.border.segment.',
   input: z
     .strictObject({
       slide: SlideRefSchema,
@@ -899,10 +894,10 @@ export const tableBorderSegment = defineCommand({
   idempotent: true,
   title: 'Style one table grid line',
   description:
-    'Set or clear the style of ONE grid-line segment. A horizontal segment {orientation: "horizontal", row, col} is ' +
-    'the line above row `row` in column `col` (row = number of rows is the bottom edge); a vertical one is the line ' +
-    'left of column `col` in row `row` (col = number of columns is the right edge). `style: null` removes the ' +
-    'segment so it falls back to the table default. Width 0 hides the line. For ranges use table.border.preset.',
+    'Set or clear the style of ONE grid-line segment. Horizontal {orientation: "horizontal", row, col}: the ' +
+    'line above row `row` in column `col` (row = number of rows: the bottom edge); vertical: the line left of ' +
+    'column `col` in row `row` (col = number of columns: the right edge). `style: null` falls back to the ' +
+    'table default; width 0 hides the line. Ranges: table.border.preset.',
   input: z.strictObject({
     slide: SlideRefSchema,
     table: TableIdSchema,

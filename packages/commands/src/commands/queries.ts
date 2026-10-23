@@ -223,12 +223,11 @@ export const queryDeck = defineCommand({
   title: 'Deck outline',
   description:
     "A compact outline of the whole deck, built to fit a model's context: every slide with its id, 0-based " +
-    'index, name, a title guessed from its largest text, outline indent, skipped flag, transition kind and object ' +
-    "/ animation counts and its style pack layout, plus the deck's alignment guides and its meta (pack variant, " +
-    'footer fields, language; set with style.deck.apply). A deck built from a spec says how many slides it has ' +
-    '(`specSlides`); `spec: true` returns the spec itself, to build again. Start here, then read one slide with ' +
-    'query.slide. ' +
-    'Slides are 1920 x 1080 px.',
+    'index, name, a title guessed from its largest text, outline indent, skipped flag, transition kind, ' +
+    "object / animation counts and style pack layout, plus the deck's guides and meta (pack variant, footer " +
+    'fields, language; set with style.deck.apply). A deck built from a spec says how many slides it has ' +
+    '(`specSlides`); `spec: true` returns the spec, to build again. Start here, then read one slide with ' +
+    'query.slide.',
   input: z.strictObject({
     spec: z.boolean().optional().describe('Also return the deck spec it was built from'),
   }),
@@ -314,12 +313,12 @@ export const querySlide = defineCommand({
   title: 'Read slide',
   description:
     'Everything on one slide: every object with all its properties in stacking order (first = backmost), the ' +
-    'animation steps in play order, the transition, the background (null = default white), the style pack layout ' +
-    'it follows (slide.applyLayout), its brief (the message and claims of the spec that built it) and the speaker notes ' +
-    'as plain text (slide.notes.get has them as Markdown with their formatting). Text bodies come as plain `text` (blank line between paragraphs) plus `paragraphs` with runs ' +
-    'and list attributes when formatted; colours as "#rrggbb" or { $token }. For one object use query.object. ' +
-    'It also reads a component master: target the component (componentId) and read slide { index: 0 } — edit ' +
-    'the master with the same object and text commands.',
+    'animation steps in play order, the transition, the background (null = default white), the style pack ' +
+    'layout it follows (slide.applyLayout), its brief (the message and claims of the spec that built it) and ' +
+    'the speaker notes as plain text (slide.notes.get: as Markdown). Text bodies come as plain `text` (blank ' +
+    'line between paragraphs) plus `paragraphs` with runs and list attributes when formatted; colours as ' +
+    '"#rrggbb" or { $token }. One object: query.object. Reads a component master too: target its componentId ' +
+    'and slide { index: 0 }, and edit it with the same object and text commands.',
   input: z.strictObject({ slide: SlideRefSchema }),
   output: z.object({
     id: z.string(),
@@ -402,9 +401,9 @@ export const queryObject = defineCommand({
   id: 'query.object',
   title: 'Read object',
   description:
-    'One object with all its properties (same shape as in query.slide) plus the animation steps that target it ' +
-    'and its stacking position (0 = backmost). Use it before text.format / text.list to see the exact text ' +
-    'offsets, or before object.update to see current values.',
+    'One object with all its properties (as in query.slide), the animation steps that target it and its ' +
+    'stacking position (0 = backmost). Read it for exact text offsets (text.format / text.list) or current ' +
+    'values (object.update).',
   input: z.strictObject({ slide: SlideRefSchema, object: ObjectIdSchema }),
   output: z.object({
     slide: z.object({ id: z.string(), index: z.number() }),

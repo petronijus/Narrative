@@ -125,10 +125,10 @@ export const objectPathCreate = defineCommand({
   id: 'object.path.create',
   title: 'Draw a path',
   description:
-    'Draw a free-form path (what the pen tool makes) through `anchors` given in slide px; each anchor may carry ' +
-    'bezier handles relative to it. The box is fitted around what is drawn. `object` sets the other properties: ' +
-    '`closed: true` joins the last point to the first and lets `fill` show; with a `rotation` (radians) the points ' +
-    'still land where given. For a straight two-point line prefer object.create with type line / arrow.',
+    'Draw a free-form path (what the pen tool makes) through `anchors` in slide px, each optionally with ' +
+    'bezier handles relative to it; the box is fitted around it. `object` sets the other properties: `closed: ' +
+    'true` joins the last point to the first and lets `fill` show; with a `rotation` (radians) the points ' +
+    'still land where given. A straight two-point line: object.create with type line / arrow.',
   input: z.strictObject({
     slide: SlideRefSchema,
     anchors: SlideAnchorsSchema,
@@ -216,10 +216,10 @@ export const objectPathFromShape = defineCommand({
   id: 'object.path.fromShape',
   title: 'Convert a shape to a path',
   description:
-    'Turn a rectangle (rounded corners included), ellipse, triangle or polygon into an editable path with the ' +
-    'same outline, so its points can be moved one by one (object.path.setAnchors). It stays the same object: ' +
-    'same id, place in the stacking order, animations, group, fill (gradients and images too), stroke, shadow, ' +
-    'rotation and mirroring. Shape-only settings (corner radius, number of sides) become the path itself.',
+    'Turn a rectangle (rounded corners too), ellipse, triangle or polygon into an editable path with the same ' +
+    'outline, so its points can be moved (object.path.setAnchors). Same object: id, stacking place, ' +
+    'animations, group, fill (gradients and images too), stroke, shadow, rotation and mirroring; shape-only ' +
+    'settings (corner radius, sides) become the path.',
   input: z.strictObject({ slide: SlideRefSchema, object: ObjectIdSchema }),
   output: z.object({ objectId: z.string(), anchorCount: z.number() }),
   implementedWith: ['replaceObject'],
@@ -282,11 +282,10 @@ export const objectPathSetAnchors = defineCommand({
   title: 'Set path points',
   description:
     "Edit a path's points in slide px: `moves` puts chosen anchors (by index in the path's `anchors`) at new " +
-    'points, their handles and every other anchor staying where they are drawn — the way to move one corner, ' +
-    'rotated or mirrored path alike; or `anchors` replaces them all (handles relative to their anchor). The box ' +
-    'is refitted while the path keeps its rotation and mirroring. Stored anchors are relative to the box: for ' +
-    'an unrotated, unmirrored path an anchor sits at (x + anchor.x, y + anchor.y). Shapes convert with ' +
-    'object.path.fromShape first.',
+    'points, their handles and the other anchors staying where they are drawn — the way to move one corner, ' +
+    'of a rotated or mirrored path too; or `anchors` replaces them all (handles relative to their anchor). ' +
+    'The box is refitted; rotation and mirroring are kept. Stored anchors are relative to the box: unrotated ' +
+    'and unmirrored, an anchor sits at (x + anchor.x, y + anchor.y). Shapes: object.path.fromShape first.',
   input: z
     .strictObject({
       slide: SlideRefSchema,
@@ -370,9 +369,9 @@ export const objectLineSetEndpoints = defineCommand({
   idempotent: true,
   title: 'Move line ends',
   description:
-    'Move the start (`p1`) and/or end (`p2`) of a line or arrow to points in slide px; an end you leave out stays ' +
-    "where it is drawn. The box is refitted; rotation and mirroring stay. A line's stored p1 / p2 are relative to " +
-    'its box: for an unrotated line an end sits at (x + p.x, y + p.y). Returns both ends in slide px.',
+    'Move the start (`p1`) and/or end (`p2`) of a line or arrow to points in slide px; an omitted end stays ' +
+    'where it is drawn. The box is refitted; rotation and mirroring stay. Stored p1 / p2 are relative to the ' +
+    'box: unrotated, an end sits at (x + p.x, y + p.y). Returns both ends in slide px.',
   input: z
     .strictObject({
       slide: SlideRefSchema,

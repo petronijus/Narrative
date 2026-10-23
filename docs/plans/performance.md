@@ -281,10 +281,12 @@ the display's rate).
   was the production image on two cores, 2026-10-18, not re-measured): no
   poll, no second settle, an asynchronous read-back.
   **R1c ✅ 2026-10-20** (Log): the whole 30-slide file 12.4–14.9 → 8.6–10.5
-  s on the dev stack; the production-image run under VM 103's limits is
-  still to do. **R1a → [ADR 0019](../adr/0019-render-page-in-place-deck-switch.md)
-  (proposed)**: not built — an in-place switch needs a page-wide session
-  reset; the slim render entry's load split is measured first.
+  s on the dev stack; **on the production image under VM 103's limits
+  ✅ 2026-10-23** (Log, F5): 23.8–30.8 → 12.0–13.6 s once the render page
+  batches 4 textures per draw (a cold one-slide PNG 2.9 → 1.3 s).
+  **R1a → [ADR 0019](../adr/0019-render-page-in-place-deck-switch.md):
+  measured and closed 2026-10-23** — an in-place switch would save ~0.4 s
+  of a session's first job, a slim render entry ≤ ~50 ms; neither built.
 - **R2 (S)** Video worker — **built**: poster and thumbnail from one ffmpeg
   run beside the transcode, on the asset before the playback. **The editor
   shows it while processing ✅ 2026-10-19**
@@ -384,13 +386,21 @@ the Log entry or ADR that holds its numbers.
   - **Text boxes sharing one raster image like table cells, in Chromium**
     (E5): a crowded slide's ~120 texts; needs a measurement first.
   - **`present/presentation.ts`**: a store change between `prepare()` and
-    `start()` replans nothing; harmless today because `show()` replans first
-    (combined verification, 2026-10-21; owners present / animation).
+    `start()` replans nothing (combined verification, 2026-10-21; owners
+    present / animation). **Resolved 2026-10-23** (Log): not harmless — an
+    edit of the start slide during the load left present mode never ready,
+    and a neighbour's edit was rebuilt after ready; the skip path had a
+    sibling bug (no slide on stage, cache never idle-only).
   - **One large texture upload per frame** in the editor (W4: a `display`
     upload is a ~20 ms stall in WebKit).
-  - **Drag counters in display-paced runs** (W1): `sg.update` /
-    `y.slideObjects.flush` vary with pointer coalescing (85–90 of 90) — make
-    them timing metrics there, or await a frame per move.
+  - ~~**Drag counters in display-paced runs** (W1)~~ — resolved 2026-10-23:
+    no move is lost (`y.tx.local` and the observer calls are exact in every
+    runtime); `sg.update` / `y.slideObjects.flush` count frames that had a
+    move, so the drags mark them `perFrame`: budgeted only where a frame is
+    drawn per input (headless Chromium), timed everywhere else, headless
+    WebKit included (59 of 60). Awaiting a frame per move was rejected: it
+    would stop measuring a mouse faster than the display. The table drag
+    now budgets the same list (`packages/perf/README.md` → Statistics).
   - **Tauri**: the presenter window and the cold opens cannot run in the
     shell yet (W1); a run on an external 1× display.
   - **Linux / Windows driver input**: the Tauri perf driver's input is
@@ -399,8 +409,9 @@ the Log entry or ADR that holds its numbers.
     autofit's throwaway container per key (E4).
   - The warm agent phases left are security checks (G7: token lookup,
     deck role); the cold 100-slide load's 20–30 ms of Yjs decode.
-  - R1c's production-image run under VM 103's limits; R1a per ADR 0019
-    (measure the slim render entry's load split first).
+  - ~~R1c's production-image run under VM 103's limits; R1a per ADR 0019~~
+    — done 2026-10-23 (F5, Log): ADR 0019 closed unbuilt; the render page's
+    captures halved instead.
   - D3 on VM 103: a timed `docker restart` and a VM boot (downtime, needs
     Petr's word); the MCP catalogue at build time; a bundled server.
   - V4: `tsc -b` project references or tsgo, `vitest related` in the stop
@@ -410,7 +421,8 @@ the Log entry or ADR that holds its numbers.
   - B3: 300+ slide opens (rows off screen could skip mounting their
     thumbnail); B4: incremental rows with compaction if 1000+ slide decks
     appear.
-- **Decisions waiting for Petr**
+- **Decisions waiting for Petr** — all decided on 2026-10-23, see "Final
+  round" below; the list stays as the record of what was asked.
   - [ADR 0018](../adr/0018-canvas-text-from-the-browser-layout.md) (E7's
     port, L) and [ADR 0019](../adr/0019-render-page-in-place-deck-switch.md)
     (R1a), both proposed.
@@ -439,6 +451,36 @@ the Log entry or ADR that holds its numbers.
     container started for R3, and `~/Documents/Dev/Narrative-desktop` (a
     local merge a69f7fdc plus W1's uncommitted files, all of which are now on
     this branch) — stop / clean up.
+
+## Final round (from 2026-10-23): finish the programme and release
+
+Petr's decisions, 2026-10-23: ADR 0017, 0018 and 0019 accepted; the ADR 0018
+port is part of this round; at the end `perf/crowded-slide` merges into
+`main` and is released (bump, CHANGELOG, tag, GitHub release, `just deploy`
+to VM 103); on that deploy `METRICS_TOKEN` is set and the old v0.13.2 /
+v0.14.0 images are removed from VM 103. Not chosen: the render worker's Arabic
+font (stays a backlog note, not perf work). Decided by the session on the
+rules above (nothing changes how a slide looks; robust over quick): MSAA
+stays on at 2× unless a pixel comparison of shape edges proves no difference;
+`media.url` answers 404 for a forbidden asset too (existence is not leaked);
+`tools/list` keeps its budget and the descriptions are trimmed; client
+metrics keep sampling every session until real traffic says otherwise.
+
+Workstreams (each with before/after numbers in the Log; status kept here):
+
+| Id  | What                                                                                                                              | Owner                  | Status                                                                                                                                                                                                                                                                             |
+| --- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1  | ADR 0018 port: canvas text from the browser layout, behind a flag, pixel parity in Chromium + WebKit, then the switch             | renderer               | in progress — phase 1 units green, parity corpus written; paused 2026-10-23 ~17:00 (weekly API limit, resets 2026-10-25 02:00); log `~/.cache/narrative-perf/round-logs/F1.md`                                                                                                     |
+| F2  | Present residuals: WebKit swap-frame misses, Chromium `build.steps` first-entry gap; MSAA-at-2× pixel comparison                  | renderer (present)     | in progress — build.steps gap traced, MSAA-at-2× Chromium pixel comparison done, Tauri 2× idle-turn work; paused 2026-10-23 (API limit); log F2.md                                                                                                                                 |
+| F3  | E8 heap / GPU growth across slide switches (CDP heap after GC, texture counts); the +22 `react.commits` per present run (bisect)  | perf                   | in progress — +22 react.commits found (useSlideNotes double render) and fixed; memory benches built, three leak fixes measured; paused 2026-10-23 (API limit); log F3.md                                                                                                           |
+| F4  | P3 the 4K source in `present.video`                                                                                               | media                  | in progress — root cause found: present mode drew the poster, not the playing video; fix not finished; paused 2026-10-23 (API limit); log F4.md                                                                                                                                    |
+| F5  | ADR 0019 (slim render entry measured first) and R1c on the production image under VM 103's limits                                 | renderer (render page) | built 2026-10-23, in review (Log): ADR 0019 measured and closed; render page captures halved; R1c PDF of 30 −28 %                                                                                                                                                                  |
+| F6  | `media.url` 404 for forbidden; `tools/list` trimmed under budget                                                                  | ai-integration         | done 2026-10-23: one 404 for every refusal on url / video-info / font-url / delete (readers without the role keep 403), malformed `share_token` refused at the boundary, own rate limit; `tools/list` 199,999 → 189,572 B (link); security-reviewed                                |
+| F7  | E6 overlays per key, E4 autofit per key, B3 300+ slide opens                                                                      | editor-ui              | in progress — WebKit E6 A/B queued; paused 2026-10-23 (API limit); log F7.md                                                                                                                                                                                                       |
+| F8  | Release prep: `METRICS_TOKEN`, compose (L4 volume, `INSTANCE_MARKER_PATH`), D3 boot timing on the deploy, old images, V4 dev loop | infra                  | done 2026-10-23: METRICS_TOKEN wired (compose + SOPS, Caddy 404 on /api/metrics), L4 marker deploy order fixed (restore-marker.sh), boot-timing / availability probes, prune --drop, V4 measured (TS7 / vitest related rejected), CHANGELOG draft; runbook docs/deploy.md → 0.16.0 |
+| F9  | E3 the editor's slide switch — after F1, whose text path it depends on                                                            | renderer               | after F1                                                                                                                                                                                                                                                                           |
+| F10 | Tauri presenter window + cold opens; Low Power Mode run (Petr switches LPM on); Linux / Windows driver input (handover)           | desktop                | after F1                                                                                                                                                                                                                                                                           |
+| F11 | Verify, document, commit, merge, release, deploy                                                                                  | session                | last                                                                                                                                                                                                                                                                               |
 
 ## Log
 
@@ -1614,6 +1656,16 @@ captureSlideCanvasAsync`, `renderer/liveThumbnail.ts`): drawn into a
       commands' error codes (`forbidden` vs `not_found`, which layouts'
       picture checks and agents read) rely on the distinction; changing it
       is an API change of `media.url`, left for a decision of its own.
+      _Decided and done 2026-10-23 (F6, Final round):_ the single route and
+      `media.url` answer 404 `Asset not found` for an asset the caller may
+      not read, as for an unknown id; the other media routes followed —
+      `/video-info` / `media.status`, `/font-url` / `media.fontUrl` (a legacy
+      deck font row too) and `DELETE /api/media/:id` / `media.delete` for a
+      caller who cannot read the asset (a reader without the role keeps its
+      403). The reason stays server-side (`narrative_media_refusals_total
+{route,reason}`, the `media refused` log line); a malformed
+      `share_token` is 401 before any lookup; the single route got its own
+      rate limit. Accepted residual: latency (ids ≥ 72 random bits).
     - _Parity:_ a `media.url` example with `medium`; tools/list at 199,999
       bytes in link mode (one byte left; recorded in
       `toolListBudget.test.ts`).
@@ -2705,3 +2757,105 @@ deck.open.* --mode prod`, 10 runs, medians; a machine shared with other
     `apps/web/test-results/` and wiped each other's artefacts (ENOENT on the <!-- docs-check: ignore -->
     other run's traces and screenshots). The session's queue now serialises
     e2e runs; run one Playwright suite at a time per checkout.
+
+- 2026-10-23, **Present mode: the deck edited during the upfront load, and
+  the skip** (MacBook; unit tests only — e2e and perf pending, Docker down).
+  - **Cause 1:** before `start()` the store subscriber of
+    `present/presentation.ts` replanned around nothing (`waitingFor ??
+shownId`, both null), so the cache's plan kept the deck of `prepare()`
+    and `isPrepared` judged scenes against it. An edit of the start slide
+    (its objects, background, page number) then made `start()`'s own
+    replan mark it stale: `take` failed, `start` returned false and
+    PresentLayout never reached `ready`. A neighbour's edit, an added,
+    removed or reordered slide were rebuilt after ready, in idle time — a
+    first advance that could wait. The layout also checked readiness only
+    before the thumbnail, render-work and font waits.
+  - **Fix 1:** the plan follows the deck from `prepare()` on, around the
+    slide the presentation will start on (`Presentation.startSlide`; the
+    slide after it when an edit deleted it); `isPrepared` replans first when
+    the store's snapshot moved, announced or not. PresentLayout checks
+    `isPrepared` once more right before `start()` and waits again when an
+    edit left work.
+  - **Cause 2 (the skip):** `skipPreparation` ran `start(activeSlideId)`;
+    on a slide not prepared it set `waitingFor`, so the `follow()` after it
+    returned early. The presenter saw the slide as the canvas mounted it,
+    but nothing was on stage for the controller (its onClick builds dead),
+    the cache never switched to idle-only building (it built during
+    transitions and builds) nor kept slides warm, and when the scene landed
+    it was swapped in and its builds started over. A skip during the media
+    phase also let the later `prepare()` replan around the original start.
+  - **Fix 2:** `Presentation.startNow` — the prepared scene when there is
+    one, otherwise the mounted slide followed with its builds compiled on it
+    and played; idle-only either way. `prepare()` after a start plans
+    nothing, and the load stops after the media when skipped.
+  - Tests: `present/presentation.test.ts` +11 (5 kinds of edit, the
+    unannounced change, the deleted start slide, the plan after start, 3 for
+    the skip); the 8 on the two bugs fail on the old code. To run: `just e2e -g
+"present"`, `just perf present` (`e2e/perf/present.spec.ts`).
+- 2026-10-23, **F5: ADR 0019 measured and closed; R1c on the production image
+  under VM 103's limits; the render page's captures halved** (renderer; MacBook
+  M3 Pro, a machine shared with other agents, load 6–14 during the runs
+  quoted, every timed run alone under the shared lock). Stack: the production
+  web bundle (built like the image: no env-file `VITE_*`, precompressed) behind
+  `caddy:2-alpine` with the repo's Caddyfile (upstream host names pointed at
+  this stack's ports, CSP and routes unchanged); the server from the working
+  tree on its own database and Redis, with production's public origin; the
+  render worker as the **production image** under the compose limits
+  (`--cpus 2 --memory 1200m --memory-swap 1200m`, cap_drop ALL, read-only,
+  tmpfs, pids 512, `RENDER_REQUIRE_SANDBOX=1`, `RENDER_CONCURRENCY=2`), on an
+  internal network with only Caddy and Redis. Docker Desktop's VM had 1.9 GiB
+  (VM 103: 4 GB); the container's own 1200 MB limit is the one that applies.
+  - **The load split** (`apps/render-worker/src/loadSplit.ts`, new: the
+    worker logs it for every page it loads and returns it as
+    `worker.load.{html,scripts,boot,inputs,pixi}` steps; a probe in a
+    container of the image ran the worker's own `recyclePage`): "app ready"
+    of a recycled page p50 ~480 ms (292–574), a new one ~550 ms (397–621);
+    recycled: HTML 3–8, scripts 60–130, boot 220–310, deck inputs 47–140
+    (Pixi 27–100 inside); the session check answered at 46–206 ms, never the
+    gate. CPU profile of a load: vendor-pixi ~100 ms, vendor-react 18–52,
+    the entry chunk 12–18, Yjs 4–18. The render route is 1.6 MB raw / 469 kB
+    gz (the worker's routing fetches it raw).
+  - **ADR 0019 closed, nothing built**: an in-place switch would save ~0.4 s
+    (HTML + scripts + boot) on a session's first job only, a slim entry
+    ≤ ~50 ms — neither worth the cross-tenant risk or a second HTML entry
+    (ADR 0019 → Outcome).
+  - **The cold job's real cost was the page's first capture**: extract
+    1.4–1.8 s on every new or recycled page, later captures 0.38–0.48 s
+    (decomposed: the same slide again, the next slide with another photo,
+    that one again — all ~0.4 s; a warm-up draw into a tiny render texture
+    absorbed the 1.1 s whatever its size). Cause: Pixi's batch shader has
+    one branch per texture slot and SwiftShader reports 32 —
+    compiled on the first draw, and paid per pixel ever after. With the
+    render page at 4 slots (`renderer/batchTextures.ts`, Canvas
+    `batchTextures`, `limits.maxBatchableTextures` only — `maxTextures` for
+    filters and masks unchanged): first capture 259–389 ms, later 152–257.
+    **Pictures byte-identical**: PNG hashes of a rich deck (4 photos,
+    gradients, a shadow filter, a table, 30 texts with diacritics) equal at
+    32 / 8 / 4 / 2 / 1 slots and with the shipped code. 4 ≈ 2 ≈ 1 in time;
+    4 keeps picture-heavy slides to fewer draws. The worker also polls for
+    the hooks every 10 ms (was 50: ~20 ms of every cold job).
+  - **R1c, before → after** (`apps/render-worker/perf/render.ts`, one worker
+    for png, pdf, behind): first job 3.8 → 1.2 s; cold one-slide PNG p50 2935
+    → 1324 ms (p95 4033 → 1508); warm 1276 → 673; PDF of 30 23.8–30.8 →
+    12.0–13.6 s (73 → 141 pages/min); per slide extract p50 457 → 210, page
+    total 663 → 382; 3/3 finished each, 25.1 MB, no failed loads. The before
+    run had load ~14, the after ~8, so an **interleaved A/B** of the PDF alone
+    (fresh worker each, two rounds, load 9–11): 21.3 / 24.9 / 21.6 / 24.7 s →
+    16.9 / 17.6 / 16.2 / 16.3 s (p50 ~23.1 → ~16.6, −28 %).
+  - **Memory**: cgroup `memory.peak` (exact, includes ~200 MB of page cache)
+    with a PDF and a PNG beside it 1100 → 1098 MiB of 1200; a PDF alone
+    739–773 → 754–807 MiB; oom_kill 0 throughout. `docker stats` sampling
+    (perf/rss.ts) misses peaks by ~100–200 MiB.
+  - **Pool recycling**: spare cleared in p50 27 ms (24–37) when nothing else
+    runs, 127 ms beside a PDF; recycled pages app ready p50 483 ms.
+  - `just perf-agent --only queryRender` on the dev stack (12 cores, the
+    tree with the fix) against the stored 2026-10-20 run at the same load:
+    cold medians 2279–2799 → 988–1073 ms, warm 301–472 → 158–194 ms, extract
+    ~90 → ~52 ms warm (other round changes in between: supporting, not an A/B).
+  - Open: a PNG behind a PDF still waits at the memory gate (2.9–17.0 s
+    total; queue wait 3–59 ms) — one PDF's render job holds most of the
+    1200 MB; scheduling a PDF to leave room for another session's job is a
+    server-side decision, not measured here. The same batch limit would
+    help the editor and present mode on machines whose Chrome falls back to
+    SwiftShader (no GPU) — not done: it touches every page, so a decision
+    with a measurement of its own.

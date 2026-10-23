@@ -300,7 +300,13 @@ hand-written:
   test's comment) and review the sizes as a whole when A2 closes. A2 closed on
   2026-09-30 (A2.13), and that review is the next step before the MCP work. Headroom on
   2026-09-30 after A2.13 is 303 bytes in url mode (593 after A2.12b, 843 after A2.12a, ≈ 470 during A2.11, 124
-  after A2.10, 20 after A2.9).
+  after A2.10, 20 after A2.9). Today the budget is 200,000 bytes and link mode is the
+  largest: 199,999 after L3 (2026-10-20); F6 (2026-10-23) trimmed the descriptions
+  instead of raising it — 189,572 (link) / 189,506 (url) / 188,582 bytes (form) for 146
+  tools, 10,428 bytes (5.2 %) left — by taking out what a description repeated from its
+  own field descriptions or the instructions, never guidance; the `instructions` grew
+  4,931 → 5,026 bytes (the slide's size and axes, said once instead of on several
+  tools). The test's comment itemises it.
 - **Annotations** come from the registry's explicit metadata (`readOnly` / `idempotent` on each command; the registry refuses inconsistent combinations); a hint equal to the MCP default (`readOnlyHint` / `idempotentHint` false) is left out, `destructiveHint` and `openWorldHint` (default true) are always stated: `readOnlyHint` for commands that change nothing — document queries and server reads such as `deck_list`, `share_links_list`, `media_url`; `destructiveHint` for writes with `undo: 'irreversible'` (false on other writes); `idempotentHint` on read-only tools and on set-to-value writes marked `idempotent` (renames, `text_set`, `slide_setBackground`, `object_update`, … — the contract suite runs each of their examples twice), false on every other write; `openWorldHint` for commands that can fetch a URL (file inputs).
 - **Paged lists**: `deck_list` (most recently changed first — content, title or folder) and `folder_list` (by name) return at most `limit` items (default 50, max 200) as lean records plus `nextCursor`; pass it back as `cursor` with the same filters for the next page. `query` filters by title or name (case-insensitive, literal), and `deck_list` also takes `folderId`. The web app's `GET /decks` and `GET /folders` are unchanged.
 - **Results**: `structuredContent` = the command's output, plus the same as JSON text;

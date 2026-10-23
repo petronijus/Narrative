@@ -1,6 +1,6 @@
 # ADR 0017 — The browser keeps a local copy of what the server confirmed; a document epoch guards it
 
-**Status**: Proposed (2026-10-20; awaits Petr's approval), built on branch `perf/crowded-slide` for
+**Status**: Accepted (Petr, 2026-10-23), built on branch `perf/crowded-slide` for
 the performance programme's L4 ([`plans/performance.md`](../plans/performance.md)
 → A); amended 2026-10-21 after its security review (restore generation,
 foreign copies, cross-tab sessions, pruning, the render pages, byte caps,

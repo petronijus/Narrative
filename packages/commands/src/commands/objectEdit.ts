@@ -65,10 +65,10 @@ const objectEditor = {
   acceptsComponent: true,
 } as const
 
-const UNITS =
-  'Units: the slide is 1920 x 1080 px, origin top-left, y down; x/y/width/height in slide px; rotation in RADIANS ' +
-  '(90 degrees = 1.5708); opacity and *Alpha 0..1; colours as "#RRGGBB", a 0xRRGGBB integer, or a colour token ' +
-  '{ "$token": "colors.<id>" }.'
+// The slide's size and axes and the colour formats are the server
+// instructions' (mcp/guidance.ts, mcp/sharedShapes.ts), said once.
+const GEOMETRY = 'Units: slide px; opacity and *Alpha 0..1'
+const UNITS = `${GEOMETRY}; rotation in RADIANS (90 degrees = 1.5708).`
 
 /**
  * A component master links to nothing (A4.1): `component` — a stamp's
@@ -167,10 +167,10 @@ export const objectCreate = defineCommand({
     'Create one object on a slide: rectangle, ellipse, triangle, polygon, line, arrow, path, text, image, video or ' +
     'table. Only `type` is required; every property you omit takes the editor default (e.g. a 200 x 150 blue ' +
     'rectangle at 100,100). Text takes `text` as a plain string (blank line = new paragraph) or ' +
-    '{ paragraphs: [...] } with formatted runs and bullet/numbered lists. Images and videos need the `assetId` of ' +
-    'an asset already uploaded to the deck (media.upload). A table takes rows/cols/defaults (same as table.insert) and is filled ' +
-    'with text.set. New objects go on top of the stacking order; use object.layer to reorder. `id` names the ' +
-    'new object yourself (e.g. the same id on two slides pairs them for a magic transition); omit it normally. ' +
+    '{ paragraphs: [...] } with formatted runs and bullet/numbered lists. Images and videos need an uploaded ' +
+    '`assetId` (media.upload). A table takes rows/cols/defaults (as table.insert) and is filled with text.set. ' +
+    'New objects go on top (object.layer reorders). `id` only to name it yourself, e.g. the same id on two ' +
+    'slides pairs them for a magic transition. ' +
     UNITS,
   input: z.strictObject({
     slide: SlideRefSchema,
@@ -317,8 +317,7 @@ const PatchRecord = z
   .record(z.string(), z.unknown())
   .refine((p) => Object.keys(p).length > 0, { message: 'The patch is empty' })
   .describe(
-    'Properties to change, validated against the object type (unknown keys are rejected). `null` removes an ' +
-      'optional property (e.g. "shadow": null). Required properties cannot be removed.',
+    'Properties to change; `null` removes an optional one (e.g. "shadow": null), never a required one',
   )
 
 interface PreparedUpdate {
@@ -409,33 +408,29 @@ export const objectUpdate = defineCommand({
   idempotent: true,
   title: 'Update object properties',
   description:
-    'ROTATION IS IN RADIANS here (the stored unit): 90 degrees = 1.5708, 180 = 3.1416; object.rotate takes ' +
-    'degrees. ' +
+    'ROTATION IS IN RADIANS here (90 degrees = 1.5708, 180 = 3.1416); object.rotate takes degrees. ' +
     'Change properties of an object — fill, stroke, opacity, font size, corner radius, shadow, name, lock, x/y/' +
-    'width/height, rotation, … — validated against its type before anything is written (unknown keys fail). ' +
-    '`null` removes an optional property. Use `updates` to patch several objects on one slide in one step. ' +
+    'width/height, rotation, … — validated against its type before anything is written (unknown keys fail); ' +
+    '`updates` patches several objects on one slide in one step. ' +
     "Not for tables' rows/columns/cells (table.* commands) or relative moves (object.move). " +
-    'Raw fields do exactly what they say and no more; where the editor does more, compose it yourself: ' +
-    '(1) Setting x/y of a cropped image moves its crop along, but width/height do NOT scale the crop ' +
-    '(`imageRect`) — resize with object.resize, which does. ' +
-    "(2) `flipH` / `flipV` only mirror the content without negating `rotation` as the editor's Flip does — flip " +
-    'with object.flip. ' +
-    '(3) Box typography (fontFamily, fontSize, fontWeight, color, …) set here is only the default under inline ' +
-    'formatting, leaves fontWeight as is on a family change and does not mark a linked text style overridden — use ' +
-    'text.setBoxTypography, which does what the Inspector does. ' +
-    '(4) `textStyleId` only links a folder text style without applying it — use text.style.apply. ' +
+    'Raw fields do exactly what they say; where the editor does more, use the command that does it: ' +
+    "(1) width/height do NOT scale a cropped image's crop (`imageRect`; x/y move it along) — object.resize. " +
+    "(2) `flipH` / `flipV` mirror the content without negating `rotation` as the editor's Flip does — object.flip. " +
+    '(3) Box typography (fontFamily, fontSize, fontWeight, color, …) here is only the default under inline ' +
+    'formatting, keeps fontWeight on a family change and does not mark a linked text style overridden — ' +
+    'text.setBoxTypography does what the Inspector does. ' +
+    '(4) `textStyleId` only links a folder text style, without applying it — text.style.apply. ' +
     "(5) A video's `videoTrigger` + `videoDelay` (s, >= 0) place its clip on the editor's timeline: onEnter from " +
-    "the slide start, withPrevious / afterPrevious from the start / end of the slide's LAST animation step; they " +
-    'are exported to PowerPoint, but present mode starts a video by `autoplay` / `playOnClick` only. ' +
-    '`text` on a text box replaces the body with plain text (formatting is dropped; use text.set for formatted ' +
-    'text, text.format for styling ranges). ' +
-    '`locked` is an editor-only flag (it stops a person dragging, resizing or deleting the object on the canvas); ' +
-    'it does not restrict commands, so locked objects can be changed and `locked` set or cleared like any property. ' +
+    "the slide start, withPrevious / afterPrevious from the start / end of the slide's LAST animation step; " +
+    'exported to PowerPoint, but present mode starts a video by `autoplay` / `playOnClick` only. ' +
+    '`text` on a text box replaces the body with plain text, dropping its formatting (formatted: text.set; ' +
+    'ranges: text.format). ' +
+    '`locked` only stops a person on the canvas: commands ignore it and set or clear it like any property. ' +
     '`slot` (a component or brand slot name) and `role` (title, subtitle, body, picture, chart, table, caption, ' +
     "footnote, furniture) say what an object is for; `component` is a stamp's link, set by component.stamp. " +
     'A text box\'s `autofit`: "grow-down" = as tall as its text (`height` may lag behind your edits; look), ' +
     '"shrink" = type scaled down to fit, not below `minFontSize`; null = fixed. ' +
-    UNITS,
+    `${GEOMETRY}.`,
   input: z.union([
     z.strictObject({ slide: SlideRefSchema, object: ObjectIdSchema, patch: PatchRecord }),
     z.strictObject({
@@ -535,10 +530,9 @@ export const objectDelete = defineCommand({
   id: 'object.delete',
   title: 'Delete objects',
   description:
-    'Delete objects from a slide together with every animation step that targets them. Group members are deleted ' +
-    'individually; pass every member to delete a whole group. To hide an object instead, use object.update with ' +
-    'opacity 0. Locked objects are deleted like any other: `locked` is an editor-only flag that does not restrict ' +
-    'commands.',
+    'Delete objects from a slide with every animation step that targets them. Group members are deleted one ' +
+    'by one: pass every member to delete a group. To hide an object: object.update with opacity 0. `locked` ' +
+    'does not stop it (an editor-only flag).',
   input: z.strictObject({
     slide: SlideRefSchema,
     objects: ObjectIdsSchema,
@@ -575,10 +569,10 @@ export const objectMaskApply = defineCommand({
   id: 'object.mask.apply',
   title: 'Mask an image with a shape',
   description:
-    "Clip an image to a shape's silhouette (rectangle, ellipse, triangle, polygon or path). The shape is consumed: " +
-    "it is deleted along with its animations, and the image's frame becomes the shape's bounding box while the " +
-    'picture stays exactly where it was on the slide. Shape rotation is ignored. Undo with object.mask.remove ' +
-    '(which keeps the new frame).',
+    "Clip an image to a shape's silhouette (rectangle, ellipse, triangle, polygon or path). The shape is " +
+    "consumed (deleted with its animations); the image's frame becomes the shape's bounding box, the picture " +
+    'staying where it was on the slide. Shape rotation is ignored. Undo: object.mask.remove (keeps the new ' +
+    'frame).',
   input: z.strictObject({
     slide: SlideRefSchema,
     image: ObjectIdSchema.describe('The image to clip'),
@@ -628,9 +622,8 @@ export const objectMaskRemove = defineCommand({
   id: 'object.mask.remove',
   title: 'Remove image mask',
   description:
-    "Remove an image's shape mask so it shows as a rectangle again. The frame stays where the mask left it and the " +
-    'picture does not move. Returns removed: false when the image had no mask. To remove a crop instead use ' +
-    'object.crop.set with op reset.',
+    "Remove an image's shape mask so it shows as a rectangle again; the frame stays where the mask left it, " +
+    'the picture does not move. Returns removed: false without a mask. A crop: object.crop.set with op reset.',
   input: z.strictObject({ slide: SlideRefSchema, image: ObjectIdSchema }),
   output: z.object({ removed: z.boolean() }),
   implementedWith: ['updateObject'],

@@ -68,13 +68,12 @@ export const textSet = defineCommand({
   idempotent: true,
   title: 'Set text',
   description:
-    'Replace the WHOLE body of a text box or of one table cell (`target.cell`). Pass a plain string — a blank line ' +
-    '("\\n\\n") starts a new paragraph, a single "\\n" is a line break inside the paragraph — or ' +
-    '{ paragraphs: [{ runs: [{ text, bold, italic, underline, color, fontFamily, fontSize }], list, level, ' +
-    'bulletChar, numberFormat, startAt }] } for formatted runs and bullet / numbered lists (level 0..8). ' +
-    'A plain string drops existing inline formatting and lists. Box-level typography (the box font, size, ' +
-    'alignment) is unchanged — set it with text.setBoxTypography. To restyle part of the text without retyping it use ' +
-    'text.format; for lists on existing text use text.list.',
+    'Replace the WHOLE body of a text box or of one table cell (`target.cell`): a plain string ("\\n\\n" starts ' +
+    'a paragraph, "\\n" is a line break) or { paragraphs: [{ runs: [{ text, bold, italic, underline, color, ' +
+    'fontFamily, fontSize }], list, level, bulletChar, numberFormat, startAt }] } for formatted runs and ' +
+    'lists (level 0..8). A plain string drops inline formatting and lists. Box typography (font, size, ' +
+    'alignment) is unchanged: text.setBoxTypography. Restyle part without retyping: text.format; lists on ' +
+    'existing text: text.list.',
   input: z.strictObject({ target: TextTargetSchema, text: TextBodyInputSchema }),
   output: z.object({
     length: z.number().describe('Characters in the new body, as queries count them'),
@@ -177,11 +176,11 @@ export const textFormat = defineCommand({
   title: 'Format text range',
   description:
     'Apply (`set`) and/or remove (`clear`) inline formatting — bold, fontWeight, italic, underline, color, ' +
-    'fontFamily, fontSize — on part of a text box or table cell without changing the text. Choose the range by ' +
-    '{ match: "exact text", occurrence?: n | "all" } (safest) or { start, length } in characters of the text as ' +
-    'query.object returns it; omit `range` for the whole body. `clear` runs first, so clear: "all" plus set restyles ' +
-    'from scratch. Clearing makes the text fall back to the box defaults. To restyle the whole box use ' +
-    'text.setBoxTypography, which also removes this inline formatting.',
+    'fontFamily, fontSize — on part of a text box or table cell, the text unchanged. `range`: { match: "exact ' +
+    'text", occurrence?: n | "all" } (safest) or { start, length } in characters of the text as query.object ' +
+    'returns it; omitted: the whole body. `clear` runs first, so clear: "all" plus set restyles from scratch; ' +
+    'cleared text falls back to the box defaults. The whole box: text.setBoxTypography, which also removes ' +
+    'this inline formatting.',
   input: z
     .strictObject({
       target: TextTargetSchema,
@@ -247,14 +246,14 @@ export const textList = defineCommand({
   id: 'text.list',
   title: 'Set list formatting',
   description:
-    'Turn paragraphs into a bullet or numbered list, change nesting, glyph or numbering, or remove the list — on ' +
-    'the paragraphs a range touches (omit `range` for every paragraph; a range of length 0 targets the paragraph ' +
-    'containing it), exactly like the Inspector list controls. `kind`: "bullet" | "number" | "none" (removes the ' +
-    'list and its level/glyph/numbering; on a box with listLevels it writes list "none" so the level\'s default ' +
-    'list no longer applies); `toggle`: the editor toolbar button (removes the list if every targeted ' +
-    'paragraph already has that kind, else applies it); `level` 0..8 sets nesting, `indent` +1/-1 shifts it; ' +
-    '`bulletChar` (implies bullet; null = default glyph), `numberFormat` (implies number), `startAt` (restart ' +
-    'numbering; null clears). To write new list text use text.set with list paragraphs.',
+    'Make paragraphs a bullet or numbered list, change nesting, glyph or numbering, or remove the list — on ' +
+    'the paragraphs a range touches (no `range`: every paragraph; length 0: the paragraph containing it), ' +
+    'like the Inspector list controls. `kind`: "bullet" | "number" | "none" (removes the list and its ' +
+    'level/glyph/numbering; on a box with listLevels it writes list "none" so the level default no longer ' +
+    'applies); `toggle`: the toolbar button (removes the list if every targeted paragraph has that kind, else ' +
+    'applies it); `level` 0..8 sets nesting, `indent` +1/-1 shifts it; `bulletChar` (implies bullet; null = ' +
+    'default), `numberFormat` (implies number), `startAt` (restart numbering; null clears). New list text: ' +
+    'text.set with list paragraphs.',
   input: z
     .strictObject({
       target: TextTargetSchema,

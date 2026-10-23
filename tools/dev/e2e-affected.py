@@ -138,6 +138,9 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/renderer/playTransition*", PRESENT),
     # Present mode's prepared slides and pooled videos (ADR 0016).
     ("apps/web/src/renderer/present*", PRESENT),
+    # Which file a present-mode video plays, and its switch on a display change (P3).
+    ("apps/web/src/renderer/presentVideos.ts", ["present-video-rendition"]),
+    ("apps/web/src/renderer/videoRendition.ts", ["present-video-rendition"]),
     # What a complete picture of the deck waits for: present mode and the render page.
     ("apps/web/src/state/useDeckInputs.ts", PRESENT + ["render-page", "render-export"]),
     ("apps/web/src/renderer/*", RENDER),
@@ -211,7 +214,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/ui/*Component*", COMPONENTS),
     ("apps/web/src/ui/Upload*", MEDIA),
     ("apps/web/src/ui/Video*", MEDIA),
-    ("apps/web/src/ui/EditorVideoPreview.tsx", MEDIA),
+    ("apps/web/src/ui/EditorVideoPreview.tsx", MEDIA + ["present-video-rendition"]),
     ("apps/web/src/ui/*Pptx*", PPTX),
     ("apps/web/src/ui/ShareDialog.tsx", ACCESS),
     ("apps/web/src/ui/FolderShareDialog.tsx", ACCESS),
@@ -367,7 +370,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/server/src/routes/commands.ts", AGENT),
     # The service set every command and route is built from.
     ("apps/server/src/services/index.ts", AGENT + ACCESS),
-    ("apps/video-worker/src/*", MEDIA),
+    ("apps/video-worker/src/*", MEDIA + ["present-video-rendition"]),
     ("apps/render-worker/*", ["render-export", "render-page", "query-render"]),
     # The desktop shell (ADR 0015): the `electron` project's specs.
     ("apps/desktop/*", DESKTOP),

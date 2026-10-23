@@ -99,7 +99,8 @@ curl http://localhost:3001/health
 curl -H "Authorization: Bearer $METRICS_TOKEN" http://localhost:3001/metrics
 ```
 
-In production replace `localhost:3001` with the domain or the internal address.
+In production `/health` answers at `https://<domain>/health` too; `/metrics`
+does not — it is read on the VM (below).
 
 ---
 
@@ -107,11 +108,12 @@ In production replace `localhost:3001` with the domain or the internal address.
 
 The endpoint returns Prometheus text format (version 0.0.4).
 
-| Metric                             | Type    | Meaning                                                   |
-| ---------------------------------- | ------- | --------------------------------------------------------- |
-| `narrative_ws_connections`         | gauge   | Currently active Hocuspocus WebSocket connections         |
-| `narrative_updates_ingested_total` | counter | Yjs document flush operations (per flush, not per update) |
-| `narrative_updates_bytes_total`    | counter | Bytes of Yjs updates written to Postgres                  |
+| Metric                                         | Type    | Meaning                                                                     |
+| ---------------------------------------------- | ------- | --------------------------------------------------------------------------- |
+| `narrative_ws_connections`                     | gauge   | Currently active Hocuspocus WebSocket connections                           |
+| `narrative_updates_ingested_total`             | counter | Yjs document flush operations (per flush, not per update)                   |
+| `narrative_updates_bytes_total`                | counter | Bytes of Yjs updates written to Postgres                                    |
+| `narrative_media_refusals_total{route,reason}` | counter | Media reads and deletes refused as unknown, by `route` and `reason` (below) |
 
 **Reading them**:
 
@@ -119,6 +121,19 @@ The endpoint returns Prometheus text format (version 0.0.4).
 - `narrative_updates_ingested_total` rises with every save flush (debounced 2 s
   after the last Yjs update by default).
 - A high `narrative_updates_bytes_total` means large documents or heavy editing.
+- `narrative_media_refusals_total` counts the media reads and deletes that
+  answer an asset the caller may not have with the same 404 as an unknown id,
+  by `route` — `url` (`GET /api/media/:id/url`, `media.url`), `video_info`
+  (`/video-info`, `media.status`), `font_url` (`/font-url`, `media.fontUrl`),
+  `delete` (`DELETE /api/media/:id`, `media.delete`) — and `reason`:
+  `unknown`, `wrong_kind` (an image read of a video or font), `not_shown`
+  (not the named deck's, master's or folder's), `legacy` (a font row from
+  before folder fonts), `forbidden`. Whether an asset exists is not told to
+  someone who may not read it; only this counter and the server log line
+  `media refused` (`mediaRefusal: { route, reason }`) tell a forbidden asset
+  from an unknown one. A rising `forbidden` is someone asking for assets of
+  decks they cannot open. (A malformed `share_token` never gets this far:
+  401 before any lookup.)
 
 ### Client session metrics (performance plan G4)
 
@@ -142,10 +157,10 @@ across many sessions, never as an alerting signal or a per-user fact.
 
 Each report becomes histograms on `/metrics` (in memory: a restart starts
 them from zero) and one log line of the server, `client session metrics`
-(kept as long as the container's logs). **Production today has no
-`/metrics`:** `METRICS_TOKEN` is not set in `infra/.env.prod`, so the
-endpoint is not registered (see "Access control" above) and the log lines
-are the only source until a token is configured.
+(kept as long as the container's logs). Production has `/metrics` from
+the performance-round release on (`METRICS_TOKEN` in `infra/.env.prod`;
+before it the endpoint was not registered and the log lines were the only
+source — see "Access control" below).
 
 | Metric (`narrative_client_…`, labels `route`, deck ones also `load`)    | What                                                                    |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------------------- |
@@ -166,14 +181,17 @@ first paint can come before the sync (the canvas draws the empty slide first).
 and p95 per metric from either source:
 
 ```bash
-# On the VM: every report in the server's logs (exact percentiles)
-docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml \
-  logs --no-log-prefix server | infra/scripts/client-metrics.py
+# On the VM: every report in the server's logs (exact percentiles). `docker
+# logs` needs no compose files (the prod overlay refuses to parse without
+# --env-file .env.prod)
+docker logs narrative-server 2>&1 | infra/scripts/client-metrics.py
 # … since a deploy
-docker compose … logs --no-log-prefix server | infra/scripts/client-metrics.py --since 2026-10-21T08:00
+docker logs narrative-server 2>&1 | infra/scripts/client-metrics.py --since 2026-10-21T08:00
 
-# The histograms since the server started (interpolated in the buckets)
-curl -s -H "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:3001/metrics \
+# The histograms since the server started (interpolated in the buckets);
+# the token expands inside the container, never on the VM's command line
+docker exec narrative-server sh -c \
+  'wget -qO- --header "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:3001/metrics' \
   | infra/scripts/client-metrics.py
 ```
 
@@ -184,6 +202,33 @@ production it is gated by `METRICS_TOKEN` — scrape with
 is unset or empty, the endpoint is **not registered at all**: the server keeps
 running and metrics are simply unreachable until a token is configured. See
 `apps/server/src/metrics/index.ts`.
+
+**Production** (since the performance-round release, 2026-10):
+
+- The token is `METRICS_TOKEN` in `infra/.env.prod` (64 hex characters,
+  `openssl rand -hex 32`; source of truth the SOPS file
+  `private/config/env.prod.sops`). It reaches the server only because
+  `docker-compose.prod.yml` lists it in the server's `environment:` — that
+  list, not `.env.prod`, is what the container gets. Rotate: a new value in
+  both, then `docker compose … up -d server`.
+- **Caddy never forwards `/api/metrics`** (it answers 404, Caddyfile
+  "Prometheus metrics"): nothing outside the VM scrapes, so the public path
+  is closed rather than left to the token alone. In the shared-tunnel
+  topology the server publishes no host port either, so `curl
+127.0.0.1:3001` on the VM does not reach it. Read it inside the container:
+
+  ```bash
+  docker exec narrative-server sh -c \
+    'wget -qO- --header "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:3001/metrics' | head
+  ```
+
+  (single quotes: `$METRICS_TOKEN` expands in the container's shell, so the
+  token appears neither in the VM's process list nor in its shell history.)
+
+- A Prometheus scraper (M30) belongs on the compose network and scrapes
+  `http://server:3001/metrics` with the bearer token — not through Caddy.
+- Check after a deploy: the server log has no `METRICS_TOKEN is unset`
+  line, and `infra/scripts/boot-timing.py` says `/metrics registered: yes`.
 
 ---
 

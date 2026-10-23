@@ -516,10 +516,12 @@ describe('every folder-scoped command', () => {
   })
 
   it('says in its description who may run it — and nothing it does not do', () => {
+    // One short sentence per role, the same on every tool (performance.md → F6
+    // shortened them for the MCP tool list).
     const says: Record<Role, RegExp> = {
-      viewer: /Any member of the folder/,
-      editor: /Needs the editor role in the folder/,
-      owner: /Only the folder's owners/,
+      viewer: /Any folder member/,
+      editor: /Needs folder editor/,
+      owner: /Folder owners only/,
     }
     for (const def of folderScoped) {
       for (const [role, sentence] of Object.entries(says))

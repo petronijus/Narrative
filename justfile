@@ -198,8 +198,9 @@ perf-compare revA revB *ids: _stack
     eval "$(tools/dev/playwright-env.sh)"
     exec pnpm --silent --filter @narrative/perf run perf compare "$@"
 
-# The first commit in good..bad whose bench regresses against good (perf-compare as the predicate; no git bisect here)
-perf-bisect id good bad: _stack
+# The first commit in good..bad whose bench regresses against good (perf-compare as the predicate; no git bisect here):
+# `[--runs N] [--warmup N] [--metric m[,m…]]` — with --metric only those metrics' regressions or counter changes count
+perf-bisect id good bad *args: _stack
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(tools/dev/playwright-env.sh)"

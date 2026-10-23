@@ -56,8 +56,8 @@ function checkPosition(
 }
 
 const PLACEMENT =
-  'A vertical guide is an x position (0..1920 px), a horizontal guide a y position (0..1080 px). Guides are ' +
-  'deck-wide and only help alignment in the editor; they never render in the presentation.'
+  'Vertical: an x position (0..1920 px), horizontal: a y (0..1080 px). Guides are deck-wide, only help ' +
+  'alignment in the editor and never render in the presentation.'
 
 export const guideAdd = defineCommand({
   ...guideEditor,
@@ -94,7 +94,7 @@ export const guideUpdate = defineCommand({
   id: 'guide.update',
   idempotent: true,
   title: 'Move guide',
-  description: `Move a guide to a new position. Its orientation cannot change (remove it and add a new one). ${PLACEMENT}`,
+  description: `Move a guide (its orientation cannot change: remove it and add another). ${PLACEMENT}`,
   input: z.strictObject({ guide: GuideIdSchema, position: z.number() }),
   output: z.object({}),
   implementedWith: ['updateGuide', 'listDeckGuides'],
@@ -116,7 +116,7 @@ export const guideRemove = defineCommand({
   id: 'guide.remove',
   title: 'Remove guides',
   description:
-    'Remove alignment guides from the deck (every slide shares them). Objects do not move.',
+    'Remove alignment guides from the deck (all slides share them). Objects do not move.',
   input: z.strictObject({ guides: z.array(GuideIdSchema).min(1).max(200) }),
   output: z.object({ removed: z.array(z.string()) }),
   implementedWith: ['removeGuide'],

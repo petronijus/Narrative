@@ -45,16 +45,15 @@ export const folderList = defineCommand({
   domain: 'folder',
   title: 'List folders',
   description:
-    "The user's folders, by name A→Z, one page at a time: { id, name, createdAt, deckCount, role } each. A folder " +
-    'is a client or brand: it holds decks plus the design tokens, fonts and components they share. The list ' +
-    "includes folders shared with the user; `role` is the user's in it (viewer reads, editor changes, owner also " +
-    'renames, shares and deletes it). Every user has a private "Drafts" folder. ' +
-    'Narrow it with `query` (name contains, ignoring case). A page holds `limit` folders ' +
-    '(default 50, at most 200); when `nextCursor` is not null there are more — call again with ' +
-    '`cursor: nextCursor` and the same `query`. Decks in a folder: deck.list with folderId.',
+    "The user's folders, A→Z by name, one page at a time: { id, name, createdAt, deckCount, role } each. A " +
+    'folder is a client or brand: decks plus the design tokens, fonts and components they share. Shared ' +
+    "folders included; `role` is the user's (viewer reads, editor changes, owner also renames, shares and " +
+    'deletes). Every user has a private "Drafts" folder. Narrow it with `query` (name contains, ignoring ' +
+    'case). A page holds `limit` folders (default 50, at most 200); while `nextCursor` is not null there are ' +
+    'more: call again with `cursor: nextCursor` and the same `query`. Its decks: deck.list with folderId.',
   input: z.strictObject({
     query: ListQuerySchema.optional().describe(
-      'Only folders whose name contains this text, ignoring case (plain text, no wildcards)',
+      'Name contains it, ignoring case (plain text, no wildcards)',
     ),
     limit: ListLimitSchema,
     cursor: ListCursorSchema.optional(),
@@ -111,8 +110,8 @@ export const folderCreate = defineCommand({
   domain: 'folder',
   title: 'Create folder',
   description:
-    'Create a folder owned by the user, e.g. for a new client — no decks yet, the default colours and text styles ' +
-    '(token.list). Put decks in it with deck.create (folderId) or deck.moveToFolder, fonts with ' +
+    'Create a folder owned by the user, e.g. for a new client: no decks, the default colours and text styles ' +
+    '(token.list). Decks go in with deck.create (folderId) or deck.moveToFolder, fonts with ' +
     'folder.fonts.upload. Undo: folder.delete.',
   input: z.strictObject({ name: NameSchema }),
   output: FolderOutput.extend({ deckCount: z.number() }),
@@ -138,7 +137,8 @@ export const folderRename = defineCommand({
   domain: 'folder',
   title: 'Rename folder',
   description:
-    "Rename the folder. Its decks, tokens, fonts and components are unaffected. Undo: rename it back. Only the folder's owners.",
+    'Rename the folder; its decks, tokens, fonts and components are unaffected. Undo: rename it back. Folder ' +
+    'owners only.',
   input: z.strictObject({ name: NameSchema }),
   output: FolderOutput,
   role: 'owner',
@@ -165,10 +165,10 @@ export const folderDelete = defineCommand({
   domain: 'folder',
   title: 'Delete folder',
   description:
-    "Permanently delete the folder AND every deck in it, with their media, plus the folder's tokens, fonts and " +
-    'components. Cannot be undone; always confirm with the user first, saying how many decks go with it ' +
-    '(folder.list shows deckCount). The Drafts folder cannot be deleted. To keep the decks, move them out first ' +
-    "with deck.moveToFolder. Only the folder's owners.",
+    "Permanently delete the folder AND every deck in it, with their media, and the folder's tokens, fonts and " +
+    'components. Always confirm with the user first, saying how many decks go with it (folder.list ' +
+    'deckCount). Drafts cannot be deleted. To keep the decks, move them out first (deck.moveToFolder). Folder ' +
+    'owners only.',
   input: z.strictObject({}),
   output: z.object({ deletedDeckCount: z.number() }),
   role: 'owner',
@@ -192,8 +192,8 @@ export const folderFontsList = defineCommand({
   domain: 'folder',
   title: 'Folder fonts',
   description:
-    "The folder's uploaded fonts: family, weight, style, postscript name and a download URL. Every deck in the " +
-    'folder can use these families as fontFamily in text (text.set, text.format, text.setBoxTypography). Any member of the folder, and anyone with access to one of its decks.',
+    "The folder's uploaded fonts: family, weight, style, postscript name and a download URL. Every deck in " +
+    'the folder can use these families as fontFamily (text.set, text.format, text.setBoxTypography). Any folder member, or anyone with access to one of its decks.',
   input: z.strictObject({}),
   output: z.object({ fonts: z.array(FontFaceOutput) }),
   role: 'viewer',
@@ -221,11 +221,11 @@ export const folderFontsUpload = defineCommand({
   domain: 'folder',
   title: 'Upload folder font',
   description:
-    'Add one font face (a TTF, OTF, WOFF or WOFF2 file, at most 10 MB) to the folder, from a public URL or as ' +
-    'base64, so every deck in the folder can use it. Upload each weight / style as its own file. The file is ' +
-    'parsed to read its family, weight and style; `fontFamily` binds it to another family name instead (e.g. the ' +
-    'name an imported PowerPoint uses). A face whose postscript name the folder already has is refused. Only ' +
-    'upload fonts the user has the right to use. Undo: folder.fonts.delete. Needs the editor role in the folder.',
+    'Add one font face (TTF, OTF, WOFF or WOFF2, at most 10 MB) to the folder from a public URL or as base64, ' +
+    'for every deck in it. Each weight / style is its own file. Family, weight and style are read from the ' +
+    'file; `fontFamily` binds it to another family name (e.g. the one an imported PowerPoint uses). A face ' +
+    'whose postscript name the folder has is refused. Only fonts the user has the right to use. Undo: ' +
+    'folder.fonts.delete. Needs folder editor.',
   input: z.strictObject({
     file: FileSourceSchema,
     fontFamily: z
@@ -273,8 +273,8 @@ export const folderFontsDelete = defineCommand({
   domain: 'folder',
   title: 'Delete folder font',
   description:
-    'Remove a font face from the folder (asset id from folder.fonts.list). Every deck in the folder keeps a ' +
-    'private copy so it still renders. Confirm with the user first. Needs the editor role in the folder.',
+    'Remove a font face from the folder (asset id from folder.fonts.list); every deck in the folder keeps a ' +
+    'private copy so it still renders. Confirm with the user first. Needs folder editor.',
   input: z.strictObject({ assetId: IdSchema.describe('Font asset id (folder.fonts.list)') }),
   output: z.object({
     promotedToDeckCount: z.number().describe('Decks that received a private copy of the font'),

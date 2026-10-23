@@ -75,10 +75,9 @@ export const stylePackGet = defineCommand({
   role: 'viewer',
   title: "Read the folder's style pack",
   description:
-    "The folder's style pack — its brand as layouts, text styles, colour variants, components and rules. `part`: " +
-    '"summary" (start here), "layouts" (each layout\'s id, purpose and slots: pick one by purpose), "layout" (one, ' +
-    'in full, with `layoutId`) or "pack" (all of it, large). null when the folder has none. Any member of the ' +
-    'folder, and anyone with access to one of its decks.',
+    "The folder's style pack — its brand as layouts, text styles, colour variants, components and rules. " +
+    '`part`: "summary" (start here), "layouts" (each id, purpose and slots: pick one by purpose), "layout" ' +
+    '(one in full, with `layoutId`) or "pack" (all, large). null when the folder has none. Any folder member, or anyone with access to one of its decks.',
   input: z.strictObject({
     part: z.enum(['summary', 'layouts', 'layout', 'pack']),
     layoutId: z.string().min(1).max(48).optional(),
@@ -127,14 +126,14 @@ export const stylePackEdit = defineCommand({
   title: "Change the folder's style pack",
   description:
     'Change the folder\'s style pack. `op`: "set" replaces it with `pack` (a whole pack, as style.pack.get ' +
-    '"pack" returns one); "update" applies `patch`, a JSON merge patch (null removes; `layouts` and `components` ' +
-    'may be an object keyed by id to change, add or, with null, remove single ones); "delete" removes it; ' +
-    '"compile" turns it into the folder\'s colour and text-style tokens and its component masters (only what an ' +
-    'earlier compile made is updated; tokens and masters people made are left alone) and names the fonts the ' +
-    'folder still needs. The result is validated whole; nothing is written when it is not valid. `previous`: for ' +
-    'an update, the update that undoes it; for set/delete, the pack before (set it back; null: there was none). ' +
-    'Undo a compile: put the pack back, compile again (what a first compile created stays). ' +
-    'Only when the user asked for a change to the brand. Needs the editor role in the folder.',
+    '"pack" returns it); "update" applies `patch`, a JSON merge patch (null removes; `layouts` and ' +
+    '`components` may be objects keyed by id, to change, add or (null) remove single ones); "delete" removes ' +
+    'it; "compile" turns it into the folder\'s colour and text-style tokens and component masters (updating ' +
+    'only what an earlier compile made, never what people made) and names the fonts the folder still needs. ' +
+    'The result is validated whole; nothing is written when it is invalid. `previous`: for an update, the ' +
+    'update that undoes it; for set/delete, the pack before (null: none). Undo a compile: put the pack back ' +
+    'and compile again (what a first compile created stays). Only when the user asked for a brand change. ' +
+    'Needs folder editor.',
   input: z.discriminatedUnion('op', [
     z.strictObject({ op: z.literal('set'), pack: z.record(z.string(), z.unknown()) }),
     z.strictObject({ op: z.literal('update'), patch: z.record(z.string(), z.unknown()) }),

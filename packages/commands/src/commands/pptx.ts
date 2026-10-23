@@ -29,12 +29,12 @@ export const deckImportPptx = defineCommand({
   domain: 'deck',
   title: 'Import PowerPoint',
   description:
-    'Create a NEW deck in the folder from a .pptx file (public URL or base64): slides, shapes, text with its ' +
-    'formatting, tables, images, videos, speaker notes and embedded fonts are converted to Narrative objects. ' +
-    'Returns the new deck id and what could not be carried over (skipped shapes, unsupported images, ignored ' +
-    'elements) plus the font families the slides use — upload missing ones with folder.fonts.upload. To add a ' +
-    "file's slides to an existing deck use deck.insertFrom. A .pptx by URL or base64 is limited to 200 MB; " +
-    'larger decks import through the browser. Undo: deck.delete. Needs the editor role in the folder.',
+    'Create a NEW deck in the folder from a .pptx file (public URL or base64): slides, shapes, formatted text, ' +
+    'tables, images, videos, speaker notes and embedded fonts become Narrative objects. At most 200 MB (larger ' +
+    'through the browser). Returns the new deck id, what could not be carried over (skipped shapes, ' +
+    'unsupported images, ignored elements) and the font families the slides use — upload missing ones with ' +
+    "folder.fonts.upload. A file's slides into an existing deck: deck.insertFrom. Undo: deck.delete. Needs " +
+    'folder editor.',
   input: z.strictObject({
     file: FileSourceSchema,
     title: z
@@ -127,16 +127,14 @@ export const deckInsertFrom = defineCommand({
   domain: 'deck',
   title: 'Insert slides from a file or deck',
   description:
-    'Insert slides into this deck at position `at` (0-based; omitted = at the end; past the end = at the end), ' +
-    'taken from a .pptx file (URL or base64, at most 200 MB) or from another Narrative deck you can edit ' +
-    '(optionally slides `from`..`to`, or exactly the slide ids in `slides`; copying needs the same editor ' +
-    'access as exporting that deck, so a deck ' +
-    'you can only view is refused). Slides keep their objects, animations, speaker notes, transition and background; media this deck ' +
-    "could not show is copied into it, the source folder's linked media included. From a deck in another " +
-    'folder, token references are rebound to this folder the ' +
-    'way deck.moveToFolder does it. One change, reverted as one step. To make the new slides match this deck: ' +
+    'Insert slides into this deck at `at` (0-based; omitted or past the end = at the end) from a .pptx file ' +
+    '(URL or base64, at most 200 MB) or another Narrative deck (optionally slides `from`..`to`, or exactly ' +
+    'the slide ids in `slides`), which needs editor access to it, as exporting it does. Slides keep objects, ' +
+    'animations, speaker notes, transition and background; media this deck could not show is copied in, the ' +
+    "source folder's linked media included; from another folder, token references are rebound as " +
+    'deck.moveToFolder does. One change, reverted as one step. To match the new slides to this deck: ' +
     'style.deck.apply { relayout: "archetype", slides }, then slide.applyLayout for what it lists unmatched ' +
-    '(the insert-restyle prompt). A new deck from a file is deck.importPptx.',
+    '(the insert-restyle prompt). A new deck from a file: deck.importPptx.',
   input: z.strictObject({
     source: InsertSourceSchema,
     at: z.number().int().min(0).optional().describe('Index the first inserted slide takes'),
@@ -225,12 +223,11 @@ export const deckExportPptx = defineCommand({
   domain: 'deck',
   title: 'Export PowerPoint',
   description:
-    'Export the deck as a .pptx file, exactly as it is right now (including edits made seconds ago). By default ' +
-    'returns a download URL valid for 15 minutes. It is a bearer link: anyone who has it can download the deck ' +
-    'without signing in, so give it only to the user who asked (or fetch it yourself) — never put it in a slide, a ' +
-    'share, or a message to someone else. `delivery: "base64"` returns ' +
-    'the file inline instead, only for files up to 8 MB. Colour tokens are written as their colours; everything ' +
-    'the PowerPoint format can hold round-trips back through deck.importPptx.',
+    'Export the deck as a .pptx file as it is right now (edits seconds old included). By default a download ' +
+    'URL valid 15 minutes — a bearer link: anyone with it downloads the deck without signing in, so give it ' +
+    'only to the user who asked (or fetch it yourself), never in a slide, a share or a message to someone ' +
+    'else. `delivery: "base64"`: the file inline, up to 8 MB. Colour tokens become their colours; whatever ' +
+    'PowerPoint can hold round-trips through deck.importPptx.',
   input: z.strictObject({
     delivery: z
       .enum(['url', 'base64'])

@@ -281,6 +281,13 @@ the whole lane and skips a tree that already passed it. Subagents in
   NODE_OPTIONS="--import=tsx" pnpm lint
   ```
   exits 0 with 0 errors (219 warnings). Measured on `petronijus-PC`, Ubuntu 26.04, 2026-09-29. Since 2026-09-30 `just lint` and `tools/dev/format.sh` (the pre-commit hook) add the loader themselves when Node lacks type stripping; only a raw `pnpm lint` still needs it. A Node with type stripping (the Omarchy desktop runs 26.8 via mise, the MacBook 26.5) needs nothing.
+- **e2e specs fail at random on macOS with the "This page couldn't load" card** — the browser console has `RouteLoadError … Failed to fetch dynamically imported module …` (often `DeckShell.tsx`), the failed requests end in `net::ERR_NETWORK_CHANGED`, and Vite logs nothing. A network interface is flapping: Chrome aborts every request in flight, `localhost` included, each time macOS reports a network change. Find the interface and unplug or fix it before e2e or perf runs (a perf bench is skewed the same way):
+  ```bash
+  log show --last 30m --predicate 'process == "configd"' | grep -i "State:/Network"
+  networksetup -listallhardwareports
+  ```
+  Seen on the MacBook on 2026-10-23: a USB-tethered phone (an NCM USB gadget on `en14`) re-attached ~106 times in an hour; 12 route-load failures, each in the same second as a `configd` IPv4 change; with the interface quiet the same specs went 65/65. Since 2026-10-23 a page's first load retries once by itself, 400 ms after the failure (`ui/lazyRoute.tsx`), so a single network change no longer shows the card; a card now means the retry hit another change too. The flapping still skews perf benches and other requests, so fix the interface anyway.
+  When it cannot be unplugged, the test tooling copes (2026-10-23): every e2e worker and `just perf` watch the network — the host's interfaces (polled every 100 ms) and each browser context's requests failing with `ERR_NETWORK_CHANGED` (`apps/web/e2e/fixtures/networkChange.ts`). An e2e test that failed while the network changed gets a `network-change` annotation and attachment naming each event and its local time (compare with the `configd` log above) and is retried once; a test that failed without a change still fails on its first attempt — its retry stops at once with "failed without a network change: not retried" (`e2e/fixtures/test.ts`, the browser projects' `retries: 1`). A perf sample a change touched is discarded and re-run (up to 3 extra attempts, then the bench fails rather than store it), printed as a `PERF note` and kept in the stored result's `discarded` (`packages/perf/README.md` → Run validity).
 
 ## Dev is not production
 

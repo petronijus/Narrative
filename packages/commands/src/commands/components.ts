@@ -201,10 +201,10 @@ export const componentList = defineCommand({
   id: 'component.list',
   title: 'List components',
   description:
-    "The folder's components (id, name, thumbnail URL), oldest first. A folder keeps only a few — the blocks that " +
-    'recur on many slides, such as the headline block, the pagination or a card grid. Prefer them for those roles: ' +
-    'component.get shows one with its slots, component.stamp places it. Do not expect a component for every ' +
-    'layout; build one-off content from plain objects styled with the folder tokens. Any member of the folder.',
+    "The folder's components (id, name, thumbnail URL), oldest first. A folder keeps only a few — blocks that " +
+    'recur on many slides (the headline block, the pagination, a card grid). Prefer them for those roles: ' +
+    'component.get shows one with its slots, component.stamp places it. Do not expect one for every layout; ' +
+    'build one-off content from plain objects styled with the folder tokens. Any folder member.',
   input: z.strictObject({}),
   output: z.object({ components: z.array(ComponentOutput) }),
   readOnly: true,
@@ -228,11 +228,10 @@ export const componentGet = defineCommand({
   id: 'component.get',
   title: 'Read component',
   description:
-    "One component's master: its objects with every property (the shapes query.slide returns), its animations, " +
-    'its bounding box, and its slot map — an object with a `slot` (else a name) is a slot; text slots show their ' +
-    'placeholder text. ' +
-    'Read it before component.stamp to know which slot names to fill. To change the master itself, target the ' +
-    'component (componentId) with the ordinary document commands. Any member of the folder.',
+    "One component's master: its objects with every property (as query.slide returns them), animations, " +
+    'bounding box and slot map — an object with a `slot` (else a name) is a slot; text slots show their ' +
+    'placeholder text. Read it before component.stamp for the slot names. To change the master, target its ' +
+    'componentId with the ordinary document commands. Any folder member.',
   input: z.strictObject({ componentId: ComponentIdSchema }),
   output: z.object({
     component: ComponentOutput,
@@ -274,9 +273,9 @@ export const componentCreate = defineCommand({
   id: 'component.create',
   title: 'Create component',
   description:
-    'Make an empty component in the folder, for a block that recurs on many slides. Fill its master with the ' +
-    'object and text commands pointed at it (componentId); from objects on a slide use component.promote. ' +
-    'Needs the editor role in the folder. Undo: component.delete.',
+    'Make an empty component in the folder, for a block that recurs on many slides; fill its master with the ' +
+    'object and text commands pointed at it (componentId). From objects on a slide: component.promote. Needs ' +
+    'folder editor. Undo: component.delete.',
   input: z.strictObject({
     // Validated by the service (as for POST /folders/:folderId/components):
     // trimmed, at most 200 characters, blank → "Untitled component".
@@ -303,7 +302,8 @@ export const componentRename = defineCommand({
   id: 'component.rename',
   title: 'Rename component',
   description:
-    'Rename a component of the folder. Stamps already on slides are unaffected. Undo: rename it back. Needs the editor role in the folder.',
+    'Rename a component of the folder; stamps on slides are unaffected. Undo: rename it back. Needs folder ' +
+    'editor.',
   input: z.strictObject({
     componentId: ComponentIdSchema,
     name: z
@@ -336,9 +336,9 @@ export const componentDelete = defineCommand({
   id: 'component.delete',
   title: 'Delete component',
   description:
-    'Delete a component master from the folder. Objects already stamped from it stay on their slides with their ' +
-    "pictures and videos (the folder keeps the master's); it just cannot be stamped any more. Cannot be undone; " +
-    'confirm with the user first. Needs the editor role in the folder.',
+    'Delete a component master from the folder. Objects stamped from it stay with their pictures and videos ' +
+    "(the folder keeps the master's); it just cannot be stamped any more. Confirm with the user first. Needs " +
+    'folder editor.',
   input: z.strictObject({ componentId: ComponentIdSchema }),
   output: z.object({ deleted: z.literal(true) }),
   undo: 'irreversible',
@@ -483,16 +483,14 @@ export const componentStamp = defineCommand({
   domain: 'component',
   title: 'Stamp component',
   description:
-    "Place one of the deck's folder components on a slide and fill its text slots in the same step. The master's " +
-    'objects are copied as ordinary objects with fresh ids — rich text, groups and table content included; the ' +
-    "master's animations are not copied. Each copy records its component (`component`): component.restamp " +
-    're-applies a changed master. Without `at` ' +
-    'the copy lands where the master was drawn (its bounding box top-left); `at` moves that corner. `slots` maps ' +
-    'slot names (component.get lists them) to text: a plain string keeps the ' +
-    "slot's formatting, { paragraphs } sets it explicitly. The stamp shows the master's own pictures and videos " +
-    "(linked, not copied: a deck may show its folder's component media). Returns the new object ids in stacking " +
-    "order. Use the folder's existing components for the roles they cover; do not stamp for one-off content. " +
-    "Needs the editor role on the deck and a role in its folder (the folder's components are its members').",
+    "Place one of the deck's folder components on a slide and fill its text slots in the same step. The " +
+    "master's objects are copied as ordinary objects with fresh ids — rich text, groups and table content " +
+    'included, its animations not. Each copy records its component (`component`): component.restamp ' +
+    're-applies a changed master. `slots` maps slot names (component.get lists them) to text: a plain string ' +
+    "keeps the slot's formatting, { paragraphs } sets it. The master's pictures and videos stay linked, not " +
+    "copied (a deck may show its folder's component media). Returns the new object ids in stacking order. Use " +
+    "the folder's components for the roles they cover, not for one-off content. Needs deck editor and a role " +
+    'in its folder.',
   input: z.strictObject({
     componentId: ComponentIdSchema,
     slide: SlideRefSchema,
@@ -650,15 +648,14 @@ export const componentRestamp = defineCommand({
   domain: 'component',
   title: 'Restamp component',
   description:
-    "Reset a component's stamps to its current master — on `slide`, or without it the whole deck — only when " +
-    'the user asks to bring them up to date: stamps are detached, a master change never reaches them by itself. ' +
-    'Change the master first (object and text commands with componentId); for a new stamp use component.stamp. ' +
-    'Each stamp is updated in place (ids, so animations, kept; where people moved it) with every master ' +
-    'property, overwriting local edits to it (colour, size, name, lock, link…), except slot content: a text slot ' +
-    'keeps its text in the master formatting, a picture slot its picture, a table slot its cells. Every master ' +
-    'object comes back, also ones deleted from the stamp; objects no longer in the master go with their ' +
-    'animations. Ask the user before restamping a whole deck. An empty master is refused. Needs the editor role ' +
-    'on the deck and a role in its folder.',
+    "Reset a component's stamps to its current master — on `slide`, else the whole deck — only when the user " +
+    'asks to bring them up to date: stamps are detached, a master change never reaches them by itself. Change ' +
+    'the master first (object and text commands with componentId); a new stamp is component.stamp. Each stamp ' +
+    'is updated in place (ids, so animations, kept; where people moved it) with every master property, ' +
+    'overwriting local edits (colour, size, name, lock, link…), except slot content: a text slot keeps its ' +
+    'text in the master formatting, a picture slot its picture, a table slot its cells. Master objects ' +
+    'deleted from the stamp come back; objects no longer in the master go with their animations. Ask before ' +
+    'restamping a whole deck. An empty master is refused. Needs deck editor and a role in its folder.',
   input: z.strictObject({
     componentId: ComponentIdSchema,
     slide: SlideRefSchema.optional(),
@@ -727,12 +724,12 @@ export const componentPromote = defineCommand({
   title: 'Make component from objects',
   description:
     "Make a new component of this deck's folder from objects on one of its slides, for a block that recurs on " +
-    'many slides (a headline block, the pagination, a card grid) — a folder keeps only a few. The objects become ' +
-    'the master as they are: a group brings its members, rich text, tables and their animations come along; the ' +
-    'slide is not changed. Pictures and videos are copied into the component; links to slides are removed. ' +
-    "An object's `slot` (else its name) makes it a slot (component.stamp fills text slots by it), so set `slot` on " +
-    'the text boxes (object.update) first; a stamp link (`component`) is dropped. Needs the editor role in the ' +
-    "deck's folder. Undo: component.delete.",
+    'many slides (a headline block, the pagination, a card grid) — a folder keeps only a few. The objects ' +
+    'become the master as they are (a group with its members, rich text, tables, their animations); the slide ' +
+    'is not changed. Pictures and videos are copied into the component; links to slides are removed; a stamp ' +
+    "link (`component`) is dropped. An object's `slot` (else its name) makes it a slot (component.stamp fills " +
+    'text slots by it): set `slot` on the text boxes (object.update) first. Needs folder editor. Undo: ' +
+    'component.delete.',
   input: z.strictObject({
     slide: SlideRefSchema,
     objects: ObjectIdsSchema.describe('The objects to promote (a group id brings its members)'),

@@ -148,14 +148,13 @@ export const objectFillGradient = defineCommand({
   title: 'Gradient fill',
   description:
     'Fill shapes (rectangle, ellipse, triangle, polygon, path) or tables with a linear or radial gradient. Without ' +
-    "`stops` a new gradient starts from the shape's own fill colour and a darker tint of it (as the editor does), " +
-    'and a shape that already has a gradient keeps its stops — so switching linear ↔ radial or changing only ' +
-    '`angle` / `center` keeps the colours. `angle` (linear, degrees clockwise, 0 = top to bottom, 90 = left to ' +
-    'right) and `center` (radial, 0..1 of the shape) keep their current values when omitted. A fill linked to a ' +
-    'folder colour token is unlinked to its current colour. A table gets the gradient as the fill of every cell ' +
-    "(replacing cells' own gradients); with `cells` (one table in `objects`) only those cells get it, each " +
-    'starting from its own colour. Back to a solid fill: object.update with "fillStyle": null (for table cells, ' +
-    'table.style.* with "fillStyle": null).',
+    "`stops` a new gradient starts from the shape's fill colour and a darker tint of it (as the editor does), " +
+    'and an existing gradient keeps its stops — so switching linear ↔ radial or changing only `angle` / `center` ' +
+    'keeps the colours. `angle` (linear, degrees clockwise, 0 = top to bottom, 90 = left to right) and `center` ' +
+    '(radial, 0..1 of the shape) keep their values when omitted. A fill linked to a folder colour is unlinked to ' +
+    "its current colour. A table gets it as every cell's fill (replacing cells' own gradients); with `cells` (one " +
+    'table in `objects`) only those cells, each from its own colour. Back to solid: object.update with ' +
+    '"fillStyle": null (table cells: table.style.*).',
   input: z.strictObject({
     slide: SlideRefSchema,
     objects: ObjectIdsSchema,
@@ -382,10 +381,9 @@ export const objectEffectsShadow = defineCommand({
   id: 'object.effects.shadow',
   title: 'Drop shadow',
   description:
-    'Give objects a drop shadow, change it, or remove it (`shadow: null`). The fields you give are merged into ' +
-    "the object's current shadow — or, when it has none, into the editor's default (black, blur 8, offset 4 / 4, " +
-    'opacity 0.5) — so `{}` switches the default shadow on and `{ "blur": 20 }` only softens it. Any object type ' +
-    'takes one; for text the glyphs cast it.',
+    'Give objects a drop shadow, change it, or remove it (`shadow: null`). The fields given are merged into ' +
+    "the current shadow, or the editor's default (black, blur 8, offset 4 / 4, opacity 0.5): `{}` switches " +
+    'the default on, `{ "blur": 20 }` only softens it. Any object type; for text the glyphs cast it.',
   input: z.strictObject({
     slide: SlideRefSchema,
     objects: ObjectIdsSchema,
@@ -462,12 +460,11 @@ export const objectSlideNumberSet = defineCommand({
   id: 'object.slideNumber.set',
   title: 'Page-number field',
   description:
-    'Make a text box show the number of the slide it is on (`on: true`), or turn that off. The number replaces ' +
-    'its text when rendered and counts slides in deck order, skipping skipped slides; its font, size, colour ' +
-    "and alignment stay as they are. `applyTextStyle: true` also links the box to the folder's page-number text " +
-    `style ("${PAGE_NUMBER_TEXT_STYLE_NAME}") and applies it, as the editor offers for a deck's first page number. ` +
-    'The result says whether another page number already exists in the deck and whether the folder has that ' +
-    'style.',
+    'Make a text box show the number of its slide (`on: true`), or stop. The number replaces its text when ' +
+    'drawn, counting slides in deck order without skipped ones; font, size, colour and alignment stay. ' +
+    "`applyTextStyle: true` also links and applies the folder's page-number text style " +
+    `("${PAGE_NUMBER_TEXT_STYLE_NAME}"), as the editor offers for a deck's first page number. The result says ` +
+    'whether the deck has another page number and whether the folder has that style.',
   input: z
     .strictObject({
       slide: SlideRefSchema,

@@ -81,14 +81,14 @@ export const textEdit = defineCommand({
   id: 'text.edit',
   title: 'Edit text in place',
   description:
-    'Change part of a text box or table cell body without resending it, as typing in the editor does. `edits` ' +
-    'run in order, each against the text the previous one left. { at, delete?, insert? } removes `delete` ' +
-    'characters at `at` and inserts `insert` there; inserted text takes the formatting of the text before it, ' +
-    '"\\n\\n" in it starts a new paragraph that continues the list it splits. { at, key: "Enter" | "Backspace" } ' +
-    'does what the key does with the caret there: Enter splits the paragraph (on an empty list item it ' +
-    'outdents, or ends the list); Backspace at the start of an indented or list paragraph outdents it or ' +
-    'removes the list, elsewhere deletes the character before. Returns the new length and the caret after the ' +
-    'last edit. Whole body: text.set; find and replace: text.replace.',
+    'Change part of a text box or table cell body without resending it, as typing does. `edits` run in order, ' +
+    'each on the text the previous one left. { at, delete?, insert? } removes `delete` characters at `at` and ' +
+    'inserts `insert` there, in the formatting of the text before it; "\\n\\n" in it starts a paragraph that ' +
+    'continues the list it splits. { at, key: "Enter" | "Backspace" } is the key with the caret there: Enter ' +
+    'splits the paragraph (on an empty list item it outdents or ends the list); Backspace at the start of an ' +
+    'indented or list paragraph outdents it or removes the list, elsewhere deletes the character before. ' +
+    'Returns the new length and the caret after the last edit. Whole body: text.set; find and replace: ' +
+    'text.replace.',
   input: z.strictObject({
     target: TextTargetSchema,
     edits: z
@@ -217,10 +217,10 @@ export const textReplace = defineCommand({
   id: 'text.replace',
   title: 'Find and replace text',
   description:
-    'Replace every occurrence of `find` with `replace` in text boxes and visible table cells (not speaker notes) — of the whole deck, of ' +
-    'one `slide`, or of some `objects` on it. Case-sensitive unless `matchCase: false`; `wholeWord: true` skips ' +
-    'matches inside longer words. The replacement keeps the formatting of the text it replaces; "\\n\\n" in it ' +
-    'starts a new paragraph. Returns how many were replaced and where. One change: a single undo reverts it.',
+    'Replace every `find` with `replace` in text boxes and visible table cells (not speaker notes) — of the ' +
+    'whole deck, one `slide`, or some `objects` on it. Case-sensitive unless `matchCase: false`; `wholeWord: ' +
+    'true` skips matches inside longer words. The replacement keeps the formatting it replaces; "\\n\\n" in it ' +
+    'starts a paragraph. Returns how many and where. One change, one undo.',
   input: z
     .strictObject({
       find: z.string().min(1).max(1000),

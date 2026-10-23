@@ -96,9 +96,8 @@ export const slideAdd = defineCommand({
   id: 'slide.add',
   title: 'Add slide',
   description:
-    'Insert a new empty slide (white background, no objects, no transition). ' +
-    'Omit `index` to append at the end; `index` is the 0-based position the new slide will occupy. ' +
-    'To copy an existing slide with its content use slide.duplicate instead.',
+    'Insert an empty slide (white, no objects, no transition): at the end, or at the 0-based position ' +
+    '`index`. A copy of an existing slide: slide.duplicate.',
   input: z.object({ index: z.number().int().min(0).optional() }).strict(),
   output: SlideIdOutput,
   implementedWith: ['addSlide'],
@@ -117,10 +116,9 @@ export const slideDuplicate = defineCommand({
   id: 'slide.duplicate',
   title: 'Duplicate slide',
   description:
-    'Copy a slide whole — objects with their rich text, tables, animations, transition, background, ' +
-    'speaker notes, name and outline state — and insert the copy right after the source (or at `index`). ' +
-    'Object ids are kept on purpose so Magic Move pairs objects across the two slides; ' +
-    'use it before moving things on the copy to author a Magic Move.',
+    'Copy a slide whole — objects with rich text, tables, animations, transition, background, speaker notes, ' +
+    'name and outline state — right after it (or at `index`). Object ids are kept on purpose so Magic Move ' +
+    'pairs them across the two: duplicate, then move things on the copy to author one.',
   input: z.object({ slide: SlideRefSchema, index: z.number().int().min(0).optional() }).strict(),
   output: SlideIdOutput,
   implementedWith: ['duplicateSlide'],
@@ -143,11 +141,10 @@ export const slideDelete = defineCommand({
   id: 'slide.delete',
   title: 'Delete slides',
   description:
-    'Delete one or more slides with everything on them. A deck always keeps at least one slide: ' +
-    'deleting the last remaining slide replaces it with an empty one. Outline children of a deleted slide ' +
-    'stay and move up a level where they would otherwise be two levels below the slide above them. ' +
-    '`landOn` is the slide an editor shows next: the nearest remaining slide above the first deleted one, ' +
-    'else the first remaining slide. To hide a slide from the presentation without deleting it use slide.skip.',
+    'Delete slides with everything on them. A deck keeps at least one slide: deleting the last one leaves an ' +
+    'empty one. Outline children of a deleted slide stay, moving up a level where they would be two below the ' +
+    'slide above. `landOn`: the slide an editor shows next (the nearest remaining above the first deleted, ' +
+    'else the first). Hide from the presentation instead: slide.skip.',
   input: z.object({ slides: z.array(SlideRefSchema).min(1).max(500) }).strict(),
   output: z.object({ deleted: z.array(z.string()), landOn: z.string() }),
   implementedWith: ['removeSlide', 'setSlideIndent'],
@@ -176,12 +173,10 @@ export const slideMove = defineCommand({
   id: 'slide.move',
   title: 'Move slides',
   description:
-    'Move one or more slides, as a block keeping their current relative order, so the block starts at ' +
-    '`toIndex` (0-based, counted in the deck BEFORE the move; clamped to the deck length). ' +
-    'Outline children are NOT moved implicitly — list them too if they should follow their parent. ' +
-    '`level` sets the outline level of the first moved slide; the others shift by the same amount, so the ' +
-    "block's own structure stays. Afterwards no slide is more than one level deeper than the slide above it " +
-    '(deeper ones are raised), the rule the slides panel drags by.',
+    'Move slides as a block, keeping their relative order, so it starts at `toIndex` (0-based, counted in the ' +
+    'deck BEFORE the move; clamped to its length). Outline children do NOT follow unless listed too. `level` ' +
+    '(of the first moved slide) shifts the others with it. Afterwards no slide is more than one level deeper ' +
+    'than the slide above it (deeper ones are raised), as in the slides panel.',
   input: z
     .object({
       slides: z.array(SlideRefSchema).min(1).max(500),
@@ -243,12 +238,11 @@ export const slideCopyTo = defineCommand({
   id: 'slide.copyTo',
   title: 'Copy slides',
   description:
-    'Copy one or more slides of this deck, as a block in their deck order, so the copies start at `index` ' +
-    '(0-based position in the deck as it is now; omitted = at the end). Each copy is whole — objects with ' +
-    'their rich text, tables, animations, transition, background, speaker notes, name — and keeps its object ' +
-    'ids (Magic Move pairs them with the originals). The copies keep their relative outline levels, shifted ' +
-    'so the first fits under the slide it lands below. To copy one slide right after itself use ' +
-    'slide.duplicate; to bring slides from ANOTHER deck use deck.insertFrom.',
+    'Copy slides of this deck as a block in their deck order, the copies starting at `index` (0-based, in the ' +
+    'deck as it is now; omitted = at the end). Each copy is whole — objects with rich text, tables, ' +
+    'animations, transition, background, speaker notes, name — and keeps its object ids (Magic Move pairs ' +
+    'them with the originals). Relative outline levels are kept, shifted so the first fits under the slide ' +
+    'above it. One slide right after itself: slide.duplicate; from ANOTHER deck: deck.insertFrom.',
   input: z
     .object({
       slides: z.array(SlideRefSchema).min(1).max(500),
@@ -286,8 +280,8 @@ export const slideRename = defineCommand({
   idempotent: true,
   title: 'Rename slide',
   description:
-    'Set the name shown for a slide in the slides panel and the presenter view. ' +
-    'An empty (or whitespace-only) name clears it, so the slide falls back to "Slide N".',
+    'Set the name a slide shows in the slides panel and the presenter view; an empty or whitespace name ' +
+    'clears it ("Slide N").',
   input: z.object({ slide: SlideRefSchema, name: z.string().max(200) }).strict(),
   output: EmptyOutput,
   implementedWith: ['setSlideName'],
@@ -305,8 +299,8 @@ export const slideSkip = defineCommand({
   idempotent: true,
   title: 'Skip slide in presentation',
   description:
-    'Mark a slide as skipped (hidden from present mode, still visible and editable in the editor) ' +
-    'or un-skip it. Skipped slides do not count towards page numbers.',
+    'Mark a slide skipped (hidden from present mode, still in the editor) or un-skip it. Skipped slides do ' +
+    'not count towards page numbers.',
   input: z.object({ slide: SlideRefSchema, skipped: z.boolean() }).strict(),
   output: EmptyOutput,
   implementedWith: ['setSlideSkipped'],
@@ -326,11 +320,11 @@ export const slideIndent = defineCommand({
   idempotent: true,
   title: 'Set slide outline level',
   description:
-    `Set a slide's outline indent level (0 = top level, max ${MAX_SLIDE_INDENT}). ` +
-    'A slide can be at most one level deeper than the slide above it, and the first slide is always level 0 — ' +
-    'the same rules as dragging in the slides panel. Indented slides become children of the nearest ' +
-    'shallower slide above them (sections); the outline does not affect present mode. Slides below it that ' +
-    'would then be two levels deeper than the slide above them are raised with it.',
+    `Set a slide's outline indent level (0 = top, max ${MAX_SLIDE_INDENT}). ` +
+    'A slide is at most one level deeper than the slide above it and the first slide is level 0, as when ' +
+    'dragging in the slides panel. Indented slides become children of the nearest shallower slide above ' +
+    '(sections); present mode ignores the outline. Slides below that would end two levels deeper than the ' +
+    'slide above are raised with it.',
   input: z
     .object({ slide: SlideRefSchema, level: z.number().int().min(0).max(MAX_SLIDE_INDENT) })
     .strict(),
@@ -363,8 +357,8 @@ export const slideCollapse = defineCommand({
   idempotent: true,
   title: 'Collapse slide section',
   description:
-    "Collapse or expand a slide's outline children in the slides panel. Purely a panel view setting " +
-    'shared with collaborators; it does not hide anything from present mode (use slide.skip for that).',
+    "Collapse or expand a slide's outline children in the slides panel: a view setting shared with " +
+    'collaborators, hiding nothing from present mode (that is slide.skip).',
   input: z.object({ slide: SlideRefSchema, collapsed: z.boolean() }).strict(),
   output: EmptyOutput,
   implementedWith: ['setSlideCollapsed'],
@@ -386,9 +380,9 @@ export const slideSetTransition = defineCommand({
   idempotent: true,
   title: 'Set slide transition',
   description:
-    'Set how present mode moves INTO this slide: `kind` none | fade | push | cube | magic (Magic Move animates ' +
-    'objects that share ids with the previous slide — see slide.duplicate), `durationMs` in milliseconds, ' +
-    '`direction` left | right | up | down for push (null removes it). Fields you omit keep their value.',
+    'Set how present mode moves INTO this slide: `kind` none | fade | push | cube | magic (Magic Move ' +
+    'animates objects that share ids with the previous slide — see slide.duplicate), `durationMs`, ' +
+    '`direction` left | right | up | down for push (null removes it). Omitted fields keep their value.',
   input: z
     .strictObject({
       slide: SlideRefSchema,
@@ -438,9 +432,9 @@ export const slideSetBackground = defineCommand({
   title: 'Set slide background',
   description:
     'Set a slide\'s background: { kind: "color", color, alpha? }, { kind: "linearGradient", angleDeg, stops }, ' +
-    '{ kind: "radialGradient", centerX, centerY, radius, stops } (2..10 stops of { offset 0..1, color, alpha? }) ' +
-    'or { kind: "image", assetId, fit: cover|contain, dim? } for an already uploaded asset. Colours "#RRGGBB" or ' +
-    '0xRRGGBB. `null` resets to the default white. The whole background is replaced.',
+    '{ kind: "radialGradient", centerX, centerY, radius, stops } (2..10 stops of { offset 0..1, color, alpha? ' +
+    '}) or { kind: "image", assetId, fit: cover|contain, dim? } for an uploaded asset. `null`: the default ' +
+    'white. The whole background is replaced.',
   input: z.strictObject({
     slide: SlideRefSchema,
     background: SlideBackgroundInputSchema.nullable(),
@@ -498,9 +492,9 @@ export const slideNotesGet = defineCommand({
   id: 'slide.notes.get',
   title: 'Read speaker notes',
   description:
-    "A slide's speaker notes as Markdown with their formatting, in the syntax slide.notes.set takes; empty " +
-    'notes read as "". query.slide gives them as plain text — read them here before editing them with ' +
-    'slide.notes.set so the formatting survives.',
+    "A slide's speaker notes as Markdown with their formatting, in slide.notes.set's syntax; empty notes are " +
+    '"". query.slide has them as plain text — read them here before slide.notes.set so the formatting ' +
+    'survives.',
   input: z.strictObject({ slide: SlideRefSchema }),
   output: z.object({ markdown: z.string() }),
   implementedWith: ['getSlideNotesDoc'],
@@ -519,11 +513,10 @@ export const slideNotesSet = defineCommand({
   idempotent: true,
   title: 'Set speaker notes',
   description:
-    "Replace a slide's speaker notes (what the presenter view shows) with Markdown: # headings, - and 1. lists " +
-    '(nested by indenting), > quotes, ``` code blocks, ---, **bold**, *italic*, ~~strike~~, `code`, ' +
-    '<u>underline</u>, [links](https://…). A newline inside a paragraph is a line break; a blank line starts a ' +
-    'new paragraph. "" clears the notes. The whole notes are replaced — read them first with slide.notes.get ' +
-    'to change only part.',
+    "Replace a slide's speaker notes (the presenter view's) with Markdown: # headings, - and 1. lists (nested " +
+    'by indenting), > quotes, ``` code blocks, ---, **bold**, *italic*, ~~strike~~, `code`, <u>underline</u>, ' +
+    '[links](https://…). A newline is a line break, a blank line a new paragraph; "" clears them. The whole ' +
+    'notes are replaced — to change part, read them first with slide.notes.get.',
   input: z.strictObject({
     slide: SlideRefSchema,
     markdown: z.string().max(MAX_NOTES_MARKDOWN),

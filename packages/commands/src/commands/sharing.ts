@@ -48,9 +48,8 @@ export const sharePermissionsList = defineCommand({
   id: 'share.permissions.list',
   title: 'List collaborators',
   description:
-    'Who has access to the deck: every collaborator with user id, email, name, role and when it was granted. ' +
-    'People invited by email who have not signed in yet are share.invites.list; anonymous links are ' +
-    'share.links.list.',
+    'Who has access to the deck: each collaborator with user id, email, name, role and grant time. Invited by ' +
+    'email, not signed in yet: share.invites.list; anonymous links: share.links.list.',
   input: z.strictObject({}),
   output: z.object({
     permissions: z.array(
@@ -80,11 +79,11 @@ export const sharePermissionsInvite = defineCommand({
   id: 'share.permissions.invite',
   title: 'Share with a person',
   description:
-    'Share the deck with someone by email. If they already use Narrative they get the role immediately ' +
-    '(`kind: "granted"`); otherwise a pending invite is created and an invitation EMAIL is sent to them ' +
-    '(`kind: "pending"`), which they accept by signing in. Inviting an existing collaborator changes their role. ' +
-    'Always confirm the address and role with the user first — this reaches a real person. To change the role of ' +
-    'someone listed by share.permissions.list without emailing, use share.permissions.setRole.',
+    'Share the deck with someone by email. A Narrative user gets the role at once (`kind: "granted"`); ' +
+    'otherwise a pending invite is created and an invitation EMAIL sent (`kind: "pending"`), accepted by ' +
+    'signing in. Inviting a collaborator changes their role. Always confirm the address and role with the ' +
+    "user first — this reaches a real person. A listed collaborator's role without an email: " +
+    'share.permissions.setRole.',
   input: z.strictObject({
     email: z.email().max(320).describe('Their email address'),
     role: RoleInput,
@@ -122,9 +121,9 @@ export const sharePermissionsSetRole = defineCommand({
   idempotent: true,
   title: 'Change a collaborator role',
   description:
-    'Change the role of an existing collaborator (user id from share.permissions.list). Their open editors ' +
-    'reconnect with the new role at once — a downgrade to viewer makes the deck read-only for them. You cannot ' +
-    'change your own role. Sends no email. Confirm with the user first.',
+    "Change an existing collaborator's role (user id from share.permissions.list); their open editors " +
+    'reconnect with it at once (viewer = read-only). Not your own role. No email. Confirm with the user ' +
+    'first.',
   input: z.strictObject({
     userId: UserIdSchema.describe('The collaborator (share.permissions.list)'),
     role: RoleInput,
@@ -148,8 +147,8 @@ export const sharePermissionsRevoke = defineCommand({
   id: 'share.permissions.revoke',
   title: 'Remove a collaborator',
   description:
-    "Remove a collaborator's access (user id from share.permissions.list); their open editors are disconnected. " +
-    'You cannot remove yourself, and the last owner cannot be removed. Confirm with the user first.',
+    "Remove a collaborator's access (user id from share.permissions.list); their open editors are " +
+    'disconnected. Not yourself, not the last owner. Confirm with the user first.',
   input: z.strictObject({ userId: UserIdSchema.describe('The collaborator to remove') }),
   output: z.object({ revoked: z.literal(true) }),
   routes: [DELETE('/decks/:id/permissions/:userId')],
@@ -169,8 +168,8 @@ export const shareInvitesList = defineCommand({
   id: 'share.invites.list',
   title: 'List pending invites',
   description:
-    'Email invites to the deck that have not been accepted yet (id, email, role, sent and expiry time). An invite ' +
-    'turns into a collaborator when the person signs in.',
+    'Email invites to the deck not accepted yet (id, email, role, sent and expiry time); one becomes a ' +
+    'collaborator when the person signs in.',
   input: z.strictObject({}),
   output: z.object({
     invites: z.array(
@@ -197,8 +196,8 @@ export const shareInvitesCancel = defineCommand({
   id: 'share.invites.cancel',
   title: 'Cancel an invite',
   description:
-    'Withdraw a pending email invite (id from share.invites.list): the link in the email stops working. Confirm ' +
-    'with the user first.',
+    'Withdraw a pending email invite (id from share.invites.list): the link in the email stops working. ' +
+    'Confirm with the user first.',
   input: z.strictObject({ inviteId: IdSchema.describe('Invite id (share.invites.list)') }),
   output: z.object({ cancelled: z.literal(true) }),
   routes: [DELETE('/decks/:id/invites/:inviteId')],
@@ -217,8 +216,8 @@ export const shareLinksList = defineCommand({
   id: 'share.links.list',
   title: 'List share links',
   description:
-    'Active share links of the deck: anyone holding one opens the deck with its role, without signing in. Lists ' +
-    'id, role, creation and expiry time; the URL itself is only returned when a link is created.',
+    "The deck's active share links: anyone holding one opens the deck with its role, without signing in. Id, " +
+    'role, creation and expiry time; the URL is only returned when a link is created.',
   input: z.strictObject({}),
   output: z.object({
     links: z.array(
@@ -243,9 +242,9 @@ export const shareLinksCreate = defineCommand({
   id: 'share.links.create',
   title: 'Create a share link',
   description:
-    'Create a link that opens the deck for ANYONE who has it, without an account, with the given role (usually ' +
-    'viewer; an editor link lets strangers change the deck). Optionally expiring. Returns the URL to hand out. ' +
-    'Confirm with the user first; revoke with share.links.revoke.',
+    'Create a link that opens the deck for ANYONE who has it, without an account, with the given role ' +
+    '(usually viewer; an editor link lets strangers change the deck), optionally expiring. Returns the URL to ' +
+    'hand out. Confirm with the user first; revoke with share.links.revoke.',
   input: z.strictObject({
     role: RoleInput,
     expiresAt: z.iso.datetime({ offset: true }).optional().describe('When the link stops working'),
@@ -271,8 +270,8 @@ export const shareLinksRevoke = defineCommand({
   id: 'share.links.revoke',
   title: 'Revoke a share link',
   description:
-    'Revoke a share link (id from share.links.list): it stops working at once and people who opened the deck with ' +
-    'it are disconnected. Confirm with the user first.',
+    'Revoke a share link (id from share.links.list): it stops working at once and people who opened the deck ' +
+    'with it are disconnected. Confirm with the user first.',
   input: z.strictObject({ linkId: IdSchema.describe('Share link id (share.links.list)') }),
   output: z.object({ revoked: z.literal(true) }),
   routes: [DELETE('/decks/:id/share-links/:linkId')],

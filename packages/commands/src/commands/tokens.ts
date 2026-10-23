@@ -230,9 +230,9 @@ export const tokenUsages = defineCommand({
   title: 'Where a token is used',
   description:
     "Every place that uses one of the folder's design tokens: objects and text runs on each deck slide (deck, " +
-    'slide index, object, field), component masters, and — for a colour — the text styles whose colour is that ' +
-    'token. Check it before changing or deleting a token to know what will change. Reads the saved documents, so ' +
-    'edits from the last few seconds may be missing. Any member of the folder.',
+    'slide index, object, field), component masters, and for a colour the text styles using it. Check it ' +
+    'before changing or deleting a token. Reads the saved documents: edits of the last few seconds may be ' +
+    'missing. Any folder member.',
   input: z.strictObject({
     category: z.enum(['colors', 'textStyles', 'effectStyles']).describe('Token category'),
     tokenId: IdSchema.describe('Token id within the category'),
@@ -297,10 +297,10 @@ export const tokenCreate = defineCommand({
   title: 'Add a design token',
   description:
     `Add a colour or a text style to the folder, for every deck in it. A colour is { name, value } ("#RRGGBB" or ` +
-    `"#RRGGBBAA"), optionally byVariant { axis, values } (a value per deck variant) and bySurface; a folder holds ` +
-    `at most ${MAX_COLORS} colours. A text style holds the typography linked text takes (its fields are the ` +
-    "schema's); apply it with text.style.apply; its name must be new in the folder (token.list). Returns the new id. Undo: " +
-    'token.delete. Needs the editor role in the folder.',
+    `"#RRGGBBAA"), optionally byVariant { axis, values } (a value per deck variant) and bySurface; at most ` +
+    `${MAX_COLORS} colours per folder. A text style holds the typography linked text takes (its fields are the ` +
+    "schema's; apply it with text.style.apply); its name must be new in the folder (token.list). Returns the new " +
+    'id. Undo: token.delete. Needs folder editor.',
   input: z.discriminatedUnion('category', [
     NewColor.extend({ category: z.literal('colors') }),
     NewTextStyle.extend({ category: z.literal('textStyles') }),
@@ -366,11 +366,11 @@ export const tokenUpdate = defineCommand({
   idempotent: true,
   title: 'Change a design token',
   description:
-    'Change a colour or a text style of the folder. Everything linked to it follows in every deck and component ' +
-    'master of the folder, open or not: text boxes and tables linked to a text style take its new values (except ' +
-    'fields set by hand on them), and a colour reaches the text of styles that use it. Only when the user asked ' +
-    'for the folder-wide change; to restyle one box use text.setBoxTypography. `null` removes an optional ' +
-    'text-style field. Returns the previous values (token.update with them undoes it) and what was re-styled. Needs the editor role in the folder.',
+    'Change a colour or a text style of the folder. Everything linked to it follows, in every deck and master ' +
+    'of the folder, open or not: linked text boxes and tables take the new values (except fields set by hand ' +
+    'on them), and a colour reaches the text of styles that use it. Only when the user asked for the ' +
+    'folder-wide change; one box: text.setBoxTypography. `null` removes an optional text-style field. Returns ' +
+    'the previous values (token.update with them undoes it) and what was restyled. Needs folder editor.',
   input: z.discriminatedUnion('category', [
     ColorPatch.extend({ category: z.literal('colors'), tokenId: TokenIdSchema }),
     TextStylePatch.extend({ category: z.literal('textStyles'), tokenId: TokenIdSchema }),
@@ -423,9 +423,9 @@ export const tokenDelete = defineCommand({
   id: 'token.delete',
   title: 'Delete a design token',
   description:
-    'Remove a colour, text style or effect style from the folder. Anything still using it keeps its current look ' +
-    "but no longer follows the token (check token.usages first). The folder's built-in text styles cannot be " +
-    'deleted. Cannot be undone (it returns the token, so it can be made again); confirm with the user first. Needs the editor role in the folder.',
+    'Remove a colour, text style or effect style from the folder. What uses it keeps its look but no longer ' +
+    'follows it (token.usages first). Built-in text styles cannot be deleted. It returns the token, so it can ' +
+    'be made again; confirm with the user first. Needs folder editor.',
   input: z.strictObject({ category: CategorySchema, tokenId: TokenIdSchema }),
   output: z.object({
     deleted: z.literal(true),
@@ -454,10 +454,10 @@ export const tokenSeedDefaults = defineCommand({
   idempotent: true,
   title: 'Add the default tokens',
   description:
-    'Give a folder that has no colours and no text styles the default palette and text styles (Title, Heading 1–3, ' +
-    'Body, …, "Footnotes and pages"), and bring an older folder\'s default styles up to date. New folders get them ' +
-    'when created; a folder that already has colours or text styles is not refilled. Cannot be undone — the ' +
-    'default text styles are built in (token.delete refuses them); confirm with the user first. Needs the editor role in the folder.',
+    'Give a folder with no colours and no text styles the default palette and text styles (Title, Heading ' +
+    '1–3, Body, …, "Footnotes and pages"), and bring an older folder\'s default styles up to date. New folders ' +
+    'get them when created; a folder with colours or text styles is not refilled. The default text styles are ' +
+    'built in (token.delete refuses them); confirm with the user first. Needs folder editor.',
   input: z.strictObject({}),
   output: z.object({ seeded: z.boolean(), migrated: z.boolean() }),
   undo: 'irreversible',
@@ -528,9 +528,8 @@ export const tokenList = defineCommand({
   title: "List a folder's tokens",
   description:
     "The folder's design tokens with their ids: colours, text styles (`builtin` ones cannot be deleted; a " +
-    'colour is a hex or { $token: "colors.<id>" }) and effect styles (stored, not applied to anything yet). A ' +
-    "deck's folder is its `folderId` (deck.get). Link text to a style with text.style.apply (by name works too). " +
-    'Any member of the folder, and anyone with access to one of its decks.',
+    'colour is a hex or { $token: "colors.<id>" }) and effect styles (stored, not applied yet). A deck\'s ' +
+    'folder is its `folderId` (deck.get). Link text to a style with text.style.apply (by name too). Any folder member, or anyone with access to one of its decks.',
   input: z.strictObject({}),
   output: z.object({
     colors: z.array(ColorTokenOutput),

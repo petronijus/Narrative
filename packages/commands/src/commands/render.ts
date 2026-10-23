@@ -40,14 +40,13 @@ export const deckExportPng = defineCommand({
   domain: 'deck',
   title: 'Export slides as PNG',
   description:
-    'Render slides to PNG files exactly as the editor shows them now (seconds-old edits included), with the ' +
-    'deck’s fonts and pictures: 1920×1080 per slide. Returns one download URL per slide, valid for 15 minutes — ' +
-    'bearer links: give them only to the user who asked. `delivery: "base64"` returns the bytes inline (≤ 8 MB in ' +
-    'total) to pass on (e.g. to media.upload), not to look at (to see a slide, query.render). An editable ' +
-    'file is deck.exportPptx. At most 20 slides per call: ask for a longer deck in parts. `failedLoads` counts ' +
-    'a slide’s pictures that no longer exist (they show their error mark, as in the editor); `failedFonts` names ' +
-    'font families that failed to load (their text shows a fallback face). Takes a few seconds. Any reader of ' +
-    'the deck.',
+    'Render slides to PNG files as the editor shows them now (seconds-old edits included), with the deck’s ' +
+    'fonts and pictures: 1920×1080 per slide. Returns one download URL per slide, valid 15 minutes — bearer ' +
+    'links: only for the user who asked. `delivery: "base64"`: the bytes inline (≤ 8 MB in total) to pass on ' +
+    '(e.g. to media.upload), not to look at (query.render). Editable: deck.exportPptx. At most 20 slides per ' +
+    'call: a longer deck in parts. `failedLoads` counts a slide’s missing pictures (drawn as their error ' +
+    'mark, as in the editor); `failedFonts` names families that fell back. Takes a few seconds. Any deck ' +
+    'reader.',
   input: z.strictObject({
     slides: z
       .union([z.literal('all'), z.array(SlideRefSchema).min(1).max(MAX_RENDER_SLIDES)])
@@ -153,7 +152,7 @@ export const deckExportPdf = defineCommand({
     'skipped slides only with `includeSkipped`. A 15-minute bearer link (only for the asker), ' +
     `or \`delivery: "base64"\` (≤ 8 MB). At most ${MAX_PDF_SLIDES} slides, ~1 s each. ` +
     `Waits ≤ ${PDF_EXPORT_WAIT_MS / 1000} s; not done: \`jobId\` + \`status\` queued/running — call again ` +
-    'with `jobId` alone. Any reader of the deck.',
+    'with `jobId` alone. Any deck reader.',
   input: z
     .strictObject({
       slides: z
@@ -223,7 +222,7 @@ const RegionSchema = z
     width: z.number().positive().max(1920),
     height: z.number().positive().max(1080),
   })
-  .describe('A part of `slide`, in slide px (the slide is 1920×1080)')
+  .describe('A part of `slide`, in slide px')
 
 export const queryRender = defineCommand({
   ...serverCommand,
@@ -231,16 +230,15 @@ export const queryRender = defineCommand({
   domain: 'query',
   title: 'Look at slides',
   description:
-    'See slides as they really look — the image comes back to you (fonts, pictures, layout, as the editor ' +
+    'See slides as they really look — the image comes back to you (fonts, pictures, layout as the editor ' +
     'draws them, seconds-old edits included). Look after every visible change before you report it done. ' +
-    '`slide`: the whole slide (1430×804). `slide` + `region` (slide px, 1920×1080 space): that part at full ' +
-    'resolution, for small type, a table or an alignment. `slides` ("all" or a list, at most 20): one contact ' +
-    'sheet, each slide numbered, for pacing and repetition across the deck. `slide` + `compare: "before"`: ' +
-    'the slide before your current run first changed it, beside it now (`newSlide`: your run added it). ' +
-    '`overflow`: text boxes whose text runs below the box with the real fonts — fix those you caused. ' +
-    '`failedLoads` counts missing pictures per slide; ' +
+    '`slide`: the whole slide (1430×804). `slide` + `region` (slide px): that part at full resolution, for ' +
+    'small type, a table or an alignment. `slides` ("all" or a list, at most 20): one numbered contact sheet, ' +
+    'for pacing and repetition. `slide` + `compare: "before"`: the slide before your current run first ' +
+    'changed it, beside it now (`newSlide`: your run added it). `overflow`: text boxes whose text runs below ' +
+    'the box with the real fonts — fix those you caused. `failedLoads` counts missing pictures per slide; ' +
     '`failedFonts` names fonts that fell back. A few seconds the first time on a deck, about a second after. ' +
-    'Files for the user are deck.exportPng. Any reader of the deck.',
+    'Files for the user: deck.exportPng. Any deck reader.',
   input: z
     .strictObject({
       slide: SlideRefSchema.optional().describe('The slide to look at'),
@@ -321,12 +319,11 @@ export const deckRefreshThumbnail = defineCommand({
   domain: 'deck',
   title: 'Redraw the deck card',
   description:
-    'Redraw the card picture — what the folder page shows for the deck, or for a component master (componentId) ' +
-    'in its component list — from the first slide, now. The ' +
-    'card follows changes by itself: from the editor while someone has the deck open, else about 15 s after ' +
-    'the last change (once a minute at most); call this only when it must be right at once (before sending ' +
-    'someone to the folder). Returns the new picture’s URL. Takes a few seconds. Editors of the deck (a master: ' +
-    'of its folder).',
+    'Redraw the card picture the folder page shows for the deck (or for a master, componentId) from the first ' +
+    'slide, now. The card follows changes by itself (from the editor while the deck is open, else about 15 s ' +
+    'after the last change, at most once a minute); call this only when it must be right at once (before ' +
+    'sending someone to the folder). Returns the picture’s URL. Takes a few seconds. Deck editors (a master: ' +
+    "its folder's).",
   input: z.strictObject({}),
   output: z.object({
     thumbnailUrl: z.string(),
