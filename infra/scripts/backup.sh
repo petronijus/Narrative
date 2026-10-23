@@ -62,27 +62,15 @@ SIZE=$(du -sh "${BACKUP_FILE}" | cut -f1)
 log "Záloha hotova: ${BACKUP_FILE} (${SIZE})"
 
 # Restore marker (ADR 0017): advance the instance's restore generation AFTER
-# the dump, and write it outside Postgres. The dump just taken holds a lower
-# generation, so a server that boots on a restore of it sees the database
-# below the marker and refuses every local document copy browsers took
-# before (apps/server/src/hocuspocus/instanceGeneration.ts). A failure here
-# fails the backup: a marker behind the database cannot detect a restore.
-MARKER_DIR="${BACKUP_DIR}/marker"
-mkdir -p "${MARKER_DIR}"
-GENERATION=$(docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.prod.yml \
-  --env-file "${ENV_FILE}" \
-  exec -T postgres \
-  psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -v ON_ERROR_STOP=1 -tAq -c \
-  "UPDATE instance_generation SET generation = GREATEST(generation + 1, extract(epoch from now())::bigint) WHERE id = 1 RETURNING generation")
-if ! [[ "${GENERATION}" =~ ^[1-9][0-9]*$ ]]; then
-  err "Restore generation could not be advanced (got: '${GENERATION}')"
-  exit 1
-fi
-printf '%s\n' "${GENERATION}" > "${MARKER_DIR}/generation.tmp"
-mv -f "${MARKER_DIR}/generation.tmp" "${MARKER_DIR}/generation"
-log "Restore marker: generation ${GENERATION}"
+# the dump, and write it outside Postgres (restore-marker.sh). The dump just
+# taken holds a lower generation, so a server that boots on a restore of it
+# sees the database below the marker and refuses every local document copy
+# browsers took before (apps/server/src/hocuspocus/instanceGeneration.ts). A
+# failure here fails the backup: a marker behind the database cannot detect a
+# restore. The marker lives in <BACKUP_DIR>/marker unless RESTORE_MARKER_DIR
+# says otherwise — the directory the server mounts (docker-compose.prod.yml).
+RESTORE_MARKER_DIR="${RESTORE_MARKER_DIR:-${BACKUP_DIR}/marker}" \
+  bash "${SCRIPT_DIR}/restore-marker.sh" "${ENV_FILE}"
 
 # Smazání starých záloh (starší než RETAIN_DAYS dní)
 log "Mazání záloh starších než ${RETAIN_DAYS} dní..."

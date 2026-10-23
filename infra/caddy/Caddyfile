@@ -99,6 +99,20 @@ http://{$DOMAIN:localhost} {
     }
   }
 
+  # ── Prometheus metrics: never through the proxy ───────────────────────────
+  # The server's GET /metrics (connection counts, document sizes, the client
+  # session histograms) is gated by METRICS_TOKEN, and nothing outside the VM
+  # scrapes it: the reader is `docker exec` on the VM, a scraper belongs on
+  # the Docker network (server:3001, docs/ops.md → Metrics). So the public
+  # path to it is closed here rather than left to the token alone — it would
+  # otherwise be /api/metrics, through the tunnel, for anyone to probe.
+  # Placed before the REST API block: Caddy runs the first `handle` whose
+  # matcher fits, and a named matcher keeps the order as written.
+  @metrics path /api/metrics /api/metrics/*
+  handle @metrics {
+    respond 404
+  }
+
   # ── REST API ────────────────────────────────────────────────────────────────
   handle_path /api/* {
     reverse_proxy server:3001 {

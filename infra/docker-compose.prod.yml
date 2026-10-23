@@ -68,10 +68,23 @@ services:
       # the database below it was restored and refuses every local document
       # copy browsers took before (apps/server/src/hocuspocus/instanceGeneration.ts).
       INSTANCE_MARKER_PATH: /var/lib/narrative/marker/generation
+      # Bearer token of GET /metrics (docs/ops.md → Metrics). The server reads
+      # it from its own environment, and this list is the only way a value in
+      # .env.prod reaches the container: without this line the token would sit
+      # in .env.prod unused. Unset or empty in production = /metrics is not
+      # registered (apps/server/src/metrics/index.ts). Caddy never forwards
+      # /api/metrics, so the scrape goes over the Docker network or
+      # `docker exec`, never through the tunnel.
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
     volumes:
       # backups/ is never synced by a deploy (deploy.sh / remote-release.sh
       # exclude it), so the marker outlives every release; read-only here.
-      - ${RESTORE_MARKER_DIR:-../backups/marker}:/var/lib/narrative/marker:ro
+      # The same directory backup.sh and restore-marker.sh write to:
+      # RESTORE_MARKER_DIR, else <BACKUP_DIR>/marker, else ../backups/marker
+      # (relative to infra/, i.e. /opt/narrative/backups/marker). deploy.sh
+      # creates it before the first container mounts it — a bind-mount source
+      # Docker has to create is root's, and backup.sh could not write into it.
+      - ${RESTORE_MARKER_DIR:-${BACKUP_DIR:-../backups}/marker}:/var/lib/narrative/marker:ro
     ports:
       # Bind to 127.0.0.1 only — Caddy reverse-proxies
       - '127.0.0.1:${API_PORT:-3001}:3001'

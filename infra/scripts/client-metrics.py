@@ -7,13 +7,14 @@ label set, the number of reports and p50 / p75 / p95:
   * the server's logs: one JSON line per report, message `client session
     metrics` (routes/clientMetrics.ts) — exact percentiles, every report since
     the logs begin;
-        docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml \\
-          logs --no-log-prefix server | infra/scripts/client-metrics.py
+        docker logs narrative-server 2>&1 | infra/scripts/client-metrics.py
   * `/metrics` (Prometheus text): the in-memory histograms since the server
     started — percentiles interpolated inside the buckets, as Prometheus'
     histogram_quantile does;
-        curl -s -H "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:3001/metrics \\
+        docker exec narrative-server sh -c \\
+          'wget -qO- --header "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:3001/metrics' \\
           | infra/scripts/client-metrics.py
+    (on the VM: the token expands inside the container; docs/ops.md "Metrics")
 
 Options: --since ISO-8601 (log lines only: reports at or after it).
 docs/ops.md "Client session metrics" explains each metric.

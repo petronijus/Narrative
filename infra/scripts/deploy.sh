@@ -70,6 +70,23 @@ COMPOSE="docker compose ${COMPOSE_FILES} --env-file .env.prod"
 # be root's, and the publish could not write to it.
 mkdir -p "${INFRA_DIR}/../desktop-feed"
 
+# The restore marker's directory (ADR 0017): backup.sh writes the instance's
+# restore generation there, the server mounts it read-only
+# (docker-compose.prod.yml, the same RESTORE_MARKER_DIR / BACKUP_DIR
+# resolution). It must exist before the first `compose run` below: a
+# bind-mount source Docker has to create is root's, and backup.sh (cron, as
+# this user) could then never write the marker — every nightly backup would
+# fail at that step. backups/ is never synced by a deploy, so this is a
+# one-time creation on a VM that predates the marker.
+MARKER_DIR="${RESTORE_MARKER_DIR:-${BACKUP_DIR:-${INFRA_DIR}/../backups}/marker}"
+if mkdir -p "${MARKER_DIR}" 2>/dev/null && [[ -w "${MARKER_DIR}" ]]; then
+  log "Restore marker directory: ${MARKER_DIR}"
+else
+  warn "Cannot create or write ${MARKER_DIR} as $(id -un) — the restore marker"
+  warn "will only appear if backup.sh runs as a user that can write it"
+  warn "(check: ls -ld '${MARKER_DIR}' and the backup cron's user)"
+fi
+
 log "Deploy prostředí: ${ENV}"
 log "Doména: ${DOMAIN}"
 
@@ -146,9 +163,50 @@ ${COMPOSE} run --rm \
 
 log "Migrace hotovy"
 
+# ── Restore marker ─────────────────────────────────────────────────────────────
+# The first deploy with migration 0042 has no marker yet (backup.sh writes it
+# after each dump, at 03:00). Write it now, so the server's boot check has a
+# marker from this release on, not from the next backup. --if-missing: an existing
+# marker is left alone (it only ever moves forward, with the backups). Not
+# fatal: without a marker the server runs normally and logs "no restore
+# marker"; the next backup writes it.
+bash "${SCRIPT_DIR}/restore-marker.sh" --if-missing .env.prod \
+  || warn "The restore marker could not be written — the next backup.sh run writes it (docs/deploy.md → Backups)"
+
+# ── Keep the outgoing server's logs ───────────────────────────────────────────
+# `up -d` recreates the server, and its logs go with the old container: the
+# client session reports (docs/ops.md → Client session metrics, until a
+# scraper keeps them) and the shutdown lines infra/scripts/boot-timing.py
+# reads with --previous to time the restart (plan D3). Follow them into
+# backups/logs/ (never synced by a deploy) until that container is gone, so
+# its last lines — SIGTERM, the documents stored — are in the file too. The
+# newest 20 files are kept.
+LOGS_DIR="${BACKUP_DIR:-${INFRA_DIR}/../backups}/logs"
+LOG_FOLLOWER=""
+OLD_LOG=""
+if docker inspect narrative-server > /dev/null 2>&1 && mkdir -p "${LOGS_DIR}" 2> /dev/null; then
+  old_image="$(docker inspect -f '{{.Config.Image}}' narrative-server)"
+  OLD_LOG="${LOGS_DIR}/server-${old_image##*:}-$(date -u +%Y%m%dT%H%M%SZ).log"
+  docker logs --timestamps --follow narrative-server > "${OLD_LOG}" 2>&1 &
+  LOG_FOLLOWER=$!
+fi
+
 # ── Start services ─────────────────────────────────────────────────────────────
 log "Startujeme služby..."
 ${COMPOSE} up -d --remove-orphans
+
+if [[ -n "${LOG_FOLLOWER}" ]]; then
+  # The follower ends by itself once the old container stopped; when `up -d`
+  # left the server running (nothing about it changed) it is stopped here.
+  sleep 1
+  kill "${LOG_FOLLOWER}" 2> /dev/null || true
+  wait "${LOG_FOLLOWER}" 2> /dev/null || true
+  if gzip -f "${OLD_LOG}" 2> /dev/null; then
+    log "The previous server's logs: ${OLD_LOG}.gz"
+  fi
+  # shellcheck disable=SC2012  # names without spaces, written above
+  ls -1t "${LOGS_DIR}"/server-*.log.gz 2> /dev/null | tail -n +21 | xargs rm -f 2> /dev/null || true
+fi
 
 # ── Caddy config ───────────────────────────────────────────────────────────────
 # `up -d` recreates Caddy only when its image or compose definition changes; a
