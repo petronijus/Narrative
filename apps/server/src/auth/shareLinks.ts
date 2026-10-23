@@ -46,6 +46,21 @@ export interface ShareLinkRow {
   revoked: boolean
 }
 
+/**
+ * Every token a `share_token` can carry: a share-link id (nanoid(21),
+ * `createShareLink` below) or a render token (`nrr_` and 43 base64url
+ * characters, auth/renderTokens.ts) — both base64url, at most 47 characters.
+ * Anything else is no token of ours and is refused before any lookup: a NUL
+ * byte or a repeated parameter (an array) reached Postgres and answered 500
+ * for an existing asset but 404 for an unknown one (performance.md → F6).
+ */
+export const SHARE_TOKEN_SHAPE = /^[A-Za-z0-9_-]{1,64}$/
+
+/** Whether `value` has the shape of a share token (SHARE_TOKEN_SHAPE): one string, nothing else. */
+export function isShareTokenShape(value: unknown): value is string {
+  return typeof value === 'string' && SHARE_TOKEN_SHAPE.test(value)
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -109,6 +124,9 @@ export async function findShareLink(
   db: Database,
   shareToken: string,
 ): Promise<{ deckId: string; role: DeckRole } | null> {
+  // The routes refuse a malformed token at the boundary (fastifyAuth.ts
+  // readShareToken); this keeps every other caller from handing one to Postgres.
+  if (!isShareTokenShape(shareToken)) return null
   if (isRenderToken(shareToken)) {
     const grant = resolveRenderToken(shareToken)
     // A component master's render token is no share link of any deck.

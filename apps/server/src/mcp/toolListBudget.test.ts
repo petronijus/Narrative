@@ -157,6 +157,19 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * example): 199,999 bytes in link mode, 199,933 in url mode, 146 tools — one
  * byte left. The next tool change needs the room first (the table and path
  * tool merges, D4).
+ * F6 (2026-10-23, performance.md → Final round): no raise; the room made
+ * instead. 199,999 → 189,572 bytes in link mode (199,933 → 189,506 url,
+ * 199,009 → 188,582 form), 146 tools, 10,428 bytes (5.2 %) left. Redundancy
+ * out, never guidance: descriptions no longer restate what their own field
+ * descriptions or the server instructions say (the slide's size and axes now
+ * said once in guidance.ts, colour formats already in sharedShapes.ts, a
+ * field's default where its schema gives it), "Cannot be undone" no longer
+ * beside the generated "Irreversible:" line, one short role sentence per
+ * role (serverCommands.test.ts pins them), wording tightened; a few field
+ * descriptions that listed their schema's own properties; object_insert's
+ * example without default fields and object_insertFromDeck's with one
+ * object; object_create's union note names what not every kind takes
+ * (schemaCompact.ts), and no longer claims an anyOf pass 4 had merged away.
  */
 export const TOOL_LIST_BUDGET_BYTES = 200_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */

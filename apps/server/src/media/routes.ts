@@ -7,6 +7,21 @@
  *     Returns a signed imgproxy URL for the given asset + variant.
  *     Auth: a session or `?share_token=` (shareReadPreHandler — a share-link
  *     visitor's deck renders with its media). Deck access: viewer or above.
+ *     An unknown id, a video or font, and an asset the caller may not read
+ *     all answer the same 404 `{ error: 'Asset not found' }` — whether it
+ *     exists is not told (performance.md → F6); the reason stays in the
+ *     server's log (`mediaRefusal`) and metrics
+ *     (`narrative_media_refusals_total{route,reason}`). So do /video-info,
+ *     /font-url and DELETE below, each with its own not-found body. A
+ *     malformed `share_token` (a NUL byte, a repeated parameter) is 401
+ *     before anything is looked up (fastifyAuth.ts readShareToken).
+ *     Accepted residual: the refusal of an asset that exists costs the access
+ *     check's queries, an unknown id one lookup, so latency can still tell
+ *     them apart. Asset ids are ≥ 72 random bits (nanoid(16) for uploads,
+ *     ≥ 96 bits): not secret, but not guessable either, so the oracle needs
+ *     an id the caller already holds; equalising the work would add database
+ *     load to exactly the scans it is about. Its own rate limit
+ *     (MEDIA_URLS_RATE_LIMIT, a bucket apart from the batch route's).
  *     Cache-Control: private, max-age=600 (10 min). Signed URLs are stable, so the
  *     browser may keep one; a shared cache must not (it would hand one viewer's
  *     answer to another — component media is only for its folder's readers).
@@ -70,7 +85,12 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Database } from '../db/client.js'
-import { authPreHandler, getAuthOpts, shareReadPreHandler } from '../auth/fastifyAuth.js'
+import {
+  authPreHandler,
+  getAuthOpts,
+  shareReadPreHandler,
+  shareTokenOf,
+} from '../auth/fastifyAuth.js'
 import { mediaUrlsRouteConfig } from '../http/rateLimit.js'
 import { resolveDeckAccess } from '../auth/permissions.js'
 import { MEDIA_URLS_MAX_IDS, type ImageVariant } from '@narrative/shared'
@@ -174,30 +194,37 @@ export async function registerMediaRoutes(
   app.get<{
     Params: { assetId: string }
     Querystring: { variant?: string }
-  }>('/api/media/:assetId/url', { preHandler: shareReadPreHandler }, async (request, reply) => {
-    const variantParam = request.query.variant ?? 'display'
-    if (!isImageVariant(variantParam)) {
-      return reply.status(400).send({
-        error: `Invalid variant. Allowed: ${IMAGE_VARIANTS.join(', ')}`,
-      })
-    }
-    try {
-      const result = await createMediaService(routeDeps(app, db, request.log)).url({
-        userId: request.user?.sub ?? null,
-        shareToken: (request.query as Record<string, string>)['share_token'] ?? null,
-        assetId: request.params.assetId,
-        variant: variantParam,
-      })
-      // The answer depends on who asks (the session cookie; a share token is
-      // in the URL): a cache must not hand one caller's to another.
-      return reply
-        .header('Cache-Control', 'private, max-age=600')
-        .header('Vary', 'Cookie')
-        .send(result)
-    } catch (err) {
-      return sendServiceError(reply, err)
-    }
-  })
+  }>(
+    '/api/media/:assetId/url',
+    {
+      preHandler: shareReadPreHandler,
+      config: mediaUrlsRouteConfig(getAuthOpts(app).bypass === true),
+    },
+    async (request, reply) => {
+      const variantParam = request.query.variant ?? 'display'
+      if (!isImageVariant(variantParam)) {
+        return reply.status(400).send({
+          error: `Invalid variant. Allowed: ${IMAGE_VARIANTS.join(', ')}`,
+        })
+      }
+      try {
+        const result = await createMediaService(routeDeps(app, db, request.log)).url({
+          userId: request.user?.sub ?? null,
+          shareToken: shareTokenOf(request),
+          assetId: request.params.assetId,
+          variant: variantParam,
+        })
+        // The answer depends on who asks (the session cookie; a share token is
+        // in the URL): a cache must not hand one caller's to another.
+        return reply
+          .header('Cache-Control', 'private, max-age=600')
+          .header('Vary', 'Cookie')
+          .send(result)
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
+    },
+  )
 
   // -------------------------------------------------------------------------
   // GET /api/media/urls?ids=<id,…>&variants=<variant,…>
@@ -228,7 +255,7 @@ export async function registerMediaRoutes(
       try {
         const result = await createMediaService(routeDeps(app, db, request.log)).urls({
           userId: request.user?.sub ?? null,
-          shareToken: request.query.share_token ?? null,
+          shareToken: shareTokenOf(request),
           assetIds: ids,
           variants: variants as ImageVariant[],
         })
@@ -265,7 +292,7 @@ export async function registerMediaRoutes(
         return reply.send(
           await createMediaService(routeDeps(app, db, request.log)).videoInfo({
             userId: request.user?.sub ?? null,
-            shareToken: request.query.share_token ?? null,
+            shareToken: shareTokenOf(request),
             assetId: request.params.assetId,
           }),
         )
@@ -289,7 +316,7 @@ export async function registerMediaRoutes(
     { preHandler: shareReadPreHandler },
     async (request, reply) => {
       const userId = request.user?.sub ?? null
-      const shareToken = request.query.share_token ?? null
+      const shareToken = shareTokenOf(request)
       if (!userId && !shareToken) {
         return reply.status(401).send({ error: 'Unauthenticated' })
       }
@@ -394,7 +421,7 @@ export async function registerMediaRoutes(
     { preHandler: shareReadPreHandler },
     async (request, reply) => {
       const userId = request.user?.sub ?? null
-      const shareToken = request.query.share_token ?? null
+      const shareToken = shareTokenOf(request)
       if (!userId && !shareToken) {
         return reply.status(401).send({ error: 'Unauthenticated' })
       }
@@ -444,7 +471,7 @@ export async function registerMediaRoutes(
   }>('/api/decks/:deckId/fonts', { preHandler: shareReadPreHandler }, async (request, reply) => {
     const { deckId } = request.params
     const userId = request.user?.sub ?? null
-    const shareToken = (request.query as Record<string, string>)['share_token'] ?? null
+    const shareToken = shareTokenOf(request)
 
     const access = await resolveDeckAccess(db, { deckId, userId, shareToken })
     if (!access) return reply.status(403).send({ error: 'Forbidden' })

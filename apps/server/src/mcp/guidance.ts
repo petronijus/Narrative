@@ -80,6 +80,7 @@ export class Guidance {
       `component master instead (id from ${t('component.list')}; address the master's only slide as { "index": 0 }),`,
       "one that offers `folderId` on that folder's own media; send exactly one. Folder tools take `folderId` (from " +
         `${t('folder.list')}); account tools take neither.`,
+      'A slide is 1920 x 1080 px, origin top-left, y down; positions and sizes are in these slide px.',
       `Every tool also takes an optional \`runId\`: a run you started with ${t('agent.startRun')} (default: your`,
       `current run on that deck or master). Call ${t('agent.startRun')} once per user request, group edits with`,
       `${t('ops.apply')}, and ${t('agent.revert')} undoes a run.`,

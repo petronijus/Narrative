@@ -37,6 +37,7 @@ import type {
 import { components, mediaAssets } from '../db/schema.js'
 import { deleteMediaAsset, getFontAsset, getMediaAsset, getVideoAsset } from '../media/assets.js'
 import { purgeUnreferencedKeys } from '../media/bucketCleanup.js'
+import { metrics, type MediaRefusalReason, type MediaRefusalRoute } from '../metrics/collectors.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { buildS3Client, MEDIA_BUCKET, presignGetUrl } from '../media/s3Client.js'
 import {
@@ -80,7 +81,7 @@ import {
   tooLarge,
   unsupportedType,
 } from './errors.js'
-import { bypassAliases, folderRoleRefusal, requireFolderContentReader } from './shared.js'
+import { bypassAliases, folderRoleRefusal } from './shared.js'
 import { UploadSessionLimitError } from '../media/uploadSessions.js'
 import { LARGE_DOWNLOAD_TIMEOUT_MS, withBinarySource, type BinaryFile } from './binarySource.js'
 
@@ -105,7 +106,7 @@ const FOLDER_CHECKS_AT_ONCE = 4
 export { IMAGE_VARIANTS, isImageVariant }
 
 /**
- * Who may read a media row (`requireAssetReader`, `urls`): a deck's media
+ * Who may read a media row (`assetReaderAdmits`, `urls`): a deck's media
  * the deck's viewers (a share link to it included); a component master's
  * picture or video, and a folder's own, whoever may read that folder's
  * content — a member, or anyone with access to one of its decks, share links
@@ -185,43 +186,45 @@ const SNIFF_BYTES = 4096
 export function createMediaService(deps: ServiceDeps): ServerMediaService {
   const { db } = deps
 
-  async function requireDeckRole(
-    deckId: string | null,
-    userId: string | null,
-    shareToken: string | null | undefined,
-    required: 'viewer' | 'owner',
-  ): Promise<void> {
-    const access = await resolveDeckAccess(db, {
-      deckId: deckId ?? '',
-      userId,
-      shareToken: shareToken ?? null,
-    })
-    if (!access || !roleAtLeast(access.role, required)) {
-      throw forbidden(required === 'owner' ? 'Forbidden: owner role required' : 'Forbidden')
-    }
+  /**
+   * Refuse a media read or delete exactly as an unknown id: the same status
+   * and body whether the asset is missing, of another kind, not the named
+   * document's, or not the caller's to read — so the answer says nothing of
+   * an asset the caller may not have, not even that it exists. Only the
+   * server's log (`mediaRefusal`) and metrics (`narrative_media_refusals_total`)
+   * keep the reason. A caller who may read the asset but lacks the role to
+   * change it still gets its 403 (it knows the asset is there).
+   */
+  function refuse(
+    route: MediaRefusalRoute,
+    reason: MediaRefusalReason,
+    assetId: string,
+    message: string,
+  ): never {
+    deps.log.info({ assetId, mediaRefusal: { route, reason } }, 'media refused')
+    metrics.recordMediaRefusal(route, reason)
+    throw notFound(message)
   }
 
   /**
-   * The caller may read the asset: a component master's or a folder's
-   * picture or video (a deleted component's, handed to its folder) by
+   * Whether the caller may read the asset: a component master's or a
+   * folder's picture or video (a deleted component's, handed to its folder)
    * whoever may read the folder's content — a member, or anyone with access
    * to one of the folder's decks, a share link included, so a linked picture
    * shows on a shared deck; a deck's asset by the deck role, share links
    * included, as always. Who may remove an asset is `remove`'s.
    */
-  async function requireAssetReader(
+  async function assetReaderAdmits(
     asset: { deckId: string | null; componentId?: string | null; folderId?: string | null },
     userId: string | null,
     shareToken: string | null | undefined,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const componentId = asset.componentId ?? null
     // A component's row: its folder looked up, then the folder gate
     // (canReadComponentMedia; `urls` has the folder from its join).
-    const admitted =
-      componentId !== null
-        ? await canReadComponentMedia(db, componentId, userId, shareToken)
-        : await gateAdmits(mediaReadGate(asset, null), userId, shareToken)
-    if (!admitted) throw forbidden('Forbidden')
+    return componentId !== null
+      ? await canReadComponentMedia(db, componentId, userId, shareToken)
+      : await gateAdmits(mediaReadGate(asset, null), userId, shareToken)
   }
 
   /** Whether the caller passes `gate` (mediaReadGate): the deck's viewer role, or the folder's content. */
@@ -450,11 +453,12 @@ export function createMediaService(deps: ServiceDeps): ServerMediaService {
     assetId: string
     owner?: MediaOwner | undefined
   }): Promise<VideoInfo> {
+    const no = (reason: MediaRefusalReason): never =>
+      refuse('video_info', reason, args.assetId, 'Video asset not found')
     const asset = await getVideoAsset(db, args.assetId)
-    if (!asset || !(await shownBy({ ...asset, kind: 'video' }, args.owner))) {
-      throw notFound('Video asset not found')
-    }
-    await requireAssetReader(asset, args.userId, args.shareToken)
+    if (asset === null) return no('unknown')
+    if (!(await shownBy({ ...asset, kind: 'video' }, args.owner))) no('not_shown')
+    if (!(await assetReaderAdmits(asset, args.userId, args.shareToken))) no('forbidden')
 
     const posterUrl = asset.posterKey
       ? signImgproxyUrl({ storageKey: asset.posterKey, variant: 'display', extension: 'jpg' })
@@ -502,13 +506,17 @@ export function createMediaService(deps: ServiceDeps): ServerMediaService {
     variant: ImageVariant
     owner?: MediaOwner | undefined
   }): Promise<{ url: string }> {
+    // One answer for every refusal (`refuse`); the batch's `unavailable` does
+    // not tell them apart either.
+    const no = (reason: MediaRefusalReason): never =>
+      refuse('url', reason, args.assetId, 'Asset not found')
     const asset = await getMediaAsset(db, args.assetId)
+    if (asset === null) return no('unknown')
     // Images only: a video's or a font's file is no picture imgproxy serves
     // (videos have media.status, fonts fontUrl).
-    if (!asset || asset.kind !== 'image' || !(await shownBy(asset, args.owner))) {
-      throw notFound('Asset not found')
-    }
-    await requireAssetReader(asset, args.userId, args.shareToken)
+    if (asset.kind !== 'image') no('wrong_kind')
+    if (!(await shownBy(asset, args.owner))) no('not_shown')
+    if (!(await assetReaderAdmits(asset, args.userId, args.shareToken))) no('forbidden')
     return { url: signImgproxyUrl({ storageKey: asset.storageKey, variant: args.variant }) }
   }
 
@@ -567,18 +575,24 @@ export function createMediaService(deps: ServiceDeps): ServerMediaService {
     assetId: string
     folderId?: string | undefined
   }): Promise<FontUrlInfo> {
+    const no = (reason: MediaRefusalReason): never =>
+      refuse('font_url', reason, args.assetId, 'Font asset not found')
     const asset = await getFontAsset(db, args.assetId)
-    if (!asset || (args.folderId !== undefined && asset.folderId !== args.folderId)) {
-      throw notFound('Font asset not found')
-    }
-    // Legacy deck-scoped row (should have been migrated by 0009): no caller expects it.
-    if (!asset.folderId) throw notFound('Font asset is not folder-scoped')
+    if (asset === null) return no('unknown')
+    if (args.folderId !== undefined && asset.folderId !== args.folderId) no('not_shown')
+    // Legacy deck-scoped row (should have been migrated by 0009): no caller
+    // expects it, and its answer says no more than an unknown id's.
+    const folderId = asset.folderId
+    if (!folderId) return no('legacy')
     // A deck guest loads its folder's fonts too, a share-link visitor
     // included: the deck renders with them.
-    await requireFolderContentReader(db, asset.folderId, args.userId, {
-      bypass: deps.bypass,
-      shareToken: args.shareToken,
+    const reader = await resolveFolderContentAccess(db, {
+      folderId,
+      userId: args.userId === '' ? null : args.userId,
+      alsoAs: bypassAliases(args.userId, deps.bypass),
+      shareToken: args.shareToken ?? null,
     })
+    if (reader === null) no('forbidden')
     return {
       assetId: asset.id,
       url: await presignGetUrl(asset.storageKey, FONT_URL_TTL_SEC),
@@ -636,9 +650,10 @@ export function createMediaService(deps: ServiceDeps): ServerMediaService {
           (asset.componentId ?? null) === null &&
           asset.folderId === owner.folderId
         : ownedBy(asset, owner))
-    if (!asset || !owned) {
-      throw notFound('Asset not found')
-    }
+    const no = (reason: MediaRefusalReason): never =>
+      refuse('delete', reason, args.assetId, 'Asset not found')
+    if (asset === null) return no('unknown')
+    if (!owned) no('not_shown')
 
     const componentId = asset.componentId ?? null
     const folderId = asset.deckId === null ? (asset.folderId ?? null) : null
@@ -648,9 +663,15 @@ export function createMediaService(deps: ServiceDeps): ServerMediaService {
         .from(components)
         .where(eq(components.id, componentId))
         .limit(1)
-      if (!component) throw notFound('Asset not found')
+      if (!component) return no('unknown')
       const role = await folderRole(component.folderId, args.userId)
-      if (role === null) throw forbidden('Forbidden')
+      // Someone who cannot even see the picture (no deck of the folder
+      // either) learns nothing about it; a deck guest of the folder, who
+      // sees it, is told it is not theirs to remove.
+      if (role === null) {
+        if (!(await canReadComponentMedia(db, componentId, args.userId, null))) no('forbidden')
+        throw forbidden('Forbidden')
+      }
       if (!roleAtLeast(role, 'editor')) throw forbidden(folderRoleRefusal('editor'))
       const [handed] = await db
         .update(mediaAssets)
@@ -669,7 +690,7 @@ export function createMediaService(deps: ServiceDeps): ServerMediaService {
         shareToken: null,
         alsoAs: bypassAliases(args.userId, deps.bypass),
       })
-      if (reader === null) throw forbidden('Forbidden')
+      if (reader === null) no('forbidden')
       if (asset.kind === 'font') {
         throw badRequest(
           `Asset '${asset.id}' is a font of its folder: remove it with ` +
@@ -684,7 +705,13 @@ export function createMediaService(deps: ServiceDeps): ServerMediaService {
         )
       }
     } else {
-      await requireDeckRole(asset.deckId, args.userId, null, 'owner')
+      const access = await resolveDeckAccess(db, {
+        deckId: asset.deckId ?? '',
+        userId: args.userId,
+        shareToken: null,
+      })
+      if (!access) return no('forbidden')
+      if (!roleAtLeast(access.role, 'owner')) throw forbidden('Forbidden: owner role required')
     }
 
     const keys = [

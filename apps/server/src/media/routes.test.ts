@@ -21,6 +21,7 @@ import type { MediaAsset } from '../db/schema.js'
 import { MEDIA_URLS_MAX_IDS, type MediaUrlsResponse } from '@narrative/shared'
 import { registerAuthPlugin } from '../auth/fastifyAuth.js'
 import { registerMediaRoutes } from './routes.js'
+import { metrics } from '../metrics/collectors.js'
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -224,7 +225,15 @@ describe('GET /api/media/:assetId/url', () => {
     expect(res.statusCode).toBe(404)
   })
 
-  it('returns 403 when user has no deck access', async () => {
+  // A forbidden asset answers exactly as an unknown one: status, body and
+  // headers say nothing of whether it exists (performance.md → F6).
+  async function unknownAnswer() {
+    vi.mocked(getMediaAsset).mockResolvedValueOnce(null)
+    return app.inject({ method: 'GET', url: '/api/media/nonexistent/url' })
+  }
+
+  it('answers 404, as for an unknown id, when the user has no deck access', async () => {
+    const unknown = await unknownAnswer()
     vi.mocked(getMediaAsset).mockResolvedValue(FIXTURE_ASSET)
     vi.mocked(resolveDeckAccess).mockResolvedValue(null)
     vi.mocked(roleAtLeast).mockReturnValue(false)
@@ -234,10 +243,14 @@ describe('GET /api/media/:assetId/url', () => {
       url: '/api/media/asset-test-01/url',
     })
 
-    expect(res.statusCode).toBe(403)
+    expect(res.statusCode).toBe(404)
+    expect(res.json()).toEqual(unknown.json())
+    expect(res.json()).toEqual({ error: 'Asset not found' })
+    expect(res.headers['cache-control']).toBe(unknown.headers['cache-control'])
+    expect(signImgproxyUrl).not.toHaveBeenCalled()
   })
 
-  it('returns 403 when user role is insufficient (below viewer)', async () => {
+  it('answers 404 when the role is insufficient (below viewer)', async () => {
     vi.mocked(getMediaAsset).mockResolvedValue(FIXTURE_ASSET)
     // resolveDeckAccess returns some access but roleAtLeast says insufficient
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'viewer', reason: 'share-link' })
@@ -248,7 +261,44 @@ describe('GET /api/media/:assetId/url', () => {
       url: '/api/media/asset-test-01/url',
     })
 
-    expect(res.statusCode).toBe(403)
+    expect(res.statusCode).toBe(404)
+    expect(res.json()).toEqual({ error: 'Asset not found' })
+  })
+
+  it('answers a malformed share_token on a forbidden asset exactly as on an unknown id, before any lookup', async () => {
+    // A NUL byte or a repeated parameter used to reach Postgres (500) for an
+    // existing asset while an unknown one answered 404: an existence oracle.
+    for (const query of ['?share_token=%00', '?share_token=a&share_token=b']) {
+      vi.mocked(getMediaAsset).mockClear()
+      vi.mocked(getMediaAsset).mockResolvedValue(null)
+      const unknown = await app.inject({ method: 'GET', url: `/api/media/nonexistent/url${query}` })
+      vi.mocked(getMediaAsset).mockResolvedValue(FIXTURE_ASSET)
+      vi.mocked(resolveDeckAccess).mockResolvedValue(null)
+      vi.mocked(roleAtLeast).mockReturnValue(false)
+      const forbidden = await app.inject({
+        method: 'GET',
+        url: `/api/media/asset-test-01/url${query}`,
+      })
+
+      expect(forbidden.statusCode, query).toBe(401)
+      expect(forbidden.statusCode, query).toBe(unknown.statusCode)
+      expect(forbidden.body, query).toBe(unknown.body)
+      expect(forbidden.json()).toEqual({ error: 'Unauthorized' })
+      expect(getMediaAsset).not.toHaveBeenCalled()
+      expect(resolveDeckAccess).not.toHaveBeenCalled()
+    }
+  })
+
+  it('keeps the reason of a refusal server-side only: in the metrics, never in the answer', async () => {
+    metrics._reset()
+    await unknownAnswer()
+    vi.mocked(getMediaAsset).mockResolvedValue(FIXTURE_ASSET)
+    vi.mocked(resolveDeckAccess).mockResolvedValue(null)
+    vi.mocked(roleAtLeast).mockReturnValue(false)
+    const res = await app.inject({ method: 'GET', url: '/api/media/asset-test-01/url' })
+
+    expect(res.body).not.toMatch(/forbidden/i)
+    expect(metrics.mediaRefusals('url')).toMatchObject({ unknown: 1, forbidden: 1 })
   })
 
   it('returns 400 for an invalid variant', async () => {
@@ -757,7 +807,9 @@ describe('GET /api/media/:assetId/video-info', () => {
     expect(res.statusCode).toBe(404)
   })
 
-  it('returns 403 when user has no deck access', async () => {
+  it('answers 404, as for an unknown id, when the user has no deck access', async () => {
+    vi.mocked(getVideoAsset).mockResolvedValueOnce(null)
+    const unknown = await app.inject({ method: 'GET', url: '/api/media/nonexistent/video-info' })
     vi.mocked(getVideoAsset).mockResolvedValue(FIXTURE_VIDEO_PENDING)
     vi.mocked(resolveDeckAccess).mockResolvedValue(null)
     vi.mocked(roleAtLeast).mockReturnValue(false)
@@ -767,7 +819,9 @@ describe('GET /api/media/:assetId/video-info', () => {
       url: '/api/media/video-pending-01/video-info',
     })
 
-    expect(res.statusCode).toBe(403)
+    expect(res.statusCode).toBe(404)
+    expect(res.json()).toEqual({ error: 'Video asset not found' })
+    expect(res.json()).toEqual(unknown.json())
   })
 
   it('returns pending status with null URLs when video is still transcoding', async () => {
@@ -945,8 +999,9 @@ describe("a component master's media: read with the folder's content, handed to 
       url: '/api/media/comp-img-01/url?share_token=tok-elsewhere',
     })
 
-    expect(plain.statusCode).toBe(403)
-    expect(shared.statusCode).toBe(403)
+    // 404, as for an unknown id: whether the asset exists is not told.
+    expect(plain.statusCode).toBe(404)
+    expect(shared.statusCode).toBe(404)
     expect(signImgproxyUrl).not.toHaveBeenCalled()
     expect(resolveDeckAccess).not.toHaveBeenCalled()
   })
@@ -964,17 +1019,30 @@ describe("a component master's media: read with the folder's content, handed to 
       method: 'GET',
       url: '/api/media/comp-vid-01/video-info?share_token=tok-elsewhere',
     })
-    expect(shared.statusCode).toBe(403)
+    // As for an unknown id: the link's holder is not told the video exists.
+    expect(shared.statusCode).toBe(404)
     expect(resolveDeckAccess).not.toHaveBeenCalled()
   })
 
-  it('removing it needs the editor role in its folder: a viewer and an outsider are refused', async () => {
+  it('removing it needs the editor role in its folder: a viewer and a deck guest are refused, a stranger told nothing', async () => {
     vi.mocked(getMediaAsset).mockResolvedValue(COMPONENT_IMAGE)
-    for (const access of [{ role: 'viewer', reason: 'direct' } as const, null]) {
-      vi.mocked(resolveFolderAccess).mockResolvedValueOnce(access)
-      const res = await app.inject({ method: 'DELETE', url: '/api/media/comp-img-01' })
-      expect(res.statusCode).toBe(403)
-    }
+    // A viewer of the folder: it sees the picture, so it is told why not.
+    vi.mocked(resolveFolderAccess).mockResolvedValueOnce({ role: 'viewer', reason: 'direct' })
+    const viewer = await app.inject({ method: 'DELETE', url: '/api/media/comp-img-01' })
+    expect(viewer.statusCode).toBe(403)
+    // A guest of one of the folder's decks sees it too: 403.
+    vi.mocked(resolveFolderAccess).mockResolvedValueOnce(null)
+    vi.mocked(resolveFolderContentAccess).mockResolvedValueOnce({ role: 'viewer', via: 'deck' })
+    const guest = await app.inject({ method: 'DELETE', url: '/api/media/comp-img-01' })
+    expect(guest.statusCode).toBe(403)
+    // A stranger, who cannot read it: the answer to an unknown id.
+    vi.mocked(resolveFolderAccess).mockResolvedValueOnce(null)
+    vi.mocked(resolveFolderContentAccess).mockResolvedValueOnce(null)
+    const stranger = await app.inject({ method: 'DELETE', url: '/api/media/comp-img-01' })
+    vi.mocked(getMediaAsset).mockResolvedValueOnce(null)
+    const unknown = await app.inject({ method: 'DELETE', url: '/api/media/nonexistent' })
+    expect(stranger.statusCode).toBe(404)
+    expect(stranger.json()).toEqual(unknown.json())
     expect(handedOver).toEqual([])
     expect(deleteMediaAsset).not.toHaveBeenCalled()
   })

@@ -41,6 +41,8 @@
  *      `object.create` the stroke and alpha fields were the same schema per
  *      kind. Duplicates are dropped; a union left with one alternative
  *      becomes that alternative (its siblings, e.g. a description, kept).
+ *      Only then does a collapsed union say which of its properties still
+ *      differ by kind (`sayDiffering`).
  *   5. A nullable field is one schema. zod renders `.nullable()` (a field
  *      `null` clears: token_update, the table styles,
  *      text_setBoxTypography — 57 fields) as `anyOf: [X, { type: 'null' }]`;
@@ -135,6 +137,28 @@ function discriminatorOf(branches: JsonSchema[]): string | null {
   return null
 }
 
+/**
+ * A collapsed union's properties whose schema differs by kind, until the
+ * last pass says so in its description: merging and inlining can leave
+ * `anyOf: [X, X]`, which pass 4 makes one schema again (object.create's
+ * stroke and alpha fields), and "differs by kind (see anyOf)" would then
+ * point at an anyOf that is not there. Never in a finished schema.
+ */
+const DIFFERING = 'x-narrative-differing'
+
+/**
+ * What every kind of a collapsed union takes. A long list (object.create's
+ * object: 18 properties every kind has) is said by what it is not — the
+ * properties the "only some kinds" sentence does not name — when that is
+ * shorter; a short one is named.
+ */
+function everyKindSentence(everyKind: string[] | undefined, hasPartial: boolean): string | null {
+  if (everyKind === undefined) return null
+  const named = `Every kind takes ${everyKind.join(', ')}.`
+  const rest = 'Every kind takes the properties not named below.'
+  return hasPartial && rest.length < named.length ? rest : named
+}
+
 function collapseUnion(node: JsonSchema, defs: Record<string, JsonSchema>): JsonSchema {
   const key = Array.isArray(node['oneOf']) ? 'oneOf' : Array.isArray(node['anyOf']) ? 'anyOf' : null
   if (key === null) return node
@@ -201,11 +225,10 @@ function collapseUnion(node: JsonSchema, defs: Record<string, JsonSchema>): Json
   const description = [
     typeof node['description'] === 'string' ? node['description'] : null,
     `One of ${tags.length} kinds, chosen by \`${discriminator}\`.`,
-    everyKind !== undefined ? `Every kind takes ${everyKind.join(', ')}.` : null,
+    everyKindSentence(everyKind, partial.length > 0),
     partial.length > 0
       ? `Only some kinds take — ${partial.map(([kinds, props]) => `${props.join(', ')}: ${kinds}`).join('; ')}.`
       : null,
-    differing.length > 0 ? `${differing.join(', ')}: shape differs by kind (see anyOf).` : null,
   ]
     .filter((x): x is string => x !== null)
     .join(' ')
@@ -215,6 +238,8 @@ function collapseUnion(node: JsonSchema, defs: Record<string, JsonSchema>): Json
     ...rest,
     type: 'object',
     description,
+    // Which properties still differ is only known after pass 4 (sayDiffering).
+    ...(differing.length > 0 ? { [DIFFERING]: differing } : {}),
     properties,
     required,
     ...(branches.every((b) => b['additionalProperties'] === false)
@@ -414,6 +439,22 @@ function mergeStringConstants(node: JsonSchema): JsonSchema {
   return { ...siblings, type: 'string', enum: [...new Set(values)] }
 }
 
+/** Say which properties of a collapsed union (pass 1) still differ by kind, now that pass 4 ran. */
+function sayDiffering(node: JsonSchema): JsonSchema {
+  const marked = node[DIFFERING]
+  if (!Array.isArray(marked)) return node
+  const { [DIFFERING]: _marked, ...out } = node
+  const properties = propertiesOf(out)
+  const differing = (marked as string[]).filter((prop) => {
+    const schema = properties[prop]
+    return isObject(schema) && (Array.isArray(schema['anyOf']) || Array.isArray(schema['oneOf']))
+  })
+  if (differing.length === 0) return out
+  const note = `${differing.join(', ')}: shape differs by kind (see anyOf).`
+  const description = typeof out['description'] === 'string' ? out['description'] : ''
+  return { ...out, description: description === '' ? note : `${description} ${note}` }
+}
+
 /** The passes, in order. Returns a new schema; `root` is not modified. */
 export function compactInputSchema(input: JsonSchema): JsonSchema {
   const root = mapSchema(input, dropUninformativeBounds) as JsonSchema
@@ -433,6 +474,6 @@ export function compactInputSchema(input: JsonSchema): JsonSchema {
     Object.keys(defs).length > 0 ? { ...collapsed, $defs: defs } : collapsed,
   )
   return mapSchema(dropNestedClosedness(inlined, 0), (node) =>
-    mergeStringConstants(mergeNullable(dedupeUnionAlternatives(node))),
+    sayDiffering(mergeStringConstants(mergeNullable(dedupeUnionAlternatives(node)))),
   ) as JsonSchema
 }

@@ -58,7 +58,8 @@ describe('media.delete confirmation', () => {
   it('on a deck: names the file within the deck and says it is deleted', async () => {
     const { summary, lookups: l } = await summaryFor({ deckId: 'd1' })
     expect(l.asset).toHaveBeenCalledWith({ deckId: 'd1' }, 'a1')
-    expect(summary.action).toMatch(/^Remove an asset: delete a deck's own with its file, hand/)
+    // The action says only what every target shares; what happens is per target.
+    expect(summary.action).toBe('Remove an asset.')
     expect(summary.details).toEqual([
       { label: 'File', value: 'logo.png (image)' },
       { label: 'What happens', value: 'Deleted with its file: objects still showing it go blank' },
@@ -69,6 +70,7 @@ describe('media.delete confirmation', () => {
     const { summary, lookups: l } = await summaryFor({ componentId: 'cmp1' })
     expect(l.asset).toHaveBeenCalledWith({ componentId: 'cmp1' }, 'a1')
     expect(summary.target).toEqual({ kind: 'component', label: 'Logo block' })
+    expect(summary.action).toBe('Remove an asset.')
     const lines = summaryLines(summary)
     expect(lines).toContain('File: logo.png (image)')
     expect(lines.find((l) => l.startsWith('What happens:'))).toMatch(
@@ -80,6 +82,7 @@ describe('media.delete confirmation', () => {
     const { summary, lookups: l } = await summaryFor({ folderId: 'f1' })
     expect(l.asset).toHaveBeenCalledWith({ folderId: 'f1' }, 'a1')
     expect(summary.target).toEqual({ kind: 'folder', label: 'Client' })
+    expect(summary.action).toBe('Remove an asset.')
     expect(summary.details.at(-1)).toEqual({
       label: 'What happens',
       value: "Deleted with its file: the folder's decks that still show it go blank",

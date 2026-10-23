@@ -33,7 +33,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { ListKeyset } from '@narrative/commands'
 import type { Database } from '../db/client.js'
-import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
+import { authPreHandler, readShareToken, requireDeckRole } from '../auth/fastifyAuth.js'
 import { lookupSession, SESSION_COOKIE_NAME } from '../auth/session.js'
 import { devSubFromCookieHeader } from '../auth/devIdentity.js'
 import { parseDataUrl } from '../media/dataUrl.js'
@@ -164,8 +164,10 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
   // ---------------------------------------------------------------------------
   app.get<{ Params: { id: string } }>('/decks/:id', async (request, reply) => {
     const { id } = request.params
-    const query = request.query as Record<string, string>
-    const shareToken = query['share_token'] ?? null
+    // A malformed share token is refused before any lookup (readShareToken).
+    const share = readShareToken(request)
+    if (!share.valid) return reply.status(401).send({ error: 'Unauthorized' })
+    const shareToken = share.token
 
     // Auth is optional on this route — falls through to the share-token
     // check below if no session cookie. authPreHandler isn't listed in

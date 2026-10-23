@@ -24,7 +24,10 @@ vi.mock('./session.js', async (importOriginal) => {
   }
 })
 
-import { registerAuthPlugin, shareReadPreHandler } from './fastifyAuth.js'
+import { nanoid } from 'nanoid'
+import { readShareToken, registerAuthPlugin, shareReadPreHandler } from './fastifyAuth.js'
+import { isShareTokenShape, SHARE_TOKEN_SHAPE } from './shareLinks.js'
+import { mintRenderToken, revokeRenderToken } from './renderTokens.js'
 import type { PatService } from './personalAccessTokens.js'
 import type { Database } from '../db/client.js'
 
@@ -83,5 +86,50 @@ describe('shareReadPreHandler', () => {
       headers: { authorization: `Bearer nrt_${'x'.repeat(43)}` },
     })
     expect(forged.statusCode).toBe(401)
+  })
+})
+
+describe('readShareToken: one well-formed token, checked before any lookup', () => {
+  async function read(query: string) {
+    const server = Fastify()
+    server.get('/q', async (request) => readShareToken(request))
+    return (await server.inject({ method: 'GET', url: `/q${query}` })).json()
+  }
+
+  it('fits the tokens Narrative issues: share-link ids and render tokens', () => {
+    for (let i = 0; i < 50; i++) expect(isShareTokenShape(nanoid(21))).toBe(true)
+    const render = mintRenderToken({ kind: 'deck', id: 'd1' }, 'u1')
+    expect(SHARE_TOKEN_SHAPE.test(render)).toBe(true)
+    revokeRenderToken(render)
+  })
+
+  it('reads an absent token as none and a well-formed one as itself', async () => {
+    expect(await read('')).toEqual({ valid: true, token: null })
+    expect(await read('?share_token=AbC_12-x')).toEqual({ valid: true, token: 'AbC_12-x' })
+  })
+
+  it('refuses an empty, NUL-bearing, repeated, over-long or oddly-charactered token', async () => {
+    for (const query of [
+      '?share_token=',
+      '?share_token=%00',
+      '?share_token=abc%00',
+      '?share_token=a&share_token=b',
+      `?share_token=${'a'.repeat(65)}`,
+      '?share_token=a%20b',
+      "?share_token=a'b",
+    ])
+      expect(await read(query), query).toEqual({ valid: false })
+  })
+
+  it('answers a malformed token 401 in the pre-handler, the route never runs', async () => {
+    const res = await app().inject({ method: 'GET', url: '/probe?share_token=%00' })
+    expect(res.statusCode).toBe(401)
+    expect(res.json()).toEqual({ error: 'Unauthorized' })
+    const repeated = await app().inject({
+      method: 'GET',
+      url: '/probe?share_token=a&share_token=b',
+    })
+    expect(repeated.statusCode).toBe(401)
+    expect(repeated.json()).toEqual({ error: 'Unauthorized' })
   })
 })

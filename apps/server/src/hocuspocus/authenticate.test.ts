@@ -215,6 +215,16 @@ describe('browser paths', () => {
     expect(data.connectionConfig.readOnly).toBe(true)
   })
 
+  it('refuses a malformed share token before any lookup', async () => {
+    deckAccess.mockResolvedValue({ role: 'viewer', reason: 'share-link' })
+    for (const token of ['link\u0000', 'a b', 'x'.repeat(65)])
+      await expect(
+        onAuthenticate()(payload({ params: { share_token: token } })),
+        JSON.stringify(token),
+      ).rejects.toThrow('Invalid credentials')
+    expect(deckAccess).not.toHaveBeenCalled()
+  })
+
   it("admits a share link read-only to its deck's folder document, never to a component", async () => {
     folderAccess.mockResolvedValue({ role: 'viewer', via: 'deck' })
     const folder = payload({ documentName: 'folder:f1', params: { share_token: 'link-123' } })

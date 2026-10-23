@@ -353,8 +353,9 @@ describe('MediaService scoping', () => {
     ).toBe(200)
     expect(await status(media().delete({ userId: 'u1', assetId: 'af' }))).toBe(403)
 
+    // Refused like an unknown id: the caller is not told the asset exists.
     vi.mocked(resolveFolderContentAccess).mockResolvedValue(null)
-    expect(await status(media().url({ userId: 'u1', assetId: 'af', variant: 'display' }))).toBe(403)
+    expect(await status(media().url({ userId: 'u1', assetId: 'af', variant: 'display' }))).toBe(404)
   })
 
   it("lets whoever reads the component's folder see its media, a share link passed along", async () => {
@@ -372,8 +373,86 @@ describe('MediaService scoping', () => {
     expect(canReadComponentMedia).toHaveBeenCalledWith(expect.anything(), 'c1', null, 'tok-1')
 
     canReadComponentMedia.mockResolvedValue(false)
-    expect(await status(media().url({ userId: 'u1', assetId: 'a1', variant: 'display' }))).toBe(403)
+    expect(await status(media().url({ userId: 'u1', assetId: 'a1', variant: 'display' }))).toBe(404)
     expect(resolveDeckAccess).not.toHaveBeenCalled()
+  })
+
+  it('refuses an asset the caller may not read exactly as an unknown one, the reason only in the log', async () => {
+    const info = vi.fn()
+    const log = { ...quietLog, info } as unknown as typeof quietLog
+    const service = createMediaService({ db: scriptedDb().db, log })
+    const refusal = (p: Promise<unknown>) =>
+      p.then(
+        () => null,
+        (e: unknown) => {
+          const err = e as InstanceType<typeof ServiceError>
+          return { code: err.code, status: err.status, body: err.body, message: err.message }
+        },
+      )
+
+    vi.mocked(getMediaAsset).mockResolvedValueOnce(null)
+    const unknown = await refusal(service.url({ userId: 'u1', assetId: 'ax', variant: 'thumb' }))
+    vi.mocked(getMediaAsset).mockResolvedValueOnce({
+      id: 'a1',
+      deckId: null,
+      componentId: 'c1',
+      storageKey: 'k',
+      kind: 'image',
+    } as never)
+    canReadComponentMedia.mockResolvedValue(false)
+    const forbidden = await refusal(service.url({ userId: 'u1', assetId: 'a1', variant: 'thumb' }))
+
+    // What a route, a command or an agent sees: one answer.
+    expect(unknown).toEqual({
+      code: 'not_found',
+      status: 404,
+      body: { error: 'Asset not found' },
+      message: 'Asset not found',
+    })
+    expect(forbidden).toEqual(unknown)
+    // What the server keeps.
+    expect(info).toHaveBeenCalledWith(
+      { assetId: 'ax', mediaRefusal: { route: 'url', reason: 'unknown' } },
+      'media refused',
+    )
+    expect(info).toHaveBeenCalledWith(
+      { assetId: 'a1', mediaRefusal: { route: 'url', reason: 'forbidden' } },
+      'media refused',
+    )
+  })
+
+  it('media.url, the command agents call, reads the same refusal as not_found', async () => {
+    const { runCommand, createDefaultRegistry, CommandError } = await import('@narrative/commands')
+    const { LOCAL_ORIGIN } = await import('@narrative/slide-model')
+    vi.mocked(getMediaAsset).mockResolvedValue({
+      id: 'a1',
+      deckId: null,
+      componentId: 'c1',
+      storageKey: 'k',
+      kind: 'image',
+    } as never)
+    // The deck may show its folder's master picture, but the caller may not read it.
+    canReadComponentMedia.mockResolvedValue(false)
+    const err = await runCommand(
+      createDefaultRegistry(),
+      {
+        actor: { userId: 'u1', role: 'viewer', kind: 'agent' },
+        host: 'server',
+        origin: LOCAL_ORIGIN,
+        target: { deckId: 'd1' },
+        services: { media: media() },
+      } as never,
+      'media.url',
+      { assetId: 'a1' },
+    ).then(
+      () => null,
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(CommandError)
+    expect((err as InstanceType<typeof CommandError>).code).toBe('not_found')
+    expect((err as Error).message).toBe('Asset not found')
+    // Refused by the access check (the deck does show it), not as unknown.
+    expect(canReadComponentMedia).toHaveBeenCalledWith(expect.anything(), 'c1', 'u1', undefined)
   })
 
   it("hands a master's picture to its folder for an editor of the folder, deleting nothing", async () => {
@@ -519,10 +598,11 @@ describe('MediaService scoping', () => {
     expect(err.message).toContain('DELETE /api/folders/F1/fonts/font-1')
     expect(deleteMediaAsset).not.toHaveBeenCalled()
 
-    // Someone who cannot see the folder learns nothing about it.
+    // Someone who cannot see the folder learns nothing about it: as unknown.
     vi.mocked(resolveFolderContentAccess).mockResolvedValue(null)
     const outsider = await serviceErrorOf(media().delete({ userId: 'u2', assetId: 'font-1' }))
-    expect(outsider.status).toBe(403)
+    expect(outsider.status).toBe(404)
+    expect(outsider.message).toBe('Asset not found')
     expect(outsider.message).not.toContain('F1')
   })
 
@@ -712,11 +792,29 @@ describe('MediaService.fontUrl', () => {
     })
   })
 
-  it('refuses someone with no access to the folder or any of its decks (403)', async () => {
+  it('refuses someone with no access to the folder or any of its decks as an unknown id (404)', async () => {
     vi.mocked(getFontAsset).mockResolvedValue(FONT as never)
     vi.mocked(resolveFolderContentAccess).mockResolvedValue(null)
+    const stranger = await serviceErrorOf(
+      fonts().fontUrl({ userId: 'stranger', assetId: 'font-1' }),
+    )
 
-    expect(await status(fonts().fontUrl({ userId: 'stranger', assetId: 'font-1' }))).toBe(403)
+    vi.mocked(getFontAsset).mockResolvedValue(null as never)
+    const unknown = await serviceErrorOf(fonts().fontUrl({ userId: 'stranger', assetId: 'font-x' }))
+    expect(stranger.status).toBe(404)
+    expect({ code: stranger.code, body: stranger.body }).toEqual({
+      code: unknown.code,
+      body: unknown.body,
+    })
+    expect(stranger.body).toEqual({ error: 'Font asset not found' })
+  })
+
+  it('answers a legacy deck-scoped font row as an unknown id, without naming it', async () => {
+    vi.mocked(getFontAsset).mockResolvedValue({ ...FONT, folderId: null } as never)
+    const legacy = await serviceErrorOf(fonts().fontUrl({ userId: 'u1', assetId: 'font-1' }))
+    expect(legacy.status).toBe(404)
+    expect(legacy.body).toEqual({ error: 'Font asset not found' })
+    expect(resolveFolderContentAccess).not.toHaveBeenCalled()
   })
 
   it('refuses a font of another folder than the target, before asking who may read it (404)', async () => {

@@ -39,6 +39,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { JwtPayload } from './jwt.js'
 import { resolveDeckAccess, roleAtLeast, type DeckRole } from './permissions.js'
+import { isShareTokenShape } from './shareLinks.js'
 import type { Database } from '../db/client.js'
 import { BearerCache } from '../http/bearerCache.js'
 import {
@@ -238,6 +239,33 @@ export async function authPreHandler(req: FastifyRequest, reply: FastifyReply): 
 }
 
 // ---------------------------------------------------------------------------
+// readShareToken
+// ---------------------------------------------------------------------------
+
+/** What a request's `?share_token=` holds: nothing, one well-formed token, or something no token of ours. */
+export type ShareTokenParam = { valid: true; token: string | null } | { valid: false }
+
+/**
+ * The request's `?share_token=`, checked once at the boundary, before any
+ * lookup: absent → `{ valid: true, token: null }`; one string of a share
+ * token's shape (auth/shareLinks.ts SHARE_TOKEN_SHAPE) → that token; anything
+ * else — empty, a NUL byte, a repeated parameter (an array), the wrong
+ * characters — `{ valid: false }`, which the pre-handlers answer 401 with one
+ * body whatever the route would have looked up.
+ */
+export function readShareToken(req: FastifyRequest): ShareTokenParam {
+  const raw = (req.query as Record<string, unknown> | undefined)?.['share_token']
+  if (raw === undefined) return { valid: true, token: null }
+  return isShareTokenShape(raw) ? { valid: true, token: raw } : { valid: false }
+}
+
+/** The request's well-formed share token, or null (none, or malformed: the pre-handlers refused those). */
+export function shareTokenOf(req: FastifyRequest): string | null {
+  const param = readShareToken(req)
+  return param.valid ? param.token : null
+}
+
+// ---------------------------------------------------------------------------
 // shareReadPreHandler
 // ---------------------------------------------------------------------------
 
@@ -250,9 +278,15 @@ export async function authPreHandler(req: FastifyRequest, reply: FastifyReply): 
  *     authorise from `share_token` (resolveDeckAccess /
  *     resolveFolderContentAccess) and refuse without one;
  *   - a credential that does not verify is still 401, never downgraded to
- *     anonymous, and a personal access token is 403 as on every browser route.
+ *     anonymous, and a personal access token is 403 as on every browser route;
+ *   - a malformed `share_token` (readShareToken) is 401 before anything is
+ *     looked up, so it tells nothing about what the route would have found.
  */
 export async function shareReadPreHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (!readShareToken(req).valid) {
+    await reply.status(401).send({ error: 'Unauthorized' })
+    return
+  }
   const result = await resolveFastifyIdentity(req)
   if (result.status === 'none') return
   if (result.status !== 'ok') {
@@ -352,7 +386,8 @@ export function requireTokenScope(
  * attaches it to request.deckAccess, and rejects with 403 if the role is insufficient.
  *
  * Deck id is taken from request.params.id — standard convention for /decks/:id routes.
- * Share token is taken from request.query.share_token when user is null/missing.
+ * Share token is taken from request.query.share_token when user is null/missing
+ * (readShareToken: a malformed one is 401 before the lookup).
  *
  * @param required  Minimum role required to proceed (inclusive — e.g. 'editor' allows 'owner' too).
  */
@@ -371,8 +406,12 @@ export function requireDeckRole(
 
     const userId = req.user?.sub ?? null
 
-    const query = req.query as Record<string, string>
-    const shareToken = query['share_token'] ?? null
+    const share = readShareToken(req)
+    if (!share.valid) {
+      await reply.status(401).send({ error: 'Unauthorized' })
+      return
+    }
+    const shareToken = share.token
 
     let access = await resolveDeckAccess(opts.db, { deckId, userId, shareToken })
 

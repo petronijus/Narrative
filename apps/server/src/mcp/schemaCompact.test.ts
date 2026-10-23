@@ -76,6 +76,76 @@ describe('compactInputSchema', () => {
     }
   })
 
+  it('says a property differs by kind only while its anyOf is still there', () => {
+    // `fill` differs only in nested closedness, which pass 3 drops: then pass
+    // 4 makes it one schema and the note must not point at a missing anyOf.
+    // `size` really differs and keeps its anyOf and its note.
+    const point = (closed: boolean) => ({
+      type: 'object',
+      properties: { x: { type: 'number' } },
+      ...(closed ? { additionalProperties: false } : {}),
+    })
+    const shape = (kind: string, closed: boolean, size: Record<string, unknown>) => ({
+      type: 'object',
+      properties: { kind: { type: 'string', const: kind }, fill: point(closed), size },
+      required: ['kind'],
+      additionalProperties: false,
+    })
+    const out = compactInputSchema({
+      type: 'object',
+      properties: {
+        shape: {
+          oneOf: [
+            shape('a', true, { type: 'number' }),
+            shape('b', false, { type: 'string' }),
+            shape('c', true, { type: 'number' }),
+          ],
+        },
+      },
+    })
+    const collapsed = (out['properties'] as Record<string, Record<string, unknown>>)['shape']!
+    const props = collapsed['properties'] as Record<string, Record<string, unknown>>
+    expect(props['fill']).not.toHaveProperty('anyOf')
+    expect(props['size']).toHaveProperty('anyOf')
+    expect(collapsed['description']).toMatch(/size: shape differs by kind \(see anyOf\)\./)
+    expect(collapsed['description']).not.toMatch(/fill[^.]*differs/)
+    expect(JSON.stringify(out)).not.toContain('x-narrative-differing')
+  })
+
+  it('says a long list of what every kind takes by what the kind sentence does not name', () => {
+    const common = Object.fromEntries(
+      ['x', 'y', 'width', 'height', 'rotation', 'opacity', 'name', 'locked', 'shadow'].map((p) => [
+        p,
+        { type: 'number' },
+      ]),
+    )
+    const shape = (kind: string, extra: Record<string, unknown>) => ({
+      type: 'object',
+      properties: { kind: { type: 'string', const: kind }, ...common, ...extra },
+      required: ['kind'],
+    })
+    const out = compactInputSchema({
+      type: 'object',
+      properties: {
+        shape: {
+          oneOf: [
+            shape('rect', { radius: { type: 'number' } }),
+            shape('circle', {}),
+            shape('image', { assetId: { type: 'string' } }),
+          ],
+        },
+      },
+    })
+    const collapsed = (out['properties'] as Record<string, Record<string, unknown>>)['shape']!
+    expect(collapsed['description']).toBe(
+      'One of 3 kinds, chosen by `kind`. Every kind takes the properties not named below. ' +
+        'Only some kinds take — radius: rect; assetId: image.',
+    )
+    expect(Object.keys(collapsed['properties'] as object)).toEqual(
+      expect.arrayContaining(Object.keys(common)),
+    )
+  })
+
   it('leaves unions without a discriminator alone', () => {
     const union = {
       anyOf: [

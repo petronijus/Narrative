@@ -57,6 +57,7 @@ import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../aut
 import { devSubFromCookieHeader } from '../auth/devIdentity.js'
 import { claimedDocumentEpoch, looksLikeNarrativeCredential } from '@narrative/shared'
 import { isRenderToken } from '../auth/renderTokens.js'
+import { isShareTokenShape } from '../auth/shareLinks.js'
 import { clientIpFromHeaders } from '../http/clientIp.js'
 import { createFixedWindowLimiter, type FixedWindowLimiter } from '../http/fixedWindowLimiter.js'
 import { subsystemLogger } from '../observability/logger.js'
@@ -173,6 +174,9 @@ async function resolvePrincipal(data: WsAuthPayload, deps: WsAuthDeps): Promise<
   // exposes them as `requestParameters: URLSearchParams` in the payload.
   const shareToken = data.requestParameters.get('share_token')
   if (shareToken) {
+    // No token of ours (auth/shareLinks.ts SHARE_TOKEN_SHAPE): refused before
+    // any lookup, as the HTTP routes do (fastifyAuth.ts readShareToken).
+    if (!isShareTokenShape(shareToken)) throw new Error('Invalid credentials')
     // Share-token access — skip session validation entirely.
     // resolveDeckAccess validates the token; a folder doc admits it
     // read-only when it links to a deck of the folder. A component doc

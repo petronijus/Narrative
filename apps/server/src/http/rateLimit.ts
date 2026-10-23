@@ -215,7 +215,10 @@ export const tokenCreateRouteRateLimit: { rateLimit: RateLimitOptions } = {
 export const MEDIA_URLS_RATE_LIMIT = { max: 300, timeWindowMs: MINUTE_MS } as const
 
 /**
- * Route `config` for GET /api/media/urls: MEDIA_URLS_RATE_LIMIT, none under
+ * Route `config` for GET /api/media/urls and the single GET
+ * /api/media/:assetId/url (each route its own bucket; the single read
+ * refuses unknown and forbidden ids alike, so a scan of ids is bounded):
+ * MEDIA_URLS_RATE_LIMIT, none under
  * BYPASS_AUTH — its synthetic `dev-user` is every parallel e2e browser at
  * once (see tokenCreateRouteConfig).
  */
