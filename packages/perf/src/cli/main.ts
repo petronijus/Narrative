@@ -14,7 +14,7 @@
  * Exit code 1 on anything to fix. Output is `PERF …` lines (report.ts).
  */
 
-import { BUDGET_MODE, diffCounters, formatCounterDiff } from '../budgets.js'
+import { BUDGET_MODE, budgetResult, diffCounters, formatCounterDiff } from '../budgets.js'
 import { coverageOk, NOT_YET_BENCHED } from '../coverage.js'
 import { readBudget, writeBudget } from '../node/budgetFiles.js'
 import { machineName } from '../node/fingerprint.js'
@@ -112,12 +112,18 @@ function accept(ids: readonly string[]): number {
       failed = true
       continue
     }
-    // The budget: the latest counters measured in the budget mode (dev).
-    const forBudget = store.latest(id, { mode: BUDGET_MODE })
+    // The budget: the latest counters measured in the budget mode (dev), in a
+    // runtime that counts every work metric exactly (a display-paced run
+    // times the bench's perFrame counts: its snapshot would drop them).
+    const forBudget = budgetResult(bench.metrics, store.results({ benchId: id }))
     if (Object.values(bench.metrics).some((m) => m.kind === 'work')) {
       if (forBudget?.counters === undefined) {
         console.error(
-          `perf-accept: ${id} has no ${BUDGET_MODE} result to take its budget from (just perf ${id} --mode ${BUDGET_MODE})`,
+          `perf-accept: ${id} has no ${BUDGET_MODE} result to take its budget from (just perf ${id} --mode ${BUDGET_MODE}${
+            Object.values(bench.metrics).some((m) => m.perFrame === true)
+              ? ' in headless Chromium'
+              : ''
+          })`,
         )
         failed = true
       } else {

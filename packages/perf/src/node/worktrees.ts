@@ -9,9 +9,12 @@
  * included.
  */
 
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { run } from './webBuild.js'
+
+/** Written into a worktree's node_modules once its install succeeded. */
+const INSTALLED_MARKER = '.narrative-perf-installed'
 
 export const WORKING_TREE = '.'
 
@@ -46,12 +49,20 @@ export async function checkout(
     log(`worktree ${sha.slice(0, 12)} → ${dir}`)
     await run('git', ['worktree', 'add', '--detach', dir, sha], { cwd: repo })
   }
-  if (!existsSync(path.join(dir, 'node_modules'))) {
+  // A marker, not node_modules: a failed install leaves node_modules behind.
+  const installed = path.join(dir, 'node_modules', INSTALLED_MARKER)
+  if (!existsSync(installed)) {
     log(`pnpm install in ${dir}`)
-    await run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], {
-      cwd: dir,
-      env: { ...process.env, CI: '1' },
-    })
+    // An older revision may not yet decline a dependency's build script that
+    // today's pnpm refuses to leave unapproved (strictDepBuilds: electron-
+    // winstaller before 989163a5): a measured checkout needs the scripts its
+    // own allowBuilds runs, never a failed install over one it ignores.
+    await run(
+      'pnpm',
+      ['install', '--frozen-lockfile', '--prefer-offline', '--config.strict-dep-builds=false'],
+      { cwd: dir, env: { ...process.env, CI: '1' } },
+    )
+    writeFileSync(installed, `${new Date().toISOString()}\n`)
   }
   return { rev, sha, root: dir, webDir: path.join(dir, 'apps', 'web') }
 }

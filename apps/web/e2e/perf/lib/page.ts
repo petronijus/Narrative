@@ -54,7 +54,12 @@ export async function openDeck(
 
 export async function settle(
   page: Page,
-  opts: { quietMs?: number; timeoutMs?: number; expectedIds?: readonly string[] } = {},
+  opts: {
+    quietMs?: number
+    timeoutMs?: number
+    expectedIds?: readonly string[]
+    unloads?: boolean
+  } = {},
 ): Promise<SettleResult> {
   const r = await page.evaluate(
     (o) =>
@@ -62,11 +67,13 @@ export async function settle(
         quietMs: o.quietMs,
         timeoutMs: o.timeoutMs,
         ...(o.expectedIds !== undefined ? { expectedIds: o.expectedIds } : {}),
+        ...(o.unloads ? { unloads: true } : {}),
       }),
     {
       quietMs: opts.quietMs ?? QUIET_MS,
       timeoutMs: opts.timeoutMs ?? 30_000,
       expectedIds: opts.expectedIds === undefined ? undefined : [...opts.expectedIds],
+      unloads: opts.unloads === true,
     },
   )
   if (!r.ok)

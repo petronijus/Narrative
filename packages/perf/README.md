@@ -24,6 +24,80 @@ Work metrics (`kind: 'work'`: rasters, uploads, renders) must not vary between
 runs; they form the counter snapshot compared exactly with
 `perf/budgets/<id>.json`.
 
+A work metric marked `perFrame` counts work the page does once a frame
+rather than once an input: a drag's slide-object flush (`y.slideObjects.flush`,
+rAF-batched) and the scene updates it applies (`sg.update`). It equals the
+moves only where the runtime draws a frame for every input, which is headless
+Chromium (`drawsFramePerInput`). WebKit paces its own frames: headless, headed
+and in the Tauri window two moves can share a frame and one flush (59 of 60,
+85–90 of 90). Every move still arrives there, so `y.tx.local` and the observer
+calls stay exact. So `metricsFor(metrics, fingerprint)` turns a `perFrame`
+count into a time metric in any other runtime. There it is summarised and
+compared like a time and left out of the counter snapshot. The budget check
+of such a run covers the per-input counts only (`diffBudget`). A budget is
+taken from (`just perf-accept`) and checked against (`just perf-counters`)
+the newest dev result that counts every work metric (`budgetResult`), which
+for a drag is a headless Chromium run. The drags do not wait for a frame per
+move: they would then stop measuring a pointer faster than the display, the
+case the batching exists for.
+
+### Run validity: network changes
+
+A network change under the browser invalidates a sample: Chrome aborts every
+request in flight, `localhost` included, with `net::ERR_NETWORK_CHANGED`
+whenever the OS reports one, and a dropped WebSocket reconnects and
+re-syncs — the sample then measured a re-fetch or a reconnect, not the
+gesture (SETUP.md → Common first-run failures: a USB-tethered phone
+re-attaching ~106 times an hour on the MacBook). The layer I driver
+(`apps/web/e2e/perf/lib/driver.ts`, with `apps/web/e2e/fixtures/networkChange.ts`)
+watches three things from the first browser context on:
+
+- the host: `os.networkInterfaces()` polled every 100 ms (~50 µs a call; no
+  root, no subprocess, every OS) — an interface that comes, goes or changes
+  its addresses (`node/networkWatch.ts`; AWDL / LLW churn ignored);
+- every context's failed requests whose error text means a network change or
+  a network gone (`isNetworkChangeError`: `ERR_NETWORK_CHANGED`,
+  `ERR_INTERNET_DISCONNECTED`, `ERR_NETWORK_IO_SUSPENDED`, WebKit's "network
+  connection was lost" / "appears to be offline");
+- a WebSocket that dropped: its CloseEvent says no close frame (1006,
+  `wasClean` false) and page code did not call `close()` on it. Playwright's
+  `close` event carries no code, so an init script wraps `WebSocket` in every
+  page of a side's context and reports each close (code, `wasClean`, whether
+  the page closed it) through a binding. A close the page asked for, or one
+  the other end sent a close frame for (1000, 1001, 1011, a server's 4xxx),
+  is the app's doing and never counts; a close with no code reported counts
+  only next to a host or request signal (`classifySocketClose`,
+  `socketCloseDisturbs`). Before this rule, `just perf-compare HEAD .
+present.*` (2026-10-23) discarded 9 samples of `present.jump.link` and
+  failed `present.build.steps`: present mode closes the slide documents'
+  sockets on every jump, with no network event anywhere. With the rule the
+  same compare (`--runs 5`) discarded nothing from present mode; it did
+  discard one sample whose every socket, on both sides, dropped with 1006 in
+  the same millisecond: the dev server restarting (`tsx watch`, an edit of
+  `packages/commands` in that second) — a dropped connection that re-syncs,
+  which is what the rule is for.
+
+An attempt (warm-up or recorded) that any of them touched — from 3 s before
+it started to 0.5 s after it ended (`TOUCH_MARGIN`) — is discarded, whether it
+returned values or threw; the driver waits until the network has been quiet
+for 2 s and every dropped socket has reconnected, then runs it again in the
+same side's turn (`guarded`, `runInterleaved({ guard })`). Each discard prints
+a `PERF note <id>: discarded … run N attempt K — <time> <source> <what>` line,
+the result a `PERF note <id>: N samples discarded and re-run` line, and the
+stored result carries them in `discarded` (attempt, times, the events), as
+does the details file. A comparison with a baseline that had discards says so.
+After `PERF_NETWORK_RETRIES` (3) extra attempts of one run the bench fails
+(`DisturbedRunError`) instead of storing tainted samples, as it does when the
+network does not settle within 60 s. `discarded` is optional — results stored
+before it are format 1 all the same and read as "none discarded".
+
+The Tauri window has no request events: there the host watcher alone guards
+the run. `PERF_SIMULATE_NETWORK_CHANGE=3[,…]` takes the side's context
+offline for 300 ms with a request in flight in the given attempts of each
+bench (warm-ups count) — Playwright cannot produce a real
+`ERR_NETWORK_CHANGED`, but `ERR_INTERNET_DISCONNECTED` travels the same
+detection path; such a run is printed, never stored.
+
 ## Comparability
 
 Results compare only on the same machine and build mode (`dev`, `prod`,
@@ -50,7 +124,8 @@ dev stack must be up). Chromium draws with the machine's GPU unless
 `--headed` draws in a window on the screen, paced by the display as the
 Tauri app's window is (a headless WebKit or Chromium paces itself); its
 results are a series of their own (`…/webkit-browser-headed`), never
-compared with a headless run.
+compared with a headless run. In a headed or WebKit run the `perFrame` counts
+are time metrics (Statistics above; the run prints a `PERF note` saying so).
 
 `--shell tauri` measures in the Tauri desktop window instead (macOS, the
 system WKWebView; `apps/desktop-tauri/README.md` → Measuring it): the same
@@ -109,11 +184,41 @@ builds and serves both, and runs them interleaved A B A B on two pages;
 verdicts per time metric (bootstrap CI and threshold) and the counter diff
 are printed, and the exit code is 1 on a regression or a changed counter.
 Both revisions must have the harness (step 2 onwards); the old side talks to
-the current dev backend. `just perf-bisect <id> <good> <bad>` searches
-`good..bad` (first parent) for the first commit that regresses against
-`good`, never touching this checkout. `just perf-profile <id>` runs once with
+the current dev backend. A worktree's install runs the build scripts its own
+`allowBuilds` allows and ignores the rest (`--config.strict-dep-builds=false`:
+a revision older than its decline of a script would otherwise fail today's
+pnpm); a marker in its `node_modules` says the install finished.
+`just perf-bisect <id> <good> <bad> [--runs N] [--warmup N] [--metric m[,m…]]`
+searches `good..bad` (first parent) for the first commit that regresses
+against `good`, never touching this checkout. Without `--metric` any time
+metric's regression or any changed counter stops it there; with it, only the
+named metrics count (`--metric react.commits` — a bench reports dozens of
+time metrics, and one landing outside its interval by chance would send the
+search the wrong way). `just perf-profile <id>` runs once with
 a CDP CPU profile (profiling build by default) and prints the top self-time
 functions; the `.cpuprofile` lands in `details/` next to the results.
+
+### Growth benches (E8)
+
+`memory.*` (`apps/web/e2e/perf/memory.spec.ts`) measure what a long session
+leaves behind. One run is one session in a page of its own: the scene
+opened, a pass, the same pass again, a snapshot after each (the scene
+settled; in Chromium two full collections through CDP, then the retained
+heap — `usedSize + embedderHeapUsedSize + backingStorageSize` of
+`Runtime.getHeapUsage` — and `Memory.getDOMCounters`; in every engine the
+harness's `memory()`: the GL context's textures and their bytes, the WebGL
+contexts alive, the elements, the object URLs not revoked). A pass that ends
+where the first ended must leave nothing new: `mem.leak.*`, the second pass's
+growth (never below 0), is budgeted exactly, the heap as whole MB over its
+noise bound (`MEMORY_HEAP_BOUND_MB`). The time metrics (`mem.heapMB`,
+`mem.heap.firstMB`, `mem.heap.growMB`, `mem.textures.first`, …) keep the
+signed numbers. The texture bytes are an estimate (4 bytes a pixel, every
+mip level; `apps/web/src/perf/glResidency.ts`), followed only on pages that
+ask for it before the harness loads (`window.__narrative_perf_residency`):
+the wraps on every `bindTexture` stay out of the other benches. A bench may
+name its own default runs (`BenchDef.runs`; the growth benches 1 + 3), which
+`--runs` / `--warmup` override. Never `performance.memory`: Chromium buckets
+it and caches it for 20 minutes.
 
 Each result also writes a details file (`~/.cache/narrative-perf/<machine>/
 details/<id>@<mode>-…json`): requests by route, React renders by component,

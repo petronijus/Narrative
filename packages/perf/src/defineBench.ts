@@ -12,6 +12,8 @@
  * fails at definition.
  */
 
+import { drawsFramePerInput, type Fingerprint } from './fingerprint.js'
+
 /** C counters · M micro (Node) · B renderer bench · I interaction · S system. */
 export type Layer = 'C' | 'M' | 'B' | 'I' | 'S'
 
@@ -30,6 +32,16 @@ export interface MetricSpec {
    * Frame counts during a timed gesture are `time`, never `work`.
    */
   kind: 'work' | 'time'
+  /**
+   * A `work` count of something the page does once a frame, not once an
+   * input — the slide-object observer's rAF-batched flush
+   * (`y.slideObjects.flush`) and the scene updates it applies (`sg.update`).
+   * It equals the inputs' count only where the runtime draws a frame for
+   * every input (`drawsFramePerInput`: headless Chromium); anywhere else two
+   * inputs can share a frame, so there it is measured as a `time` metric
+   * (`metricsFor`). Only on `kind: 'work'`.
+   */
+  perFrame?: true
   /** Overrides the bench's threshold for this metric (a fraction, 0.05 = 5 %). */
   threshold?: number
 }
@@ -59,6 +71,12 @@ export interface BenchDef<Ctx = unknown> {
   metrics: Readonly<Record<string, MetricSpec>>
   /** Smallest relative change reported as a difference (default 5 %). */
   threshold?: number
+  /**
+   * Warm-up and recorded runs when the command line names none (`--runs`,
+   * `--warmup`): a bench whose one run is a long session (the growth benches,
+   * a minute or more each) takes fewer than the driver's default 2 + 10.
+   */
+  runs?: { warmup: number; runs: number }
 }
 
 export const DEFAULT_THRESHOLD = 0.05
@@ -82,11 +100,23 @@ export function benchProblems(def: BenchDef<never>): string[] {
     if (!METRIC.test(name)) problems.push(`metric '${name}' is not a dotted camelCase name`)
     if (spec.threshold !== undefined && !validThreshold(spec.threshold))
       problems.push(`metric '${name}': threshold ${spec.threshold} is not in (0, 1)`)
+    if (spec.perFrame === true && spec.kind !== 'work')
+      problems.push(`metric '${name}': perFrame on a time metric (it qualifies a work count)`)
   }
   if (def.layer === 'C' && !metrics.some(([, s]) => s.kind === 'work'))
     problems.push('a layer C bench needs at least one work metric (its counter budget)')
   if (def.threshold !== undefined && !validThreshold(def.threshold))
     problems.push(`threshold ${def.threshold} is not in (0, 1)`)
+  if (
+    def.runs !== undefined &&
+    !(
+      Number.isInteger(def.runs.warmup) &&
+      def.runs.warmup >= 0 &&
+      Number.isInteger(def.runs.runs) &&
+      def.runs.runs >= 1
+    )
+  )
+    problems.push(`runs ${JSON.stringify(def.runs)}: warm-ups ≥ 0 and runs ≥ 1, whole numbers`)
   for (const list of [def.actions, def.commands]) {
     if (list !== undefined && new Set(list).size !== list.length)
       problems.push('names an action or command twice')
@@ -103,6 +133,51 @@ export function defineBench<Ctx>(def: BenchDef<Ctx>): BenchDef<Ctx> {
   const problems = benchProblems(def as BenchDef<never>)
   if (problems.length > 0) throw new Error(`defineBench ${def.id}: ${problems.join('; ')}`)
   return def
+}
+
+/**
+ * A bench's metrics as a run under `fp` measures them: a `perFrame` work
+ * count becomes a time metric where the runtime does not draw a frame per
+ * input. Every other metric, and every metric in headless Chromium, is as
+ * declared. Results, comparisons and budget checks all go through this, so
+ * one runtime's exact count is never another's flaky one.
+ */
+export function metricsFor(
+  metrics: Readonly<Record<string, MetricSpec>>,
+  fp: Pick<Fingerprint, 'browser'>,
+): Readonly<Record<string, MetricSpec>> {
+  if (drawsFramePerInput(fp)) return metrics
+  return Object.fromEntries(
+    Object.entries(metrics).map(([m, spec]) => {
+      if (spec.perFrame !== true) return [m, spec]
+      const timed: MetricSpec = {
+        unit: spec.unit,
+        better: spec.better,
+        kind: 'time',
+        ...(spec.threshold !== undefined ? { threshold: spec.threshold } : {}),
+      }
+      return [m, timed]
+    }),
+  )
+}
+
+/** The work metrics a run under `fp` counts exactly (its counter snapshot's keys), sorted. */
+export function workMetricsFor(
+  metrics: Readonly<Record<string, MetricSpec>>,
+  fp: Pick<Fingerprint, 'browser'>,
+): string[] {
+  return Object.entries(metricsFor(metrics, fp))
+    .filter(([, s]) => s.kind === 'work')
+    .map(([m]) => m)
+    .sort()
+}
+
+/** Whether a run under `fp` counts every work metric the bench declares (what a budget is taken from). */
+export function countsAllWork(
+  metrics: Readonly<Record<string, MetricSpec>>,
+  fp: Pick<Fingerprint, 'browser'>,
+): boolean {
+  return drawsFramePerInput(fp) || !Object.values(metrics).some((s) => s.perFrame === true)
 }
 
 /** The threshold a metric of a bench is judged by. */

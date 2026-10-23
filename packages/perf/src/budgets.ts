@@ -8,6 +8,9 @@
  * `@narrative/perf/node` (budgetFiles.ts).
  */
 
+import { countsAllWork, workMetricsFor, type MetricSpec } from './defineBench.js'
+import type { Fingerprint } from './fingerprint.js'
+
 export const BUDGET_FORMAT = 1
 
 /**
@@ -50,6 +53,46 @@ export function diffCounters(
     if (from !== to) changes.push({ key, from, to })
   }
   return { ok: changes.length === 0, changes }
+}
+
+/**
+ * A budget checked against one result of its bench: every counter, except a
+ * declared `perFrame` one the result's runtime does not count exactly
+ * (`workMetricsFor`) — a display-paced run still checks the per-input counts
+ * (one transaction and one observer call per move), never the per-frame ones
+ * it cannot hold. A budgeted key the bench does not declare stays in (it is
+ * a `budgetProblems` finding, and shows as removed).
+ */
+export function diffBudget(
+  metrics: Readonly<Record<string, MetricSpec>>,
+  budget: Readonly<Record<string, number>>,
+  result: {
+    counters?: Readonly<Record<string, number>>
+    fingerprint: Pick<Fingerprint, 'browser'>
+  },
+): CounterDiff {
+  const exact = new Set(workMetricsFor(metrics, result.fingerprint))
+  const checked = Object.fromEntries(
+    Object.entries(budget).filter(([k]) => exact.has(k) || !Object.hasOwn(metrics, k)),
+  )
+  return diffCounters(checked, result.counters ?? {})
+}
+
+/**
+ * The result a budget is taken from and checked against: the newest one of
+ * the budget mode whose runtime counts every work metric the bench declares
+ * (`countsAllWork` — headless Chromium for a bench with `perFrame` counts).
+ * `results` oldest first, as the store lists them.
+ */
+export function budgetResult<R extends { fingerprint: Pick<Fingerprint, 'build' | 'browser'> }>(
+  metrics: Readonly<Record<string, MetricSpec>>,
+  results: readonly R[],
+): R | undefined {
+  return results
+    .filter(
+      (r) => r.fingerprint.build.mode === BUDGET_MODE && countsAllWork(metrics, r.fingerprint),
+    )
+    .at(-1)
 }
 
 /** One line per change: `text.rasters: 0 → 120 (+120)`, `gl.mipmaps: new, 4`, `react.commits: 3 → removed`. */

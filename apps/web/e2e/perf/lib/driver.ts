@@ -11,7 +11,7 @@
  *   PERF_IDS            comma-separated bench ids (default: all of the spec)
  *   PERF_MODE           the build mode the page must report: dev | prod | profiling
  *   PERF_SIDES          JSON [{ name, baseURL, version?, rev? }] (default: one side, PW_BASE_URL)
- *   PERF_RUNS, PERF_WARMUP   recorded / warm-up runs per side (default 10 / 2)
+ *   PERF_RUNS, PERF_WARMUP   recorded / warm-up runs per side (default: the bench's `runs`, else 10 / 2)
  *   PERF_STORE=0        print only, store nothing
  *   PERF_HEADED=1       the browser draws in a window (`--headed`); its own baseline series
  *   PERF_SHELL=tauri    the page is the Tauri window (`--shell tauri`, tauriPage.ts); its own series
@@ -20,6 +20,12 @@
  *   PERF_LOW_POWER=1    run WebKit in macOS Low Power Mode on purpose (its 30 fps cap is the
  *                       subject: performance.md → E, Low Power Mode): printed, never stored
  *   PERF_PROFILE=1      one run with a CPU profile (Chromium), written next to the results
+ *   PERF_NETWORK_RETRIES  extra attempts of a run a network change disturbed (default 3;
+ *                       packages/perf/README.md → Run validity)
+ *   PERF_SIMULATE_NETWORK_CHANGE=n[,m…]  take the side's context offline for 300 ms in the
+ *                       n-th attempt of each bench (warm-ups included, counted over the sides)
+ *                       and fire a request into it: proves the discard path end to end —
+ *                       printed, never stored
  *   PERF_VERDICT_FILE   where to write the A/B verdicts (JSON) for perf-compare / perf-bisect
  *
  * Scene knobs of the old probes still work — PERF_TEXTS, PERF_IMAGES,
@@ -34,13 +40,18 @@ import { fileURLToPath } from 'node:url'
 import type { Browser, BrowserContext, LaunchOptions, Page } from '@playwright/test'
 import {
   bindRun,
+  clockTime,
   comparability,
   compareResults,
+  diffBudget,
   diffCounters,
+  drawsFramePerInput,
   fmt,
   formatBudgetCheck,
   formatComparisons,
+  formatDiscards,
   formatFingerprint,
+  GUARD_RETRIES,
   INTERACTION_BENCHES,
   refuseToRun,
   runInterleaved,
@@ -48,9 +59,11 @@ import {
   type BenchResult,
   type BuildMode,
   type Fingerprint,
+  type RunGuard,
   type RunValues,
 } from '@narrative/perf'
 import { collectFingerprint, machineName, openResultStore, readBudget } from '@narrative/perf/node'
+import { NetworkMonitor } from '../../fixtures/networkChange'
 import { installReactPerfHook } from './reactHook'
 import { cdpProfiler, summariseProfile, type CpuProfile } from './profile'
 import type { Captured } from './page'
@@ -80,6 +93,20 @@ function sides(): SideSpec[] {
   return [{ name: mode, baseURL: process.env['PW_BASE_URL'] || 'http://localhost:5173' }]
 }
 
+/** PERF_SIMULATE_NETWORK_CHANGE: the attempt numbers to disturb. */
+function simulated(): number[] {
+  return (process.env['PERF_SIMULATE_NETWORK_CHANGE'] ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '')
+    .map((s) => {
+      const n = Number(s)
+      if (!Number.isInteger(n) || n < 1)
+        throw new Error(`PERF_SIMULATE_NETWORK_CHANGE=${s} is not an attempt number (1, 2, …)`)
+      return n
+    })
+}
+
 export const PERF = {
   run: process.env['PERF_RUN'] === '1',
   ids: (process.env['PERF_IDS'] ?? '')
@@ -89,10 +116,18 @@ export const PERF = {
   mode: (process.env['PERF_MODE'] ?? 'dev') as BuildMode,
   runs: num('PERF_RUNS', 10),
   warmup: num('PERF_WARMUP', 2),
+  /** Whether the command line set them: otherwise a bench's own `runs` (BenchDef.runs) wins. */
+  runsGiven: (process.env['PERF_RUNS'] ?? '') !== '',
+  warmupGiven: (process.env['PERF_WARMUP'] ?? '') !== '',
   store:
     process.env['PERF_STORE'] !== '0' &&
     process.env['PERF_ANTIALIAS'] !== 'off' &&
-    process.env['PERF_LOW_POWER'] !== '1',
+    process.env['PERF_LOW_POWER'] !== '1' &&
+    simulated().length === 0,
+  /** Extra attempts of a run that a network change disturbed, before the bench fails. */
+  networkRetries: num('PERF_NETWORK_RETRIES', GUARD_RETRIES),
+  /** Attempts (1-based, per bench, warm-ups included) to disturb on purpose. */
+  simulate: simulated(),
   /** WebKit in Low Power Mode measured on purpose (refuseToRun lets it through). */
   lowPower: process.env['PERF_LOW_POWER'] === '1',
   profile: process.env['PERF_PROFILE'] === '1',
@@ -159,6 +194,46 @@ export function launchOptions(): LaunchOptions {
   }
 }
 
+/**
+ * The network under the browser, watched from the first context on: the
+ * host's interfaces, failed requests, dropped WebSockets (README → Run
+ * validity). One per process — a perf run is one Playwright worker.
+ */
+let monitor: NetworkMonitor | null = null
+export function networkMonitor(): NetworkMonitor {
+  monitor ??= new NetworkMonitor({ sockets: true, offline: true })
+  return monitor
+}
+
+/**
+ * PERF_SIMULATE_NETWORK_CHANGE: what a network change does to a page, as
+ * near as Playwright gets without touching the machine's network — 50 ms
+ * into the run the side's context goes offline for 300 ms with a request in
+ * flight. Chromium's offline emulation fails it with
+ * `net::ERR_INTERNET_DISCONNECTED` (a WebSocket stays up); a real
+ * `ERR_NETWORK_CHANGED` cannot be produced from Playwright (neither
+ * `route.abort` nor CDP's `Fetch.failRequest` has that reason). Detection
+ * takes the same path for both: the context's `requestfailed`.
+ */
+function simulateNetworkChange(page: Page, what: string): void {
+  if (isTauriPage(page))
+    throw new Error('PERF_SIMULATE_NETWORK_CHANGE: the Tauri window has no offline switch')
+  const context = page.context()
+  void (async () => {
+    await new Promise((r) => setTimeout(r, 50))
+    console.log(`PERF simulate ${what}: the side offline for 300 ms, a request in flight`)
+    await context.setOffline(true)
+    try {
+      await page.evaluate(() => {
+        void fetch(`/api/health?perf-simulated-network-change=${Date.now()}`).catch(() => undefined)
+      })
+      await new Promise((r) => setTimeout(r, 300))
+    } finally {
+      await context.setOffline(false)
+    }
+  })().catch((err: unknown) => console.log(`PERF simulate ${what} failed: ${String(err)}`))
+}
+
 /** A browser context for a side: its origin, the scenario's viewport, the React hook. */
 export async function sideContext(
   browser: Browser,
@@ -172,6 +247,7 @@ export async function sideContext(
   })
   await context.addInitScript(installReactPerfHook)
   for (const script of extraInitScripts()) await context.addInitScript(script)
+  await networkMonitor().instrumentContext(context)
   return context
 }
 
@@ -342,6 +418,8 @@ function writeDetails(
         longTasks: c?.recording.longTasks,
         slowEvents: c?.recording.slowEvents?.slice(0, 20),
         restagesDone: c?.recording.restagesDone,
+        // The attempts a network change disturbed and the run took again (README → Run validity).
+        discarded: result.discarded ?? [],
         notes: state.notes,
         ...extra,
       },
@@ -378,9 +456,20 @@ export async function runScenarios<S extends SideState>(o: {
     fps.set(s, fp)
     for (const line of formatFingerprint(fp))
       console.log(`${line}${o.states.length > 1 ? ` [${s.side.name}]` : ''}`)
+    if (!drawsFramePerInput(fp))
+      console.log(
+        'PERF note this runtime paces its frames apart from the input: perFrame counts ' +
+          '(a drag’s sg.update, y.slideObjects.flush) are time metrics here, not budgeted',
+      )
   }
   const keep = PERF.store && o.sceneIsDefault
   if (!o.sceneIsDefault) console.log('PERF scene knobs changed: results are printed, not stored')
+  if (PERF.simulate.length > 0)
+    console.log(
+      `PERF simulating a network change in attempt ${PERF.simulate.join(', ')} of each bench ` +
+        '(the side offline for 300 ms, a request in flight): results printed, not stored',
+    )
+  const network = networkMonitor()
   const verdicts: Verdict[] = []
 
   const failures: string[] = []
@@ -421,6 +510,7 @@ export async function runScenarios<S extends SideState>(o: {
     const def = bindRun<S>(meta, async (state) => {
       const t = Date.now()
       n++
+      if (PERF.simulate.includes(n)) simulateNetworkChange(state.page, `${id} attempt ${n}`)
       if (!PERF.profile) {
         const v = await fn(state, meta)
         if (process.env['PERF_VERBOSE'] === '1')
@@ -447,10 +537,34 @@ export async function runScenarios<S extends SideState>(o: {
           ),
         }
       : def
+    // A run a network change touched measured a re-fetch or a reconnect:
+    // discarded, and taken again once the network is quiet (README → Run validity).
+    const guard: RunGuard = {
+      retries: PERF.networkRetries,
+      disturbances: (start, end) => network.touching(start, end),
+      recover: () => network.recover(),
+      onDiscard: (d) =>
+        console.log(
+          `PERF note ${id}: discarded ${d.phase === 'warmup' ? 'warm-up' : 'recorded'} run ${d.index}` +
+            `${o.states.length > 1 && d.side !== undefined ? ` [${d.side}]` : ''} attempt ${d.attempt}` +
+            `${d.error !== undefined ? ` (it threw: ${d.error})` : ''} — ${d.disturbances
+              .slice(0, 3)
+              .map((e) => `${clockTime(Date.parse(e.at))} ${e.source} ${e.detail}`)
+              .join(
+                '; ',
+              )}${d.disturbances.length > 3 ? `; +${d.disturbances.length - 3} more` : ''}`,
+        ),
+    }
     const results = await runInterleaved(
       runDef,
       o.states.map((s) => ({ name: s.side.name, ctx: s, fingerprint: fps.get(s)! })),
-      PERF.profile ? { warmup: 1, runs: 1 } : { warmup: PERF.warmup, runs: PERF.runs },
+      PERF.profile
+        ? { warmup: 1, runs: 1, guard }
+        : {
+            warmup: PERF.warmupGiven ? PERF.warmup : (meta.runs?.warmup ?? PERF.warmup),
+            runs: PERF.runsGiven ? PERF.runs : (meta.runs?.runs ?? PERF.runs),
+            guard,
+          },
     )
     if (discover)
       for (const r of results) {
@@ -469,6 +583,9 @@ export async function runScenarios<S extends SideState>(o: {
     for (const [k, result] of results.entries()) {
       const state = o.states[k]!
       console.log(headline(meta, result))
+      const discards = formatDiscards(id, result.discarded ?? [])
+      if (discards !== null)
+        console.log(`${discards}${o.states.length > 1 ? ` [${state.side.name}]` : ''}`)
       if (keep && !PERF.profile && !discover) store.append(result)
       const extra: Record<string, unknown> = {}
       const prof = profiles.filter((p) => p.state === state).at(-1)
@@ -499,6 +616,13 @@ export async function runScenarios<S extends SideState>(o: {
         if (base === undefined)
           console.log(`PERF ${id}: no baseline on ${store.machine} yet (just perf-accept ${id})`)
         else {
+          const baseDiscards = base.result.discarded?.length ?? 0
+          if (baseDiscards > 0)
+            console.log(
+              `PERF note ${id}: its baseline (${base.result.at}) had ${baseDiscards} disturbed attempt${
+                baseDiscards === 1 ? '' : 's'
+              } discarded and re-run`,
+            )
           const ok = comparability(base.result.fingerprint, result.fingerprint)
           if (!ok.ok) console.log(`PERF ${id}: baseline not comparable: ${ok.reasons.join('; ')}`)
           else
@@ -511,7 +635,11 @@ export async function runScenarios<S extends SideState>(o: {
           budget !== undefined &&
           result.fingerprint.build.mode === 'dev'
         )
-          for (const line of formatBudgetCheck(id, diffCounters(budget.counters, result.counters)))
+          // A display-paced run checks the per-move counts; its perFrame ones are timed.
+          for (const line of formatBudgetCheck(
+            id,
+            diffBudget(meta.metrics, budget.counters, result),
+          ))
             console.log(line)
       }
     }

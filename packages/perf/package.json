@@ -7,7 +7,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./stats": "./src/stats.ts",
-    "./node": "./src/node/index.ts"
+    "./disturbance": "./src/disturbance.ts",
+    "./node": "./src/node/index.ts",
+    "./node/networkWatch": "./src/node/networkWatch.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

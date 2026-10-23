@@ -7,8 +7,8 @@
  *   perf [ids…] [--mode dev|prod|profiling] [--layer I|C] [--runs N] [--warmup N]
  *        [--browser chromium|webkit] [--headed] [--shell tauri] [--device-scale N]
  *        [--no-build] [--swiftshader]
- *   perf-compare <revA> <revB> [ids…] [--runs N]   (`.` = this working tree)
- *   perf-bisect <id> <good> <bad> [--runs N]
+ *   perf-compare <revA> <revB> [ids…] [--runs N] [--warmup N]   (`.` = this working tree)
+ *   perf-bisect <id> <good> <bad> [--runs N] [--warmup N] [--metric m[,m…]]
  *   perf-profile <id> [--mode profiling|prod|dev]
  *
  * The mode defaults to prod (the build people use; perf-harness.md →
@@ -61,7 +61,9 @@ export function parseArgs(argv: readonly string[]): Args {
       const [k, v] = a.slice(2).split('=', 2) as [string, string | undefined]
       if (v !== undefined) flags.set(k, v)
       else if (
-        ['mode', 'layer', 'runs', 'warmup', 'browser', 'shell', 'device-scale'].includes(k) &&
+        ['mode', 'layer', 'runs', 'warmup', 'browser', 'shell', 'device-scale', 'metric'].includes(
+          k,
+        ) &&
         i + 1 < argv.length
       )
         flags.set(k, argv[++i]!)
@@ -241,7 +243,7 @@ async function perf(args: Args): Promise<number> {
   }
 }
 
-interface VerdictRow {
+export interface VerdictRow {
   bench: string
   regressions: string[]
   improvements: string[]
@@ -254,7 +256,7 @@ async function compareRevs(
   revA: string,
   revB: string,
   ids: readonly string[],
-  runs: string | undefined,
+  counts: { runs?: string | undefined; warmup?: string | undefined },
 ): Promise<{ code: number; verdicts: VerdictRow[] }> {
   await requireDevBackend()
   const a = await checkout(root, revA, perfHome(), log)
@@ -284,7 +286,11 @@ async function compareRevs(
           ...(sb.version !== undefined ? { version: sb.version } : {}),
         },
       ],
-      env: { PERF_VERDICT_FILE: verdictFile, ...(runs !== undefined ? { PERF_RUNS: runs } : {}) },
+      env: {
+        PERF_VERDICT_FILE: verdictFile,
+        ...(counts.runs !== undefined ? { PERF_RUNS: counts.runs } : {}),
+        ...(counts.warmup !== undefined ? { PERF_WARMUP: counts.warmup } : {}),
+      },
     })
     const verdicts = existsSync(verdictFile)
       ? (JSON.parse(readFileSync(verdictFile, 'utf8')) as VerdictRow[])
@@ -296,8 +302,20 @@ async function compareRevs(
   }
 }
 
-function printVerdicts(verdicts: readonly VerdictRow[]): boolean {
-  let regressed = false
+/**
+ * Whether a verdict counts as a regression for a bisect or a compare's exit
+ * code: any time metric that regressed or any work counter that changed — or,
+ * with `metrics` (`perf-bisect --metric react.commits`), only those. A bisect
+ * after one number must not stop at a commit where an unrelated time metric
+ * happened to land outside its interval: every bench reports dozens of them.
+ */
+export function regressed(v: VerdictRow, metrics?: ReadonlySet<string>): boolean {
+  const named = (m: string): boolean => metrics === undefined || metrics.has(m)
+  return v.regressions.some(named) || v.counterChanges.some(named)
+}
+
+function printVerdicts(verdicts: readonly VerdictRow[], metrics?: ReadonlySet<string>): boolean {
+  let any = false
   for (const v of verdicts) {
     const parts = [
       v.regressions.length > 0 ? `REGRESSION ${v.regressions.join(', ')}` : '',
@@ -305,9 +323,11 @@ function printVerdicts(verdicts: readonly VerdictRow[]): boolean {
       v.counterChanges.length > 0 ? `counters changed: ${v.counterChanges.join(', ')}` : '',
     ].filter((p) => p !== '')
     log(`verdict ${v.bench}: ${parts.join(' · ') || 'no change'}`)
-    if (v.regressions.length > 0 || v.counterChanges.length > 0) regressed = true
+    if (regressed(v, metrics)) any = true
   }
-  return regressed
+  if (metrics !== undefined)
+    log(`verdict counted on ${[...metrics].join(', ')} only: ${any ? 'regressed' : 'no change'}`)
+  return any
 }
 
 async function compareCmd(args: Args): Promise<number> {
@@ -315,13 +335,10 @@ async function compareCmd(args: Args): Promise<number> {
   if (revA === undefined || revB === undefined)
     throw new Error('usage: perf-compare <revA> <revB> [ids…]')
   const root = repoRoot()
-  const { code, verdicts } = await compareRevs(
-    root,
-    revA,
-    revB,
-    resolveIds(named, undefined),
-    flag(args, 'runs'),
-  )
+  const { code, verdicts } = await compareRevs(root, revA, revB, resolveIds(named, undefined), {
+    runs: flag(args, 'runs'),
+    warmup: flag(args, 'warmup'),
+  })
   if (code !== 0) return code
   return printVerdicts(verdicts) ? 1 : 0
 }
@@ -330,7 +347,20 @@ async function bisectCmd(args: Args): Promise<number> {
   const [id, good, bad] = args.positional
   if (id === undefined || good === undefined || bad === undefined)
     throw new Error('usage: perf-bisect <id> <good> <bad>')
-  resolveIds([id], undefined)
+  const [def] = resolveIds([id], undefined).map((i) => benchRegistry().get(i))
+  const metricFlag = flag(args, 'metric')
+  const metrics =
+    metricFlag === undefined
+      ? undefined
+      : new Set(
+          metricFlag
+            .split(',')
+            .map((m) => m.trim())
+            .filter((m) => m !== ''),
+        )
+  for (const m of metrics ?? [])
+    if (def !== undefined && !Object.hasOwn(def.metrics, m))
+      throw new Error(`--metric ${m}: ${id} does not report it`)
   const root = repoRoot()
   const commits = await commitsBetween(root, good, bad)
   if (commits.length === 0) throw new Error(`no commits between ${good} and ${bad}`)
@@ -342,9 +372,12 @@ async function bisectCmd(args: Args): Promise<number> {
     const mid = (lo + hi) >> 1
     const sha = commits[mid]!
     log(`bisect ${id}: ${good} vs ${sha.slice(0, 10)} (${hi - lo + 1} candidates)`)
-    const { code, verdicts } = await compareRevs(root, good, sha, [id], flag(args, 'runs'))
+    const { code, verdicts } = await compareRevs(root, good, sha, [id], {
+      runs: flag(args, 'runs'),
+      warmup: flag(args, 'warmup'),
+    })
     if (code !== 0) throw new Error(`perf-compare failed at ${sha} (exit ${code})`)
-    if (printVerdicts(verdicts)) {
+    if (printVerdicts(verdicts, metrics)) {
       firstBad = sha
       hi = mid - 1
     } else lo = mid + 1

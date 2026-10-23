@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "id": "memory.zoom.cycle",
+  "counters": {
+    "mem.leak.blobUrls": 0,
+    "mem.leak.contexts": 0,
+    "mem.leak.heapMB": 0,
+    "mem.leak.listeners": 0,
+    "mem.leak.nodes": 0,
+    "mem.leak.textureMB": 0,
+    "mem.leak.textures": 0
+  }
+}

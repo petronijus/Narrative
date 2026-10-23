@@ -15,18 +15,42 @@
  *   - transitions: none, fade, push ×4, cube, magic;
  *   - builds: afterPrevious chains, onClick steps (clicked), withPrevious groups, moveTo;
  *   - video: a 10 s 1080p H.264 between two text slides (transcoded by the dev video worker).
+ *   - video4k: the same deck with a 10 s 4K H.264 (~20 Mbit/s, uploaded through tus): present
+ *     mode plays its 1080p rendition or the original (renderer/videoRendition.ts, P3);
+ *   - videoLoop: the 4K video trimmed to 4.5–7 s and looped, held 8 s a visit.
+ * The video passes also read the playing elements (`videoProbe`): video frames handed to the
+ * canvas, frames never shown, decoder drops, the longest wait from `play` to a new frame, the
+ * file's width; in Chromium the GPU and renderer processes' CPU time over the pass and the GPU
+ * process's memory after it. PERF_VIDEO_IDLE_MS=<ms> holds the first slide that long before a
+ * video pass (a buffered element paused for minutes before its slide).
  * `present.presenter.window` drives the text deck from the pop-out presenter window
  * (`?presenter=1`) and counts that window's work too.
  *
  * Diagnostics: every frame over 1.5 intervals goes into the details file
  * (`notes.slowFrames`: the advance it followed, the renders and long tasks
  * around it; printed with PERF_VERBOSE=1); PERF_TRACE=<dir> writes a Chromium
- * performance trace of each pass there; PERF_KEEP_WARM_AB=1 runs one build as
- * two interleaved sides, present mode's keep-warm off and on (use with
- * PERF_STORE=0 — neither side is the bench's series).
+ * performance trace of each pass there; PERF_PRESENT_AB=<knob> runs one build
+ * as two interleaved sides, the knob off and on — `keep-warm` (present
+ * mode's keep-warm; PERF_KEEP_WARM_AB=1 too), `fence` (the harness's input
+ * fence), `rendition` (off: every video plays its original file, on: present
+ * mode chooses — renderer/videoRendition.ts) or `keep-warm-frame` /
+ * `keep-warm-targets` (keep-warm's frame at the next animation frame / none;
+ * PERF_KEEP_WARM_FRAME=now|frame|none sets it for every pass, the Tauri window too)
+ * or `idle-after-frame` (present mode's idle turns in an engine without idle
+ * callbacks: a 0-ms timer, or right after the next frame; PERF_PRESENT_IDLE);
+ * use with PERF_STORE=0, neither side is the bench's series. WebKit has no profiler
+ * here and no Long Tasks API, so the slow frames also say how long each input
+ * fence waited (`fences`, the GPU work of that frame; the fence is off unless
+ * PERF_INPUT_FENCE=on) and, with
+ * PERF_GAP_PROBE=1, where the main thread was busy (`gaps`, a timer chain —
+ * a wakeup every 4 ms, never for a stored run). PERF_IDLE_CONTROL_MS=<ms>
+ * records that long of the ready presentation with no input before each pass
+ * and prints its slow frames: the misses of a page that does nothing, in the
+ * same window — what the display path drops without us.
  */
 
-import type { BrowserContext, Page } from '@playwright/test'
+import { execFileSync } from 'node:child_process'
+import type { Browser, BrowserContext, Page } from '@playwright/test'
 import type { BenchDef } from '@narrative/perf'
 import { PRESENT_TRANSITIONS } from '@narrative/perf'
 import { expect, test } from '../fixtures/test'
@@ -48,6 +72,16 @@ import {
   type PresentDeck,
 } from './lib/presentDecks'
 
+/** What PERF_PRESENT_AB can switch (see the scenarios). */
+const AB_KNOBS = [
+  'keep-warm',
+  'fence',
+  'rendition',
+  'keep-warm-frame',
+  'keep-warm-targets',
+  'idle-after-frame',
+]
+
 const IDS = [
   'present.advance.text',
   'present.advance.paced',
@@ -55,6 +89,8 @@ const IDS = [
   'present.transition.all',
   'present.build.steps',
   'present.video.play',
+  'present.video.4k',
+  'present.video.loop',
   'present.jump.link',
   'present.presenter.window',
 ]
@@ -84,12 +120,171 @@ const DECKS_OF: Record<string, DeckKind> = {
   'present.transition.all': 'transitions',
   'present.build.steps': 'builds',
   'present.video.play': 'video',
+  'present.video.4k': 'video4k',
+  'present.video.loop': 'videoLoop',
   'present.jump.link': 'photo',
   'present.presenter.window': 'text',
 }
 
 if (PERF.gpu) test.use({ launchOptions: launchOptions() })
 test.skip(!PERF.run, 'perf scenarios run through `just perf`')
+
+/**
+ * The JS heap still in use after a full collection, in bytes (0 where it
+ * cannot be read: WebKit, the Tauri window). Not `performance.memory`:
+ * without `--enable-precise-memory-info` Chromium rounds it into 100
+ * logarithmic buckets from 10 MB to 4 GB (~6 % apart) and caches it per
+ * thread for 20 minutes (blink `timing/memory_info.cc`), so a pass reported
+ * the heap of some earlier moment of the page, in steps — 27.6 → 42.1 MB in
+ * `present.build.steps` and `present.jump.link` alike, seven buckets
+ * (2026-10-23). Read through CDP, after a GC: what the pass left behind,
+ * not when V8 last collected.
+ */
+async function retainedHeap(page: Page): Promise<number> {
+  if (PERF.shell !== 'browser') return 0
+  if (page.context().browser()?.browserType().name() !== 'chromium') return 0
+  const cdp = await page.context().newCDPSession(page)
+  try {
+    await cdp.send('HeapProfiler.collectGarbage')
+    const { usedSize } = await cdp.send('Runtime.getHeapUsage')
+    return usedSize
+  } finally {
+    await cdp.detach()
+  }
+}
+
+/**
+ * The video probe of a video pass (performance.md → P3): every `<video>` of
+ * the page (present mode's pool, renderer/presentVideos.ts) reports each
+ * frame it hands on (requestVideoFrameCallback — Pixi's VideoSource uploads
+ * on the same callback) and its decoder's drops. Started before the pass,
+ * read after it.
+ */
+async function startVideoProbe(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    type Meta = { mediaTime: number; width: number; height: number }
+    type El = HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: (now: number, meta: Meta) => void) => number
+    }
+    const probe = {
+      stopped: false,
+      frames: 0,
+      steps: [] as number[],
+      widths: [] as number[],
+      dropped0: [] as Array<[HTMLVideoElement, number]>,
+      /** From `play` (or a loop's `seeking`) to the next new frame, ms. */
+      starts: [] as number[],
+    }
+    ;(window as unknown as { __narrative_videoProbe?: typeof probe }).__narrative_videoProbe = probe
+    for (const v of document.querySelectorAll<El>('video')) {
+      probe.dropped0.push([v, v.getVideoPlaybackQuality?.().droppedVideoFrames ?? 0])
+      if (typeof v.requestVideoFrameCallback !== 'function') continue
+      let last = -1
+      // A start: `play`, or a seek while playing (a trimmed loop's restart).
+      let startedAt: number | null = null
+      v.addEventListener('play', () => (startedAt = performance.now()))
+      v.addEventListener('seeking', () => {
+        if (!v.paused) startedAt = performance.now()
+      })
+      const onFrame = (now: number, meta: Meta): void => {
+        if (probe.stopped) return
+        if (startedAt !== null && meta.mediaTime !== last) {
+          probe.starts.push(now - startedAt)
+          startedAt = null
+        }
+        probe.frames++
+        probe.widths.push(Math.max(meta.width, meta.height))
+        // A step forward of the media time: one frame, or more never shown.
+        // A rewind or a seek (a slide left, a loop) starts over.
+        const step = meta.mediaTime - last
+        if (last >= 0 && step > 0 && step < 1) probe.steps.push(step)
+        last = meta.mediaTime
+        v.requestVideoFrameCallback!(onFrame)
+      }
+      v.requestVideoFrameCallback(onFrame)
+    }
+  })
+}
+
+async function readVideoProbe(page: Page): Promise<{
+  frames: number
+  skipped: number
+  decoderDropped: number
+  startMs: number
+  width: number
+}> {
+  return page.evaluate(() => {
+    const probe = (
+      window as unknown as {
+        __narrative_videoProbe?: {
+          stopped: boolean
+          frames: number
+          steps: number[]
+          widths: number[]
+          dropped0: Array<[HTMLVideoElement, number]>
+          starts: number[]
+        }
+      }
+    ).__narrative_videoProbe
+    if (probe === undefined)
+      return { frames: 0, skipped: 0, decoderDropped: 0, startMs: 0, width: 0 }
+    probe.stopped = true
+    // The frame duration: the most common step (the median of them).
+    const sorted = [...probe.steps].sort((a, b) => a - b)
+    const frame = sorted[Math.floor(sorted.length / 2)] ?? 0
+    const skipped =
+      frame > 0 ? probe.steps.reduce((n, st) => n + Math.max(0, Math.round(st / frame) - 1), 0) : 0
+    const decoderDropped = probe.dropped0.reduce(
+      (n, [v, d0]) => n + (v.getVideoPlaybackQuality?.().droppedVideoFrames ?? d0) - d0,
+      0,
+    )
+    return {
+      frames: probe.frames,
+      skipped,
+      decoderDropped,
+      startMs: Math.round(Math.max(0, ...probe.starts)),
+      width: Math.max(0, ...probe.widths),
+    }
+  })
+}
+
+/**
+ * CPU time (ms) of the browser's GPU processes and of its renderers so far,
+ * and the GPU processes' resident memory (MB); null outside Chromium (CDP's
+ * SystemInfo.getProcessInfo, `ps` for the memory).
+ */
+async function chromiumProcesses(
+  browser: Browser,
+): Promise<{ gpuCpuMs: number; rendererCpuMs: number; gpuRssMB: number } | null> {
+  if (PERF.shell !== 'browser' || browser.browserType().name() !== 'chromium') return null
+  const cdp = await browser.newBrowserCDPSession()
+  try {
+    const { processInfo } = (await cdp.send('SystemInfo.getProcessInfo')) as {
+      processInfo: Array<{ type: string; id: number; cpuTime: number }>
+    }
+    const gpu = processInfo.filter((p) => p.type.toLowerCase() === 'gpu')
+    const cpu = (list: typeof processInfo): number =>
+      Math.round(list.reduce((a, p) => a + p.cpuTime * 1000, 0))
+    let rssKb = 0
+    for (const p of gpu)
+      try {
+        rssKb += Number(
+          execFileSync('ps', ['-o', 'rss=', '-p', String(p.id)])
+            .toString()
+            .trim(),
+        )
+      } catch {
+        // Gone meanwhile.
+      }
+    return {
+      gpuCpuMs: cpu(gpu),
+      rendererCpuMs: cpu(processInfo.filter((p) => p.type === 'renderer')),
+      gpuRssMB: Math.round(rssKb / 102.4) / 10,
+    }
+  } finally {
+    await cdp.detach()
+  }
+}
 
 /** The refresh interval of the display: the median rAF delta over half a second. */
 async function refreshInterval(page: Page): Promise<number> {
@@ -106,6 +301,48 @@ async function refreshInterval(page: Page): Promise<number> {
         }
         requestAnimationFrame(tick)
       }),
+  )
+}
+
+function keepWarmFrameOf(v: string | undefined): 'now' | 'frame' | 'none' | null {
+  if (v === undefined || v === '') return null
+  if (v === 'now' || v === 'frame' || v === 'none') return v
+  throw new Error(`PERF_KEEP_WARM_FRAME=${v}: now, frame or none`)
+}
+
+/**
+ * PERF_IDLE_CONTROL_MS: the ready presentation recorded for `ms` with no
+ * input, its slow frames printed — the control for the misses of a pass.
+ */
+async function idleControl(
+  page: Page,
+  id: string,
+  side: string,
+  ms: number,
+  interval: number,
+): Promise<void> {
+  const rec = await page.evaluate(async (holdMs) => {
+    const h = window.__narrative_perf_harness!
+    h.startRecording()
+    await new Promise((r) => setTimeout(r, holdMs))
+    return h.stopRecording()
+  }, ms)
+  const slow = rec.frames.filter((f) => f.ms > 1.5 * interval)
+  const dropped = rec.frames.reduce((a, f) => a + Math.max(0, Math.round(f.ms / interval) - 1), 0)
+  const near = (
+    log: Array<{ at: number; ms: number }> | undefined,
+    f: { at: number; ms: number },
+  ) => (log ?? []).filter((r) => r.at >= f.at - interval && r.at <= f.at + f.ms).length
+  console.log(
+    `PERF idle control ${id} [${side}] ${Math.round(rec.durationMs)} ms, ${rec.frames.length} frames, ${dropped} dropped: ` +
+      JSON.stringify(
+        slow.map((f) => ({
+          at: Math.round(f.at),
+          ms: Math.round(f.ms),
+          keepWarm: near(rec.keepWarmLog, f),
+          renders: near(rec.renderLog, f),
+        })),
+      ),
   )
 }
 
@@ -209,7 +446,16 @@ function stepsFor(id: string, deck: PresentDeck): Step[] {
       for (let s = n - 2; s >= 0; s--) steps.push({ kind: 'key', key: 'ArrowLeft', expect: s })
       return steps
     }
+    case 'present.video.loop':
+      // 2.5 s of the file a loop: each hold plays it through about three times.
+      return [
+        { kind: 'key', key: 'ArrowRight', expect: 1, holdMs: 8000 },
+        { kind: 'key', key: 'ArrowRight', expect: 2 },
+        { kind: 'key', key: 'ArrowLeft', expect: 1, holdMs: 8000 },
+        { kind: 'key', key: 'ArrowLeft', expect: 0 },
+      ]
     case 'present.video.play':
+    case 'present.video.4k':
       return [
         { kind: 'key', key: 'ArrowRight', expect: 1, holdMs: 3000 },
         { kind: 'key', key: 'ArrowRight', expect: 2 },
@@ -266,6 +512,12 @@ function slowFrames(
         keepWarm: (rec.keepWarmLog ?? [])
           .filter((r) => r.at >= f.at - interval && r.at <= f.at + f.ms)
           .map((r) => `${Math.round(r.at - f.at)}+${r.ms.toFixed(1)}`),
+        fences: (rec.fenceLog ?? [])
+          .filter((r) => r.at >= f.at - interval && r.at <= f.at + f.ms)
+          .map((r) => `${Math.round(r.at - f.at)}+${r.ms.toFixed(1)}`),
+        gaps: (rec.gapLog ?? [])
+          .filter((g) => g.at + g.ms >= f.at - interval && g.at <= f.at + f.ms)
+          .map((g) => `${Math.round(g.at - f.at)}+${Math.round(g.ms)}`),
         longTasks: (rec.longTasks ?? [])
           .filter((l) => l.at + l.ms >= f.at && l.at <= f.at + f.ms)
           .map((l) => `${Math.round(l.at - f.at)}+${Math.round(l.ms)}`),
@@ -288,6 +540,14 @@ const PRESENT_KEYS = new Set([
   'present.glTextures',
   'present.heapMB',
   'wall',
+  'video.frames',
+  'video.skipped',
+  'video.decoderDropped',
+  'video.startMs',
+  'video.width',
+  'proc.gpuCpuMs',
+  'proc.rendererCpuMs',
+  'proc.gpuRssMB',
 ])
 
 function passValues(
@@ -341,20 +601,58 @@ test('present mode', async ({ browser }) => {
 
   const kinds = new Set(ids.map((id) => DECKS_OF[id]!))
   const states: PresentState[] = []
-  // PERF_KEEP_WARM_AB=1: one build as two interleaved sides, present mode's
-  // keep-warm off (A) and on (B) — renderer/presentSlides.ts → "Kept warm".
-  const keepWarmAb = process.env['PERF_KEEP_WARM_AB'] === '1'
-  const sides = keepWarmAb
-    ? [
-        { ...PERF.sides[0]!, name: 'keep-warm off' },
-        { ...PERF.sides[0]!, name: 'keep-warm on' },
-      ]
-    : PERF.sides
+  // PERF_PRESENT_AB=<knob>: one build as two interleaved sides, the knob off
+  // (A) and on (B) — `keep-warm` (renderer/presentSlides.ts → "Kept warm";
+  // PERF_KEEP_WARM_AB=1 is the same), `fence` (the harness's input fence),
+  // `rendition` (a video's original file, or the one present mode chooses),
+  // `keep-warm-frame` / `keep-warm-targets` (keep-warm's frame drawn at once,
+  // or at the next animation frame / not at all: presentKeepWarm.ts →
+  // KeepWarmFrame).
+  const ab =
+    process.env['PERF_KEEP_WARM_AB'] === '1' ? 'keep-warm' : (process.env['PERF_PRESENT_AB'] ?? '')
+  if (ab !== '' && !AB_KNOBS.includes(ab))
+    throw new Error(`PERF_PRESENT_AB=${ab}: one of ${AB_KNOBS.join(', ')}`)
+  const sides =
+    ab !== ''
+      ? [
+          { ...PERF.sides[0]!, name: `${ab} off` },
+          { ...PERF.sides[0]!, name: `${ab} on` },
+        ]
+      : PERF.sides
   for (const side of sides) {
     const context = await sideContext(browser, side, VIEWPORT)
-    if (keepWarmAb && PERF.shell === 'tauri')
-      throw new Error('PERF_KEEP_WARM_AB runs in a browser: the Tauri window has one page')
-    if (keepWarmAb && side.name === 'keep-warm off')
+    if (ab !== '' && PERF.shell === 'tauri')
+      throw new Error('PERF_PRESENT_AB runs in a browser: the Tauri window has one page')
+    // `rendition`: off plays every video's original, on lets present mode
+    // choose (renderer/videoRendition.ts; performance.md → P3).
+    if (ab === 'rendition' && side.name === 'rendition off')
+      await context.addInitScript(() => {
+        ;(
+          window as unknown as { __narrative_perf_videoRendition?: string }
+        ).__narrative_perf_videoRendition = 'playback'
+      })
+    if (ab.startsWith('keep-warm-') && side.name.endsWith(' on'))
+      await context.addInitScript(
+        (m) => {
+          ;(
+            window as unknown as { __narrative_perf_keepWarmFrame?: string }
+          ).__narrative_perf_keepWarmFrame = m
+        },
+        ab === 'keep-warm-frame' ? 'frame' : 'none',
+      )
+    // `idle-after-frame`: present mode's idle turns where the engine has no
+    // idle callbacks — off a 0-ms timer, on right after the next frame
+    // (renderer/presentKeepWarm.ts → PresentIdleFallback).
+    if (ab === 'idle-after-frame')
+      await context.addInitScript(
+        (m) => {
+          ;(
+            window as unknown as { __narrative_perf_presentIdle?: string }
+          ).__narrative_perf_presentIdle = m
+        },
+        side.name.endsWith(' on') ? 'frame' : 'timer',
+      )
+    if (ab === 'keep-warm' && side.name === 'keep-warm off')
       await context.addInitScript(() => {
         ;(window as unknown as { __narrative_perf_keepWarm?: boolean }).__narrative_perf_keepWarm =
           false
@@ -370,6 +668,12 @@ test('present mode', async ({ browser }) => {
     await assertPerfOff(page, first.id, PERF.mode)
     // A page with the harness, for the fingerprint.
     await openPresentation(page, first)
+    // Keep-warm and the slide cache's idle work wait for idle callbacks
+    // (textResolutionStaging.ts → idleCallbacks), a 0-ms timer where the
+    // engine has none: which one this page gets.
+    console.log(
+      `PERF present page [${side.name}]: requestIdleCallback ${await page.evaluate(() => typeof requestIdleCallback)}`,
+    )
     states.push({ side, page, context, decks })
   }
 
@@ -404,6 +708,44 @@ test('present mode', async ({ browser }) => {
           throw new Error(
             `the page draws every ${Math.round(interval)} ms — its window is covered or hidden and throttled; keep it in front`,
           )
+        const idleControlMs = Number(process.env['PERF_IDLE_CONTROL_MS'] ?? 0)
+        if (idleControlMs > 0) await idleControl(s.page, id, s.side.name, idleControlMs, interval)
+        // The probes of this pass. No input fence by default: these benches
+        // time frames, not input-to-pixel, and the fence's 1-px readPixels
+        // makes the main thread wait for the GPU in the very frame it shows
+        // (in WebKit one waited 66 ms inside a 145 ms frame of a transition,
+        // 2026-10-23, F2) — PERF_INPUT_FENCE=on brings it back.
+        await s.page.evaluate(
+          ({ fence, gaps, keepWarmFrame, presentIdle, keepWarmTarget }) => {
+            const h = window.__narrative_perf_harness!
+            h.setInputFence(fence)
+            if (keepWarmFrame !== null) h.setKeepWarmFrame(keepWarmFrame)
+            if (presentIdle === 'frame' || presentIdle === 'timer')
+              h.setPresentIdleFallback(presentIdle)
+            if (
+              keepWarmTarget === 'pixel' ||
+              keepWarmTarget === 'eighth' ||
+              keepWarmTarget === 'full'
+            )
+              h.setKeepWarmTarget(keepWarmTarget)
+            // An older build's harness (an A/B's "before") has no gap probe.
+            ;(h as Partial<typeof h>).setGapProbe?.(gaps)
+          },
+          {
+            fence:
+              ab === 'fence'
+                ? s.side.name === 'fence on'
+                : process.env['PERF_INPUT_FENCE'] === 'on',
+            gaps: process.env['PERF_GAP_PROBE'] === '1',
+            // PERF_KEEP_WARM_FRAME=now|frame|none: keep-warm's frame for every
+            // pass (the Tauri window, which cannot run PERF_PRESENT_AB's sides).
+            keepWarmFrame: keepWarmFrameOf(process.env['PERF_KEEP_WARM_FRAME']),
+            // PERF_PRESENT_IDLE=frame|timer: the same for the idle turns (idle-after-frame).
+            presentIdle: process.env['PERF_PRESENT_IDLE'] ?? null,
+            // PERF_KEEP_WARM_TARGET=pixel|eighth|full: what keep-warm draws into.
+            keepWarmTarget: process.env['PERF_KEEP_WARM_TARGET'] ?? null,
+          },
+        )
         let advances: AdvanceRecord[] = []
         // An older build's harness (an A/B's "before") has no glLive: 0.
         const texturesAtReady = await s.page.evaluate(
@@ -438,6 +780,14 @@ test('present mode', async ({ browser }) => {
               ...(process.env['PERF_TRACE_CATEGORIES'] ?? '').split(',').filter((c) => c !== ''),
             ],
           })
+        const videoPass = DECKS_OF[id]!.startsWith('video')
+        // PERF_VIDEO_IDLE_MS: the presentation sits on its first slide this long
+        // before the pass, as a talk reaches its video minutes in (a diagnostic:
+        // whether a buffered element paused that long starts late).
+        const idleMs = Number(process.env['PERF_VIDEO_IDLE_MS'] ?? 0)
+        if (videoPass && idleMs > 0) await s.page.waitForTimeout(idleMs)
+        if (videoPass) await startVideoProbe(s.page)
+        const procs0 = videoPass ? await chromiumProcesses(browser) : null
         const c = await capture(s.page, async (inputEnd) => {
           if (trace)
             await s.page.evaluate(() => window.__narrative_perf_harness!.traceUploads(true))
@@ -448,17 +798,19 @@ test('present mode', async ({ browser }) => {
         })
         if (traceDir !== undefined && traceDir !== '') await browser.stopTracing()
         s.last = c
+        const procs1 = videoPass ? await chromiumProcesses(browser) : null
+        const video = videoPass ? await readVideoProbe(s.page) : null
         if (trace)
           for (const u of await s.page.evaluate(() =>
             window.__narrative_perf_harness!.traceUploads(false),
           ))
             console.log(`PERF upload ${id} ${u.w}×${u.h}\n${u.stack}`)
-        const live = await s.page.evaluate(() => ({
-          textures: window.__narrative_perf_harness!.glLive?.().textures ?? 0,
-          heap:
-            (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory
-              ?.usedJSHeapSize ?? 0,
-        }))
+        const live = {
+          textures: await s.page.evaluate(
+            () => window.__narrative_perf_harness!.glLive?.().textures ?? 0,
+          ),
+          heap: await retainedHeap(s.page),
+        }
         const extra =
           presenter === null
             ? undefined
@@ -477,9 +829,24 @@ test('present mode', async ({ browser }) => {
           presenterCounters: extra ?? null,
           live,
         }
-        if (process.env['PERF_VERBOSE'] === '1')
+        if (process.env['PERF_VERBOSE'] === '1') {
           for (const f of s.notes['slowFrames'] as Array<Record<string, unknown>>)
             console.log(`PERF slow frame ${id} [${s.side.name}] ${JSON.stringify(f)}`)
+          // With PERF_INPUT_FENCE=on: how long the first fence after each
+          // input waited — the GPU work of the frame that showed it.
+          const fences = c.recording.fenceLog ?? []
+          const start = c.recording.startedAt
+          if (fences.length > 0 && start !== undefined)
+            console.log(
+              `PERF fences ${id} [${s.side.name}] ` +
+                advances
+                  .map((a) => {
+                    const f = fences.find((x) => start + x.at >= a.t0)
+                    return `${a.step}=${f === undefined ? '-' : f.ms.toFixed(0)}`
+                  })
+                  .join(' '),
+            )
+        }
         return {
           ...passValues(def, c, {
             readyMs,
@@ -489,6 +856,22 @@ test('present mode', async ({ browser }) => {
           }),
           'present.glTextures': live.textures - texturesAtReady,
           'present.heapMB': Math.round(live.heap / 1e5) / 10,
+          ...(video !== null
+            ? {
+                'video.frames': video.frames,
+                'video.skipped': video.skipped,
+                'video.decoderDropped': video.decoderDropped,
+                'video.startMs': video.startMs,
+                'video.width': video.width,
+                'proc.gpuCpuMs':
+                  procs0 !== null && procs1 !== null ? procs1.gpuCpuMs - procs0.gpuCpuMs : 0,
+                'proc.rendererCpuMs':
+                  procs0 !== null && procs1 !== null
+                    ? procs1.rendererCpuMs - procs0.rendererCpuMs
+                    : 0,
+                'proc.gpuRssMB': procs1?.gpuRssMB ?? 0,
+              }
+            : {}),
         }
       } finally {
         await presenter?.close()

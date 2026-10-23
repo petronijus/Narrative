@@ -174,6 +174,23 @@ export function refuseToRun(fp: Fingerprint): string[] {
   return reasons
 }
 
+/**
+ * Whether the runtime draws a frame for every input the driver sends, so a
+ * count of once-a-frame work (a `perFrame` metric) equals the inputs' count.
+ * Headless Chromium does: it produces a frame on demand after an input, and
+ * every stored drag there counted one slide-object flush per move (90 of 90,
+ * on SwiftShader and on Metal, in dev, prod and profiling). A WebKit page
+ * paces its own frames — headless at its own rate, headed and in the Tauri
+ * window at the display's — so two moves can land in one frame: 59 flushes
+ * for 60 moves in headless WebKit (transform.move.table, 2026-10-21), 85–90
+ * of 90 headed and in Tauri (W1), while all the moves still arrived
+ * (`y.tx.local` exact). A headed Chromium is paced by the display too.
+ */
+export function drawsFramePerInput(fp: Pick<Fingerprint, 'browser'>): boolean {
+  const b = fp.browser
+  return b !== undefined && b.engine === 'chromium' && b.shell === 'browser' && b.headed !== true
+}
+
 /** Load average per core above which timings are flagged as taken on a busy machine. */
 export const BUSY_LOAD_PER_CORE = 0.5
 

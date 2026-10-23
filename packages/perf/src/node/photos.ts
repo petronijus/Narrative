@@ -5,7 +5,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, renameSync } from 'node:fs'
 import path from 'node:path'
 import { perfHome } from './store.js'
 
@@ -78,6 +78,36 @@ export function presentVideoFile(seconds = 10): string {
       ...['-b:v', '1800k', '-maxrate', '2000k', '-bufsize', '4000k'],
       ...['-movflags', '+faststart', '-y', file],
     ])
+  }
+  return file
+}
+
+/**
+ * The 4K present-mode video (present.video.4k, performance.md → P3):
+ * `seconds` of 3840 × 2160 H.264 at 30 fps, testsrc2 under temporal grain so
+ * the encoder spends a camera's bitrate (~20 Mbit/s, 25 MB for 10 s) — a
+ * clean testsrc2 compresses to almost nothing, and the bitrate is part of
+ * what a decoder pays. A keyframe every 2 s. Generated once with ffmpeg
+ * into the harness cache (written to a temporary name first, so an
+ * interrupted run leaves no half file); too large for the command API's
+ * body, so it is uploaded through tus (e2e/perf/lib/presentDecks.ts). What
+ * plays is the video worker's output: the stream copied as the playback
+ * file, and its 1080p rendition (`present.mp4`).
+ */
+export function presentVideo4kFile(seconds = 10): string {
+  const dir = path.join(perfHome(), 'present-video-v1')
+  mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, `testsrc2-2160p-${seconds}s-grain-20M.mp4`)
+  if (!existsSync(file)) {
+    const partial = `${file}.partial.mp4`
+    execFileSync('ffmpeg', [
+      ...['-v', 'error', '-f', 'lavfi'],
+      ...['-i', `testsrc2=size=3840x2160:rate=30:duration=${seconds}`],
+      ...['-vf', 'noise=alls=10:allf=t', '-c:v', 'libx264', '-pix_fmt', 'yuv420p'],
+      ...['-preset', 'veryfast', '-b:v', '20M', '-maxrate', '25M', '-bufsize', '40M', '-g', '60'],
+      ...['-movflags', '+faststart', '-y', partial],
+    ])
+    renameSync(partial, file)
   }
   return file
 }

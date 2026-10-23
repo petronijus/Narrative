@@ -6,7 +6,7 @@
  * slide whole (e2e/present-smooth.spec.ts).
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { BrowserContext, Page } from '@playwright/test'
@@ -18,7 +18,7 @@ import {
   presentTransitionOps,
   presentVideoOps,
 } from '@narrative/perf'
-import { presentPhotoFiles, presentVideoFile } from '@narrative/perf/node'
+import { presentPhotoFiles, presentVideo4kFile, presentVideoFile } from '@narrative/perf/node'
 import { expect } from '../../fixtures/test'
 import { API_BASE, applyOps, command, photoFiles, uploadPhotos } from './seed'
 
@@ -31,7 +31,8 @@ const BLOCK_FONT = join(
 )
 const WEB_ORIGIN = process.env['NARRATIVE_WEB_URL'] ?? 'http://localhost:5173'
 
-export type DeckKind = 'text' | 'photo' | 'transitions' | 'builds' | 'video'
+export type DeckKind =
+  'text' | 'photo' | 'transitions' | 'builds' | 'video' | 'video4k' | 'videoLoop'
 
 export interface PresentDeck {
   kind: DeckKind
@@ -64,6 +65,53 @@ async function newDeck(context: BrowserContext, title: string, folderId?: string
   })
   expect(res.ok(), `deck creation failed: ${res.status()}`).toBe(true)
   return ((await res.json()) as { id: string }).id
+}
+
+/**
+ * Upload `file` into the deck through tus, as the editor does
+ * (state/useMediaUpload.tsx: 5 MB chunks, the metadata in Upload-Metadata);
+ * the media asset's id. For files over the command API's 4 MB body
+ * (`media.upload` takes base64 in JSON).
+ */
+async function tusUpload(
+  context: BrowserContext,
+  deckId: string,
+  file: string,
+  mime: string,
+): Promise<string> {
+  const size = statSync(file).size
+  const b64 = (v: string): string => Buffer.from(v).toString('base64')
+  const filename = file.split('/').at(-1)!
+  const created = await context.request.post(`${API_BASE}/api/uploads`, {
+    headers: {
+      Origin: WEB_ORIGIN,
+      'Tus-Resumable': '1.0.0',
+      'Upload-Length': String(size),
+      'Upload-Metadata': `deckId ${b64(deckId)},filename ${b64(filename)},filetype ${b64(mime)}`,
+    },
+  })
+  expect(created.status(), `tus create: ${await created.text()}`).toBe(201)
+  // A relative Location (media/tus.ts → buildPublicUploadUrl).
+  const location = new URL(created.headers()['location']!, `${API_BASE}/`).toString()
+  const bytes = readFileSync(file)
+  const CHUNK = 5 * 1024 * 1024
+  let assetId: string | null = null
+  for (let offset = 0; offset < size; offset += CHUNK) {
+    const res = await context.request.patch(location, {
+      headers: {
+        Origin: WEB_ORIGIN,
+        'Tus-Resumable': '1.0.0',
+        'Upload-Offset': String(offset),
+        'Content-Type': 'application/offset+octet-stream',
+      },
+      data: bytes.subarray(offset, Math.min(size, offset + CHUNK)),
+      timeout: 120_000,
+    })
+    expect(res.ok(), `tus patch at ${offset}: ${res.status()} ${await res.text()}`).toBe(true)
+    assetId = res.headers()['x-narrative-asset-id'] ?? assetId
+  }
+  expect(assetId, 'the finished upload named no asset').not.toBeNull()
+  return assetId!
 }
 
 async function slideIdsOf(context: BrowserContext, deckId: string): Promise<string[]> {
@@ -127,23 +175,39 @@ export async function seedDeck(
       ...('clicks' in scene ? { clicks: scene.clicks } : {}),
     }
   }
-  // video
-  const file = presentVideoFile(10)
-  const up = await command<{ assetId: string }>(context.request, id, 'media.upload', {
-    file: { base64: readFileSync(file).toString('base64'), filename: 'present-video.mp4' },
-  })
+  // video: 1080p through the command API; 4K (P3) too large for its body, through tus
+  const fourK = kind === 'video4k' || kind === 'videoLoop'
+  const up = fourK
+    ? { assetId: await tusUpload(context, id, presentVideo4kFile(10), 'video/mp4') }
+    : await command<{ assetId: string }>(context.request, id, 'media.upload', {
+        file: {
+          base64: readFileSync(presentVideoFile(10)).toString('base64'),
+          filename: 'present-video.mp4',
+        },
+      })
+  // A 4K source's 1080p rendition is its own ffmpeg run after `done`
+  // (apps/video-worker → present.mp4): waited for too.
   await expect
     .poll(
-      async () =>
-        (
-          await command<{ transcodeStatus: string | null }>(context.request, id, 'media.status', {
-            assetId: up.assetId,
-          })
-        ).transcodeStatus,
+      async () => {
+        const s = await command<{ transcodeStatus: string | null; presentPlayback: unknown }>(
+          context.request,
+          id,
+          'media.status',
+          { assetId: up.assetId },
+        )
+        return fourK && s.transcodeStatus === 'done' && s.presentPlayback === null
+          ? 'done, no rendition yet'
+          : s.transcodeStatus
+      },
       { timeout: 300_000, intervals: [1000], message: 'the video was not transcoded' },
     )
     .toBe('done')
-  const scene = presentVideoOps(up.assetId)
+  // videoLoop: present.video.loop's range (packages/perf catalog → presentVideoLoop).
+  const scene = presentVideoOps(
+    up.assetId,
+    kind === 'videoLoop' ? { loop: { trimStart: 4.5, trimEnd: 7 } } : {},
+  )
   await applyOps(context.request, id, scene.ops)
   return { kind, id, slideIds: await slideIdsOf(context, id), scene }
 }

@@ -685,8 +685,15 @@ export function presentBuildOps(assets: readonly string[]): PresentScene & { cli
   return { ops, perSlide, clicks }
 }
 
-/** A text slide, a full-bleed autoplaying video, a text slide. */
-export function presentVideoOps(videoAsset: string): PresentScene {
+/**
+ * A text slide, a full-bleed autoplaying video, a text slide. With `loop`
+ * the video plays that range of its file over and over (trimmed, looped:
+ * present.video.loop).
+ */
+export function presentVideoOps(
+  videoAsset: string,
+  opts: { loop?: { trimStart: number; trimEnd: number } } = {},
+): PresentScene {
   const ops: Op[] = []
   const perSlide: string[][] = []
   for (let s = 1; s < 3; s++) ops.push({ command: 'slide.add', input: {} })
@@ -710,6 +717,9 @@ export function presentVideoOps(videoAsset: string): PresentScene {
             opacity: 1,
             autoplay: true,
             muted: true,
+            ...(opts.loop !== undefined
+              ? { loop: true, trimStart: opts.loop.trimStart, trimEnd: opts.loop.trimEnd }
+              : {}),
           },
         },
       })

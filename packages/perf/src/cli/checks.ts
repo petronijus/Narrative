@@ -13,6 +13,8 @@ import { ALL_BENCHES } from '../benches.js'
 import {
   BUDGET_MODE,
   budgetProblems,
+  budgetResult,
+  diffBudget,
   diffCounters,
   type CounterBudget,
   type CounterDiff,
@@ -50,7 +52,11 @@ export function repoCoverage(registry = benchRegistry()): CoverageReport {
 
 export interface BudgetStatus {
   problems: string[]
-  /** Per budgeted bench: its diff against this machine's latest counters, or null when never measured here. */
+  /**
+   * Per budgeted bench: its diff against this machine's latest counters
+   * measured where every work count is exact (budgetResult), or null when
+   * never measured so here.
+   */
   diffs: Array<{ id: string; diff: CounterDiff | null }>
 }
 
@@ -62,8 +68,23 @@ export function budgetStatus(
   return {
     problems: budgetProblems(registry.list(), budgets),
     diffs: budgets.map((b) => {
-      const counters = store?.latest(b.id, { mode: BUDGET_MODE })?.counters
-      return { id: b.id, diff: counters === undefined ? null : diffCounters(b.counters, counters) }
+      const bench = registry.get(b.id)
+      const results = store?.results({ benchId: b.id }) ?? []
+      if (bench === undefined) {
+        // A budget of no bench (budgetProblems reports it): its last counters, plainly.
+        const counters = results
+          .filter((r) => r.fingerprint.build.mode === BUDGET_MODE)
+          .at(-1)?.counters
+        return {
+          id: b.id,
+          diff: counters === undefined ? null : diffCounters(b.counters, counters),
+        }
+      }
+      const from = budgetResult(bench.metrics, results)
+      return {
+        id: b.id,
+        diff: from?.counters === undefined ? null : diffBudget(bench.metrics, b.counters, from),
+      }
     }),
   }
 }

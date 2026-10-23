@@ -6,6 +6,7 @@
 
 export * from './budgetFiles.js'
 export * from './fingerprint.js'
+export * from './networkWatch.js'
 export * from './store.js'
 export * from './photos.js'
 export * from './webBuild.js'

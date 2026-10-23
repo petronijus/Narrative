@@ -36,6 +36,14 @@ const FP: Fingerprint = {
 }
 
 describe('defineBench', () => {
+  it('takes default run counts only as whole numbers, at least one recorded run', () => {
+    expect(() => defineBench(def({ runs: { warmup: 1, runs: 3 } }))).not.toThrow()
+    expect(() => defineBench(def({ runs: { warmup: 0, runs: 1 } }))).not.toThrow()
+    expect(() => defineBench(def({ runs: { warmup: 1, runs: 0 } }))).toThrow(/runs/)
+    expect(() => defineBench(def({ runs: { warmup: -1, runs: 2 } }))).toThrow(/runs/)
+    expect(() => defineBench(def({ runs: { warmup: 1.5, runs: 2 } }))).toThrow(/runs/)
+  })
+
   it('accepts area.tool.operation ids starting with their area', () => {
     for (const id of [
       'transform.move.rect',

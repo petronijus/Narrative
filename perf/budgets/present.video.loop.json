@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "id": "present.video.loop",
+  "counters": {
+    "rm.texture.load": 0,
+    "sg.mount": 0,
+    "text.raster.kpx": 0,
+    "text.raster.started": 0,
+    "thumb.render": 0
+  }
+}
