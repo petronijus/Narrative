@@ -40,7 +40,12 @@ vi.mock('pixi.js', () => {
 })
 
 import type { Container, HTMLText } from 'pixi.js'
-import { subscribeTextLayout, textBoxLayout, textRenderer } from './textRenderer.js'
+import {
+  measureTextBoxLayout,
+  subscribeTextLayout,
+  textBoxLayout,
+  textRenderer,
+} from './textRenderer.js'
 import type { TextObject } from '@narrative/shared'
 
 function makeText(overrides: Partial<TextObject> = {}): TextObject {
@@ -132,5 +137,34 @@ describe('autofit: grow-down', () => {
   it('a fixed box is drawn at its own height', () => {
     const node = textRenderer.mount(makeText())
     expect(textBoxLayout(node)).toEqual({ height: 100, scale: 1 })
+  })
+})
+
+describe('measureTextBoxLayout', () => {
+  it("gives what a fresh mount of each box is drawn as, one box after another on the page's node", () => {
+    const boxes: TextObject[] = [
+      makeText({ autofit: 'shrink' }),
+      makeText({ autofit: 'grow-down', align: 'right' }),
+      // The same text and box as the first: its search must not be skipped
+      // because the node still holds the first's style and scale.
+      makeText({ autofit: 'shrink' }),
+      makeText({ autofit: 'shrink', height: 10, minFontSize: 30, align: 'center' }),
+      makeText({ autofit: 'grow-down', width: 400 }),
+      makeText(),
+      makeText({ autofit: 'shrink', width: 120 }),
+    ]
+    for (const data of boxes) {
+      const mounted = textBoxLayout(textRenderer.mount(data))
+      expect(measureTextBoxLayout(data)).toEqual(mounted)
+    }
+  })
+
+  it('reports no layout to the listeners (the node is not on any canvas)', () => {
+    const heard = vi.fn()
+    const off = subscribeTextLayout(heard)
+    measureTextBoxLayout(makeText({ autofit: 'grow-down' }))
+    measureTextBoxLayout(makeText({ autofit: 'shrink', width: 150 }))
+    off()
+    expect(heard).not.toHaveBeenCalled()
   })
 })

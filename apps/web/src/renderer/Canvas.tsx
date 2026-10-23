@@ -27,10 +27,19 @@ import { ResourceManager, setDefaultResourceManager } from './ResourceManager'
 import { OverlayCompositor } from './overlay/OverlayCompositor'
 import { RenderScheduler, setDefaultRenderScheduler } from './RenderScheduler'
 import { pendingRenderWork } from './renderWork.js'
+import {
+  adaptiveUploadBudget,
+  pixiUploadTarget,
+  stageLocator,
+  TextureUploadGate,
+} from './textureUploadGate.js'
 import { installPixiBindGroupPatch } from './pixiBindGroupPatch.js'
+import { releaseOwnedGraphicsContexts } from './graphicsContextRelease.js'
 import { patchHTMLTextRace } from './patchHTMLTextRace.js'
+import { installRunText } from './runText/runTextSystem.js'
 import { registerPerfCanvas, whenPerfHarnessReady } from '../perf/activation.js'
 import { destroyPixiApplication } from './pixiApplication.js'
+import { limitBatchTextures } from './batchTextures.js'
 
 // Install the BindGroup crash workaround once at module load. See the
 // patch file for the full Pixi v8 bug writeup.
@@ -144,6 +153,26 @@ export interface CanvasProps {
    * is then the ResourceManager's to budget. Fixed for the canvas's lifetime.
    */
   gc?: boolean
+  /**
+   * false: pictures are uploaded by the frame that draws them, however many
+   * became ready together. Default true: large textures pass the upload gate
+   * (textureUploadGate.ts), a bounded number of pixels per frame, so a slide
+   * switch or a zoom's larger variants never stack their uploads into one
+   * long frame. The render page turns it off — nobody watches its frames,
+   * and a capture only waits longer for them. Fixed for the canvas's lifetime.
+   */
+  paceUploads?: boolean
+  /**
+   * The most textures one batched draw samples (Pixi's
+   * `limits.maxBatchableTextures`; default: what the GPU allows, 16–32).
+   * Pixi's batch shader has one branch per texture slot, and under software
+   * WebGL (SwiftShader: the render worker) every branch costs — compiling
+   * the shader on a page's first draw (~1.1 s on two cores) and every pixel
+   * of every draw after it. Fewer slots only mean more draw calls for a scene
+   * with many pictures; the pixels are the same (performance.md, F5). The
+   * render page sets it. Fixed for the canvas's lifetime.
+   */
+  batchTextures?: number
 }
 
 export function Canvas({
@@ -153,10 +182,14 @@ export function Canvas({
   zoom = 1,
   onScreen = true,
   gc = true,
+  paceUploads = true,
+  batchTextures,
 }: CanvasProps = {}) {
   // Read once: the canvas is set up for one way of drawing.
   const onScreenRef = useRef(onScreen)
   const gcRef = useRef(gc)
+  const paceUploadsRef = useRef(paceUploads)
+  const batchTexturesRef = useRef(batchTextures)
   const containerRef = useRef<HTMLDivElement>(null)
   const overlayRootRef = useRef<HTMLDivElement>(null)
 
@@ -258,6 +291,12 @@ export function Canvas({
         return
       }
 
+      // Before anything is drawn: Pixi sizes each batcher and its shader by
+      // this limit when it first builds one (BatcherPipe, GraphicsContextSystem).
+      if (batchTexturesRef.current !== undefined) {
+        limitBatchTextures(app.renderer, batchTexturesRef.current)
+      }
+
       // Userland mitigation for a Pixi v8 WebGL race in
       // HTMLTextSystem._buildTexturePromise — see patchHTMLTextRace
       // for the full breakdown. Without this, duplicate component
@@ -266,6 +305,11 @@ export function Canvas({
       // for a frame after any rasterise event. Must run AFTER
       // `app.init()` so `app.renderer.htmlText` exists.
       patchHTMLTextRace(app.renderer, { wakeRenderScheduler: true, counters: 'text' })
+      // Where the page draws text from glyph runs (ADR 0018); the race-patched
+      // raster above stays the fallback for what the runs cannot draw.
+      installRunText(app.renderer, { wakeRenderScheduler: true, counters: 'text' })
+      // A Graphics destroyed with its tree releases its own context (graphicsContextRelease.ts).
+      releaseOwnedGraphicsContexts()
 
       containerEl.appendChild(app.canvas)
 
@@ -299,6 +343,20 @@ export function Canvas({
       // Pictures pick their size variant by the backing store's density
       // (imageVariant.ts): set before the buffered changes mount anything.
       sceneGraph.setPixelDensity(app.renderer.resolution)
+
+      // Large textures go to the GPU a bounded amount per frame, what the
+      // window shows first (textureUploadGate.ts); installed before the
+      // buffered changes mount anything.
+      if (paceUploadsRef.current) {
+        const liveApp = app
+        resourceManager.setUploadGate(
+          new TextureUploadGate(pixiUploadTarget(liveApp.renderer), {
+            budget: adaptiveUploadBudget(),
+            viewport: () => visibleCanvasRect(liveApp.canvas),
+            locate: stageLocator(liveApp.stage),
+          }),
+        )
+      }
 
       // OverlayCompositor: DOM overlay sync nad Pixi canvasem.
       // overlayRootEl je sousedící <div> s position:absolute;inset:0;pointer-events:none.
@@ -394,6 +452,9 @@ export function Canvas({
         setDefaultRenderScheduler(null)
 
         liveGraph.destroy()
+        // Its waiters go without an upload: the renderer is going.
+        liveRM.uploads?.destroy()
+        liveRM.setUploadGate(null)
         liveRM.destroyAll()
         // M16 P6: tear down all cached component master docs + their WS
         // connections. SceneGraph.destroy above has already destroyed the

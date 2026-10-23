@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * state/readMasterDoc.test.ts
  *

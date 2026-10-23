@@ -64,6 +64,7 @@ import { Presentation } from '../present/presentation.js'
 import { preloadDeckMedia, type MediaPreloadProgress } from '../present/preloadMedia.js'
 import { PresentSlideCache } from '../renderer/presentSlides.js'
 import { PresentVideoPool } from '../renderer/presentVideos.js'
+import { presentDeviceScale } from '../renderer/videoRendition.js'
 import { getDefaultResourceManager } from '../renderer/ResourceManager.js'
 import { whenRenderWorkIdle } from '../renderer/renderWork.js'
 import { PresentVideosContext, type PresentVideosValue } from '../present/presentVideosContext.js'
@@ -190,7 +191,25 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
     } catch {
       return
     }
-    const pool = new PresentVideoPool()
+    // A 4K video plays its 1080p rendition where the presentation shows no
+    // more pixels (renderer/videoRendition.ts): chosen by the slide's size on
+    // screen and the canvas's density, again when they change (the effect on
+    // `scale` below, and the pool's own density watch), switched off stage.
+    const pool: PresentVideoPool = new PresentVideoPool({
+      deviceScale: () =>
+        presentDeviceScale(
+          canvasInstance.sceneGraph.getPixelDensity(),
+          slideContainerRef.current?.getBoundingClientRect().width ?? null,
+        ),
+      canSwitch: (objectId): boolean => {
+        if (presentation.isMoving()) return false
+        const shown = presentation.shown
+        if (shown === null) return true
+        const slide = store.getSlides().find((s) => s.id === shown)
+        return slide === undefined || !slide.objects.some((o) => o.id === objectId)
+      },
+      onSwitched: (objectId) => cache.rewarmContaining(objectId),
+    })
     const cache = new PresentSlideCache({
       sceneGraph: canvasInstance.sceneGraph,
       resourceManager,
@@ -244,28 +263,41 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       if (cancelled) return
       // Each picture drawn from the variant fetched for it, on every slide.
       cache.setVariantFloor(media.variants)
+      // Skipped during the media: the presentation runs, planned around the slide shown.
+      if (startedRef.current) return
       // 2. The slides, prepared off stage.
       setPreparation((p) => ({ ...p, phase: 'slides' }))
       presentation.prepare(startId)
-      await new Promise<void>((resolve) => {
-        const check = (): void => {
-          if (cancelled || presentation.isPrepared(startId)) {
-            stop()
-            resolve()
+      // The slide it starts on: `startId`, unless an edit during the load deleted it.
+      const startAt = (): string => presentation.startSlide ?? startId
+      // Ready means ready (ADR 0016): an edit during any of the waits below
+      // replans (the plan follows the deck from `prepare` on), so the slides
+      // are checked once more after the last wait, right before the start,
+      // and waited for again while an edit left them to rebuild.
+      for (;;) {
+        await new Promise<void>((resolve) => {
+          const check = (): void => {
+            if (cancelled || presentation.isPrepared(startAt())) {
+              stop()
+              resolve()
+            }
           }
-        }
-        const stop = cache.subscribe(check)
-        check()
-      })
-      // 3. The presenter view's pictures, and anything still loading for the canvas.
-      await new Promise<void>((resolve) => {
-        if (thumbsRef.current.settled) resolve()
-        else thumbWaitersRef.current.push(resolve)
-      })
-      await whenRenderWorkIdle(abort.signal)
-      await document.fonts.ready
-      if (cancelled || presentationRef.current !== presentation || startedRef.current) return
-      if (presentation.start(startId)) {
+          const stop = cache.subscribe(check)
+          check()
+        })
+        // 3. The presenter view's pictures, and anything still loading for the canvas.
+        await new Promise<void>((resolve) => {
+          if (thumbsRef.current.settled) resolve()
+          else thumbWaitersRef.current.push(resolve)
+        })
+        await whenRenderWorkIdle(abort.signal)
+        // A video switching files after a display change during the load.
+        await pool.whenSwitched()
+        await document.fonts.ready
+        if (cancelled || presentationRef.current !== presentation || startedRef.current) return
+        if (presentation.isPrepared(startAt())) break
+      }
+      if (presentation.start(startAt())) {
         startedRef.current = true
         setPreparation((p) => ({ ...p, phase: 'ready' }))
       }
@@ -281,7 +313,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
     }
   }, [canvasInstance])
 
-  /** Skip the rest of the preparation: present what is there; slides not prepared are waited for. */
+  /** Skip the rest of the preparation: present what is there; slides not prepared yet are waited for when navigated to. */
   const skipPreparation = useCallback(() => {
     setPreloadDismissed(true)
     const presentation = presentationRef.current
@@ -289,7 +321,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
     startedRef.current = true
     // The slide prepared: swapped in; otherwise the canvas shows it as it
     // mounted it, and the presentation goes on from there.
-    if (!presentation.start(activeSlideId)) presentation.follow(activeSlideId)
+    presentation.startNow(activeSlideId)
     setPreparation((p) => ({ ...p, phase: 'ready' }))
   }, [activeSlideId])
 
@@ -379,6 +411,12 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
 
     return () => observer.disconnect()
   }, [])
+
+  // The slide's size on screen changed (fullscreen, another display, the
+  // presenter view): the videos choose their file again (renderer/presentVideos.ts).
+  useEffect(() => {
+    videos?.pool.displayChanged()
+  }, [scale, videos])
 
   // ---------------------------------------------------------------------------
   // Fullscreen API toggle

@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * state/autofitHeights.test.ts — when the editor writes a growing box's
  * height back: after the person's own change, at once (so it joins that

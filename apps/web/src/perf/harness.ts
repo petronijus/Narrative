@@ -40,13 +40,22 @@ import {
   pendingThumbnailWork,
   renderNow,
   setKeepWarmEnabled,
+  setKeepWarmFrame,
+  setKeepWarmTarget,
+  setPresentIdleFallback,
   stripMasks,
+  type KeepWarmFrame,
+  type KeepWarmTarget,
+  type PresentIdleFallback,
   type RenderKind,
 } from '../renderer/perfProbes.js'
+import { getDefaultResourceManager } from '../renderer/ResourceManager.js'
 import type { RenderScheduler } from '../renderer/RenderScheduler.js'
 import type { SceneGraph } from '../renderer/SceneGraph.js'
+import { forcePlaybackKind } from '../renderer/videoRendition.js'
 import type { LoadTimings } from '../state/loadTimings.js'
 import { COUNTS_KEY, onPerfCanvas } from './activation.js'
+import { GlResidency, type GlResidencySnapshot } from './glResidency.js'
 import {
   netBucket,
   routeOf,
@@ -84,6 +93,18 @@ export interface PerfRecording {
   renderLog?: Array<{ at: number; ms: number }>
   /** Each keep-warm draw of the present canvas (no frame of its own; optional as `startedAt`). */
   keepWarmLog?: Array<{ at: number; ms: number }>
+  /**
+   * Each input fence (the 1-px `readPixels` after a frame that showed an
+   * input): when it ran and how long the main thread waited in it — the GPU
+   * work of that frame and the round trip (optional as `startedAt`).
+   */
+  fenceLog?: Array<{ at: number; ms: number }>
+  /**
+   * Main-thread gaps over `GAP_MS` seen by the gap probe (`setGapProbe`):
+   * the main thread was busy (or not scheduled) that long. Empty unless the
+   * probe was on; the CDP-free stand-in for long tasks in WebKit.
+   */
+  gapLog?: Array<{ at: number; ms: number }>
 }
 
 /**
@@ -150,6 +171,12 @@ export interface PerfHarnessApi {
     quietMs?: number
     timeoutMs?: number
     expectedIds?: string[]
+    /**
+     * Also wait until no released texture is still waiting out its unload
+     * grace (ResourceManager.pendingUnloads): the memory benches count GPU
+     * textures, and one on its way out is not growth.
+     */
+    unloads?: boolean
   }): Promise<SettleResult>
   mountedIds(): string[]
   object(id: string): SlideObject | null
@@ -168,13 +195,32 @@ export interface PerfHarnessApi {
   /** Draw a frame now and return it as a coarse picture (null without a GL canvas). */
   captureNow(opts?: { cell?: number }): CapturedFrame | null
   /**
-   * What the editor's GL context holds now, since the harness loaded (never
-   * reset): textures created and not deleted. Growth across repeated runs of
-   * the same pass is a leak (performance.md → E8).
+   * What the editor's GL context holds now (never reset): textures created
+   * and not deleted. Growth across repeated runs of the same pass is a leak
+   * (performance.md → E8).
    */
   glLive(): { textures: number }
+  /**
+   * What the page holds now, for the growth benches (memory.spec.ts,
+   * performance.md → E8): the editor context's textures and renderbuffers
+   * with their bytes (glResidency.ts; bytes and renderbuffers only on a page
+   * whose `window.__narrative_perf_residency` was true when the harness
+   * loaded, 0 otherwise), the same summed over every live
+   * context (thumbnails, offscreen renders), the contexts alive and not lost,
+   * the elements in the document, the object URLs created and not revoked.
+   * CDP-free: the JS heap and the listeners come from CDP (Chromium only).
+   */
+  memory(): PerfMemory
   /** Present mode's keep-warm draws since the harness loaded (renderer/presentSlides.ts → "Kept warm"). */
   keepWarmDraws(): number
+  /**
+   * A diagnostic: while recording, watch the main thread with a timer chain
+   * and log every gap over `GAP_MS` (`PerfRecording.gapLog`). Costs a wakeup
+   * every few milliseconds — never on in a stored run. A page whose
+   * `window.__narrative_perf_gapProbe` is `true` when the harness loads
+   * starts with it on.
+   */
+  setGapProbe(on: boolean): void
   /**
    * A diagnostic: switch present mode's keep-warm off (or on again). A page
    * whose `window.__narrative_perf_keepWarm` is `false` when the harness
@@ -182,11 +228,41 @@ export interface PerfHarnessApi {
    */
   setKeepWarm(on: boolean): void
   /**
+   * A diagnostic: how keep-warm presents its frame (renderer/presentKeepWarm.ts
+   * → KeepWarmFrame). A page whose `window.__narrative_perf_keepWarmFrame` is
+   * set when the harness loads starts with that mode (present.spec.ts,
+   * PERF_PRESENT_AB).
+   */
+  setKeepWarmFrame(mode: KeepWarmFrame): void
+  /**
+   * A diagnostic: what present mode's idle turns wait for where the engine
+   * has no idle callbacks (renderer/presentKeepWarm.ts → PresentIdleFallback).
+   * A page whose `window.__narrative_perf_presentIdle` is set when the harness
+   * loads starts with that mode.
+   */
+  setPresentIdleFallback(mode: PresentIdleFallback): void
+  /** A diagnostic: what keep-warm draws into (renderer/presentKeepWarm.ts → KeepWarmTarget). */
+  setKeepWarmTarget(mode: KeepWarmTarget): void
+  /**
    * A diagnostic: from now on keep each texture upload of the editor's
    * context (its size, and the stack that made it) until read; null stops.
    * Which picture or text an unexpected upload was.
    */
   traceUploads(on: boolean): Array<{ w: number; h: number; stack: string }>
+}
+
+export interface PerfMemory {
+  /** The editor's context (null: no canvas). */
+  editor: GlResidencySnapshot | null
+  /** Every WebGL context alive and not lost, summed. */
+  all: GlResidencySnapshot
+  contexts: number
+  /** Elements in the document (attached). */
+  domNodes: number
+  canvases: number
+  videos: number
+  /** Object URLs created and not revoked (thumbnails, rasters, media). */
+  blobUrls: number
 }
 
 interface ReactProbe {
@@ -224,6 +300,9 @@ const STENCIL_BUFFER_BIT = 0x400
 
 let api: PerfHarnessApi | null = null
 
+/** The gap probe's threshold: a timer that fired this much later than it could have, ms. */
+const GAP_MS = 12
+
 export function installPerfHarness(): void {
   if (api !== null) return
   startPerfCounters()
@@ -244,8 +323,26 @@ export function installPerfHarness(): void {
   let inKeepWarm = false
 
   // --- GL --------------------------------------------------------------------
-  /** Textures of the editor's context created and not deleted (glLive). */
-  let liveTextures = 0
+  /**
+   * What each context holds (glResidency.ts), fed from its calls, keep-warm
+   * draws included (residency is state, not work). Contexts are held weakly:
+   * a context the page dropped is collected as it would be without the probe.
+   */
+  const residency = new WeakMap<object, GlResidency>()
+  /** memory.spec.ts sets `window.__narrative_perf_residency` in an init script. */
+  const residencyBytes =
+    (window as unknown as { __narrative_perf_residency?: boolean }).__narrative_perf_residency ===
+    true
+  const contexts = new Set<WeakRef<WebGL2RenderingContext | WebGLRenderingContext>>()
+  const residencyOf = (ctx: WebGL2RenderingContext | WebGLRenderingContext): GlResidency => {
+    let r = residency.get(ctx)
+    if (r === undefined) {
+      r = new GlResidency()
+      residency.set(ctx, r)
+      contexts.add(new WeakRef(ctx))
+    }
+    return r
+  }
   let uploadTrace: Array<{ w: number; h: number; stack: string }> | null = null
   const readPixels = new Map<object, (...a: unknown[]) => unknown>()
   const wrapGl = (proto: Record<string, unknown>): void => {
@@ -291,13 +388,36 @@ export function installPerfHarness(): void {
         }
       })
     wrap('bufferData', (p) => perfCount(`${p}.bufferData`))
-    wrap('createTexture', (p) => {
-      if (p === 'gl') liveTextures++
-    })
-    wrap('deleteTexture', (p) => {
-      if (p === 'gl') liveTextures--
-    })
     wrap('bindFramebuffer', (p) => perfCount(`${p}.fbBind`))
+    // Residency: every call, every context, keep-warm included. Creations
+    // and deletions always (rare calls; glLive); bindings and allocations —
+    // a wrap on every bindTexture of every frame — only for the growth
+    // benches, which ask for it before the page loads (`residencyBytes`).
+    const track = (
+      name: string,
+      follow: (r: GlResidency, args: unknown[], result: unknown) => void,
+    ): void => {
+      const original = proto[name] as ((...a: unknown[]) => unknown) | undefined
+      if (typeof original !== 'function') return
+      if (!residencyBytes && name !== 'createTexture' && name !== 'deleteTexture') return
+      proto[name] = function (this: unknown, ...args: unknown[]): unknown {
+        const result = original.apply(this, args)
+        follow(residencyOf(this as WebGL2RenderingContext), args, result)
+        return result
+      }
+    }
+    track('createTexture', (r, _a, tex) => r.createTexture(tex))
+    track('deleteTexture', (r, a) => r.deleteTexture(a[0]))
+    track('activeTexture', (r, a) => r.activeTexture(a[0]))
+    track('bindTexture', (r, a) => r.bindTexture(a[0], a[1]))
+    track('texImage2D', (r, a) => r.texImage2D(a))
+    track('texStorage2D', (r, a) => r.texStorage2D(a))
+    track('generateMipmap', (r, a) => r.generateMipmap(a[0]))
+    track('createRenderbuffer', (r, _a, rb) => r.createRenderbuffer(rb))
+    track('deleteRenderbuffer', (r, a) => r.deleteRenderbuffer(a[0]))
+    track('bindRenderbuffer', (r, a) => r.bindRenderbuffer(a[1]))
+    track('renderbufferStorage', (r, a) => r.renderbufferStorage(a, false))
+    track('renderbufferStorageMultisample', (r, a) => r.renderbufferStorage(a, true))
   }
   if (typeof WebGL2RenderingContext !== 'undefined')
     wrapGl(WebGL2RenderingContext.prototype as unknown as Record<string, unknown>)
@@ -309,7 +429,23 @@ export function installPerfHarness(): void {
     const gl = editorContext
     if (gl === null) return
     const read = readPixels.get(Object.getPrototypeOf(gl) as object)
+    const t = performance.now()
     read?.call(gl, 0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel)
+    if (recording) fenceLog.push({ at: t - recStart, ms: performance.now() - t })
+  }
+
+  // --- object URLs -------------------------------------------------------------
+  const blobUrls = new Set<string>()
+  const createObjectURL = URL.createObjectURL.bind(URL)
+  const revokeObjectURL = URL.revokeObjectURL.bind(URL)
+  URL.createObjectURL = (obj: Blob | MediaSource): string => {
+    const url = createObjectURL(obj)
+    blobUrls.add(url)
+    return url
+  }
+  URL.revokeObjectURL = (url: string): void => {
+    blobUrls.delete(url)
+    revokeObjectURL(url)
   }
 
   // --- network ---------------------------------------------------------------
@@ -359,6 +495,23 @@ export function installPerfHarness(): void {
   let restagesDone: number[] = []
   let renderLog: Array<{ at: number; ms: number }> = []
   let keepWarmLog: Array<{ at: number; ms: number }> = []
+  let fenceLog: Array<{ at: number; ms: number }> = []
+  let gapLog: Array<{ at: number; ms: number }> = []
+  let gapProbe =
+    (window as unknown as { __narrative_perf_gapProbe?: boolean }).__narrative_perf_gapProbe ===
+    true
+  /** The pending tick of the gap probe (cleared when recording stops). */
+  let gapTimer: ReturnType<typeof setTimeout> | null = null
+  const gapTick = (scheduledAt: number): void => {
+    gapTimer = null
+    if (!recording || !gapProbe) return
+    const now = performance.now()
+    // A zero-delay timer runs within ~4 ms (nested timers are clamped to
+    // that): one that ran over GAP_MS later than that found the main thread busy.
+    if (now - scheduledAt - 4 > GAP_MS)
+      gapLog.push({ at: scheduledAt - recStart, ms: now - scheduledAt })
+    gapTimer = setTimeout(() => gapTick(now), 0)
+  }
   let fenceWaiters: Array<(t: number) => void> = []
   let domCheckScheduled = false
   let inputFence = true
@@ -509,6 +662,19 @@ export function installPerfHarness(): void {
     false
   )
     setKeepWarmEnabled(false)
+  const frameMode = (window as unknown as { __narrative_perf_keepWarmFrame?: KeepWarmFrame })
+    .__narrative_perf_keepWarmFrame
+  if (frameMode !== undefined) setKeepWarmFrame(frameMode)
+  const idleMode = (window as unknown as { __narrative_perf_presentIdle?: PresentIdleFallback })
+    .__narrative_perf_presentIdle
+  if (idleMode !== undefined) setPresentIdleFallback(idleMode)
+  // present.spec.ts's rendition A/B (PERF_VIDEO_RENDITION_AB): this page plays
+  // one file of every video, whatever the screen (renderer/videoRendition.ts).
+  const forcedRendition = (
+    window as unknown as { __narrative_perf_videoRendition?: 'present' | 'playback' }
+  ).__narrative_perf_videoRendition
+  if (forcedRendition === 'present' || forcedRendition === 'playback')
+    forcePlaybackKind(forcedRendition)
 
   const harness: PerfHarnessApi = {
     version: 1,
@@ -568,6 +734,12 @@ export function installPerfHarness(): void {
       restagesDone = []
       renderLog = []
       keepWarmLog = []
+      fenceLog = []
+      gapLog = []
+      if (gapProbe && gapTimer === null) {
+        const t = performance.now()
+        gapTimer = setTimeout(() => gapTick(t), 0)
+      }
       wasRestaging = false
       lastFrameAt = recStart
       slowEvents.length = 0
@@ -578,6 +750,8 @@ export function installPerfHarness(): void {
     },
     stopRecording() {
       recording = false
+      if (gapTimer !== null) clearTimeout(gapTimer)
+      gapTimer = null
       const end = performance.now()
       const inWindow = (t: number): boolean => t >= recStart && t <= end
       return {
@@ -598,6 +772,8 @@ export function installPerfHarness(): void {
         startedAt: recStart,
         renderLog: [...renderLog],
         keepWarmLog: [...keepWarmLog],
+        fenceLog: [...fenceLog],
+        gapLog: [...gapLog],
       }
     },
     setInputFence(on) {
@@ -633,6 +809,8 @@ export function installPerfHarness(): void {
             busy.push('thumbnail rasters')
           if (sceneGraph !== null && pendingTextRestage(sceneGraph) > 0) busy.push('text restage')
           if ((pendingLoads?.() ?? 0) > 0) busy.push('loads')
+          if (opts.unloads === true && getDefaultResourceManager().pendingUnloads() > 0)
+            busy.push('texture unloads')
           // Thumbnails queued for idle time, debouncing or retrying move no counter yet.
           if (pendingThumbnailWork() > 0) busy.push('thumbnails')
           if (opts.expectedIds !== undefined) {
@@ -685,9 +863,51 @@ export function installPerfHarness(): void {
         capture = saved
       }
     },
-    glLive: () => ({ textures: liveTextures }),
+    glLive: () => ({
+      textures: editorContext === null ? 0 : residencyOf(editorContext).snapshot().textures,
+    }),
+    memory() {
+      const all: GlResidencySnapshot = {
+        textures: 0,
+        textureBytes: 0,
+        renderbuffers: 0,
+        renderbufferBytes: 0,
+        collected: 0,
+      }
+      let live = 0
+      for (const ref of contexts) {
+        const ctx = ref.deref()
+        if (ctx === undefined) {
+          contexts.delete(ref)
+          continue
+        }
+        if (ctx.isContextLost()) continue
+        live++
+        const r = residencyOf(ctx).snapshot()
+        all.textures += r.textures
+        all.textureBytes += r.textureBytes
+        all.renderbuffers += r.renderbuffers
+        all.renderbufferBytes += r.renderbufferBytes
+        all.collected += r.collected
+      }
+      return {
+        editor: editorContext === null ? null : residencyOf(editorContext).snapshot(),
+        all,
+        contexts: live,
+        domNodes: document.getElementsByTagName('*').length,
+        canvases: document.getElementsByTagName('canvas').length,
+        videos: document.getElementsByTagName('video').length,
+        blobUrls: blobUrls.size,
+      }
+    },
     keepWarmDraws: () => keepWarmDraws,
     setKeepWarm: (on) => setKeepWarmEnabled(on),
+    setKeepWarmFrame: (mode) => setKeepWarmFrame(mode),
+    setPresentIdleFallback: (mode) => setPresentIdleFallback(mode),
+    setKeepWarmTarget: (mode) => setKeepWarmTarget(mode),
+    setGapProbe(on) {
+      gapProbe = on
+    },
     traceUploads(on) {
       const out = uploadTrace ?? []
       uploadTrace = on ? [] : null

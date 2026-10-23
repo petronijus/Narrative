@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * pages/textFit.test.ts — which text boxes the render page reports as
  * overflowing: a text box whose laid-out text ends below its box, beyond

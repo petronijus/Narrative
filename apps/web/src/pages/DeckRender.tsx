@@ -92,6 +92,12 @@ import { resolveRenderSlide } from './renderSlide.js'
 const PAGE_TIMEOUT_MS = 60_000
 /** A slide that has not settled by then is reported as an error, with what was missing. */
 const SETTLE_TIMEOUT_MS = 30_000
+/**
+ * Textures per batched draw on this page (renderer/batchTextures.ts): under
+ * the render worker's software WebGL each slot of Pixi's batch shader costs
+ * at its compile (the page's first capture) and on every pixel drawn after.
+ */
+const RENDER_BATCH_TEXTURES = 4
 
 export type RenderErrorReason =
   | 'access-refused'
@@ -655,6 +661,9 @@ export function DeckRender() {
         onReady={onCanvasReady}
         artboardSize={{ width: SLIDE_WIDTH, height: SLIDE_HEIGHT }}
         onScreen={onScreen}
+        // Nobody watches this page's frames: pictures upload as they come.
+        paceUploads={false}
+        batchTextures={RENDER_BATCH_TEXTURES}
       />
     </div>
   )

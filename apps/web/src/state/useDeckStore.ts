@@ -142,10 +142,45 @@ export function useActiveSlideObjectsWhere(keep: (o: SlideObject) => boolean): S
   }, sameArray)
 }
 
-/** The active slide's objects with these ids (in z-order; missing ids skipped). */
-export function useActiveSlideObjectsById(ids: readonly string[]): SlideObject[] {
+/**
+ * The active slide's objects that pass `keep`, in z-order, re-rendering only
+ * when that set changes or a field of one of them does (`sameObjectFields`):
+ * typing into a selected text box re-renders no reader (performance.md →
+ * E6). Like `useActiveSlideObjectFields`, the snapshots may be older than
+ * the document inside their Yjs types; for readers of fields only (the
+ * transform rig, video previews). `keep` must not read inside a Yjs type
+ * either: a change there does not run it again.
+ */
+export function useActiveSlideObjectFieldsWhere(keep: (o: SlideObject) => boolean): SlideObject[] {
+  const { activeSlideId } = useActiveSlide()
+  return useDeckSelector((store) => {
+    if (activeSlideId === null) return NO_OBJECTS
+    const all = store.getSlide(activeSlideId)?.objects ?? NO_OBJECTS
+    const kept = all.filter(keep)
+    return kept.length === 0 ? NO_OBJECTS : kept
+  }, sameObjectFieldsList)
+}
+
+/**
+ * The active slide's objects with these ids, by fields (missing ids skipped):
+ * for overlays that re-render with the objects but draw from the scene graph
+ * (peer selections, the agent's highlight) — a collaborator typing into the
+ * outlined box does not re-render them.
+ */
+export function useActiveSlideObjectFieldsById(ids: readonly string[]): SlideObject[] {
   const wanted = ids.length === 0 ? null : new Set(ids)
-  return useActiveSlideObjectsWhere((o) => wanted !== null && wanted.has(o.id))
+  return useActiveSlideObjectFieldsWhere((o) => wanted !== null && wanted.has(o.id))
+}
+
+/** Two object lists of the same objects in the same order, each with the same fields. */
+export function sameObjectFieldsList(
+  a: readonly SlideObject[],
+  b: readonly SlideObject[],
+): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (!sameObjectFields(a[i], b[i])) return false
+  return true
 }
 
 /** The active slide's animation steps in play order. */

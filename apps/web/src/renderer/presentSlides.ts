@@ -31,6 +31,12 @@
  * Before the presentation is ready the plan is built as fast as it goes;
  * after, a slide entering the plan (a big deck's window moving on) is built
  * in idle time only, never while a transition or a build animation runs.
+ * Either way its pictures reach the GPU through the ResourceManager's upload
+ * gate (textureUploadGate.ts): a bounded number of pixels per frame — the
+ * preparing overlay keeps its frames — and none while the presentation
+ * moves (`setBusyProbe` holds it). A picture counts as loaded only once it
+ * is uploaded (renderWork.ts), so the warm-up draws below find every
+ * picture on the GPU already and ready waits for the last of them.
  *
  * Kept warm: what a frame needs on the GPU goes cold while nothing is drawn
  * — measured on an M3 Pro under memory pressure (ANGLE Metal, 2026-10-19,
@@ -41,13 +47,23 @@
  * and nothing uploaded. Drawing the textures again or presenting a frame
  * again each fixed only half of it: with both, the swap after 5 s took
  * 12–20 ms and no frame was missed. So while the presentation rests, every
- * `KEEP_WARM_MS` (an idle callback; never during a transition, a build or
- * on a hidden page) the slide shown and the slides one step away are drawn
- * into a 1 × 1 target of their own, and the canvas presents a frame of what
- * it shows (unless Pixi's ticker is presenting frames anyway).
+ * `KEEP_WARM_MS` (an idle turn — an idle callback, or where the engine has
+ * none, right after the next rendered frame: presentKeepWarm.ts →
+ * whenPresentIdle; never during a transition, a build or on a hidden page)
+ * the slide shown and the slides one step away are drawn into a 1 × 1 target
+ * of their own, and the canvas presents a frame of what it shows (unless
+ * Pixi's ticker is presenting frames anyway).
  */
 
-import { Container, Graphics, RenderTexture, Sprite, Texture, type TextureSource } from 'pixi.js'
+import {
+  Container,
+  Graphics,
+  Matrix,
+  RenderTexture,
+  Sprite,
+  Texture,
+  type TextureSource,
+} from 'pixi.js'
 import type { ColourResolverFn } from './colourResolver.js'
 import type { ImageVariant, Slide, SlideObject } from '@narrative/shared'
 import { DEFAULT_BACKGROUND, perfCount, perfCountFor } from '@narrative/shared'
@@ -75,10 +91,13 @@ import {
   KEEP_WARM_LABEL,
   KEEP_WARM_MS,
   keepWarmEnabled,
+  keepWarmFrame,
+  keepWarmTarget,
+  type KeepWarmTarget,
+  whenPresentIdle,
 } from './presentKeepWarm.js'
 import { getDefaultRenderScheduler } from './RenderScheduler.js'
 import { getRenderingSlideNumber, setRenderingSlideNumber } from './slideNumberContext.js'
-import { whenIdle } from './textResolutionStaging.js'
 
 /** One slide of the plan and what its picture depends on besides its objects. */
 export interface PresentSlideSpec {
@@ -274,6 +293,8 @@ export class PresentSlideCache {
   private readonly listeners = new Set<() => void>()
   private warmTarget: RenderTexture | null = null
   private keepWarmTarget: RenderTexture | null = null
+  /** What `keepWarmTarget` was made for (presentKeepWarm.ts → KeepWarmTarget) and at which resolution. */
+  private keepWarmTargetOf = ''
   /** The pending keep-warm turn (a timer, then an idle callback): cancels it. */
   private keepWarmCancel: (() => void) | null = null
   private destroyed = false
@@ -358,6 +379,9 @@ export class PresentSlideCache {
   /** Tell the cache when the presentation is moving (a transition, a build): it builds nothing then. */
   setBusyProbe(probe: () => boolean): void {
     this.busy = probe
+    // A picture of a slide built in idle time waits in the upload gate
+    // (textureUploadGate.ts) while the presentation moves, too.
+    this.rm.setUploadHold(probe)
   }
 
   /** Whether `slideId` can be shown now: built for its current version and fresh. */
@@ -498,6 +522,7 @@ export class PresentSlideCache {
     this.unsubscribeColours()
     this.unsubscribeFonts()
     this.stopKeepWarm()
+    this.rm.setUploadHold(null)
     for (const id of [...this.entries.keys()]) this.evict(id)
     for (const target of [this.warmTarget, this.keepWarmTarget])
       try {
@@ -562,7 +587,7 @@ export class PresentSlideCache {
     if (!this.idleOnly) return
     for (;;) {
       if (this.destroyed) return
-      await new Promise<void>((resolve) => whenIdle(resolve, 2000))
+      await new Promise<void>((resolve) => whenPresentIdle(resolve, 2000))
       if (!this.busy()) return
       await new Promise<void>((resolve) => setTimeout(resolve, 100))
     }
@@ -577,11 +602,28 @@ export class PresentSlideCache {
     if (this.destroyed || this.busy() || !keepWarmEnabled()) return
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
     const renderer = this.sceneGraph.getApp().renderer
+    const size: KeepWarmTarget = keepWarmTarget()
+    const scale = size === 'pixel' ? null : size === 'eighth' ? 1 / 8 : 1
+    const madeFor = `${size}@${renderer.resolution}`
+    if (this.keepWarmTarget !== null && this.keepWarmTargetOf !== madeFor) {
+      this.keepWarmTarget.destroy(true)
+      this.keepWarmTarget = null
+    }
     if (this.keepWarmTarget === null) {
-      this.keepWarmTarget = RenderTexture.create({ width: 1, height: 1 })
+      this.keepWarmTarget =
+        scale === null
+          ? RenderTexture.create({ width: 1, height: 1 })
+          : RenderTexture.create({
+              width: Math.ceil(SLIDE_WIDTH * scale),
+              height: Math.ceil(SLIDE_HEIGHT * scale),
+              resolution: renderer.resolution,
+            })
       this.keepWarmTarget.label = KEEP_WARM_LABEL
+      this.keepWarmTargetOf = madeFor
     }
     const target = this.keepWarmTarget
+    // A scene drawn whole into the target, from its own origin, scaled to it.
+    const transform = scale === null ? undefined : new Matrix().scale(scale, scale)
     const roots: Container[] = []
     // The scene on stage: its render group only (a scene mounted change by
     // change has none, and drawing it alone would make the stage's root one).
@@ -591,18 +633,36 @@ export class PresentSlideCache {
       const p = this.entries.get(id)?.prepared
       if (p != null && !p.root.destroyed) roots.push(p.root)
     }
-    for (const root of roots) renderer.render({ container: root, target, clear: true })
+    for (const root of roots)
+      renderer.render({
+        container: root,
+        target,
+        clear: true,
+        ...(transform !== undefined ? { transform } : {}),
+      })
     // The screen path too (see the module comment) — unless Pixi's ticker
     // presents frames anyway (a video or a timeline playing).
-    if (!this.sceneGraph.getApp().ticker.started)
+    const mode = keepWarmFrame()
+    if (mode === 'none' || this.sceneGraph.getApp().ticker.started) return
+    if (mode === 'now') {
       asKeepWarmFrame(() => getDefaultRenderScheduler()?.renderNow())
+      return
+    }
+    requestAnimationFrame((frameStart) => {
+      const scheduler = getDefaultRenderScheduler()
+      if (scheduler === null || this.destroyed || this.busy()) return
+      if (this.sceneGraph.getApp().ticker.started) return
+      // A frame of the scheduler's presents this frame anyway.
+      if (scheduler.framePending || scheduler.lastRenderAt >= frameStart) return
+      asKeepWarmFrame(() => scheduler.renderNow())
+    })
   }
 
   private scheduleKeepWarm(): void {
     if (this.destroyed || !this.idleOnly || this.keepWarmCancel !== null) return
     let cancelIdle: (() => void) | null = null
     const timer = setTimeout(() => {
-      cancelIdle = whenIdle(() => {
+      cancelIdle = whenPresentIdle(() => {
         this.keepWarmCancel = null
         this.keepWarm()
         this.scheduleKeepWarm()

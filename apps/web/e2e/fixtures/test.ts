@@ -22,6 +22,18 @@
  * tests that follow it. A spec that deletes its own is fine — a deck or
  * folder already gone answers 404, which is ignored.
  *
+ * A network change under the browser (a tethered phone re-attaching: Chrome
+ * then aborts every request in flight with `net::ERR_NETWORK_CHANGED`,
+ * SETUP.md → Common first-run failures) fails a test for the machine, not
+ * the code. Every worker watches for one (networkChange.ts: the host's
+ * interfaces, every context's failed requests). A test that failed while
+ * one touched it gets a `network-change` annotation and a `network-change`
+ * attachment naming each event and its time, and is retried once (the
+ * browser projects' `retries: 1`, playwright.config.ts). A test that failed
+ * without one is not: its retry stops at once with "failed without a network
+ * change: not retried", so it fails in the report as it did on the first
+ * attempt — the retry hides nothing nobody explained.
+ *
  * Import from here, not from '@playwright/test' (ESLint enforces it for
  * specs); everything else of Playwright is re-exported unchanged.
  */
@@ -32,6 +44,8 @@ import {
   type Browser,
   type BrowserContext,
 } from '@playwright/test'
+import { formatDisturbance, retryVerdict, summariseDisturbances } from '@narrative/perf/disturbance'
+import { markerFile, NetworkMonitor, readMarker, writeMarker } from './networkChange'
 
 export * from '@playwright/test'
 
@@ -77,6 +91,17 @@ class Janitor {
   trackContext(context: BrowserContext): void {
     if (this.tracked.has(context)) return
     this.tracked.add(context)
+    // PW_TEXT_ENGINE=runs|html: every page of the run draws its canvas text
+    // with that engine (apps/web/src/renderer/runText/flag.ts), so the
+    // existing specs run against the glyph-run engine before it is the
+    // default (ADR 0018). A spec's own choice (its init script) comes later
+    // and wins.
+    const textEngine = process.env['PW_TEXT_ENGINE']
+    if (textEngine === 'runs' || textEngine === 'html') {
+      void context.addInitScript((engine) => {
+        ;(globalThis as { __narrative_textEngine?: string }).__narrative_textEngine = engine
+      }, textEngine)
+    }
     // Cookies only: storageState() also reads every page's localStorage,
     // and called while a test drives the page it can stall the context.
     const cookiesOf = () => context.cookies()
@@ -229,7 +254,69 @@ function parseJson(value: unknown): unknown {
   }
 }
 
-export const test = base.extend<Record<string, never>, { janitor: Janitor }>({
+export const test = base.extend<
+  { networkCheck: void },
+  { janitor: Janitor; network: NetworkMonitor }
+>({
+  network: [
+    async ({}, use) => {
+      const network = new NetworkMonitor()
+      await use(network)
+      network.stop()
+    },
+    { scope: 'worker' },
+  ],
+  networkCheck: [
+    async ({ network }, use, testInfo) => {
+      const outputDir = testInfo.project.outputDir
+      if (testInfo.retry > 0) {
+        const verdict = retryVerdict(
+          testInfo.retry,
+          readMarker(markerFile(outputDir, testInfo.testId, testInfo.retry - 1)),
+        )
+        testInfo.annotations.push({ type: 'network-change', description: verdict.because })
+        if (!verdict.run) throw new Error(verdict.because)
+      }
+      const start = Date.now()
+      await use()
+      const end = Date.now()
+      if (testInfo.status === testInfo.expectedStatus) return
+      const seen = network.touching(start, end)
+      writeMarker(markerFile(outputDir, testInfo.testId, testInfo.retry), {
+        testId: testInfo.testId,
+        retry: testInfo.retry,
+        status: testInfo.status ?? 'unknown',
+        start: new Date(start).toISOString(),
+        end: new Date(end).toISOString(),
+        disturbances: seen.map((e) => ({
+          at: new Date(e.at).toISOString(),
+          source: e.source,
+          detail: e.detail,
+        })),
+      })
+      network.log.prune(end - 10 * 60_000)
+      if (seen.length === 0) return
+      testInfo.annotations.push({
+        type: 'network-change',
+        description: `failed while the network changed (${seen.length} event${
+          seen.length === 1 ? '' : 's'
+        }: ${summariseDisturbances(seen)})`,
+      })
+      await testInfo.attach('network-change', {
+        contentType: 'text/plain',
+        body: [
+          `This attempt (${new Date(start).toISOString()} – ${new Date(end).toISOString()}) ` +
+            `${testInfo.status} while the network under the browser changed:`,
+          ...seen.map((e) => `  ${formatDisturbance(e)}`),
+          '',
+          'Chrome aborts every request in flight on a network change, localhost included',
+          '(SETUP.md → Common first-run failures). The test is retried once.',
+        ].join('\n'),
+      })
+    },
+    // Before every other fixture, so its window spans their setup too.
+    { auto: true },
+  ],
   janitor: [
     async ({ playwright }, use) => {
       const janitor = new Janitor()
@@ -247,8 +334,9 @@ export const test = base.extend<Record<string, never>, { janitor: Janitor }>({
     { scope: 'worker', auto: true, timeout: 120_000 },
   ],
   browser: [
-    async ({ browser, janitor }, use) => {
+    async ({ browser, janitor, network }, use) => {
       janitor.trackBrowser(browser)
+      network.instrumentBrowser(browser)
       await use(browser)
     },
     { scope: 'worker' },
@@ -257,8 +345,9 @@ export const test = base.extend<Record<string, never>, { janitor: Janitor }>({
     janitor.trackApi(request)
     await use(request)
   },
-  context: async ({ context, janitor }, use) => {
+  context: async ({ context, janitor, network }, use) => {
     janitor.trackContext(context)
+    await network.instrumentContext(context)
     await use(context)
   },
 })

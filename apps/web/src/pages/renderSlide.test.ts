@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import type { Slide } from '@narrative/shared'
 import { resolveRenderSlide } from './renderSlide'

@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * actions/catalog.test.ts — the parity guard over what a person does in the
  * editor (plan §9.1 guard 2, A2.13): every shortcut, menu item and toolbar

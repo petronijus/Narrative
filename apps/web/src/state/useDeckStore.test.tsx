@@ -28,6 +28,7 @@ import { useTextRunAttrs } from '../ui/useTextRunAttrs.js'
 import {
   useActiveSlideObject,
   useActiveSlideObjectFields,
+  useActiveSlideObjectFieldsWhere,
   useActiveSlideObjects,
   useActiveSlideObjectsWhere,
   useSlideIdsKey,
@@ -177,6 +178,40 @@ describe('deck store selector hooks', () => {
     frame(ctx)
     expect(seen.renders).toBe(before + 1)
     expect(seen.value?.opacity).toBe(0.5)
+  })
+
+  it('useActiveSlideObjectFieldsWhere skips typing into a kept text, not a field write or a new member', () => {
+    const { ctx, slideId } = deck()
+    const objects = getSlideObjectsCtx(ctx, slideId)!
+    addObject(objects, text('t', 'hello'))
+    const keep = new Set(['t', 'a'])
+    const seen = mount(ctx, slideId, () => useActiveSlideObjectFieldsWhere((o) => keep.has(o.id)))
+    const before = seen.renders
+    expect(seen.value?.map((o) => o.id)).toEqual(['a', 't'])
+    const yText = (seen.value?.[1] as TextObject).text as Y.Text
+
+    // A keystroke: the text's snapshot is new, its fields are not.
+    spliceRichText(ctx.doc, yText, 5, 0, '!', LOCAL_ORIGIN)
+    frame(ctx)
+    expect(seen.renders).toBe(before)
+
+    // Another object's change: nothing kept changed.
+    updateObject(objects, 'b', { x: 10 })
+    frame(ctx)
+    expect(seen.renders).toBe(before)
+
+    // A field of a kept object.
+    updateObject(objects, 't', { height: 80 })
+    frame(ctx)
+    expect(seen.renders).toBe(before + 1)
+    expect(seen.value?.[1]?.height).toBe(80)
+
+    // An object entering the set.
+    keep.add('b')
+    updateObject(objects, 'b', { x: 20 })
+    frame(ctx)
+    expect(seen.renders).toBe(before + 2)
+    expect(seen.value?.map((o) => o.id)).toEqual(['a', 'b', 't'])
   })
 
   it('useTextRunAttrs re-renders when the paragraphs change, not on typing', () => {

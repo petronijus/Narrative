@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { LOOK_MAX_EDGE, LOOK_MAX_PIXELS } from '@narrative/shared'
 import { clampRegion, compareLayout, fitScale, SHEET_GAP, sheetLayout } from './renderLook'

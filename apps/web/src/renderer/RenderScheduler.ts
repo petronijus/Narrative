@@ -54,6 +54,7 @@ export class RenderScheduler {
   private postRender: Array<() => void> = []
   /** Failed frames since the last one that rendered (0 = healthy). */
   private consecutiveFailures = 0
+  private lastRenderStart = -Infinity
 
   constructor(app: Application) {
     this.app = app
@@ -78,6 +79,16 @@ export class RenderScheduler {
    * cases where the caller needs the new pixels immediately (e.g.
    * thumbnails tied to the main app).
    */
+  /** Whether a frame is scheduled (`markDirty` since the last render). */
+  get framePending(): boolean {
+    return this.rafHandle !== null
+  }
+
+  /** `performance.now()` when the last render started (-Infinity before the first). */
+  get lastRenderAt(): number {
+    return this.lastRenderStart
+  }
+
   renderNow(): void {
     if (this.destroyed) return
     if (this.rafHandle !== null) {
@@ -117,6 +128,7 @@ export class RenderScheduler {
     // Torn down between schedule and fire: Application.destroy() nulls both.
     // Nothing to draw, nothing wrong.
     if ((app.renderer as unknown) == null || (app.stage as unknown) == null) return
+    this.lastRenderStart = performance.now()
     try {
       app.renderer.render(app.stage)
     } catch (err) {

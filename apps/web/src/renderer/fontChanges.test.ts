@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const pixi = vi.hoisted(() => {
@@ -24,6 +25,8 @@ import {
   removeHtmlTextFace,
   setHtmlTextFace,
   subscribeFontFamilyChanges,
+  subscribeHtmlTextFaces,
+  type RegisteredFace,
 } from './fontChanges'
 import './pixiFontSink'
 import { _resetRenderWorkForTests, whenRenderWorkIdle } from './renderWork'
@@ -159,6 +162,54 @@ describe('fontChanges', () => {
       bytes: ttf(3),
     })
     expect(pixi.fontCss.size).toBe(0)
+  })
+})
+
+describe('subscribeHtmlTextFaces (the canvas text workers, ADR 0018)', () => {
+  it('replays the faces there are, then reports each one added, replaced and removed', () => {
+    setHtmlTextFace({ key: 'a', family: 'Brand', weight: '400', style: 'normal', bytes: ttf(1) })
+    const seen: string[] = []
+    let last: RegisteredFace | undefined
+    const stop = subscribeHtmlTextFaces({
+      added(face) {
+        last = face
+        seen.push(`+${face.key}:${face.family}:${face.weight}:${face.style}:${face.stretch}`)
+      },
+      removed(key) {
+        seen.push(`-${key}`)
+      },
+    })
+    expect(seen).toEqual(['+a:Brand:400:normal:100%'])
+    expect(new Uint8Array(last!.bytes)[4]).toBe(1)
+    setHtmlTextFace({
+      key: 'b',
+      family: 'Brand',
+      weight: '100 900',
+      style: 'italic',
+      stretch: '75% 125%',
+      bytes: ttf(2),
+    })
+    setHtmlTextFace({ key: 'a', family: 'Brand', weight: '700', style: 'normal', bytes: ttf(3) })
+    removeHtmlTextFace('b')
+    stop()
+    removeHtmlTextFace('a')
+    expect(seen).toEqual([
+      '+a:Brand:400:normal:100%',
+      '+b:Brand:100 900:italic:75% 125%',
+      '+a:Brand:700:normal:100%',
+      '-b',
+    ])
+  })
+
+  it('reports no face whose name cannot be embedded', () => {
+    const seen: string[] = []
+    const stop = subscribeHtmlTextFaces({
+      added: (face) => seen.push(face.key),
+      removed: () => {},
+    })
+    setHtmlTextFace({ key: 'x', family: 'Bad"Name', weight: '400', style: 'normal', bytes: ttf(1) })
+    stop()
+    expect(seen).toEqual([])
   })
 })
 

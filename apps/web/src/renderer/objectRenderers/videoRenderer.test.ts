@@ -26,7 +26,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setDefaultVideoInfoResolver, _resetDefaultVideoInfoResolver } from '../videoInfo'
 import { setDefaultResourceManager, _resetDefaultResourceManager } from '../ResourceManager'
-import { videoRenderer } from './videoRenderer'
+import { attachLiveVideo, releaseLiveVideoElement, videoRenderer } from './videoRenderer'
+
+/** Every VideoSource the renderer made (the mock's), in order. */
+const videoSources = vi.hoisted(
+  () =>
+    [] as Array<{
+      resource: HTMLVideoElement
+      autoUpdate: boolean
+      destroyed: boolean
+      unload: ReturnType<typeof import('vitest').vi.fn>
+      destroy: () => void
+    }>,
+)
 
 // ---------------------------------------------------------------------------
 // Pixi.js mock
@@ -125,9 +137,39 @@ vi.mock('pixi.js', () => {
     }
   }
 
-  const MockTexture = {
+  class MockTexture {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mock source
-    from: vi.fn((src: any) => ({ width: 400, height: 225, source: src, destroyed: false })),
+    static from = vi.fn((src: any) => ({ width: 400, height: 225, source: src, destroyed: false }))
+    width = 1920
+    height = 1080
+    destroyed = false
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mock source
+    source: any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mock source
+    constructor(opts: { source: any }) {
+      this.source = opts.source
+    }
+    destroy(destroySource = false): void {
+      this.destroyed = true
+      if (destroySource) this.source.destroy()
+    }
+  }
+
+  // As Pixi's: destroying it stops its element and empties its src.
+  class MockVideoSource {
+    resource: HTMLVideoElement
+    autoUpdate = true
+    destroyed = false
+    unload = vi.fn()
+    constructor(opts: { resource: HTMLVideoElement }) {
+      this.resource = opts.resource
+      videoSources.push(this)
+    }
+    destroy(): void {
+      this.destroyed = true
+      this.resource.pause()
+      this.resource.removeAttribute('src')
+    }
   }
 
   return {
@@ -137,6 +179,7 @@ vi.mock('pixi.js', () => {
     Text: MockText,
     Application: vi.fn(),
     Texture: MockTexture,
+    VideoSource: MockVideoSource,
   }
 })
 
@@ -286,7 +329,10 @@ describe('videoRenderer', () => {
     await new Promise((r) => setTimeout(r, 10))
 
     expect(resolver).toHaveBeenCalledWith({ assetId: 'asset-vid-1' })
-    expect(rm.acquireTexture).toHaveBeenCalledWith('https://imgproxy.example.com/poster.jpg')
+    expect(rm.acquireTexture).toHaveBeenCalledWith(
+      'https://imgproxy.example.com/poster.jpg',
+      expect.anything(),
+    )
     // Container should have sprite wrap + play icon children.
     expect(node.children.length).toBeGreaterThanOrEqual(1)
   })
@@ -457,6 +503,93 @@ describe('videoRenderer', () => {
     expect(rm.acquireTexture).toHaveBeenCalledTimes(2)
 
     vr.destroy(node)
+  })
+
+  describe('a live video (present mode attaches its buffered element at mount)', () => {
+    function playingElement(): HTMLVideoElement {
+      const el = document.createElement('video')
+      el.setAttribute('src', 'https://s/playback.mp4')
+      vi.spyOn(el, 'pause').mockImplementation(() => undefined)
+      return el
+    }
+    /** Whether the container draws `el` (a sprite over its VideoSource). */
+    const draws = (node: unknown, el: HTMLVideoElement): boolean => {
+      const walk = (c: { children?: unknown[]; texture?: { source?: unknown } }): boolean =>
+        c.texture?.source !== undefined &&
+        (c.texture.source as { resource?: unknown }).resource === el
+          ? !(c as { destroyed?: boolean }).destroyed
+          : (c.children ?? []).some((k) => walk(k as typeof c))
+      return walk(node as never)
+    }
+
+    // Its own object id per test: the renderer's registry is module-wide.
+    let n = 0
+    let live: typeof baseVideo
+    beforeEach(() => {
+      videoSources.length = 0
+      live = { ...baseVideo, id: `vid-live-${++n}` }
+    })
+
+    it('keeps showing when the video info lands after it: no poster over it', async () => {
+      setDefaultVideoInfoResolver(makeResolver(makeDoneResult()))
+      const el = playingElement()
+      const node = videoRenderer.mount(live)
+      attachLiveVideo(live.id, el)
+      await new Promise((r) => setTimeout(r, 10))
+      expect(rm.acquireTexture).not.toHaveBeenCalled()
+      expect(draws(node, el)).toBe(true)
+      videoRenderer.destroy(node)
+    })
+
+    it('wins over a poster still loading when it was attached', async () => {
+      setDefaultVideoInfoResolver(makeResolver(makeDoneResult()))
+      let landPoster!: (t: unknown) => void
+      rm.acquireTexture.mockImplementation(() => new Promise((r) => (landPoster = r)))
+      const el = playingElement()
+      const node = videoRenderer.mount(live)
+      await new Promise((r) => setTimeout(r, 10))
+      expect(rm.acquireTexture).toHaveBeenCalledTimes(1)
+      attachLiveVideo(live.id, el)
+      landPoster(makeTexture())
+      await new Promise((r) => setTimeout(r, 10))
+      expect(rm.releaseTexture).toHaveBeenCalledWith('https://imgproxy.example.com/poster.jpg')
+      expect(draws(node, el)).toBe(true)
+      videoRenderer.destroy(node)
+    })
+
+    it('a torn-down scene leaves the element as it is; one source for every scene', async () => {
+      setDefaultVideoInfoResolver(makeResolver(makeDoneResult()))
+      const el = playingElement()
+      // Two scenes of the slide (the one on stage and one prepared off stage).
+      const a = videoRenderer.mount(live)
+      const b = videoRenderer.mount(live)
+      attachLiveVideo(live.id, el)
+      expect(videoSources).toHaveLength(1)
+      expect(draws(a, el) && draws(b, el)).toBe(true)
+
+      videoRenderer.destroy(a)
+      expect(el.getAttribute('src')).toBe('https://s/playback.mp4')
+      expect(el.pause).not.toHaveBeenCalled()
+      expect(videoSources[0]!.unload).not.toHaveBeenCalled()
+      expect(draws(b, el)).toBe(true)
+
+      // The last scene gone: off the GPU, no longer following frames, the element still whole.
+      videoRenderer.destroy(b)
+      expect(videoSources[0]!.unload).toHaveBeenCalledTimes(1)
+      expect(videoSources[0]!.autoUpdate).toBe(false)
+      expect(el.getAttribute('src')).toBe('https://s/playback.mp4')
+
+      // A scene built again draws the same element through the same source.
+      const c = videoRenderer.mount(live)
+      attachLiveVideo(live.id, el)
+      expect(videoSources).toHaveLength(1)
+      expect(videoSources[0]!.autoUpdate).toBe(true)
+      videoRenderer.destroy(c)
+
+      // Its owner lets go of the element: the source goes with it.
+      releaseLiveVideoElement(el)
+      expect(videoSources[0]!.destroyed).toBe(true)
+    })
   })
 
   it('thumbnailMount: fetches video info and loads thumbnailUrl (400×225) bypassing RM', async () => {

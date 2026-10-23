@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * observability/sessionMetrics.test.ts — the session report (G4): which
  * pages report, the sampling draw, the report built from long tasks, event

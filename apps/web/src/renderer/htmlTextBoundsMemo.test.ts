@@ -1,8 +1,11 @@
+// @vitest-environment node
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   SHARED_MEASUREMENTS_LIMIT,
+  htmlTextMeasureGeneration,
   installHtmlTextBoundsMemo,
   invalidateHtmlTextMeasurements,
+  setHtmlTextMeasurer,
 } from './htmlTextBoundsMemo.js'
 
 /** A stand-in for HTMLText: `updateBounds` "measures" 10 px per character and counts itself. */
@@ -87,6 +90,32 @@ describe('htmlTextBoundsMemo', () => {
     expect(fresh._bounds).toEqual(canvas._bounds)
   })
 
+  it("shares between nodes whose markup differs only by the node's own comment", () => {
+    // Every node's markup starts with `<!--n:uid-->` (textRenderer
+    // buildHtmlForNode): autofit's node and the canvas's never have the same
+    // string, and the comment does not lay out.
+    const own = new FakeText()
+    own.text = '<!--n:12-->shared'
+    const canvas = new FakeText()
+    canvas.text = '<!--n:345-->shared'
+    FakeText.measured = 0
+    own.updateBounds()
+    canvas.updateBounds()
+    expect(FakeText.measured).toBe(1)
+    expect(canvas._bounds).toEqual(own._bounds)
+    // The canvas's own memo holds its own markup: measured again only when it changes.
+    canvas.updateBounds()
+    expect(FakeText.measured).toBe(1)
+    canvas.text = '<!--n:345-->shared, then more'
+    canvas.updateBounds()
+    expect(FakeText.measured).toBe(2)
+    // A comment is only skipped at the start: the content itself is compared whole.
+    const other = new FakeText()
+    other.text = '<!--n:12-->shared<!--n:1-->'
+    other.updateBounds()
+    expect(FakeText.measured).toBe(3)
+  })
+
   it('shares nothing across another anchor, other CSS or changed faces', () => {
     invalidateHtmlTextMeasurements()
     const a = new FakeText()
@@ -140,5 +169,47 @@ describe('htmlTextBoundsMemo', () => {
     a.updateBounds()
     expect(a._bounds.maxX).toBe(30)
     expect(b._bounds.maxX).toBe(60)
+  })
+})
+
+describe('htmlTextBoundsMemo with another measurer (ADR 0018)', () => {
+  beforeEach(() => {
+    invalidateHtmlTextMeasurements()
+  })
+
+  it('takes the size from the measurer, placed by the anchor, and memoises it', () => {
+    let calls = 0
+    setHtmlTextMeasurer((text) => {
+      calls++
+      return { width: text.text.length * 7, height: 13 }
+    })
+    try {
+      const t = new FakeText()
+      FakeText.measured = 0
+      t._anchor = { _x: 0.5, _y: 0 }
+      t.updateBounds()
+      t.updateBounds()
+      expect(FakeText.measured).toBe(0)
+      expect(calls).toBe(1)
+      expect(t._bounds).toEqual({ minX: -10.5, maxX: 10.5, minY: -0, maxY: 13 })
+    } finally {
+      setHtmlTextMeasurer(null)
+    }
+  })
+
+  it('voids every measurement when the measurer changes', () => {
+    const before = htmlTextMeasureGeneration()
+    const t = new FakeText()
+    t.updateBounds()
+    setHtmlTextMeasurer(() => ({ width: 1, height: 1 }))
+    try {
+      expect(htmlTextMeasureGeneration()).toBe(before + 1)
+      t.updateBounds()
+      expect(t._bounds.maxX).toBe(1)
+    } finally {
+      setHtmlTextMeasurer(null)
+    }
+    t.updateBounds()
+    expect(t._bounds.maxX).toBe(30)
   })
 })

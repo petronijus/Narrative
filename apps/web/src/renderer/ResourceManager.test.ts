@@ -14,7 +14,9 @@ import { pixiMock } from '../test/pixiMock'
 vi.mock('pixi.js', () => pixiMock())
 
 import { ResourceManager, UNLOAD_GRACE_MS } from './ResourceManager'
-import { Assets } from 'pixi.js'
+import { TextureUploadGate, type UploadTarget } from './textureUploadGate'
+import { pendingRenderWork } from './renderWork'
+import { Assets, type Container, type TextureSource } from 'pixi.js'
 
 describe('ResourceManager', () => {
   let rm: ResourceManager
@@ -81,6 +83,25 @@ describe('ResourceManager', () => {
     // rejects (texture wasn't tracked by Assets — img-decoded path).
     expect(Assets.unload).toHaveBeenCalledWith('https://example.com/img.png')
     expect(rm.textureCount).toBe(0)
+  })
+
+  it('pendingUnloads counts released textures until their grace is over', async () => {
+    vi.useFakeTimers()
+    await rm.acquireTexture('https://example.com/a.png')
+    await rm.acquireTexture('https://example.com/b.png')
+    expect(rm.pendingUnloads()).toBe(0)
+
+    rm.releaseTexture('https://example.com/a.png')
+    expect(rm.pendingUnloads()).toBe(1)
+
+    // Taken again within the grace: no longer on its way out.
+    await rm.acquireTexture('https://example.com/a.png')
+    expect(rm.pendingUnloads()).toBe(0)
+
+    rm.releaseTexture('https://example.com/b.png')
+    expect(rm.pendingUnloads()).toBe(1)
+    await afterGrace()
+    expect(rm.pendingUnloads()).toBe(0)
   })
 
   it('flushReleased unloads at once what nothing holds, and keeps what is held', async () => {
@@ -315,5 +336,121 @@ describe('ResourceManager — resident scenes (present mode)', () => {
     rm.releaseResident('c')
     expect(rm.residentBytes).toBe(4 * 1000 * 1000)
     expect(rm.admitResident('d', new Set([source(1000, 1000)]))).toBe(true)
+  })
+})
+
+describe('ResourceManager — the upload gate', () => {
+  /** A loaded picture per URL: a 2560 × 1707 source, labelled by its URL. */
+  const textures = new Map<string, { width: number; height: number; source: TextureSource }>()
+  const textureFor = (url: string) => {
+    let t = textures.get(url)
+    if (t === undefined) {
+      const source = { label: url, pixelWidth: 2560, pixelHeight: 1707, destroyed: false }
+      t = { width: 2560, height: 1707, source: source as unknown as TextureSource }
+      textures.set(url, t)
+    }
+    return t
+  }
+
+  function setup() {
+    const uploaded: string[] = []
+    const onGpu = new Set<TextureSource>()
+    const target: UploadTarget = {
+      isUploaded: (s) => onGpu.has(s),
+      upload: (s) => {
+        onGpu.add(s)
+        uploaded.push((s as unknown as { label: string }).label)
+      },
+    }
+    const pending = new Map<number, () => void>()
+    let id = 0
+    const frames = {
+      request: (cb: () => void) => (pending.set(++id, cb), id),
+      cancel: (h: number) => void pending.delete(h),
+    }
+    const frame = async () => {
+      const cbs = [...pending.values()]
+      pending.clear()
+      for (const cb of cbs) cb()
+      await new Promise((r) => setTimeout(r, 0))
+    }
+    const gate = new TextureUploadGate(target, {
+      budget: 1,
+      frames,
+      visibility: { hidden: () => false, subscribe: () => () => {} },
+      locate: (n) =>
+        (n as unknown as { box: null | { x: number; y: number; width: number; height: number } })
+          .box,
+    })
+    const rm = new ResourceManager()
+    rm.setUploadGate(gate)
+    return { rm, gate, uploaded, frame }
+  }
+
+  let originalLoad:
+    ((...a: Parameters<typeof Assets.load>) => ReturnType<typeof Assets.load>) | undefined
+  beforeEach(() => {
+    textures.clear()
+    originalLoad = vi.mocked(Assets.load).getMockImplementation()
+    vi.mocked(Assets.load).mockImplementation((async (asset: { src: string }) =>
+      textureFor(asset.src)) as unknown as typeof Assets.load)
+  })
+
+  afterEach(() => {
+    // Back to the shared mock's own answer for the suites after this one.
+    if (originalLoad !== undefined) vi.mocked(Assets.load).mockImplementation(originalLoad)
+  })
+
+  it('hands a large texture out only once a frame has uploaded it; it is render work until then', async () => {
+    const { rm, uploaded, frame } = setup()
+    let got = false
+    void rm.acquireTexture('https://x/a').then(() => (got = true))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(got).toBe(false)
+    expect(rm.peekTexture('https://x/a')).toBeNull()
+    expect(rm.hasTexture('https://x/a')).toBe(true) // a variant choice sees it coming
+    expect(pendingRenderWork()).toBeGreaterThan(0) // present mode's preparation waits for it
+
+    await frame()
+    expect(uploaded).toEqual(['https://x/a'])
+    expect(got).toBe(true)
+    expect(rm.peekTexture('https://x/a')).toBe(textureFor('https://x/a'))
+    // Taken again: on the GPU already, no frame.
+    await rm.acquireTexture('https://x/a')
+    expect(uploaded).toEqual(['https://x/a'])
+  })
+
+  it('one texture a frame at a budget below one; an acquirer that joins while it waits raises it', async () => {
+    const { rm, uploaded, frame } = setup()
+    const offStage = { priority: { node: { box: null } as unknown as Container } }
+    void rm.acquireTexture('https://x/first', offStage)
+    void rm.acquireTexture('https://x/second', offStage)
+    await new Promise((r) => setTimeout(r, 0))
+    // An object on screen wants the second one too (no node: assumed on screen).
+    void rm.acquireTexture('https://x/second')
+    await frame()
+    expect(uploaded).toEqual(['https://x/second'])
+    await frame()
+    expect(uploaded).toEqual(['https://x/second', 'https://x/first'])
+  })
+
+  it('keeps the hold across a gate installed later, and flushes the gate it replaces', async () => {
+    const { rm, gate, uploaded, frame } = setup()
+    let busy = true
+    rm.setUploadHold(() => busy)
+    void rm.acquireTexture('https://x/a')
+    await new Promise((r) => setTimeout(r, 0))
+    await frame()
+    expect(uploaded).toEqual([])
+    busy = false
+    await frame()
+    expect(uploaded).toEqual(['https://x/a'])
+
+    busy = true
+    void rm.acquireTexture('https://x/b')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(gate.pending).toBe(1)
+    rm.setUploadGate(null) // replaced: what waits goes now
+    expect(uploaded).toEqual(['https://x/a', 'https://x/b'])
   })
 })

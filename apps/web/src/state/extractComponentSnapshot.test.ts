@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * state/extractComponentSnapshot.test.ts
  *

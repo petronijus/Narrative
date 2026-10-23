@@ -80,9 +80,17 @@ export const SHARED_MEASUREMENTS_LIMIT = 256
  */
 const shared = new Map<string, Entry>()
 
+/**
+ * The `<!--n:uid-->` comment a node's markup starts with (textRenderer
+ * `buildHtmlForNode`: Pixi's texture cache per node). It does not lay out, so
+ * it is not part of what is shared — with it in the key, two nodes never
+ * shared anything (performance.md → E4; runText/layoutCache.ts keys the same).
+ */
+const NODE_PREFIX = /^<!--n:\d+-->/u
+
 function sharedKey(text: string, css: string, anchorX: number, anchorY: number): string {
   // The CSS's length keeps the key unambiguous: the markup follows it, whole.
-  return `${anchorX}|${anchorY}|${css.length}|${css}|${text}`
+  return `${anchorX}|${anchorY}|${css.length}|${css}|${text.replace(NODE_PREFIX, '')}`
 }
 
 function share(key: string, entry: Entry): void {
@@ -98,6 +106,37 @@ function share(key: string, entry: Entry): void {
 export function invalidateHtmlTextMeasurements(): void {
   generation++
   shared.clear()
+}
+
+/**
+ * The page's face generation: a measurement or layout taken in another one
+ * is void (the run-text layout cache keys on it, runText/layoutCache.ts).
+ */
+export function htmlTextMeasureGeneration(): number {
+  return generation
+}
+
+/** What a node's size is measured from: its markup and its style. */
+export interface MeasurableText {
+  text: string
+  _style: { cssStyle: string; padding: number }
+}
+
+/** Measures a node's content size in CSS px, as Pixi's `measureHtmlText` reports it. */
+export type HtmlTextMeasurer = (text: MeasurableText) => { width: number; height: number }
+
+let measurer: HtmlTextMeasurer | null = null
+
+/**
+ * Measure every HTMLText with `next` instead of Pixi's `measureHtmlText`
+ * (null: Pixi's again). The run-text engine (ADR 0018) measures with the
+ * layout its raster is painted from, so a text's bounds and its pixels come
+ * from one layout. Set once, before the first text is measured.
+ */
+export function setHtmlTextMeasurer(next: HtmlTextMeasurer | null): void {
+  if (next === measurer) return
+  measurer = next
+  invalidateHtmlTextMeasurements()
 }
 
 if (typeof document !== 'undefined' && typeof document.fonts?.addEventListener === 'function') {
@@ -139,10 +178,20 @@ export function installHtmlTextBoundsMemo(target: object = HTMLText.prototype): 
       bounds.minY = known.minY
       bounds.maxY = known.maxY
       share(key, known)
-      this[MEMO] = known
+      // Its own memo names its own markup (the comment may differ).
+      this[MEMO] = known.text === text ? known : { ...known, text }
       return
     }
-    ;(original as (this: MeasuredText) => void).call(this)
+    if (measurer === null) {
+      ;(original as (this: MeasuredText) => void).call(this)
+    } else {
+      // Pixi's `updateBounds` with the measurement swapped (HTMLText.updateBounds).
+      const { width, height } = measurer(this as unknown as MeasurableText)
+      bounds.minX = -anchor._x * width
+      bounds.maxX = bounds.minX + width
+      bounds.minY = -anchor._y * height
+      bounds.maxY = bounds.minY + height
+    }
     const entry: Entry = {
       generation,
       text,

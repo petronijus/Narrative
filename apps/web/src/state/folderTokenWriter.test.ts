@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * state/folderTokenWriter.test.ts — the page's side of a token change: the
  * server (a fake that writes a "server" copy of the folder document and

@@ -6,7 +6,8 @@
  * (`net::ERR_NETWORK_CHANGED`, a deploy that replaced the chunk) made React
  * unmount the whole tree and the page stayed white.
  *
- * - A route load failure (`RouteLoadError`, see `lazyRoute.tsx`) first asks
+ * - A route load failure (`RouteLoadError`, see `lazyRoute.tsx`; it arrives
+ *   only after the page's first load retried once by itself) first asks
  *   the version guard whether a deploy happened. If the server serves a newer
  *   build, the page reloads once — `checkForNewBuild` remembers the version
  *   it reloaded for in sessionStorage, so a stale document pinned by a proxy

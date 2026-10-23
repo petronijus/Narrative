@@ -132,6 +132,54 @@ test.describe('text engine spike — fidelity', () => {
   })
 })
 
+// The underline geometry HTMLText draws, per font, size and resolution
+// (ADR 0018 → decorations): `TEXT_SPIKE_DECORATIONS=1`, rows written to the
+// test's output (`decorations.json`).
+test.describe('text engine spike — decoration probe', () => {
+  test.skip(
+    process.env['TEXT_SPIKE_DECORATIONS'] !== '1',
+    'TEXT_SPIKE_DECORATIONS=1 runs the probe',
+  )
+  test.setTimeout(20 * 60_000)
+
+  test('underline bands', async ({ page, browserName }, testInfo) => {
+    await open(page)
+    const families = (
+      process.env['TEXT_SPIKE_FAMILIES'] ??
+      'Inter,Arial,Georgia,Times New Roman,Courier New,Verdana'
+    ).split(',')
+    const sizes = (
+      process.env['TEXT_SPIKE_SIZES'] ??
+      '8,9,10,11,12,13,14,15,16,18,20,22,24,26,28,30,32,36,40,48,56,64,72,96,120,160'
+    )
+      .split(',')
+      .map(Number)
+    const resolutions = (process.env['TEXT_SPIKE_RES'] ?? '1,1.5,2,3').split(',').map(Number)
+    const cases = []
+    for (const family of families)
+      for (const size of sizes)
+        for (const resolution of resolutions) cases.push({ family, size, resolution })
+    const ink = process.env['TEXT_SPIKE_INK_TEXT']
+    if (ink !== undefined)
+      for (const family of families)
+        for (const resolution of resolutions)
+          cases.push({ family, size: 32, resolution, text: ink })
+    const rows = await page.evaluate(
+      (cs) =>
+        (
+          window as unknown as {
+            __textSpike: { decorationProbe(c: unknown[]): Promise<unknown[]> }
+          }
+        ).__textSpike.decorationProbe(cs),
+      cases,
+    )
+    const path = testInfo.outputPath(`decorations-${browserName}.json`)
+    const { writeFileSync } = await import('node:fs')
+    writeFileSync(path, JSON.stringify(rows))
+    console.log(`decoration rows: ${rows.length} → ${path}`)
+  })
+})
+
 // Not `@serial`: that project depends on the whole parallel one, and the bench
 // launches browsers of its own anyway — run it with nothing else on the machine.
 test.describe('text engine spike — bench', () => {

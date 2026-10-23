@@ -41,7 +41,9 @@ import { getThumbnailReady } from './thumbnailReady.js'
 import { stripFilterEffectsTree } from './filterEffects.js'
 import { applyBackground } from './ArtboardBackground.js'
 import { getDefaultImageUrlResolver } from './imageUrl.js'
+import { releaseOwnedGraphicsContexts } from './graphicsContextRelease.js'
 import { patchHTMLTextRace } from './patchHTMLTextRace.js'
+import { installRunText } from './runText/runTextSystem.js'
 import { destroyPixiApplication } from './pixiApplication.js'
 import { DEFAULT_BACKGROUND, perfCount } from '@narrative/shared'
 import type { SlideBackground, SlideObject } from '@narrative/shared'
@@ -141,6 +143,9 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
   // this, thumbnail mounts that render multiple text leaves can leak
   // each other's pooled <img> into one another's textures.
   patchHTMLTextRace(app.renderer)
+  installRunText(app.renderer, { wakeRenderScheduler: false, counters: 'thumb.text' })
+  // A Graphics destroyed with its tree releases its own context (graphicsContextRelease.ts).
+  releaseOwnedGraphicsContexts()
 
   let destroyed = false
 

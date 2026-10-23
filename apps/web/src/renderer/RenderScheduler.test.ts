@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * renderer/RenderScheduler.test.ts
  *
@@ -99,6 +100,24 @@ describe('RenderScheduler', () => {
     scheduler.markDirty() // frame scheduled, never fires (tab hidden)
     scheduler.markDirty() // would be the visibility handler's attempt
     expect(renders()).toBe(0)
+  })
+
+  it('says whether a frame is pending and when the last render started', () => {
+    // Present mode's keep-warm frame (presentSlides.ts) is skipped when the
+    // scheduler draws this frame anyway: it reads both.
+    const { app } = makeApp()
+    const scheduler = new RenderScheduler(app)
+    expect(scheduler.framePending).toBe(false)
+    expect(scheduler.lastRenderAt).toBe(-Infinity)
+    scheduler.markDirty()
+    expect(scheduler.framePending).toBe(true)
+    const before = performance.now()
+    flushFrames()
+    expect(scheduler.framePending).toBe(false)
+    expect(scheduler.lastRenderAt).toBeGreaterThanOrEqual(before)
+    const first = scheduler.lastRenderAt
+    scheduler.renderNow()
+    expect(scheduler.lastRenderAt).toBeGreaterThanOrEqual(first)
   })
 
   it('renderNow paints immediately even with a stalled frame pending', () => {

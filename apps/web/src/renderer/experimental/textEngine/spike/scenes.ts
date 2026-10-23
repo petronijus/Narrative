@@ -45,6 +45,11 @@ function richText(paras: Para[]): Y.Text {
   return yt
 }
 
+/** A Y.Text of one paragraph per line (the decoration probe's texts). */
+export function plainText(lines: string[]): Y.Text {
+  return plain(lines)
+}
+
 function plain(lines: string[]): Y.Text {
   return richText(lines.map((l) => ({ runs: [{ text: l }] })))
 }

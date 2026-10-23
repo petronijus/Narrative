@@ -211,7 +211,10 @@ describe('imageRenderer', () => {
       assetId: 'asset-abc',
       variant: 'display',
     })
-    expect(rm.acquireTexture).toHaveBeenCalledWith('https://imgproxy.example.com/image.jpg')
+    expect(rm.acquireTexture).toHaveBeenCalledWith(
+      'https://imgproxy.example.com/image.jpg',
+      expect.anything(),
+    )
     // Sprite wrap should have been added as child.
     expect(node.children.length).toBeGreaterThanOrEqual(1)
   })
@@ -344,7 +347,10 @@ describe('imageRenderer', () => {
 
     // Old URL released before new acquire.
     expect(rm.releaseTexture).toHaveBeenCalledWith('https://imgproxy.example.com/image.jpg')
-    expect(rm.acquireTexture).toHaveBeenCalledWith('https://imgproxy.example.com/new.jpg')
+    expect(rm.acquireTexture).toHaveBeenCalledWith(
+      'https://imgproxy.example.com/new.jpg',
+      expect.anything(),
+    )
   })
 
   it('fit: cover — mask applied to sprite wrap', async () => {
@@ -414,8 +420,14 @@ describe('imageRenderer', () => {
         imageRenderer.mount({ ...baseImage, id: 'big', assetId: 'big', width: 1920, height: 1080 }),
       )
       await tick()
-      expect(rm.acquireTexture).toHaveBeenCalledWith('https://img.test/medium/asset-abc')
-      expect(rm.acquireTexture).toHaveBeenCalledWith('https://img.test/display/big')
+      expect(rm.acquireTexture).toHaveBeenCalledWith(
+        'https://img.test/medium/asset-abc',
+        expect.anything(),
+      )
+      expect(rm.acquireTexture).toHaveBeenCalledWith(
+        'https://img.test/display/big',
+        expect.anything(),
+      )
     })
 
     it('draws from display without a density (a scene that did not say), and keeps a pin', async () => {
@@ -424,15 +436,24 @@ describe('imageRenderer', () => {
         imageRenderer.mount({ ...small, id: 'o', assetId: 'pinned', variant: 'original' }),
       )
       await tick()
-      expect(rm.acquireTexture).toHaveBeenCalledWith('https://img.test/display/asset-abc')
-      expect(rm.acquireTexture).toHaveBeenCalledWith('https://img.test/original/pinned')
+      expect(rm.acquireTexture).toHaveBeenCalledWith(
+        'https://img.test/display/asset-abc',
+        expect.anything(),
+      )
+      expect(rm.acquireTexture).toHaveBeenCalledWith(
+        'https://img.test/original/pinned',
+        expect.anything(),
+      )
     })
 
     it('takes display when the source size is unknown', async () => {
       setDefaultImageUrlResolver(asResolver(variantResolver(), { width: null, height: null }))
       withPixelDensity(1, () => imageRenderer.mount(small))
       await tick()
-      expect(rm.acquireTexture).toHaveBeenCalledWith('https://img.test/display/asset-abc')
+      expect(rm.acquireTexture).toHaveBeenCalledWith(
+        'https://img.test/display/asset-abc',
+        expect.anything(),
+      )
     })
 
     it("takes the scene's floor, and a larger variant the GPU holds already", async () => {
@@ -442,12 +463,18 @@ describe('imageRenderer', () => {
         () => 'display',
       )
       await tick()
-      expect(rm.acquireTexture).toHaveBeenLastCalledWith('https://img.test/display/asset-abc')
+      expect(rm.acquireTexture).toHaveBeenLastCalledWith(
+        'https://img.test/display/asset-abc',
+        expect.anything(),
+      )
 
       rm.hasTexture.mockImplementation((url: string) => url === 'https://img.test/display/held')
       withPixelDensity(1, () => imageRenderer.mount({ ...small, id: 'h', assetId: 'held' }))
       await tick()
-      expect(rm.acquireTexture).toHaveBeenLastCalledWith('https://img.test/display/held')
+      expect(rm.acquireTexture).toHaveBeenLastCalledWith(
+        'https://img.test/display/held',
+        expect.anything(),
+      )
     })
 
     it('loads display when the canvas density grows past medium, and swaps it in at the same drawn size', async () => {
@@ -472,7 +499,10 @@ describe('imageRenderer', () => {
       // 360 × 4 = 1440 px: display.
       imageRenderer.setCanvasDensity!(node, 4, null)
       await tick()
-      expect(rm.acquireTexture).toHaveBeenLastCalledWith('https://img.test/display/asset-abc')
+      expect(rm.acquireTexture).toHaveBeenLastCalledWith(
+        'https://img.test/display/asset-abc',
+        expect.anything(),
+      )
       expect(sprite.texture.width).toBe(2560)
       expect([sprite.width, sprite.height]).toEqual([360, 240])
       expect(rm.releaseTexture).toHaveBeenCalledWith('https://img.test/medium/asset-abc')
@@ -537,6 +567,42 @@ describe('imageRenderer', () => {
       expect(held(m)).toEqual([])
     })
 
+    it('an upgrade the upload gate holds back keeps the smaller variant drawn until it is admitted', async () => {
+      const m = countingRm()
+      setDefaultResourceManager(m as never)
+      const node = withPixelDensity(1, () => imageRenderer.mount(small))
+      await tick()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mock access
+      const sprite = (node.children as any[])
+        .flatMap((c) => c.children ?? [])
+        .find((c) => c.texture)
+      expect(sprite.texture.width).toBe(1280)
+      // The first load asked as a placeholder's picture, the upgrade as an upgrade.
+      expect(m.acquireTexture).toHaveBeenNthCalledWith(1, 'https://img.test/medium/asset-abc', {
+        priority: { node },
+      })
+
+      imageRenderer.setCanvasDensity!(node, 4, null)
+      await tick()
+      expect(m.acquireTexture).toHaveBeenLastCalledWith('https://img.test/display/asset-abc', {
+        priority: { node, upgrade: true },
+      })
+      // Waiting in the gate (the acquire has not resolved): medium stays, no placeholder.
+      await tick()
+      expect(sprite.texture.width).toBe(1280)
+      expect(sprite.destroyed).toBe(false)
+      expect(held(m)).toEqual([
+        'https://img.test/medium/asset-abc×1',
+        'https://img.test/display/asset-abc×1',
+      ])
+
+      m.land()
+      await tick()
+      expect(sprite.texture.width).toBe(2560)
+      expect(held(m)).toEqual(['https://img.test/display/asset-abc×1'])
+      imageRenderer.destroy(node)
+    })
+
     it('an upgrade that lands after the node is gone gives its reference back', async () => {
       const m = countingRm()
       setDefaultResourceManager(m as never)
@@ -574,7 +640,10 @@ describe('imageRenderer', () => {
       // the synthetic object's default cover it would be 1500 — display.
       imageRenderer.applyPatch!(node, { assetId: 'swapped' })
       await tick()
-      expect(rm.acquireTexture).toHaveBeenLastCalledWith('https://img.test/medium/swapped')
+      expect(rm.acquireTexture).toHaveBeenLastCalledWith(
+        'https://img.test/medium/swapped',
+        expect.anything(),
+      )
     })
 
     it('loads display when a resize makes the picture larger than medium holds', async () => {
@@ -582,7 +651,10 @@ describe('imageRenderer', () => {
       await tick()
       imageRenderer.update(node, small, { ...small, width: 1500, height: 1000 })
       await tick()
-      expect(rm.acquireTexture).toHaveBeenLastCalledWith('https://img.test/display/asset-abc')
+      expect(rm.acquireTexture).toHaveBeenLastCalledWith(
+        'https://img.test/display/asset-abc',
+        expect.anything(),
+      )
     })
   })
 

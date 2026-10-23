@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * observability/fpsTracker.test.ts
  *

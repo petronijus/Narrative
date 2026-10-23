@@ -49,7 +49,7 @@ import { diffImage, diffRasters, type DiffStats } from '../pixelDiff.js'
 import { TextRasterPool } from '../rasterClient.js'
 import { rasterSize, type TextRunLayout } from '../runs.js'
 import { SdfTextCache } from '../sdfText.js'
-import { sceneFor, type SceneName } from './scenes.js'
+import { plainText, sceneFor, type SceneName } from './scenes.js'
 
 TextureSource.defaultOptions.autoGenerateMipmaps = true
 
@@ -606,12 +606,180 @@ async function boot(workers: number): Promise<{ workers: number; userAgent: stri
 const params = new URLSearchParams(location.search)
 const workerCount = Number(params.get('workers') ?? '2')
 
+// ---------------------------------------------------------------- decorations
+
+/** One underline probe: a font at a size, drawn by HTMLText at a resolution. */
+export interface DecorationCase {
+  family: string
+  weight?: number
+  italic?: boolean
+  size: number
+  resolution: number
+  /** The text under the underline; default 24 no-break spaces (no glyph ink). */
+  text?: string
+}
+
+export interface DecorationRow {
+  case: DecorationCase
+  /** Run baseline as laid out (CSS px from the raster top, unsnapped). */
+  baseline: number
+  /** Device rows with ink, each with its mean ink (0–255) over the probed columns. */
+  rows: Array<{ y: number; ink: number }>
+  /** First and last device column with ink in the band's strongest row. */
+  x0: number
+  x1: number
+  /** Ink per device column in the band's strongest row (skip-ink gaps). */
+  columns?: number[]
+  layoutWidth: number
+}
+
+/** How HTMLText draws an underline: the band's device rows and its extent. */
+async function decorationProbe(cases: DecorationCase[]): Promise<DecorationRow[]> {
+  if (mounted !== null) await clear()
+  const out: DecorationRow[] = []
+  for (const c of cases) {
+    app.renderer.resolution = c.resolution
+    const root = new Container()
+    app.stage.addChild(root)
+    const nbsp = String.fromCharCode(0xa0)
+    const data = {
+      id: 'probe',
+      type: 'text',
+      x: 0,
+      y: 0,
+      width: 3000,
+      height: Math.ceil(c.size * 3),
+      rotation: 0,
+      opacity: 1,
+      text: plainText([c.text ?? nbsp.repeat(24)]),
+      fontSize: c.size,
+      fontWeight: c.weight ?? 400,
+      fontFamily: c.family,
+      italic: c.italic === true,
+      underline: true,
+      color: 0x000000,
+      align: 'left',
+      wrap: 'none',
+    } as unknown as TextObject
+    const holder = textRenderer.mount(data)
+    root.addChild(holder)
+    await htmlSettled(root)
+    const node = htmlTextOf(holder)!
+    const texture = htmlTextureOf(node)!
+    const style = node.style
+    const layout = measureRuns(
+      node.text,
+      { cssStyle: style.cssStyle, padding: style.padding },
+      {
+        words: false,
+      },
+    )
+    const w = texture.frame.width
+    const h = texture.frame.height
+    const sprite = new Sprite(texture)
+    const px = extract(sprite, w, h, c.resolution)
+    sprite.destroy()
+    const W = Math.round(w * c.resolution)
+    const H = Math.round(h * c.resolution)
+    const ink = (x: number, y: number): number => {
+      const o = (y * W + x) * 4
+      return 255 - Math.min(px[o]!, px[o + 1]!, px[o + 2]!)
+    }
+    const rows: Array<{ y: number; ink: number }> = []
+    const from = Math.round((style.padding + 2) * c.resolution)
+    const to = Math.max(from + 1, W - Math.round((style.padding + 2) * c.resolution))
+    let best = -1
+    let bestInk = 0
+    for (let y = 0; y < H; y++) {
+      let sum = 0
+      for (let x = from; x < to; x++) sum += ink(x, y)
+      const mean = sum / (to - from)
+      if (mean > 0.5) rows.push({ y, ink: Math.round(mean * 10) / 10 })
+      if (mean > bestInk) {
+        bestInk = mean
+        best = y
+      }
+    }
+    let x0 = -1
+    let x1 = -1
+    const columns: number[] = []
+    if (best >= 0) {
+      for (let x = 0; x < W; x++) {
+        const v = ink(x, best)
+        columns.push(v)
+        if (v > 0) {
+          if (x0 < 0) x0 = x
+          x1 = x
+        }
+      }
+    }
+    const run = layout.runs[0]
+    out.push({
+      case: c,
+      baseline: run?.y ?? Number.NaN,
+      rows,
+      x0,
+      x1,
+      ...(c.text !== undefined ? { columns } : {}),
+      layoutWidth: layout.width,
+    })
+    textRenderer.destroy(holder)
+    root.destroy({ children: true })
+  }
+  return out
+}
+
+/**
+ * Where a centred line's text starts, read three ways — a Range over the text
+ * node, the client rects of a span wrapped around it, and the span's
+ * bounding box — to see which the engine snaps (WebKit snaps range rects to
+ * device pixels).
+ */
+function rectProbe(widths: number[], size = 24): Array<Record<string, number>> {
+  const host = document.createElement('div')
+  host.style.cssText =
+    'position:fixed;left:0;top:0;contain:strict;width:4000px;height:400px;visibility:hidden'
+  document.body.appendChild(host)
+  const out: Array<Record<string, number>> = []
+  for (const w of widths) {
+    host.innerHTML = ''
+    const div = document.createElement('div')
+    div.style.cssText = `width:${w}px;text-align:center;font:400 ${size}px Arial;line-height:normal`
+    const span = document.createElement('span')
+    span.textContent = 'Centred AV text'
+    div.appendChild(span)
+    host.appendChild(div)
+    const r = document.createRange()
+    r.selectNodeContents(span.firstChild!)
+    const range = r.getClientRects()[0]!
+    const spanRect = span.getClientRects()[0]!
+    const box = span.getBoundingClientRect()
+    const c = document.createElement('canvas').getContext('2d')!
+    c.font = `400 ${size}px Arial`
+    const measured = c.measureText('Centred AV text').width
+    out.push({
+      width: w,
+      rangeLeft: range.left,
+      spanLeft: spanRect.left,
+      boxLeft: box.left,
+      rangeWidth: range.width,
+      spanWidth: spanRect.width,
+      measured,
+      expectedLeft: (w - measured) / 2,
+    })
+  }
+  host.remove()
+  return out
+}
+
 const api = {
   ready: boot(Number.isFinite(workerCount) && workerCount > 0 ? workerCount : 2),
   mount,
   zoom,
   clear,
   fidelity,
+  decorationProbe,
+  rectProbe,
   /** The browser-measured layout of one text of a scene (debugging). */
   layoutOf(scene: SceneName, id: string): TextRunLayout | undefined {
     const data = sceneFor(scene).find((o) => o.id === id)

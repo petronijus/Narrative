@@ -37,6 +37,9 @@ import '../htmlTextMeasureCounter.js'
 import '../pixiFontSink.js'
 // After the counter: a measurement the memo saves is not counted as one.
 import { invalidateHtmlTextMeasurements } from '../htmlTextBoundsMemo.js'
+// Before any text is measured: where the page draws text from glyph runs
+// (ADR 0018), every text is measured from the layout its raster is painted from.
+import { installRunTextMeasurement } from '../runText/runTextSystem.js'
 import { perfCount } from '@narrative/shared'
 import { CanvasTextMetrics, Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
 import type { TextStyle } from 'pixi.js'
@@ -72,6 +75,8 @@ import {
   type HtmlTextFaceRequest,
 } from '../fontChanges.js'
 import { getRenderingSlideNumber } from '../slideNumberContext.js'
+
+installRunTextMeasurement()
 
 /**
  * Pixi v8 `HTMLText` rasterizes its SVG asynchronously
@@ -841,16 +846,43 @@ function applyAutofit(container: Container, textNode: HTMLText, data: TextObject
  * editor's write-back of a person's change (ui/AutofitHeights), which must
  * land in the same transaction tick as the change — before the canvas has
  * drawn it on the next frame and before a gesture closes its undo step.
- * The same mount as the canvas's, in the faces the page has, so it agrees
- * with what the canvas then draws.
+ * The same layout steps as the canvas's mount (`applyAutofit`,
+ * `applyVerticalAlign`, `drawnHeight`), in the faces the page has, so it
+ * agrees with what the canvas then draws.
+ *
+ * On one node kept for the page (performance.md → E4): it used to mount a
+ * whole box per keystroke — container, text node, clip mask, filters —
+ * publish its layout and destroy it again, around one measurement. The node
+ * is never drawn (no stage, so no raster or texture); the only work per call
+ * is the style, the markup and the measurement itself, which goes through
+ * the same `HTMLText` bounds (and so the same shared measurements) as before.
  */
 export function measureTextBoxLayout(data: TextObject): TextBoxLayout {
-  const container = mountTextContainer(data, { wireCatchup: false })
-  try {
-    return textBoxLayout(container) ?? { height: data.height, scale: 1 }
-  } finally {
-    textRenderer.destroy(container)
-  }
+  const container = (measuringContainer ??= createMeasuringContainer())
+  const textNode = getTextNode(container)!
+  // As a fresh mount starts: scale 1, anchor at the left, the style built
+  // for it, no shrink search remembered (another box's search must not be
+  // taken for this one). Then the mount's own steps, in its order.
+  asAny(container)[SHRINK_TAG] = undefined
+  textNode.scale.set(1)
+  textNode.anchor.x = 0
+  textNode.style = createHtmlTextStyle(data)
+  textNode.text = buildHtmlForNode(textNode, data)
+  applyAutofit(container, textNode, data)
+  applyHorizontalAlign(textNode, data)
+  applyVerticalAlign(textNode, data)
+  return { height: drawnHeight(container, data), scale: textNode.scale.y }
+}
+
+/** The page's measuring node for `measureTextBoxLayout` (created on first use). */
+let measuringContainer: Container | null = null
+
+function createMeasuringContainer(): Container {
+  const container = new Container()
+  const textNode = new HTMLText({ text: '' })
+  container.addChild(textNode)
+  asAny(container)[TEXT_TAG] = textNode
+  return container
 }
 
 /** The height the box is drawn at: its laid-out text for `grow-down` (once measured), else its own. */
@@ -879,6 +911,11 @@ function getMask(node: Container): Graphics | undefined {
 
 function getStoredData(node: Container): TextObject | undefined {
   return asAny(node)[DATA_TAG] as TextObject | undefined
+}
+
+/** The id of the text box `node` draws, if it is one this renderer mounted (diagnostics). */
+export function mountedTextObjectId(node: Container): string | undefined {
+  return getStoredData(node)?.id
 }
 
 function setStoredData(node: Container, data: TextObject): void {

@@ -17,7 +17,10 @@
  *
  * Each selects only the objects it shows, by id, from the deck store: a
  * drag re-renders the handles of the dragged selection, not the editors of
- * an unrelated table, and typing re-renders the text editor, not the guards.
+ * an unrelated table. The transform rig and the text editor select their
+ * objects by fields (`sameObjectFields`), so typing re-renders neither: what a
+ * keystroke changes lives inside the text's Y.Text, which the editor observes
+ * itself.
  *
  * Their DOM positions inside the artboard are EditorLayout's, unchanged:
  * the overlays stack in the order they always did.
@@ -36,7 +39,8 @@ import { useAnimations } from '../state/useAnimations'
 import { useSlideDoc } from '../state/useSlideDoc'
 import {
   useActiveSlideObject,
-  useActiveSlideObjectsWhere,
+  useActiveSlideObjectFields,
+  useActiveSlideObjectFieldsWhere,
   useDeckSelector,
   useDeckStore,
 } from '../state/useDeckStore.js'
@@ -162,7 +166,11 @@ function SelectionHandles({ isViewer, onSnapGuides, extraGuides }: ActiveObjectO
   const canvasInstance = useCanvasInstance()
   const { cropImageId } = useCropMode()
   const { pathPointsId } = usePathPointsMode()
-  const shown = useActiveSlideObjectsWhere((o) => o.type === 'video' || selectedIds.has(o.id))
+  // By fields: typing into the selected text box changes its snapshot, not
+  // its fields, so the rig does not re-render per key. What typing does move
+  // — a growing box's drawn height, a shrinking box's scale — reaches the rig
+  // through the scene graph's layout notification (TransformHandles).
+  const shown = useActiveSlideObjectFieldsWhere((o) => o.type === 'video' || selectedIds.has(o.id))
   const shownById = useMemo(() => {
     const map = new Map<string, SlideObject>()
     for (const o of shown) map.set(o.id, o)
@@ -268,7 +276,9 @@ function ObjectEditors({ isViewer, editingTextTarget }: ActiveObjectOverlaysProp
       ? undefined
       : animations.find((a) => a.id === selectedAnimationId && a.preset === 'moveTo')
 
-  const editingText = useActiveSlideObject(editingTextId)
+  // By fields: the overlay holds the live Y.Text and follows its content
+  // itself (its observer), so a keystroke does not re-render it.
+  const editingText = useActiveSlideObjectFields(editingTextId)
   const editedTable = useActiveSlideObject(
     activeTableCell !== null && activeTableCell.editing ? activeTableCell.tableId : null,
   )

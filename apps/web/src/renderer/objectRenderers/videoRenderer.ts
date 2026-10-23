@@ -112,6 +112,66 @@ function setLive(node: Container, state: LiveVideoState | undefined): void {
 }
 
 /**
+ * One Pixi VideoSource per element, shared by every container that draws it
+ * (each with its own Texture and Sprite over it), counted by its users.
+ *
+ * Pixi's `VideoSource.destroy()` pauses its element and empties its `src`
+ * (it assumes it owns the element). The element is not ours: present mode's
+ * pool (renderer/presentVideos.ts) buffered it before the talk and every
+ * scene of its slide draws it, so a scene torn down — evicted by the GPU
+ * budget, rebuilt after an edit — killed the video for the rest of the
+ * presentation. A container's teardown therefore destroys only its Texture;
+ * the last user unloads the source from the GPU and stops it following
+ * frames (`unload`, `autoUpdate`), leaving the element as its owner has it.
+ * The owner says when it lets go of the element (`releaseLiveVideoElement`);
+ * the source then goes with it. One source per element also means one
+ * upload per video frame however many containers show it.
+ */
+interface SharedVideoSource {
+  source: VideoSource
+  users: number
+}
+const sharedSources = new WeakMap<HTMLVideoElement, SharedVideoSource>()
+
+function acquireVideoSource(videoEl: HTMLVideoElement): VideoSource {
+  let shared = sharedSources.get(videoEl)
+  if (shared === undefined || shared.source.destroyed) {
+    // autoLoad defaults to true → VideoSource registers its play / pause /
+    // seeked listeners, which is what drives the per-frame texture upload
+    // flag. Without that, our markRenderDirty calls would render with a
+    // stale texture. autoPlay false so VideoSource doesn't try to start
+    // playback (the editor controls that).
+    shared = { source: new VideoSource({ resource: videoEl, autoPlay: false }), users: 0 }
+    sharedSources.set(videoEl, shared)
+  }
+  // Following the element's frames again (it stopped when its last user went).
+  if (shared.users === 0) shared.source.autoUpdate = true
+  shared.users++
+  return shared.source
+}
+
+function releaseVideoSource(videoEl: HTMLVideoElement): void {
+  const shared = sharedSources.get(videoEl)
+  if (shared === undefined || shared.users === 0) return
+  shared.users--
+  if (shared.users > 0 || shared.source.destroyed) return
+  // Nothing draws it: off the GPU, no uploads, the element untouched.
+  shared.source.autoUpdate = false
+  shared.source.unload()
+}
+
+/**
+ * The owner of `videoEl` is done with it (present mode's pool discards an
+ * element): its shared VideoSource goes too. Containers still drawing it
+ * keep a destroyed source — attach them to another element first.
+ */
+export function releaseLiveVideoElement(videoEl: HTMLVideoElement): void {
+  const shared = sharedSources.get(videoEl)
+  sharedSources.delete(videoEl)
+  if (shared !== undefined && !shared.source.destroyed) shared.source.destroy()
+}
+
+/**
  * Buffer for video elements that arrive before the container is mounted
  * (or while the scene graph is rebuilding). On mount, we drain any
  * matching entry and attach.
@@ -170,12 +230,8 @@ function attachLiveVideoToContainer(container: Container, videoEl: HTMLVideoElem
   teardownSpriteWrap(container)
   removePlayIcon(container)
 
-  // autoLoad defaults to true → VideoSource registers its play / pause /
-  // seeked listeners, which is what drives the per-frame texture upload
-  // flag. Without that, our markRenderDirty calls would render with a
-  // stale texture. autoPlay false so VideoSource doesn't try to start
-  // playback (the editor controls that).
-  const source = new VideoSource({ resource: videoEl, autoPlay: false })
+  // The element's VideoSource, shared with the other containers drawing it.
+  const source = acquireVideoSource(videoEl)
   const texture = new Texture({ source })
   const sprite = new Sprite(texture)
 
@@ -294,7 +350,10 @@ function teardownLiveVideo(container: Container): void {
     delete asAny(container).__vidLiveHandlers
   }
   if (!live.spriteWrap.destroyed) live.spriteWrap.destroy({ children: true })
-  if (!live.texture.destroyed) live.texture.destroy(true)
+  // The texture only: the source is shared, and destroying it would stop the
+  // element and empty its src (see `sharedSources`).
+  if (!live.texture.destroyed) live.texture.destroy(false)
+  releaseVideoSource(live.videoEl)
   setLive(container, undefined)
   setSpriteWrap(container, undefined)
   setSprite(container, undefined)
@@ -590,6 +649,18 @@ function applyVideoInfoResult(
 
   const status = info.transcodeStatus
 
+  // The live video is attached already: it is what the object shows, with
+  // no poster, placeholder or play icon over it. Present mode attaches its
+  // buffered element at mount (renderer/presentVideos.ts), before this info
+  // lands; the poster load below would have torn the live sprite down and
+  // painted the still in its place — present mode showed the poster while
+  // the element played (performance.md → P3).
+  if (getLive(container) !== undefined) {
+    if (status !== 'pending' && status !== 'processing') stopPolling(container)
+    removeProcessingLabel(container)
+    return
+  }
+
   if (status === 'failed') {
     stopPolling(container)
     if (hasAuthoredPoster) {
@@ -784,6 +855,8 @@ async function loadPosterTexture(
   // Bail before any teardown if a newer load already superseded us — we
   // must not release the current poster or destroy the live sprite wrap.
   if (isStale(container, myGen)) return
+  // The live video shows instead of the poster (applyVideoInfoResult).
+  if (getLive(container) !== undefined) return
 
   // Release previous.
   releasePosterTexture(container)
@@ -794,7 +867,7 @@ async function loadPosterTexture(
 
   let texture: Texture
   try {
-    texture = await rm.acquireTexture(posterUrl)
+    texture = await rm.acquireTexture(posterUrl, { priority: { node: container } })
   } catch {
     if (isStale(container, myGen)) return
     // Texture load failed — show error placeholder.
@@ -804,7 +877,8 @@ async function loadPosterTexture(
     return
   }
 
-  if (isStale(container, myGen)) {
+  // Superseded, or the live video was attached while the poster loaded.
+  if (isStale(container, myGen) || getLive(container) !== undefined) {
     rm.releaseTexture(posterUrl)
     return
   }

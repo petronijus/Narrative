@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * renderer/imageVariant.test.ts — which variant an image object is drawn from
  * (performance.md → L3): never one with fewer pixels than the canvas covers.

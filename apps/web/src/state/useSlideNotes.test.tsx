@@ -2,7 +2,8 @@
  * state/useSlideNotes.test.tsx — the notes follow the document whenever its
  * changes land: between the hook's render and its subscription (the sync of
  * a deck painted from its local copy, ADR 0017), on a slide map replaced
- * under the same id, and on a slide that arrives after the hook mounted.
+ * under the same id, and on a slide that arrives after the hook mounted —
+ * and a slide change costs no render more than it needs (present mode).
  */
 
 import { describe, expect, it } from 'vitest'
@@ -154,5 +155,36 @@ describe('useSlideNotes', () => {
       setSlideNotes(deckOf(doc), id, notes('After'))
     })
     expect(screen.getByTestId('text').textContent).toBe('After')
+  })
+
+  it('renders twice on a slide change, never a third time for the same text', () => {
+    // The change itself, then the effect's new fragment and text. The re-read
+    // after subscribing finds the text just set: a setState with it would
+    // render once more and commit nothing (one empty commit per advance in
+    // present mode, performance.md → F3).
+    const doc = new Y.Doc()
+    const a = addSlide(deckOf(doc)).id
+    const b = addSlide(deckOf(doc)).id
+    setSlideNotes(deckOf(doc), a, notes('First'))
+    setSlideNotes(deckOf(doc), b, notes('Second'))
+    const counter = { renders: 0 }
+    function CountedNotes() {
+      counter.renders++
+      return <div data-testid="text">{useSlideNotes().text}</div>
+    }
+    const tree = (slideId: string) => (
+      <SlideDocContext value={createMockSlideDocValue({ deckCtx: deckOf(doc) })}>
+        <ActiveSlideContext value={{ activeSlideId: slideId, setActiveSlideId: () => undefined }}>
+          <CountedNotes />
+        </ActiveSlideContext>
+      </SlideDocContext>
+    )
+    const view = render(tree(a))
+    expect(screen.getByTestId('text').textContent).toBe('First')
+
+    const before = counter.renders
+    act(() => view.rerender(tree(b)))
+    expect(screen.getByTestId('text').textContent).toBe('Second')
+    expect(counter.renders - before).toBe(2)
   })
 })

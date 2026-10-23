@@ -50,7 +50,7 @@ vi.mock('../state/ActiveSlideContext.js', () => ({
 }))
 
 vi.mock('../state/useDeckStore.js', () => ({
-  useActiveSlideObjectsById: () => [],
+  useActiveSlideObjectFieldsById: () => [],
 }))
 
 // ---------------------------------------------------------------------------

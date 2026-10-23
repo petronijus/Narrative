@@ -24,6 +24,11 @@
  * a zoom: `setPixelDensity`) past what its texture holds, the larger variant
  * is loaded beside it and swapped in at the same drawn size — no placeholder,
  * no frame without the picture; it never goes back down while mounted.
+ *
+ * A texture is handed over once it is on the GPU (ResourceManager's upload
+ * gate, textureUploadGate.ts: a bounded number of pixels per frame, what the
+ * window shows first, a placeholder's picture before an upgrade): the
+ * placeholder or the smaller variant stays until then.
  */
 
 import { Container, Graphics, Sprite, Texture } from 'pixi.js'
@@ -568,7 +573,8 @@ function startLoad(container: Container, data: ImageObject): void {
 
     let texture: Texture
     try {
-      texture = await rm.acquireTexture(url)
+      // Its placeholder shows until the gate has uploaded it (textureUploadGate.ts).
+      texture = await rm.acquireTexture(url, { priority: { node: container } })
     } catch {
       if (isStale(container, myGen)) return
       const errG = getPlaceholder(container)
@@ -704,7 +710,11 @@ function ensureVariant(container: Container): void {
           setVariantState(container, { loaded: wanted })
         return
       }
-      const texture = await rm.acquireTexture(url)
+      // The smaller variant shows until the gate has uploaded this one
+      // (textureUploadGate.ts): an upgrade waits behind placeholders.
+      const texture = await rm.acquireTexture(url, {
+        priority: { node: container, upgrade: true },
+      })
       const sprite = getSprite(container)
       // Read again after the await: another upgrade, a new asset or the
       // node's destruction may have come in between.

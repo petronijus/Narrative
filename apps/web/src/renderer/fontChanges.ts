@@ -84,10 +84,14 @@ interface Face {
   /** `font-stretch` of the rule: a width or a variable range (A4.2c). */
   stretch: string
   dataUrl: string
+  /** The font file as registered (the canvas text workers get a copy each, ADR 0018). */
+  bytes: ArrayBuffer
 }
 
 /** Registered faces by key (the font asset id). */
 const faces = new Map<string, Face>()
+/** Who hears of every face (`subscribeHtmlTextFaces`). */
+const faceFeeds = new Set<HtmlTextFaceFeed>()
 /** The same faces by family, in registration order. */
 const facesByFamily = new Map<string, Map<string, Face>>()
 
@@ -304,6 +308,7 @@ export function setHtmlTextFace(face: {
     style: STYLE.test(face.style) ? (face.style as FaceSlope) : 'normal',
     stretch: face.stretch !== undefined && STRETCH.test(face.stretch) ? face.stretch : '100%',
     dataUrl: `data:${fontMime(view)};base64,${base64(view)}`,
+    bytes: face.bytes,
   }
   if (previous !== undefined) forgetFace(previous)
   faces.set(face.key, next)
@@ -313,6 +318,7 @@ export function setHtmlTextFace(face: {
     facesByFamily.set(next.family, own)
   }
   own.set(next.key, next)
+  for (const feed of [...faceFeeds]) feed.added(registeredFace(next))
   if (previous !== undefined && previous.family !== face.family) {
     republishFamily(previous.family)
     announceFontFamilyChanged(previous.family)
@@ -327,8 +333,58 @@ export function removeHtmlTextFace(key: string): void {
   if (face === undefined) return
   faces.delete(key)
   forgetFace(face)
+  for (const feed of [...faceFeeds]) feed.removed(key)
   republishFamily(face.family)
   announceFontFamilyChanged(face.family)
+}
+
+/** A registered face as the canvas text workers get it (renderer/runText, ADR 0018). */
+export interface RegisteredFace {
+  key: string
+  family: string
+  weight: string
+  style: string
+  stretch: string
+  /** The font file; not to be transferred or modified (copy it). */
+  bytes: ArrayBuffer
+}
+
+/** Hears every face registered or removed (`subscribeHtmlTextFaces`). */
+export interface HtmlTextFaceFeed {
+  /** A face was registered, or one under the same key replaced. */
+  added(face: RegisteredFace): void
+  /** The face under `key` was removed. */
+  removed(key: string): void
+}
+
+function registeredFace(face: Face): RegisteredFace {
+  return {
+    key: face.key,
+    family: face.family,
+    weight: face.weight,
+    style: face.style,
+    stretch: face.stretch,
+    bytes: face.bytes,
+  }
+}
+
+/**
+ * Hear about every face: the ones registered so far at once (in registration
+ * order), then each one added, replaced or removed. The canvas text workers
+ * keep their `FontFaceSet`s equal to the registry this way (ADR 0018,
+ * decision 3). Returns the unsubscribe.
+ */
+export function subscribeHtmlTextFaces(feed: HtmlTextFaceFeed): () => void {
+  faceFeeds.add(feed)
+  for (const face of faces.values()) feed.added(registeredFace(face))
+  return () => {
+    faceFeeds.delete(feed)
+  }
+}
+
+/** The family names that have a registered face. */
+export function registeredFaceFamilies(): string[] {
+  return [...facesByFamily.keys()]
 }
 
 /**

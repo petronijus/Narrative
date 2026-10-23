@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * renderer/colourResolver.test.ts
  *

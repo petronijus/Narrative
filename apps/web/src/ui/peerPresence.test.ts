@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import type { PeerAwarenessState, PeerInfo } from '@narrative/shared'
 import { agentPeerLabel, peerSelectionOnSlide } from './peerPresence'

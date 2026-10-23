@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { paintRuns, type Paint2D } from './paint.js'
 import { diffRasters } from './pixelDiff.js'

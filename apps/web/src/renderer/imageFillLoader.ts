@@ -109,7 +109,7 @@ export function ensureImageFill(
       // acquire" fast path leaked one ref permanently if the slot
       // rotated between peek and the awaited acquire — the cleanup path
       // bailed without releasing the bumped count.
-      const texture = await rm.acquireTexture(url)
+      const texture = await rm.acquireTexture(url, { priority: { node: container } })
       // Re-check slot identity — may have rotated during the await.
       const stillActive = getSlot(container)
       if (stillActive !== slot) {
@@ -209,7 +209,7 @@ export function ensureImageFillKeyed(
       const url = await resolver({ assetId: fill.assetId, variant })
       const active = getSlotsMap(container)?.get(slotKey)
       if (active !== slot) return
-      const texture = await rm.acquireTexture(url)
+      const texture = await rm.acquireTexture(url, { priority: { node: container } })
       const stillActive = getSlotsMap(container)?.get(slotKey)
       if (stillActive !== slot) {
         rm.releaseTexture(url)

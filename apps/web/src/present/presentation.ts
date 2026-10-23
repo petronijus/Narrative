@@ -20,6 +20,13 @@
  * target, and a jump (a link, the presenter window, `?slide=`) cuts.
  * A slide not prepared yet (a jump outside a big deck's window) is waited
  * for: the current slide stays until the target is whole.
+ *
+ * The plan follows the deck from `prepare` on, not only from `start`: an
+ * edit during the upfront load replans around the slide the presentation
+ * will start on (the slide after it when it was deleted), so the cache
+ * rebuilds what the edit made stale while the load still runs, `isPrepared`
+ * says no until it has, and the first slide shown leaves no preparation for
+ * the first advance (ADR 0016, "ready means ready").
  */
 
 import type { AnimationStep, Slide, SlideTransition } from '@narrative/shared'
@@ -99,6 +106,10 @@ export class Presentation {
   private transition: { handle: PlayTransitionResult; targetId: string } | null = null
   /** A slide asked for before it was prepared: shown once it is. */
   private waitingFor: string | null = null
+  /** The slide `prepare` plans around until the presentation is on stage (`start`, `follow`). */
+  private startingAt: string | null = null
+  /** The deck snapshot the plan was made from (DeckStore.getSlides keeps its identity until a slide changes). */
+  private plannedFrom: Slide[] | null = null
   private destroyed = false
   private readonly unsubscribeStore: () => void
 
@@ -109,6 +120,7 @@ export class Presentation {
     this.unsubscribeStore = deps.store.subscribe(() => {
       const around = this.waitingFor ?? this.shownId
       if (around !== null) this.replan(around)
+      else this.followDeckBeforeStart()
       this.syncRuntime()
     })
   }
@@ -116,6 +128,15 @@ export class Presentation {
   /** The slide on stage (null before `start`). */
   get shown(): string | null {
     return this.shownId
+  }
+
+  /**
+   * The slide the presentation will start on, between `prepare` and the
+   * first slide on stage (null otherwise): the one `prepare` was given, or,
+   * when an edit deleted it, the slide that took its place.
+   */
+  get startSlide(): string | null {
+    return this.startingAt
   }
 
   /** Whether a transition or a build animation runs. */
@@ -128,11 +149,19 @@ export class Presentation {
    * is shown: the cache builds them all, or as many as the budget holds.
    */
   prepare(startId: string): void {
+    // Started already (the presenter skipped the load): the plan follows the slide shown.
+    if (this.shownId !== null || this.waitingFor !== null) return
+    this.startingAt = startId
     this.replan(startId)
   }
 
-  /** Whether `startId` can be shown: it and its neighbours prepared, the plan built as far as it goes. */
+  /**
+   * Whether `startId` can be shown: it and its neighbours prepared, the plan
+   * built as far as it goes — for the deck as it is now, also when the store
+   * has not announced its latest change yet.
+   */
   isPrepared(startId: string): boolean {
+    this.followDeckBeforeStart()
     const { cache } = this.deps
     return this.required(startId).every((id) => cache.isReady(id)) && cache.settledPlan()
   }
@@ -142,6 +171,28 @@ export class Presentation {
     if (!this.show(startId, null)) return false
     this.deps.cache.setIdleOnly(true)
     return true
+  }
+
+  /**
+   * Start at once, prepared or not (the presenter skipped the preparation):
+   * the prepared scene of `slideId` is swapped in when there is one;
+   * otherwise the slide stays as the canvas mounted it and the presentation
+   * goes on from it — its builds compiled on the mounted scene and played,
+   * as on any start — instead of waiting for its scene and swapping it in
+   * (its builds starting over) whenever that lands. Either way the cache
+   * builds in idle time from now on and keeps the slides around warm.
+   */
+  startNow(slideId: string): void {
+    if (this.destroyed || this.shownId !== null || this.waitingFor !== null) return
+    this.replan(slideId)
+    if (this.deps.cache.isReady(slideId)) this.show(slideId, null)
+    else {
+      this.shownId = slideId
+      this.startingAt = null
+      this.stopRuntime()
+      this.playMounted(slideId)
+    }
+    this.deps.cache.setIdleOnly(true)
   }
 
   next(): void {
@@ -167,6 +218,7 @@ export class Presentation {
   follow(slideId: string): void {
     if (slideId === this.shownId || this.transition !== null || this.waitingFor !== null) return
     this.shownId = slideId
+    this.startingAt = null
     this.stopRuntime()
     this.replan(slideId)
   }
@@ -276,6 +328,7 @@ export class Presentation {
   private arrive(targetId: string, incoming: SlideRuntime | null): void {
     this.stopRuntime()
     this.shownId = targetId
+    this.startingAt = null
     this.runtime = incoming
     if (incoming !== null) {
       incoming.bridge.open()
@@ -330,9 +383,15 @@ export class Presentation {
     const current = this.runtime?.animations ?? []
     if (animations === current || (animations.length === 0 && current.length === 0)) return
     this.stopRuntime()
+    this.playMounted(this.shownId)
+  }
+
+  /** Compile the builds of `slideId` onto the scene the canvas mounted on stage, and play them. */
+  private playMounted(slideId: string): void {
+    const animations = this.slides().find((s) => s.id === slideId)?.animations ?? []
     const sg = this.deps.sceneGraph
-    const runtime = this.compileRuntime(this.shownId, animations, {
-      slideId: this.shownId,
+    const runtime = this.compileRuntime(slideId, animations, {
+      slideId,
       root: sg.getRoot(),
       background: null,
       nodes: sg.getMountedIds().flatMap((id) => {
@@ -347,6 +406,44 @@ export class Presentation {
       runtime.bridge.open()
       runtime.runtime.play()
     }
+  }
+
+  /**
+   * Prepared but not on stage yet: when the deck moved on since the plan was
+   * made, plan again around the slide the presentation will start on — the
+   * slide after it, when it was deleted (the nearest presentable one after
+   * it, else before it, else whatever is left).
+   */
+  private followDeckBeforeStart(): void {
+    if (this.destroyed || this.startingAt === null || this.shownId !== null) return
+    if (this.waitingFor !== null) return // start() asked for it: its plan is the current one
+    const slides = this.slides()
+    if (slides === this.plannedFrom) return
+    const startId = this.startingAt
+    if (!slides.some((s) => s.id === startId)) {
+      const replacement = this.successorOf(startId, slides)
+      if (replacement === null) return // an empty deck: nothing to plan
+      this.startingAt = replacement
+    }
+    this.replan(this.startingAt)
+  }
+
+  /** The slide that takes the place of a deleted `slideId` in `slides`, by its place in the last plan's deck. */
+  private successorOf(slideId: string, slides: Slide[]): string | null {
+    const alive = new Set(slides.map((s) => s.id))
+    const presentable = new Set(slides.filter((s) => s.skipped !== true).map((s) => s.id))
+    const before = this.plannedFrom ?? []
+    const at = before.findIndex((s) => s.id === slideId)
+    if (at !== -1) {
+      const after = before.slice(at + 1).map((s) => s.id)
+      const behind = before
+        .slice(0, at)
+        .map((s) => s.id)
+        .reverse()
+      for (const pool of [presentable, alive])
+        for (const id of [...after, ...behind]) if (pool.has(id)) return id
+    }
+    return (slides.find((s) => s.skipped !== true) ?? slides[0])?.id ?? null
   }
 
   /** The slides one step away from `slideId` and the ones it links to: resident whatever the budget. */
@@ -378,6 +475,7 @@ export class Presentation {
     const slides = this.slides()
     const idx = slides.findIndex((s) => s.id === slideId)
     if (idx === -1) return
+    this.plannedFrom = slides
     const required = this.required(slideId)
     const order: string[] = [...required]
     const push = (id: string | undefined): void => {

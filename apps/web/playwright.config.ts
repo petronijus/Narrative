@@ -57,6 +57,20 @@ const BASE_URL = process.env['PW_BASE_URL'] || 'http://localhost:5173'
 const DESKTOP = [/desktop-.*\.spec\.ts$/, /desktop\.setup\.ts$/]
 
 /**
+ * One retry in the browser projects — for a network change only. A network
+ * change under the browser (a tethered phone re-attaching) makes Chrome
+ * abort every request in flight, localhost included, and fails whatever
+ * test was loading something. The `test` of e2e/fixtures/test.ts lets a
+ * retry run only when the failed attempt coincided with one (and labels it
+ * `network-change`); any other failure's retry stops at once, so the test
+ * still fails in the report — `retries` is a global knob, the fixture is
+ * what makes it targeted. The Electron specs use their own `test` and the
+ * perf scenarios their own discard-and-rerun (packages/perf/README.md → Run
+ * validity): neither retries.
+ */
+const NETWORK_CHANGE_RETRIES = 1
+
+/**
  * The layer I perf scenarios (e2e/perf/, docs/plans/perf-harness.md) run in
  * projects of their own, one at a time, and only when `just perf` asks
  * (PERF_RUN=1; they skip otherwise).
@@ -100,6 +114,7 @@ export default defineConfig({
       name: 'chromium',
       grepInvert: /@serial/,
       testIgnore: [...DESKTOP, PERF],
+      retries: NETWORK_CHANGE_RETRIES,
       use: chrome,
     },
     {
@@ -109,6 +124,7 @@ export default defineConfig({
       dependencies: ['chromium'],
       workers: 1,
       fullyParallel: false,
+      retries: NETWORK_CHANGE_RETRIES,
       use: chrome,
     },
     // The desktop shell (ADR 0015; e2e/fixtures/desktop.ts): bundled once,
@@ -139,6 +155,7 @@ export default defineConfig({
             grepInvert: /@serial/,
             // The desktop shell's own specs drive Electron, not a browser engine.
             testIgnore: [...DESKTOP, PERF],
+            retries: NETWORK_CHANGE_RETRIES,
             use: webkit,
           },
           {

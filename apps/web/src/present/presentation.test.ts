@@ -156,7 +156,10 @@ class FakeCache {
   setPlan(plan: readonly PresentSlideSpec[], required: readonly string[]): void {
     this.plans.push({ order: plan.map((s) => s.slide.id), required: [...required] })
   }
-  setIdleOnly(): void {}
+  idleOnly = false
+  setIdleOnly(on: boolean): void {
+    this.idleOnly = on
+  }
   setBusyProbe(): void {}
   isReady(id: string): boolean {
     return this.ready.has(id)
@@ -353,5 +356,260 @@ describe('Presentation — an advance only swaps', () => {
     expect(first.destroy).toHaveBeenCalledOnce()
     p.destroy()
     expect(anim.runtimes[1]!.destroy).toHaveBeenCalledOnce()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The deck changes during the upfront load
+// ---------------------------------------------------------------------------
+
+/** A deck store whose snapshot the test replaces; subscribers are told on `emit` (the store's next frame). */
+function makeLiveStore(initial: Slide[]) {
+  let slides = initial
+  const listeners = new Set<() => void>()
+  const store: DeckStore = {
+    getSlides: () => slides,
+    getSlide: (id: string) => slides.find((s) => s.id === id),
+    getObject: () => undefined,
+    subscribe: (l: () => void) => {
+      listeners.add(l)
+      return () => listeners.delete(l)
+    },
+    flush: () => undefined,
+    destroy: () => undefined,
+  }
+  return {
+    store,
+    set(next: Slide[]): void {
+      slides = next
+    },
+    emit(): void {
+      for (const l of [...listeners]) l()
+    },
+  }
+}
+
+/**
+ * A cache with the real cache's notion of a version (presentSlides.ts
+ * `sameVersion`): a scene is ready only while it was built from the planned
+ * slide's objects, background and page number. `buildAll` is the
+ * preparation running to its end.
+ */
+class VersionedCache {
+  plan: PresentSlideSpec[] = []
+  required: string[] = []
+  builds: string[] = []
+  private built = new Map<string, PresentSlideSpec>()
+  private onStage = new Set<string>()
+  private listeners = new Set<() => void>()
+  setPlan(plan: readonly PresentSlideSpec[], required: readonly string[]): void {
+    this.plan = [...plan]
+    this.required = [...required]
+    const planned = new Set(plan.map((s) => s.slide.id))
+    for (const id of [...this.built.keys()]) if (!planned.has(id)) this.built.delete(id)
+    this.notify()
+  }
+  setIdleOnly(): void {}
+  setBusyProbe(): void {}
+  isReady(id: string): boolean {
+    const built = this.built.get(id)
+    const wanted = this.plan.find((s) => s.slide.id === id)
+    return (
+      built !== undefined &&
+      wanted !== undefined &&
+      built.slide.objects === wanted.slide.objects &&
+      built.slide.background === wanted.slide.background &&
+      built.slideNumber === wanted.slideNumber
+    )
+  }
+  /** The planned slides not prepared (and not on stage): preparation still to do. */
+  unbuilt(): string[] {
+    return this.plan
+      .map((s) => s.slide.id)
+      .filter((id) => !this.isReady(id) && !this.onStage.has(id))
+  }
+  settledPlan(): boolean {
+    return this.unbuilt().length === 0
+  }
+  buildAll(): void {
+    for (const spec of this.plan) {
+      const id = spec.slide.id
+      if (this.isReady(id) || this.onStage.has(id)) continue
+      this.built.set(id, spec)
+      this.builds.push(id)
+    }
+    this.notify()
+  }
+  take(id: string): SlideScene | null {
+    if (!this.isReady(id)) return null
+    this.built.delete(id)
+    this.onStage.add(id)
+    return sceneFor(id)
+  }
+  give(scene: SlideScene): void {
+    this.onStage.delete(scene.slideId)
+  }
+  whenReady(ids: readonly string[]): Promise<void> {
+    return new Promise((resolve) => {
+      const check = (): void => {
+        if (ids.every((id) => this.isReady(id))) {
+          this.listeners.delete(check)
+          resolve()
+        }
+      }
+      this.listeners.add(check)
+      check()
+    })
+  }
+  private notify(): void {
+    for (const l of [...this.listeners]) l()
+  }
+}
+
+function setupLive(slides: Slide[]) {
+  const live = makeLiveStore(slides)
+  const cache = new VersionedCache()
+  const p = new Presentation({
+    sceneGraph: makeSceneGraph() as unknown as SceneGraph,
+    cache: cache as unknown as PresentSlideCache,
+    store: live.store,
+    setActiveSlideId: () => undefined,
+  })
+  return { p, cache, live }
+}
+
+const RECT = {
+  id: 'r',
+  type: 'rectangle',
+  x: 0,
+  y: 0,
+  width: 10,
+  height: 10,
+  rotation: 0,
+  opacity: 1,
+} as never
+
+describe('Presentation — the deck changes between prepare() and start()', () => {
+  const base = (): Slide[] => ['a', 'b', 'c', 'd'].map((id) => slide(id))
+  const cases: Array<[string, (deck: Slide[]) => Slide[]]> = [
+    ['a neighbour edited', (d) => d.map((s) => (s.id === 'b' ? { ...s, objects: [RECT] } : s))],
+    [
+      'the start slide’s background changed',
+      (d) =>
+        d.map((s) => (s.id === 'a' ? { ...s, background: { kind: 'color', color: 0xff0000 } } : s)),
+    ],
+    ['a slide added after the start slide', (d) => [d[0]!, slide('n'), ...d.slice(1)]],
+    ['the next slide removed', (d) => d.filter((s) => s.id !== 'b')],
+    ['the slides reordered', (d) => [d[0]!, d[2]!, d[1]!, d[3]!]],
+  ]
+
+  for (const [what, change] of cases) {
+    it(`${what}: the prepared set matches the deck at start, nothing left for the first show`, () => {
+      const { p, cache, live } = setupLive(base())
+      p.prepare('a')
+      cache.buildAll()
+      expect(p.isPrepared('a')).toBe(true)
+
+      live.set(change(live.store.getSlides()))
+      live.emit()
+      // The plan followed the deck: ready is not reported while it rebuilds.
+      expect(cache.plan.map((s) => s.slide.id)).toEqual(live.store.getSlides().map((s) => s.id))
+      expect(p.isPrepared('a')).toBe(false)
+      // The rest of the long upfront load.
+      cache.buildAll()
+      expect(p.isPrepared('a')).toBe(true)
+
+      const before = cache.builds.length
+      expect(p.start('a')).toBe(true)
+      expect(cache.unbuilt()).toEqual([])
+      expect(cache.builds.length).toBe(before)
+    })
+  }
+
+  it('a change the store has not announced yet (same frame) still unreadies the start', () => {
+    const { p, cache, live } = setupLive(base())
+    p.prepare('a')
+    cache.buildAll()
+    live.set(live.store.getSlides().map((s) => (s.id === 'b' ? { ...s, objects: [RECT] } : s)))
+    expect(p.isPrepared('a')).toBe(false)
+    cache.buildAll()
+    expect(p.isPrepared('a')).toBe(true)
+    expect(p.start('a')).toBe(true)
+    expect(cache.unbuilt()).toEqual([])
+  })
+
+  it('the start slide deleted: the presentation starts on the slide that took its place', () => {
+    const { p, cache, live } = setupLive(base())
+    p.prepare('b')
+    cache.buildAll()
+    live.set(live.store.getSlides().filter((s) => s.id !== 'b'))
+    live.emit()
+    expect(p.startSlide).toBe('c')
+    expect(cache.required).toEqual(['c', 'd', 'a'])
+    cache.buildAll()
+    expect(p.isPrepared('c')).toBe(true)
+    const before = cache.builds.length
+    expect(p.start('c')).toBe(true)
+    expect(p.shown).toBe('c')
+    expect(p.startSlide).toBeNull()
+    expect(cache.builds.length).toBe(before)
+  })
+
+  it('once started, the plan follows the slide shown, not the start', () => {
+    const { p, cache, live } = setupLive(base())
+    p.prepare('a')
+    cache.buildAll()
+    p.start('a')
+    p.next()
+    live.set(live.store.getSlides().map((s) => (s.id === 'c' ? { ...s, objects: [RECT] } : s)))
+    live.emit()
+    expect(cache.required[0]).toBe('b')
+  })
+})
+
+describe('Presentation — the presenter skips the preparation', () => {
+  /** What PresentLayout's skipPreparation does. */
+  const skip = (p: Presentation, slideId: string): void => p.startNow(slideId)
+
+  it('the start slide not prepared: it goes on from the mounted slide, builds playing, the cache idle-only', async () => {
+    const deck = [slide('a', { animations: [STEP] }), slide('b'), slide('c')]
+    const { p, cache } = setup(deck, [])
+    skip(p, 'a')
+    // On stage now, as the canvas mounted it; its builds compiled there and playing.
+    expect(p.shown).toBe('a')
+    expect(calls).toEqual(['compile', 'play'])
+    anim.bridges.at(-1)!.fire()
+    expect(anim.runtimes.at(-1)!.advance).toHaveBeenCalledOnce()
+    // Ready: building only in idle time, never during a transition or a build.
+    expect(cache.idleOnly).toBe(true)
+    expect(cache.plans.at(-1)!.required).toEqual(['a', 'b'])
+    // Its scene landing later swaps nothing in and starts no build over.
+    calls.length = 0
+    cache.prepareNow('a')
+    cache.prepareNow('b')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(calls).toEqual([])
+    // The presentation goes on from it.
+    p.next()
+    expect(calls).toEqual(['take:b', 'swap:b', 'give:initial', 'destroy-runtime', 'active:b'])
+  })
+
+  it('the start slide prepared: swapped in as on a normal start', () => {
+    const deck = [slide('a', { animations: [STEP] }), slide('b')]
+    const { p, cache } = setup(deck)
+    skip(p, 'a')
+    expect(calls).toEqual(['take:a', 'compile', 'swap:a', 'give:initial', 'play', 'active:a'])
+    expect(cache.idleOnly).toBe(true)
+  })
+
+  it('skipped during the media: a prepare() that comes after the start plans nothing', () => {
+    const deck = [slide('a'), slide('b'), slide('c'), slide('d')]
+    const { p, cache } = setup(deck, [])
+    skip(p, 'c')
+    const plans = cache.plans.length
+    p.prepare('a')
+    expect(cache.plans.length).toBe(plans)
+    expect(cache.plans.at(-1)!.required[0]).toBe('c')
   })
 })

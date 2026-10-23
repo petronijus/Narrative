@@ -10,6 +10,8 @@ interface ImportMetaEnv {
   readonly VITE_API_URL?: string
   /** Share of page sessions that report their timings (observability/sessionMetrics.ts); default 1. */
   readonly VITE_CLIENT_METRICS_SAMPLE_RATE?: string
+  /** The canvas's text engine of this build when the page chooses none: `html` | `runs` (renderer/runText/flag.ts). */
+  readonly VITE_TEXT_ENGINE?: string
 }
 
 interface ImportMeta {

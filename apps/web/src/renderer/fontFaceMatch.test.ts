@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { matchFaces, type FaceRequest, type MatchableFace } from './fontFaceMatch'
 

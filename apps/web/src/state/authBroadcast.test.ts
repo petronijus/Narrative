@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * authBroadcast.test.ts — a tab that hears another tab run for someone else
  * (or sign out) stops its local-copy writes and reloads; the same user, or a

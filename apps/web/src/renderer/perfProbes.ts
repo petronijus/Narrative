@@ -112,7 +112,15 @@ export function stripMasks(sceneGraph: SceneGraph): number {
 }
 
 /** Switch present mode's keep-warm on or off (a diagnostic: what does an advance cost without it?). */
-export { setKeepWarmEnabled } from './presentKeepWarm.js'
+export {
+  setKeepWarmEnabled,
+  setKeepWarmFrame,
+  setKeepWarmTarget,
+  setPresentIdleFallback,
+  type KeepWarmFrame,
+  type KeepWarmTarget,
+  type PresentIdleFallback,
+} from './presentKeepWarm.js'
 
 /** Thumbnails waiting or rendering (the store's queues, debounces and retries): settle waits for 0. */
 export { pendingThumbnailWork } from './thumbnailStore.js'

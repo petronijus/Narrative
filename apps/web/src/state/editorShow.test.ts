@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 import { EDITOR_SHOW_MESSAGE_TYPE, type EditorShowMessage } from '@narrative/commands'
 import { createEditorShowBus, parseEditorShowMessage } from './editorShow'

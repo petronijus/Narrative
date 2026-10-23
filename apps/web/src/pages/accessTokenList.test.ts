@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * pages/accessTokenList.test.ts — a late answer to the Access tokens page's
  * list neither drops a token created meanwhile nor revives one revoked

@@ -9,7 +9,7 @@
  * (e.g. presenter view's "next slide notes preview" in phase 3).
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
 import { getSlideNotesFragment } from '@narrative/slide-model'
 import { useSlideDoc } from './useSlideDoc.js'
@@ -75,6 +75,17 @@ export function useSlideNotes(): UseSlideNotesResult {
   )
   const [hasSlide, setHasSlide] = useState(() => findSlide(deckCtx, activeSlideId) !== undefined)
   const [text, setText] = useState<string>(() => serialiseFragment(fragment))
+  // The text last asked for. Both effects read the fragment again after
+  // subscribing; on a slide change that read is almost always the text just
+  // set, and a setState with an equal value right after a render is not
+  // dropped by React — it renders the component, bails out and commits: one
+  // empty commit per slide change, 22 a present pass (performance.md → F3).
+  const shownText = useRef(text)
+  const showText = useCallback((next: string): void => {
+    if (next === shownText.current) return
+    shownText.current = next
+    setText(next)
+  }, [])
 
   useEffect(() => {
     // The slide's Y.Map is not fixed for an id: a reorder (moveSlide clones
@@ -100,7 +111,7 @@ export function useSlideNotes(): UseSlideNotesResult {
       const next = notes instanceof Y.XmlFragment ? notes : null
       setHasSlide(slide !== undefined)
       setFragment(next)
-      setText(serialiseFragment(next))
+      showText(serialiseFragment(next))
     }
     const onSlidesChange = (): void => resolve()
     deckCtx.slides.observe(onSlidesChange)
@@ -111,12 +122,12 @@ export function useSlideNotes(): UseSlideNotesResult {
       deckCtx.slides.unobserve(onSlidesChange)
       slide?.unobserve(onSlideChange)
     }
-  }, [deckCtx, activeSlideId])
+  }, [deckCtx, activeSlideId, showText])
 
   useEffect(() => {
     if (fragment === null) return
     const onChange = () => {
-      setText(serialiseFragment(fragment))
+      showText(serialiseFragment(fragment))
     }
     fragment.observeDeep(onChange)
     // The text was read when the fragment was resolved, a commit earlier; an
@@ -127,7 +138,7 @@ export function useSlideNotes(): UseSlideNotesResult {
     return () => {
       fragment.unobserveDeep(onChange)
     }
-  }, [fragment])
+  }, [fragment, showText])
 
   return { fragment, hasSlide, text }
 }

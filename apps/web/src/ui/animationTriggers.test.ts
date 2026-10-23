@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * ui/animationTriggers.test.ts
  *

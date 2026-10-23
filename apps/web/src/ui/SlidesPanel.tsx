@@ -29,6 +29,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useSyncExternalStore,
   type ReactElement,
 } from 'react'
 import { useStableHandler } from './useStableHandler.js'
@@ -45,7 +46,7 @@ import { useSelection } from '../state/SelectionContext.js'
 import { useSlideThumbnailStore, useThumbnailUrl } from '../state/useSlideThumbnails.js'
 import type { ThumbnailStore } from '../renderer/thumbnailStore.js'
 import { thumbnailDataUrl } from '../renderer/thumbnailImages.js'
-import { useVisibleSlideRows } from './useVisibleSlideRows.js'
+import { useVisibleSlideRows, type RowVisibility } from './useVisibleSlideRows.js'
 import { setDeckThumbnail } from '../state/deckThumbnailCache.js'
 import { ApiError, useApi } from '../api/client.js'
 import { useParams } from 'react-router-dom'
@@ -178,6 +179,43 @@ interface DragState {
 }
 
 // ---------------------------------------------------------------------------
+// SlideThumbnail
+// ---------------------------------------------------------------------------
+
+interface SlideThumbnailProps {
+  slideId: string
+  index: number
+  thumbnails: ThumbnailStore
+  visibility: RowVisibility
+}
+
+/**
+ * A row's picture, or its placeholder colour while it has none — and while
+ * the row is off screen (performance.md → B3): there it mounts no `<img>` and
+ * does not re-render when its picture lands. The picture is drawn at idle
+ * all the same, so it is there when the row scrolls near. Its own component,
+ * so a picture landing or a row scrolling in renders this and not the row
+ * (a smooth scroll through a 300-slide panel commits a few of these a frame).
+ */
+function SlideThumbnailImpl({ slideId, index, thumbnails, visibility }: SlideThumbnailProps) {
+  const nearView = useSyncExternalStore(
+    useCallback(
+      (onChange: () => void) => visibility.subscribe(slideId, onChange),
+      [visibility, slideId],
+    ),
+    () => visibility.has(slideId),
+  )
+  const url = useThumbnailUrl(thumbnails, nearView ? slideId : undefined)
+  return url !== undefined ? (
+    <img src={url} alt="" className="h-full w-full object-cover" draggable={false} />
+  ) : (
+    <div className="h-full w-full" style={{ backgroundColor: placeholderColour(index) }} />
+  )
+}
+
+const SlideThumbnail = memo(SlideThumbnailImpl)
+
+// ---------------------------------------------------------------------------
 // SlideItem
 // ---------------------------------------------------------------------------
 
@@ -194,8 +232,10 @@ interface SlideItemProps {
   isDragging: boolean
   dropIndicatorAbove: boolean
   dropIndicatorBelow: boolean
-  /** The panel's thumbnails: the row reads its own (and re-renders with it only). */
+  /** The panel's thumbnails: the row's picture reads its own (SlideThumbnail). */
   thumbnails: ThumbnailStore
+  /** Which rows are near the view: a row off screen shows no picture (B3). */
+  visibility: RowVisibility
   readOnly?: boolean
   onActivate: (id: string, mods?: ActivateModifiers) => void
   onToggleCollapsed: (id: string) => void
@@ -228,6 +268,7 @@ function SlideItemImpl({
   dropIndicatorAbove,
   dropIndicatorBelow,
   thumbnails,
+  visibility,
   readOnly = false,
   onActivate,
   onToggleCollapsed,
@@ -242,7 +283,6 @@ function SlideItemImpl({
   onConsumeEditRequest,
 }: SlideItemProps) {
   const labelId = `slide-item-label-${slide.id}`
-  const thumbnailUrl = useThumbnailUrl(thumbnails, slide.id)
   const [editing, setEditing] = useState(false)
   const [draftName, setDraftName] = useState(slide.name ?? '')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -372,19 +412,12 @@ function SlideItemImpl({
               }
               aria-hidden="true"
             >
-              {thumbnailUrl !== undefined ? (
-                <img
-                  src={thumbnailUrl}
-                  alt=""
-                  className="h-full w-full object-cover"
-                  draggable={false}
-                />
-              ) : (
-                <div
-                  className="h-full w-full"
-                  style={{ backgroundColor: placeholderColour(index) }}
-                />
-              )}
+              <SlideThumbnail
+                slideId={slide.id}
+                index={index}
+                thumbnails={thumbnails}
+                visibility={visibility}
+              />
 
               <span
                 id={labelId}
@@ -569,7 +602,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   const allSlideIds = slides.map((s) => s.id)
   const thumbnails = useSlideThumbnailStore(allSlideIds, { liveActiveSlide: true })
   // The rows on screen are drawn first, the rest of the deck at idle.
-  useVisibleSlideRows(listRef, thumbnails, allSlideIds.join('|'))
+  const rowVisibility = useVisibleSlideRows(listRef, thumbnails, allSlideIds.join('|'))
 
   // P13: persist the first-slide thumbnail to localStorage so the home
   // page can show a deck preview without re-opening every deck. The
@@ -1532,6 +1565,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
                       dropIndicatorAbove={dropIndicatorAbove}
                       dropIndicatorBelow={dropIndicatorBelow}
                       thumbnails={thumbnails}
+                      visibility={rowVisibility}
                       readOnly={isViewer}
                       onActivate={rowOnActivate}
                       onToggleCollapsed={rowOnToggleCollapsed}

@@ -11,6 +11,10 @@
  *   acquire v té lhůtě ji převezme zpět bez nového načítání.
  * - A texture is never handed out while it is being unloaded: a load of a
  *   URL whose unload is still running waits for that unload to finish.
+ * - A texture loaded from a URL is handed out once it is on the GPU: large
+ *   ones pass the upload gate (textureUploadGate.ts, a bounded number of
+ *   pixels per frame) first, so the frame that draws them uploads nothing
+ *   and several becoming ready together do not stack into one long frame.
  *
  * M1: Malý scope — rectangle nepotřebuje textury. API existuje a je testované.
  * M11 (image uploads): ResourceManager bude zásadní — rozhraní musí být stabilní.
@@ -19,6 +23,7 @@
 import { trackRenderWork } from './renderWork.js'
 import { perfCount } from '@narrative/shared'
 import { Assets, Texture, type TextureSource, type TextureSourceOptions } from 'pixi.js'
+import type { TextureUploadGate, UploadPriority } from './textureUploadGate.js'
 
 interface TextureEntry {
   texture: Texture
@@ -34,12 +39,28 @@ interface TextureEntry {
  * texture the other object was still drawing.)
  */
 interface UrlTextureEntry {
+  /** The texture loaded and admitted (on the GPU, or small enough for the frame that draws it). */
   load: Promise<Texture>
-  /** The loaded texture, once `load` has resolved. */
+  /** The texture, once `load` has resolved. */
   texture: Texture | null
   refCount: number
   /** The unload waiting out UNLOAD_GRACE_MS once nothing holds the texture. */
   unloadTimer: ReturnType<typeof setTimeout> | null
+  /** Its way through the upload gate; null once admitted. */
+  admission: Admission | null
+}
+
+/** A URL texture on its way to the GPU: what its acquirers want it for, and where it waits. */
+interface Admission {
+  /** The acquirers' priorities while it loads (handed to the gate once it has loaded). */
+  priorities: Array<UploadPriority | undefined>
+  /** The gate it waits in, once loaded and until admitted. */
+  queuedIn: { gate: TextureUploadGate; source: TextureSource } | null
+}
+
+/** What an acquirer wants a texture for (the upload gate's order). */
+export interface AcquireTextureOptions {
+  priority?: UploadPriority
 }
 
 /**
@@ -114,6 +135,36 @@ export class ResourceManager {
    */
   private readonly procedural = new Map<string, TextureEntry>()
 
+  /** The upload gate of the canvas this manager serves (null: Pixi uploads in the frame that draws). */
+  private uploadGate: TextureUploadGate | null = null
+  private uploadHold: (() => boolean) | null = null
+
+  /**
+   * Install the gate textures loaded from now on pass before they are handed
+   * out (Canvas.tsx, once the renderer exists), or none. A previous gate is
+   * flushed: whatever waits in it goes now.
+   */
+  setUploadGate(gate: TextureUploadGate | null): void {
+    if (this.uploadGate === gate) return
+    this.uploadGate?.flush()
+    this.uploadGate = gate
+    gate?.setHold(this.uploadHold)
+  }
+
+  /** The installed upload gate, if any. */
+  get uploads(): TextureUploadGate | null {
+    return this.uploadGate
+  }
+
+  /**
+   * While `probe` answers true, the gate uploads nothing (present mode: a
+   * transition or a build is moving). Kept across `setUploadGate`.
+   */
+  setUploadHold(probe: (() => boolean) | null): void {
+    this.uploadHold = probe
+    this.uploadGate?.setHold(probe)
+  }
+
   /**
    * Načte texturu z URL (nebo vrátí cachouvanou). Inkrementuje ref count.
    * Volající je zodpovědný za zavolání releaseTexture() po použití.
@@ -121,8 +172,13 @@ export class ResourceManager {
    * A texture released to zero but still within its grace is taken back
    * as it is. A failed load leaves no entry behind, so the next acquire
    * tries again; the callers that shared it hold no reference to release.
+   *
+   * The promise resolves once the texture has passed the upload gate (see
+   * `setUploadGate`): until then the caller keeps showing what it showed.
+   * `priority` says where it will be drawn and what it replaces, so the gate
+   * uploads what is on screen first.
    */
-  acquireTexture(url: string): Promise<Texture> {
+  acquireTexture(url: string, opts: AcquireTextureOptions = {}): Promise<Texture> {
     const existing = this.textures.get(url)
     if (existing !== undefined) {
       existing.refCount += 1
@@ -130,19 +186,29 @@ export class ResourceManager {
         clearTimeout(existing.unloadTimer)
         existing.unloadTimer = null
       }
+      const admission = existing.admission
+      if (admission !== null) {
+        // Still loading: the gate hears of it once it is queued; queued: now.
+        if (admission.queuedIn === null) admission.priorities.push(opts.priority)
+        else void admission.queuedIn.gate.admit(admission.queuedIn.source, opts.priority)
+      }
       return existing.load
     }
 
+    const admission: Admission = { priorities: [opts.priority], queuedIn: null }
     const entry: UrlTextureEntry = {
-      // Counted until it settles, so the render page waits for it (renderWork.ts).
-      load: trackRenderWork(this.loadTexture(url)),
+      // Counted until it settles — admitted included — so the render page and
+      // present mode's preparation wait for it (renderWork.ts).
+      load: trackRenderWork(this.loadTexture(url).then((t) => this.admit(t, admission))),
       texture: null,
       refCount: 1,
       unloadTimer: null,
+      admission,
     }
     entry.load.then(
       (texture) => {
         entry.texture = texture
+        entry.admission = null
       },
       () => {
         if (this.textures.get(url) === entry) this.textures.delete(url)
@@ -150,6 +216,21 @@ export class ResourceManager {
     )
     this.textures.set(url, entry)
     return entry.load
+  }
+
+  /**
+   * Pass `texture` through the upload gate, as urgent as the most urgent of
+   * its acquirers: a waiter each (the gate orders by the most urgent), and an
+   * acquirer that joins while it is queued adds its own (`acquireTexture`).
+   */
+  private async admit(texture: Texture, admission: Admission): Promise<Texture> {
+    const gate = this.uploadGate
+    if (gate === null) return texture
+    admission.queuedIn = { gate, source: texture.source }
+    const priorities = admission.priorities
+    admission.priorities = []
+    await Promise.all(priorities.map((p) => gate.admit(texture.source, p)))
+    return texture
   }
 
   private async loadTexture(url: string): Promise<Texture> {
@@ -340,7 +421,8 @@ export class ResourceManager {
   /**
    * P5c: sync-friendly cache peek used by image fills on shapes. Does NOT
    * change ref count — it's a read-only probe so the caller can decide
-   * whether to paint now or wait for an async acquire to finish.
+   * whether to paint now or wait for an async acquire to finish. Null until
+   * the texture has passed the upload gate.
    */
   peekTexture(url: string): Texture | null {
     return this.textures.get(url)?.texture ?? null
@@ -354,6 +436,18 @@ export class ResourceManager {
    */
   hasTexture(url: string): boolean {
     return this.textures.has(url)
+  }
+
+  /**
+   * Textures nothing holds any more, still waiting out UNLOAD_GRACE_MS before
+   * they leave the GPU. The memory benches wait for these before they count
+   * textures (perf/harness.ts → settle `unloads`): one released a moment
+   * before a snapshot is on its way out, not a leak.
+   */
+  pendingUnloads(): number {
+    let n = 0
+    for (const entry of this.textures.values()) if (entry.unloadTimer !== null) n++
+    return n
   }
 
   // -------------------------------------------------------------------------

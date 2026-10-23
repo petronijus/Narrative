@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * renderer/htmlTextGroupRaster.test.ts — the pure parts of the grouped
  * raster: each cell's CSS confined to its own element in the shared SVG, the

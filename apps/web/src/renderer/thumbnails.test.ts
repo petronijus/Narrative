@@ -97,6 +97,7 @@ vi.mock('pixi.js', () => ({
 // rasters install a style scope on HTMLTextStyle at import), which the mock
 // above does not have; thumbnails draw no text here.
 vi.mock('./patchHTMLTextRace.js', () => ({ patchHTMLTextRace: vi.fn() }))
+vi.mock('./runText/runTextSystem.js', () => ({ installRunText: vi.fn() }))
 
 vi.mock('./objectRenderers/index.js', () => ({
   getRenderer: vi.fn().mockImplementation((type: string) => {

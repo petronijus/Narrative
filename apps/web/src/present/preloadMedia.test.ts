@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * present/preloadMedia.test.ts — what present mode fetches before it is
  * ready: each picture once, in the largest variant its uses need

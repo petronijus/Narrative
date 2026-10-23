@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * state/thumbnailRetry.test.ts — the retry policy of failed thumbnail
  * renders: backoff, the per-slide budget, and the renderer-level stop.

@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * animation/targetResolver.test.ts
  *

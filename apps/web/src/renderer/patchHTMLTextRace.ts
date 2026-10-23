@@ -44,7 +44,7 @@
  * deterministic regardless of how many nodes are dirty in one frame.
  */
 
-import { extractFontFamilies, getFontCss, isSafari } from 'pixi.js'
+import { extractFontFamilies, getFontCss, HTMLTextRenderData, isSafari } from 'pixi.js'
 import type { HTMLTextStyle, Renderer, Texture } from 'pixi.js'
 import { perfCount, perfCountersOn } from '@narrative/shared'
 import { markRenderDirty } from './RenderScheduler.js'
@@ -138,6 +138,64 @@ export function wholeTextureCanvas(
   return canvas
 }
 
+/**
+ * What a finished raster's pooled render data holds on to (performance.md
+ * → E8). Pixi pools one `HTMLTextRenderData` per raster in flight (BigPool,
+ * never shrunk) and each keeps its `<img>` on the last SVG it drew: a whole
+ * SVG document with the text's DOM and its @font-face CSS, in Blink a page of
+ * its own (frame, style engine, the parsed fonts). The pool grows with the
+ * most rasters ever in flight at once — 73 → 109 of them over a second
+ * pass of 198 slide switches, ~1,000 more nodes kept, a different number
+ * every session (memory.slide.switch; heap snapshots: XMLDocument,
+ * SVGImage, ImageResource held by `HTMLImageLoader` ← the pooled `image`).
+ *
+ * Once a raster's pixels are copied onto its texture's own canvas, nothing
+ * reads the pooled image again until the next raster sets its `src`, so it
+ * is emptied then — only while it is still in the pool: one another raster
+ * took meanwhile holds that raster's SVG. `Pool.return` and `Pool.get` call
+ * an item's `reset` and `init` (Pixi's own hooks; HTMLTextRenderData has
+ * neither), which is how the pool is followed.
+ */
+/** Pooled raster images (followRenderDataPool), with their render data. */
+const pooledRasters = new WeakMap<HTMLImageElement, { domElement: Element }>()
+
+export function followRenderDataPool(): void {
+  const proto = (HTMLTextRenderData as { prototype?: unknown } | undefined)?.prototype as
+    | {
+        reset?: (this: RenderDataLike) => void
+        init?: (this: RenderDataLike, data?: unknown) => void
+        [PATCHED]?: true
+      }
+    | undefined
+  if (proto === undefined || proto[PATCHED] === true) return
+  const reset = proto.reset
+  const init = proto.init
+  proto.reset = function (this: RenderDataLike): void {
+    reset?.call(this)
+    if (this.image instanceof HTMLImageElement) pooledRasters.set(this.image, this)
+  }
+  proto.init = function (this: RenderDataLike, data?: unknown): void {
+    init?.call(this, data)
+    if (this.image instanceof HTMLImageElement) pooledRasters.delete(this.image)
+  }
+  proto[PATCHED] = true
+}
+
+interface RenderDataLike {
+  image: unknown
+  domElement: Element
+}
+
+/** Empty a pooled raster image whose pixels its texture has copied (see `pooledRasters`). */
+export function releasePooledRaster(image: HTMLImageElement): void {
+  const data = pooledRasters.get(image)
+  if (data === undefined) return
+  pooledRasters.delete(image)
+  // Not `src = ''`: an empty src resolves against the page's URL.
+  image.removeAttribute('src')
+  data.domElement.replaceChildren()
+}
+
 interface DeferredUploads {
   /** Rasters of this renderer's HTMLText system in flight. */
   building: number
@@ -185,7 +243,7 @@ function deferPooledImageUploads(renderer: Renderer): DeferredUploads {
   }
   DEFERRED.set(renderer, state)
   if (textures === undefined || typeof upload !== 'function') return state
-  textures.onSourceUpdate = function (this: unknown, source: TextureSourceLike): void {
+  const deferring = function (this: unknown, source: TextureSourceLike): void {
     const r = source.resource
     if (typeof r === 'object' && r !== null && state.provisional.has(r)) {
       state.sources.add(source as object)
@@ -202,7 +260,51 @@ function deferPooledImageUploads(renderer: Renderer): DeferredUploads {
     }
     upload.call(this, source)
   }
+  textures.onSourceUpdate = deferring
+  // The sources the system follows already (Texture.EMPTY, bound to every
+  // unit when the context arrived, before this patch) listen with the
+  // method itself; `onSourceUnload` removes `update` / `resize` listeners by
+  // the instance's current function, which would match none of them. Each
+  // destroyed renderer then stayed subscribed to Pixi's page-wide
+  // Texture.EMPTY, and through its GL context and canvas kept the whole
+  // editor it drew — DOM, React tree, listeners: ~600 nodes and ~90
+  // listeners a deck opened (memory.deck.reopen, performance.md → E8).
+  // Those listeners move to the function that removal will look for.
+  rebindSourceListeners(textures, upload, deferring)
   return state
+}
+
+/** A texture source as far as its listeners go (Pixi's EventEmitter). */
+interface ListeningSource {
+  listenerCount(event: string): number
+  on(event: string, fn: (...a: never[]) => void, context: unknown): unknown
+  off(event: string, fn: (...a: never[]) => void, context: unknown): unknown
+}
+
+/**
+ * Move `system`'s `update` and `resize` listeners from `from` to `to` on
+ * every source it already follows (`_managedTextures`, GlTextureSystem):
+ * only where `from` was listening for `system`, so no listener is added
+ * that was not there.
+ */
+export function rebindSourceListeners(
+  system: object,
+  from: (...a: never[]) => void,
+  to: (...a: never[]) => void,
+): void {
+  const managed = (system as { _managedTextures?: { items?: Record<string, unknown> } })
+    ._managedTextures?.items
+  if (managed === undefined) return
+  for (const source of Object.values(managed)) {
+    if (source === null || typeof source !== 'object') continue
+    const s = source as Partial<ListeningSource>
+    if (typeof s.listenerCount !== 'function' || typeof s.on !== 'function') continue
+    for (const event of ['update', 'resize']) {
+      const before = s.listenerCount(event)
+      s.off!(event, from, system)
+      if (s.listenerCount(event) < before) s.on(event, to, system)
+    }
+  }
 }
 
 export function patchHTMLTextRace(
@@ -244,6 +346,7 @@ export function patchHTMLTextRace(
     }
   }
   const deferred = deferPooledImageUploads(renderer)
+  followRenderDataPool()
   const original = system._buildTexturePromise.bind(system)
   const rasterOne = async (options: unknown): Promise<unknown> => {
     perfCount(started)
@@ -291,6 +394,8 @@ export function patchHTMLTextRace(
     } catch {
       // Best-effort — older pixi versions may differ.
     }
+    // The texture draws from its canvas now: the pooled image can let go of its SVG.
+    releasePooledRaster(resource)
     // The texture promise typically resolves AFTER the render frame
     // that triggered it. Without a follow-up render, any HTMLText that
     // first appears during a multi-text mount (e.g. five duplicate

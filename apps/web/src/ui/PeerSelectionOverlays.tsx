@@ -23,11 +23,13 @@
  * - A peer that publishes `activeSlideId` (every A1 client, and the agent
  *   peer "Claude (MCP)") has its selection drawn only on that slide — see
  *   `peerSelectionOnSlide`. Older peers keep the scene-graph lookup.
- * - Re-renders on the snapshots of the objects peers have selected (from
+ * - Re-renders on the fields of the objects peers have selected (from
  *   the deck store, by id) as well as on awareness: an agent's selection names objects its
  *   command just created or moved, and the awareness update can land
  *   before the reconciler has them — the outline must appear (and follow
- *   the object) once the scene graph catches up.
+ *   the object) once the scene graph catches up. By fields, not snapshots
+ *   (performance.md → E6): typing into an outlined box changes no field, and
+ *   a growing box's drawn height arrives through `useTextLayoutTick`.
  */
 
 import type { PeerInfo } from '@narrative/shared'
@@ -35,7 +37,7 @@ import { useRemotePeers } from '../state/useAwareness.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { ObjectBounds } from '../renderer/types.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
-import { useActiveSlideObjectsById } from '../state/useDeckStore.js'
+import { useActiveSlideObjectFieldsById } from '../state/useDeckStore.js'
 import { peerSelectionOnSlide } from './peerPresence.js'
 import { useBoundsSettled } from './useBoundsSettled.js'
 import { useTextLayoutTick } from './useTextLayoutTick.js'
@@ -118,7 +120,7 @@ export function PeerSelectionOverlays() {
   // from the scene graph, which the reconciler updates from these objects
   // (and a growing text box without a document change). Only the objects
   // peers have selected: a change to any other object renders nothing here.
-  useActiveSlideObjectsById(selectedIds)
+  useActiveSlideObjectFieldsById(selectedIds)
   useBoundsSettled(canvasInstance?.sceneGraph ?? null, selectedIds)
 
   // Pokud canvas není ready nebo žádní remote peeri, nerenderujeme nic

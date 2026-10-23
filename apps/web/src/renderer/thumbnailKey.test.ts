@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * renderer/thumbnailKey.test.ts — a thumbnail's key changes with every input
  * of its picture and with nothing else (renderer/thumbnailKey.ts).
