@@ -47,6 +47,7 @@ import type { RenderWorkerConfig } from './config.js'
 import { getFromUpstream, installUpstreamRouting, putToUpstream } from './routing.js'
 import type { WarmPage, WarmPages } from './warmPages.js'
 import { MemoryWaitTimeout, type MemoryGate } from './memory.js'
+import { formatLoadSplit, loadSplit, loadSplitSteps, readLoadSnapshot } from './loadSplit.js'
 
 const errorText = (err: unknown): string =>
   maskTokens(err instanceof Error ? err.message : String(err))
@@ -286,6 +287,13 @@ export async function recyclePage(
   }
 }
 
+/**
+ * How often a load's wait looks for the page's hooks: the check runs in the
+ * page and costs microseconds, while every interval adds on average half of
+ * itself to each cold job (50 ms cost ~25 ms of a ~0.5 s app load, F5).
+ */
+const HOOKS_POLL_MS = 10
+
 /** Until the page's hooks are installed (the app mounted), or it refused the deck. */
 async function untilHooks(page: Page, stopAt: number): Promise<void> {
   const handle = await page.waitForFunction(
@@ -298,7 +306,7 @@ async function untilHooks(page: Page, stopAt: number): Promise<void> {
       return null
     },
     undefined,
-    { timeout: left(stopAt), polling: 50 },
+    { timeout: left(stopAt), polling: HOOKS_POLL_MS },
   )
   const state = (await handle.jsonValue()) as { ready: boolean; reason?: PageReason }
   if (!state.ready) {
@@ -395,7 +403,7 @@ async function drawBefore(
     await frozen.page.waitForFunction(
       () => typeof (window as unknown as RenderWindow).__narrativeRenderFreeze === 'function',
       undefined,
-      { timeout: left(stopAt), polling: 50 },
+      { timeout: left(stopAt), polling: HOOKS_POLL_MS },
     )
     await frozen.page.evaluate(
       (state) => (window as unknown as RenderWindow).__narrativeRenderFreeze!(state),
@@ -622,7 +630,17 @@ async function renderWithPage(
     }
     await untilHooks(warm.page, stopAt)
     const ready = Date.now() - started
-    deps.log(`${name}: ${how}, app ready in ${ready} ms`)
+    // A page this job loaded: where its load went (loadSplit.ts, ADR 0019).
+    const split =
+      how === 'session page'
+        ? null
+        : await warm.page
+            .evaluate(readLoadSnapshot)
+            .then(loadSplit)
+            .catch(() => null)
+    deps.log(
+      `${name}: ${how}, app ready in ${ready} ms${split !== null ? ` (${formatLoadSplit(split)})` : ''}`,
+    )
     const result = await runOnPage(
       warm.page,
       data,
@@ -630,7 +648,7 @@ async function renderWithPage(
       stopUpload.signal,
       deps.log,
       beforePng,
-      [['worker.page', ready]],
+      [['worker.page', ready], ...(split !== null ? loadSplitSteps(split) : [])],
     )
     succeeded = true
     return result

@@ -88,6 +88,9 @@ const ISOLATION_PAGE = `<!doctype html><html><body><script>
   const deckId = location.pathname.split('/')[2]
   const token = new URLSearchParams(location.search).get('share_token')
   window.__seen = (async () => {
+    // A request that names this page's token, as the real page's media and
+    // API reads do: its resource timing must stay with this document.
+    await fetch('/probe/' + deckId + '?share_token=' + token)
     const out = {
       local: Object.keys(localStorage),
       session: Object.keys(sessionStorage),
@@ -97,6 +100,8 @@ const ISOLATION_PAGE = `<!doctype html><html><body><script>
       name: window.name,
       history: history.length,
       entries: window.navigation ? navigation.entries().map((e) => e.url) : [],
+      // Every URL this document's performance timeline names (navigation, resources).
+      timeline: performance.getEntries().map((e) => e.name),
     }
     localStorage.setItem('secret', token)
     sessionStorage.setItem('secret', token)
@@ -338,6 +343,7 @@ describe('a recycled page', () => {
           name: string
           history: number
           entries: string[]
+          timeline: string[]
         }
       }
       const nothing = {
@@ -354,6 +360,8 @@ describe('a recycled page', () => {
         // Deck A's page leaves its token in every place a page can keep it.
         const a = seenBy(await renderJob(browser!, job('iso-a', 'nrr_iso_a', 's1'), deps))
         expect(a).toMatchObject(nothing)
+        // The probe works: A's own timeline names A's token.
+        expect(a.timeline.some((url) => url.includes('nrr_iso_a'))).toBe(true)
         expect(deck('iso-a').socketOpenedAt).not.toBeNull()
         expect(warm.size).toBe(1)
 
@@ -361,9 +369,11 @@ describe('a recycled page', () => {
         const b = seenBy(await renderJob(browser!, job('iso-b', 'nrr_iso_b', 's1'), deps))
         expect(logs.some((m) => m.startsWith('deck:iso-b: recycled page'))).toBe(true)
         // …and finds none of it: no storage, cookie, database, cache, window
-        // name, and no session history naming A's URL (its token).
+        // name, no session history naming A's URL (its token), and no
+        // performance entry of A's requests (the timeline names B's alone).
         expect(b).toMatchObject(nothing)
         expect(b.entries.every((url) => url.includes('nrr_iso_b'))).toBe(true)
+        expect(b.timeline.some((url) => url.includes('nrr_iso_b'))).toBe(true)
         expect(JSON.stringify(b)).not.toContain('nrr_iso_a')
         // A's document — its sync connection — was gone before B's page loaded.
         const closedAt = deck('iso-a').socketClosedAt
