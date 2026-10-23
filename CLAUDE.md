@@ -49,10 +49,13 @@ is yours.
 
 When Petr asks to run the checks and commit a stretch of work, follow the
 global `commit-in-background` skill: snapshot the finished tree, let a
-background fork split it into small commits and verify each one in its own
-git worktree (`just ci` after the last), keep working meanwhile, then adopt
-its commits with `git reset --mixed`. Small diffs are committed inline.
-Never push without its own word.
+background agent split it into commits by area in the reused
+`Narrative-commits` worktree (typecheck of the touched packages per commit;
+`just check` once on the final tree, skipped when
+`tools/dev/check-cache.sh` already has its content as green; e2e only when
+asked), keep working meanwhile, then adopt its commits with
+`git reset --mixed`. Small diffs are committed inline. Never push without
+its own word.
 
 ## Skills
 
