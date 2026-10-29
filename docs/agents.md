@@ -109,12 +109,13 @@ at A0: 50 commands, no ServerHost, no MCP server —
 
 ## Quality agents (check; do not build features)
 
-| Agent               | Scope                                                                                                                                                                                                                                                                                                          |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test-runner`       | Every test lane (`just check`, `just test`, `just e2e`, `just integration`, load, eval): runs, diagnoses, writes tests; reproduces UI bugs in a real browser; the performance harness (`packages/perf`, `perf/budgets/`, `docs/plans/perf-harness.md`). Merged from `qa-tester` and `e2e-tester` on 2026-09-30 |
-| `code-reviewer`     | Reviews diffs against the architectural principles + code quality                                                                                                                                                                                                                                              |
-| `security-reviewer` | Security audit (XSS, auth, IDOR, SSRF, DoS, secret leakage, CSP)                                                                                                                                                                                                                                               |
-| `agent-parity`      | Agentic coverage — every new capability, property, route or shortcut reaches the command registry (command, schema, examples, contract test, eval scenario, manifest); returns a ledger, never commits                                                                                                         |
+| Agent               | Scope                                                                                                                                                                                                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test-runner`       | Every test lane (`just check`, `just test`, `just e2e`, `just integration`, load, eval): runs them and reports a read-only verdict (haiku/low). Merged from `qa-tester` and `e2e-tester` on 2026-09-30; split from `test-writer` on 2026-10-29 (harness standard 12) |
+| `test-writer`       | Writes and fixes tests, diagnoses failures, reproduces UI bugs in a real browser; the performance harness (`packages/perf`, `perf/budgets/`, `docs/plans/perf-harness.md`) (sonnet/high, opus per call for hard failures)                                            |
+| `code-reviewer`     | Reviews diffs against the architectural principles + code quality                                                                                                                                                                                                    |
+| `security-reviewer` | Security audit (XSS, auth, IDOR, SSRF, DoS, secret leakage, CSP)                                                                                                                                                                                                     |
+| `agent-parity`      | Agentic coverage — every new capability, property, route or shortcut reaches the command registry (command, schema, examples, contract test, eval scenario, manifest); returns a ledger, never commits                                                               |
 
 Invoke `agent-parity` after any feature work, in the same breath as the
 `narrative-docs` sweep.
@@ -239,8 +240,10 @@ In parallel: several `Agent` invocations in one message block.
 Every agent has its own context window and does not know the preceding
 conversation — the tech-lead must supply all needed context in the prompt:
 milestone goal, relevant ADRs, what other agents are doing concurrently, and
-where the boundaries are. Per `CLAUDE.md`, sub-agents in this repo run on
-**Opus**.
+where the boundaries are. Per `CLAUDE.md`, the area agents that write
+product code run on **Opus**; the harness agents (`test-runner`,
+`test-writer`, `narrative-docs`, the reviewers) run on the model and effort
+in their frontmatter.
 
 ---
 
