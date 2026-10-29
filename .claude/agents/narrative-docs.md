@@ -11,7 +11,8 @@ description: >
   Trigger phrases: "update the docs", "document this", "aktualizuj
   dokumentaci", "zapiš to do docs", "doc sweep", "kde jsme".
 tools: Bash, Read, Grep, Glob, Edit, Write
-model: opus
+model: sonnet
+effort: medium
 ---
 
 # Narrative docs maintainer — sweep everything, reconcile with reality

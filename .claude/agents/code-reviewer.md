@@ -2,7 +2,8 @@
 name: code-reviewer
 description: Reviews Narrative changes against the architecture invariants in AGENTS.md → Hard rules — state = Yjs only, every capability is a command (one door), render = SceneGraph diff, animation = DSL, documents written through the sync server — plus package boundaries, TypeScript strictness and the test obligation. Use proactively before committing a feature or a refactor, and at a phase close. Read-only; returns ranked findings. Security goes to security-reviewer, agent-surface coverage to agent-parity.
 tools: Read, Grep, Glob, Bash
-model: opus
+model: inherit
+effort: high
 color: red
 ---
 

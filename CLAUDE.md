@@ -29,30 +29,39 @@ is yours.
     pre-push still runs the whole `just check`. The rows of AGENTS.md →
     "When to run what" are still yours to run;
   - `just deploy` and `just eval` ask before running (production, paid).
-- Sub-agents always run on Opus in this repo: pass `model: 'opus'` to the
-  Agent tool (Sonnet output needs reviewer rework here).
+- The area agents that write product code (`state-sync`, `renderer`,
+  `editor-ui`, `animation`, `media`, `ai-integration`, `infra`, `desktop`,
+  `agent-parity`) always run on Opus: pass `model: 'opus'` to the Agent tool
+  (Sonnet feature code needed reviewer rework here). The harness agents run
+  on the tiers in the table below (harness standard 12); escalate one call
+  with the Agent tool's `model` parameter rather than editing a frontmatter.
 - Connecting to the production hosts needs Petr's explicit per-host consent
   (the auto-mode classifier blocks agent-inferred prod SSH targets).
 
 ## Subagents — delegate to them
 
-| Agent                                                                                             | When                                                                                                          |
-| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `test-runner`                                                                                     | after code changes, on any failing test or build, to reproduce a UI bug in a real browser, and to write tests |
-| `code-reviewer`                                                                                   | before committing a feature or refactor: the architecture invariants                                          |
-| `agent-parity`                                                                                    | after any new or changed user capability: did it reach the agent surface                                      |
-| `security-reviewer`                                                                               | auth, sharing, new routes, MCP, uploads, deploy config                                                        |
-| `narrative-docs`                                                                                  | after a significant success or failure: sweep and reconcile the docs                                          |
-| `state-sync`, `renderer`, `editor-ui`, `animation`, `media`, `ai-integration`, `infra`, `desktop` | work inside their area (`docs/agents.md` has the ownership map)                                               |
+| Agent                                                                                             | Model / effort  | When                                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test-runner`                                                                                     | haiku / low     | after code changes and before calling work done; read-only verdict                                                                                             |
+| `test-writer`                                                                                     | sonnet / high   | when test-runner reports red, to reproduce a UI bug in a real browser, and to write tests; pass `model: "opus"` for a cross-layer, racy, flaky or CRDT failure |
+| `code-reviewer`                                                                                   | session / high  | before committing a feature or refactor: the architecture invariants                                                                                           |
+| `agent-parity`                                                                                    | opus            | after any new or changed user capability: did it reach the agent surface                                                                                       |
+| `security-reviewer`                                                                               | session / high  | auth, sharing, new routes, MCP, uploads, deploy config                                                                                                         |
+| `narrative-docs`                                                                                  | sonnet / medium | after a significant success or failure: sweep and reconcile the docs                                                                                           |
+| `state-sync`, `renderer`, `editor-ui`, `animation`, `media`, `ai-integration`, `infra`, `desktop` | opus            | work inside their area (`docs/agents.md` has the ownership map)                                                                                                |
 
 ## Committing
 
 When Petr asks to run the checks and commit a stretch of work, follow the
 global `commit-in-background` skill: snapshot the finished tree, let a
-background fork split it into small commits and verify each one in its own
-git worktree (`just ci` after the last), keep working meanwhile, then adopt
-its commits with `git reset --mixed`. Small diffs are committed inline.
-Never push without its own word.
+background agent (haiku for a fully written plan, sonnet when it must split
+hunks or write tests) split it into commits by area in the reused
+`Narrative-commits` worktree (typecheck of the touched packages per commit;
+`just check` once on the final tree, skipped when
+`tools/dev/check-cache.sh` already has its content as green; e2e only when
+asked), keep working meanwhile, then adopt its commits with
+`git reset --mixed`. Small diffs are committed inline. Never push without
+its own word.
 
 ## Skills
 

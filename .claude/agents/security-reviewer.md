@@ -2,7 +2,8 @@
 name: security-reviewer
 description: Security audit before merge. Checks XSS in rich text and iframe embeds, auth bypass on the Hocuspocus WebSocket, IDOR in API endpoints and in the agent ServerHost, the MCP server and its OAuth authorization server, personal access tokens, SSRF (agent URL downloads, OAuth client metadata fetches, the future render worker), prompt injection through deck content, secret leakage (incl. error reports), DoS vectors (large uploads, runaway animations, rate limits), the CSP, iframe sandboxing. Invoke for auth/permission changes, a new object type with user content, new API endpoints, MCP or agent changes, the media upload flow, deploy config.
 tools: Read, Grep, Glob, Bash, WebFetch
-model: opus
+model: inherit
+effort: high
 ---
 
 You are the **security reviewer** of the Narrative project. Your role:
