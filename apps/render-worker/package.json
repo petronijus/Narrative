@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@narrative/shared": "workspace:*",
-    "bullmq": "^6.3.14",
+    "bullmq": "^6.5.2",
     "ioredis": "^6.0.0",
     "playwright-core": "1.64.0",
     "ws": "^8.22.0"
@@ -22,6 +22,6 @@
     "@types/node": "^24.19.2",
     "@types/ws": "^8.18.2",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.4"
+    "vitest": "^5.0.5"
   }
 }
