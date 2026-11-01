@@ -36,14 +36,20 @@ is yours.
 
 ## Subagents — delegate to them
 
-| Agent                                                                                             | When                                                                                                          |
-| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `test-runner`                                                                                     | after code changes, on any failing test or build, to reproduce a UI bug in a real browser, and to write tests |
-| `code-reviewer`                                                                                   | before committing a feature or refactor: the architecture invariants                                          |
-| `agent-parity`                                                                                    | after any new or changed user capability: did it reach the agent surface                                      |
-| `security-reviewer`                                                                               | auth, sharing, new routes, MCP, uploads, deploy config                                                        |
-| `narrative-docs`                                                                                  | after a significant success or failure: sweep and reconcile the docs                                          |
-| `state-sync`, `renderer`, `editor-ui`, `animation`, `media`, `ai-integration`, `infra`, `desktop` | work inside their area (`docs/agents.md` has the ownership map)                                               |
+| Agent                                                                                             | Model / effort | When                                                                                      |
+| ------------------------------------------------------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------- |
+| `test-runner`                                                                                     | opus / low     | after code changes and before calling work done; read-only verdict                        |
+| `test-writer`                                                                                     | opus / high    | when test-runner reports red, to reproduce a UI bug in a real browser, and to write tests |
+| `code-reviewer`                                                                                   | opus / high    | before committing a feature or refactor: the architecture invariants                      |
+| `agent-parity`                                                                                    | opus           | after any new or changed user capability: did it reach the agent surface                  |
+| `security-reviewer`                                                                               | opus / high    | auth, sharing, new routes, MCP, uploads, deploy config                                    |
+| `narrative-docs`                                                                                  | opus / medium  | after a significant success or failure: sweep and reconcile the docs                      |
+| `state-sync`, `renderer`, `editor-ui`, `animation`, `media`, `ai-integration`, `infra`, `desktop` | opus           | work inside their area (`docs/agents.md` has the ownership map)                           |
+
+Every agent stays on Opus here (above); the effort level is what makes the
+running cheaper than the writing and the reviewing. Change one call with
+the Agent tool's `model` or `effort` parameter rather than editing the
+frontmatter.
 
 ## Committing
 

@@ -109,12 +109,13 @@ at A0: 50 commands, no ServerHost, no MCP server —
 
 ## Quality agents (check; do not build features)
 
-| Agent               | Scope                                                                                                                                                                                                                |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test-runner`       | Every test lane (`just check`, `just test`, `just e2e`, `just integration`, load, eval): runs, diagnoses, writes tests; reproduces UI bugs in a real browser. Merged from `qa-tester` and `e2e-tester` on 2026-09-30 |
-| `code-reviewer`     | Reviews diffs against the architectural principles + code quality                                                                                                                                                    |
-| `security-reviewer` | Security audit (XSS, auth, IDOR, SSRF, DoS, secret leakage, CSP)                                                                                                                                                     |
-| `agent-parity`      | Agentic coverage — every new capability, property, route or shortcut reaches the command registry (command, schema, examples, contract test, eval scenario, manifest); returns a ledger, never commits               |
+| Agent               | Scope                                                                                                                                                                                                                                               |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test-runner`       | Every test lane (`just check`, `just test`, `just e2e`, `just integration`, load, eval): runs them and reports the verdict, read-only. Merged from `qa-tester` and `e2e-tester` on 2026-09-30; split from `test-writer` on 2026-11-01 (harness v12) |
+| `test-writer`       | Writes and extends tests, diagnoses and fixes red lanes, reproduces UI bugs in a real browser                                                                                                                                                       |
+| `code-reviewer`     | Reviews diffs against the architectural principles + code quality                                                                                                                                                                                   |
+| `security-reviewer` | Security audit (XSS, auth, IDOR, SSRF, DoS, secret leakage, CSP)                                                                                                                                                                                    |
+| `agent-parity`      | Agentic coverage — every new capability, property, route or shortcut reaches the command registry (command, schema, examples, contract test, eval scenario, manifest); returns a ledger, never commits                                              |
 
 Invoke `agent-parity` after any feature work, in the same breath as the
 `narrative-docs` sweep.
@@ -152,7 +153,7 @@ Example from M6 (animation engine):
 - `animation`: DSL + GSAP compiler + runtime
 - `editor-ui`: timeline preview button + preset dropdown (UI only, calls the animation API)
 - `infra`: Sentry integration + metrics baseline
-- `test-runner`: load-harness scaffold (after the animation milestone lands)
+- `test-writer`: load-harness scaffold (after the animation milestone lands)
 
 All start in the same session/worktree; integration at the end.
 
