@@ -12,6 +12,7 @@ description: >
   dokumentaci", "zapiš to do docs", "doc sweep", "kde jsme".
 tools: Bash, Read, Grep, Glob, Edit, Write
 model: opus
+effort: medium
 ---
 
 # Narrative docs maintainer — sweep everything, reconcile with reality
