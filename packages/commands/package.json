@@ -21,7 +21,7 @@
     "@narrative/slide-model": "workspace:*",
     "mdast-util-from-markdown": "^2.1.0",
     "mdast-util-gfm-strikethrough": "^2.0.1",
-    "mdast-util-to-markdown": "^2.2.0",
+    "mdast-util-to-markdown": "^2.2.1",
     "micromark-extension-gfm-strikethrough": "^2.1.0",
     "nanoid": "^6.0.2",
     "yaml": "^2.9.1",
@@ -32,6 +32,6 @@
     "@types/mdast": "^4.0.4",
     "prettier": "^3.9.10",
     "tsx": "^4.23.15",
-    "vitest": "^5.0.4"
+    "vitest": "^5.0.5"
   }
 }
