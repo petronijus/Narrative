@@ -47,7 +47,7 @@ import type { RenderWorkerConfig } from './config.js'
 import { getFromUpstream, installUpstreamRouting, putToUpstream } from './routing.js'
 import type { WarmPage, WarmPages } from './warmPages.js'
 import { MemoryWaitTimeout, type MemoryGate } from './memory.js'
-import { formatLoadSplit, loadSplit, loadSplitSteps, readLoadSnapshot } from './loadSplit.js'
+import { formatLoadSplit, loadSplit, loadSplitSteps, readPageLoadSnapshot } from './loadSplit.js'
 
 const errorText = (err: unknown): string =>
   maskTokens(err instanceof Error ? err.message : String(err))
@@ -631,13 +631,20 @@ async function renderWithPage(
     await untilHooks(warm.page, stopAt)
     const ready = Date.now() - started
     // A page this job loaded: where its load went (loadSplit.ts, ADR 0019).
+    const loaded = warm
     const split =
       how === 'session page'
         ? null
-        : await warm.page
-            .evaluate(readLoadSnapshot)
-            .then(loadSplit)
-            .catch(() => null)
+        : loadSplit(
+            await readPageLoadSnapshot(async () => {
+              const session = await loaded.context.newCDPSession(loaded.page)
+              return {
+                // Playwright types each protocol method; these are plain reads.
+                send: (method, params) => session.send(method as never, params as never),
+                detach: () => session.detach(),
+              }
+            }),
+          )
     deps.log(
       `${name}: ${how}, app ready in ${ready} ms${split !== null ? ` (${formatLoadSplit(split)})` : ''}`,
     )

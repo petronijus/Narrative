@@ -4,7 +4,8 @@
  * switch and a slim render entry; docs/plans/performance.md, R1a / F5).
  *
  * After a new or recycled page installed its hooks, the worker reads the
- * page's own clocks once (`readLoadSnapshot`, run in the page) and turns them
+ * page's own clocks once (`readPageLoadSnapshot`: an isolated world for the
+ * native timings, the main world only for the load stamps) and turns them
  * into the critical path of the load (`loadSplit`), from the document's
  * navigation start:
  *
@@ -46,25 +47,25 @@ export interface LoadSnapshot {
 }
 
 /**
- * Runs IN the page (`page.evaluate`): self-contained, no closures over this
- * module. Reads the navigation and resource timings and the deck's load
- * stamps; resource URLs are reduced to a kind here, inside the page.
+ * The page's native timings, evaluated in an ISOLATED world of the page
+ * (`Page.createIsolatedWorld`): it shares the document but not the page's
+ * JavaScript globals, so nothing the page's own code did to `performance`,
+ * `Array`, `URL` or `String` shapes what is read. At most `max` resource
+ * entries are taken — before any of them is mapped — and each is reduced to
+ * a fixed kind there, so no URL (render token, asset ids) and nothing the page
+ * sized leaves it. Plain JavaScript (`(max) => …`): it is sent as source.
  */
-export function readLoadSnapshot(): LoadSnapshot {
+export const NATIVE_TIMINGS_SOURCE = `(max) => {
   const origin = location.origin
-  const kindOf = (name: string): ResourceKind => {
-    let url: URL
-    try {
-      url = new URL(name)
-    } catch {
-      return 'other'
-    }
+  const kindOf = (name) => {
+    let url
+    try { url = new URL(name) } catch { return 'other' }
     if (url.origin !== origin) return 'other'
     const p = url.pathname
     if (p.startsWith('/assets/')) {
       if (p.endsWith('.js')) return 'script'
       if (p.endsWith('.css')) return 'style'
-      if (/\.(woff2?|ttf|otf)$/.test(p)) return 'font'
+      if (/\\.(woff2?|ttf|otf)$/.test(p)) return 'font'
       return 'other'
     }
     if (p === '/api/auth/me') return 'auth'
@@ -72,25 +73,114 @@ export function readLoadSnapshot(): LoadSnapshot {
     if (p.startsWith('/storage/') || p.startsWith('/imgproxy/')) return 'media'
     return 'other'
   }
-  const nav = performance.getEntriesByType('navigation')[0] as
-    PerformanceNavigationTiming | undefined
-  const resources = (performance.getEntriesByType('resource') as PerformanceResourceTiming[]).map(
-    (r) => ({ kind: kindOf(r.name), start: r.startTime, end: r.responseEnd }),
-  )
-  const timings = (
-    window as unknown as {
-      __narrative_perf?: {
-        loadTimings?: { start: number; wsSyncedMs: number | null; pixiReadyMs: number | null }
-      }
+  const nav = performance.getEntriesByType('navigation')[0]
+  const entries = performance.getEntriesByType('resource').slice(0, max)
+  const resources = []
+  for (const r of entries) resources.push({ kind: kindOf(r.name), start: r.startTime, end: r.responseEnd })
+  return { now: performance.now(), htmlEnd: nav !== undefined ? nav.responseEnd : null, resources }
+}`
+
+/**
+ * The deck's load stamps (state/loadTimings.ts), evaluated in the page's MAIN
+ * world — the only place they are. The page's code can make anything of
+ * `window.__narrative_perf`, so this takes three readings and nothing else,
+ * each a number or null (`typeof` cannot be redefined), into an object of its
+ * own; a getter that throws gives null. Plain JavaScript, sent as source.
+ */
+export const LOAD_STAMPS_SOURCE = `() => {
+  const num = (read) => { try { const v = read(); return typeof v === 'number' ? v : null } catch { return null } }
+  let t = null
+  try { const perf = window.__narrative_perf; t = perf != null ? perf.loadTimings : null } catch { t = null }
+  if (t == null || (typeof t !== 'object' && typeof t !== 'function')) return { shellStart: null, wsSyncedMs: null, pixiReadyMs: null }
+  return { shellStart: num(() => t.start), wsSyncedMs: num(() => t.wsSyncedMs), pixiReadyMs: num(() => t.pixiReadyMs) }
+}`
+
+/** What `readPageLoadSnapshot` needs of a CDP session (Playwright's `CDPSession`). */
+export interface LoadSnapshotCdp {
+  send(method: string, params?: Record<string, unknown>): Promise<unknown>
+  detach(): Promise<void>
+}
+
+/** How long reading a page's load may take before it is given up on. */
+const READ_TIMEOUT_MS = 2_000
+/**
+ * How long one evaluation may run in the page: below READ_TIMEOUT_MS, so V8
+ * has stopped a script that never returns before the session is detached.
+ */
+const EVALUATE_TIMEOUT_MS = 1_500
+
+/**
+ * A page's load snapshot, read over CDP: the native timings in an isolated
+ * world, the load stamps in the main world, both serialised by the browser
+ * (`returnByValue`) and bounded in time (EVALUATE_TIMEOUT_MS per script,
+ * READ_TIMEOUT_MS for the whole). Unknown on purpose: `loadSplit` checks it
+ * again. Null when anything fails — the split is a log line, never a reason
+ * to fail a job. Once given up on, the read sends nothing more, and the
+ * session is detached whenever it opens.
+ */
+export async function readPageLoadSnapshot(
+  openCdp: () => Promise<LoadSnapshotCdp>,
+  limits: { readMs?: number; evaluateMs?: number } = {},
+): Promise<unknown> {
+  const readMs = limits.readMs ?? READ_TIMEOUT_MS
+  const evaluateMs = limits.evaluateMs ?? EVALUATE_TIMEOUT_MS
+  let abandoned = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const opening = openCdp()
+  const read = async (): Promise<unknown> => {
+    const cdp = await opening
+    const send = (method: string, params?: Record<string, unknown>): Promise<unknown> => {
+      if (abandoned) return Promise.reject(new Error('the read was given up on'))
+      return cdp.send(method, params)
     }
-  ).__narrative_perf?.loadTimings
-  return {
-    now: performance.now(),
-    htmlEnd: nav !== undefined ? nav.responseEnd : null,
-    resources,
-    shellStart: timings !== undefined ? timings.start : null,
-    wsSyncedMs: timings?.wsSyncedMs ?? null,
-    pixiReadyMs: timings?.pixiReadyMs ?? null,
+    const tree = (await send('Page.getFrameTree')) as { frameTree: { frame: { id: string } } }
+    const world = (await send('Page.createIsolatedWorld', {
+      frameId: tree.frameTree.frame.id,
+      worldName: 'narrative-load-split',
+    })) as { executionContextId: number }
+    const evaluate = async (expression: string, contextId?: number): Promise<unknown> => {
+      const out = (await send('Runtime.evaluate', {
+        expression,
+        returnByValue: true,
+        timeout: evaluateMs,
+        ...(contextId !== undefined ? { contextId } : {}),
+      })) as { result?: { value?: unknown }; exceptionDetails?: unknown }
+      if (out.exceptionDetails !== undefined) throw new Error('the page threw')
+      return out.result?.value
+    }
+    const native = await evaluate(
+      `(${NATIVE_TIMINGS_SOURCE})(${MAX_RESOURCES})`,
+      world.executionContextId,
+    )
+    const stamps = await evaluate(`(${LOAD_STAMPS_SOURCE})()`)
+    if (typeof native !== 'object' || native === null) return null
+    if (typeof stamps !== 'object' || stamps === null) return null
+    // Each field from the world that may answer it, and nothing else.
+    const n = native as Record<string, unknown>
+    const m = stamps as Record<string, unknown>
+    return {
+      now: n['now'],
+      htmlEnd: n['htmlEnd'],
+      resources: n['resources'],
+      shellStart: m['shellStart'],
+      wsSyncedMs: m['wsSyncedMs'],
+      pixiReadyMs: m['pixiReadyMs'],
+    }
+  }
+  try {
+    return await Promise.race([
+      read(),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), readMs)
+      }),
+    ])
+  } catch {
+    return null
+  } finally {
+    abandoned = true
+    clearTimeout(timer)
+    // Also when the cap fired before the session opened: detached once it has.
+    void opening.then((cdp) => cdp.detach()).catch(() => undefined)
   }
 }
 

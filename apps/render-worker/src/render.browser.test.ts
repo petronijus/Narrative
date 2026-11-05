@@ -102,6 +102,9 @@ const ISOLATION_PAGE = `<!doctype html><html><body><script>
       entries: window.navigation ? navigation.entries().map((e) => e.url) : [],
       // Every URL this document's performance timeline names (navigation, resources).
       timeline: performance.getEntries().map((e) => e.name),
+      // The resource entries alone (the navigation entry's URL names the
+      // token too, so it would pass a check of the timeline by itself).
+      resources: performance.getEntriesByType('resource').map((e) => e.name),
     }
     localStorage.setItem('secret', token)
     sessionStorage.setItem('secret', token)
@@ -344,6 +347,7 @@ describe('a recycled page', () => {
           history: number
           entries: string[]
           timeline: string[]
+          resources: string[]
         }
       }
       const nothing = {
@@ -360,8 +364,10 @@ describe('a recycled page', () => {
         // Deck A's page leaves its token in every place a page can keep it.
         const a = seenBy(await renderJob(browser!, job('iso-a', 'nrr_iso_a', 's1'), deps))
         expect(a).toMatchObject(nothing)
-        // The probe works: A's own timeline names A's token.
-        expect(a.timeline.some((url) => url.includes('nrr_iso_a'))).toBe(true)
+        // The probe works: A's own resource entries hold A's request, token and all.
+        const probeOf = (seen: { resources: string[] }, deckId: string, token: string) =>
+          seen.resources.some((url) => url.includes(`/probe/${deckId}`) && url.includes(token))
+        expect(probeOf(a, 'iso-a', 'nrr_iso_a')).toBe(true)
         expect(deck('iso-a').socketOpenedAt).not.toBeNull()
         expect(warm.size).toBe(1)
 
@@ -373,7 +379,8 @@ describe('a recycled page', () => {
         // performance entry of A's requests (the timeline names B's alone).
         expect(b).toMatchObject(nothing)
         expect(b.entries.every((url) => url.includes('nrr_iso_b'))).toBe(true)
-        expect(b.timeline.some((url) => url.includes('nrr_iso_b'))).toBe(true)
+        expect(probeOf(b, 'iso-b', 'nrr_iso_b')).toBe(true)
+        expect(b.resources.some((url) => url.includes('/probe/iso-a'))).toBe(false)
         expect(JSON.stringify(b)).not.toContain('nrr_iso_a')
         // A's document — its sync connection — was gone before B's page loaded.
         const closedAt = deck('iso-a').socketClosedAt
@@ -389,6 +396,8 @@ describe('a recycled page', () => {
         const again = seenBy(await renderJob(browser!, job('iso-a', 'nrr_iso_a2', 's1'), deps))
         expect(again).toMatchObject(nothing)
         expect(JSON.stringify(again)).not.toContain('nrr_iso_b')
+        expect(probeOf(again, 'iso-a', 'nrr_iso_a2')).toBe(true)
+        expect(again.resources.some((url) => url.includes('/probe/iso-b'))).toBe(false)
       } finally {
         warm.closeAll('test')
       }

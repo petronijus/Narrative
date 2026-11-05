@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { formatLoadSplit, loadSplit, loadSplitSteps, type LoadSnapshot } from './loadSplit.js'
+import {
+  formatLoadSplit,
+  loadSplit,
+  loadSplitSteps,
+  readPageLoadSnapshot,
+  type LoadSnapshot,
+} from './loadSplit.js'
 
 const snapshot = (over: Partial<LoadSnapshot> = {}): LoadSnapshot => ({
   now: 1400,
@@ -109,5 +115,53 @@ describe('loadSplit on what a page answered', () => {
       scripts: 60,
       scriptCount: 2_000,
     })
+  })
+})
+
+describe('readPageLoadSnapshot when it is given up on', () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+  /** A CDP session that records what it was sent and whether it was detached. */
+  const fakeCdp = (answerAfterMs: number) => {
+    const sent: string[] = []
+    let detached = 0
+    return {
+      sent,
+      detached: () => detached,
+      session: {
+        send: async (method: string) => {
+          sent.push(method)
+          await sleep(answerAfterMs)
+          return method === 'Page.getFrameTree'
+            ? { frameTree: { frame: { id: 'f' } } }
+            : { executionContextId: 1 }
+        },
+        detach: async () => {
+          detached += 1
+        },
+      },
+    }
+  }
+
+  it('detaches a session that opened only after the cap, and sends it nothing', async () => {
+    const cdp = fakeCdp(0)
+    const read = readPageLoadSnapshot(
+      async () => {
+        await sleep(60)
+        return cdp.session
+      },
+      { readMs: 10 },
+    )
+    expect(await read).toBeNull()
+    await sleep(120)
+    expect(cdp.detached()).toBe(1)
+    expect(cdp.sent).toEqual([])
+  })
+
+  it('stops a read whose answer came after the cap: nothing more is sent', async () => {
+    const cdp = fakeCdp(60)
+    expect(await readPageLoadSnapshot(async () => cdp.session, { readMs: 10 })).toBeNull()
+    await sleep(150)
+    expect(cdp.sent).toEqual(['Page.getFrameTree'])
+    expect(cdp.detached()).toBe(1)
   })
 })
