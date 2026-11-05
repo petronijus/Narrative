@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * renderer/thumbnails.test.ts
  *
@@ -21,62 +22,83 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // Pixi.js mock — use vi.hoisted() so variables are available when vi.mock hoists
 // ---------------------------------------------------------------------------
 
-const { MockContainer, MockGraphics, mockExtract, mockRenderer, mockApp } = vi.hoisted(() => {
-  const createdContainers: unknown[] = []
+const { MockContainer, MockGraphics, MockHTMLText, mockExtract, mockRenderer, mockApp } =
+  vi.hoisted(() => {
+    const createdContainers: unknown[] = []
 
-  class MockContainer {
-    children: MockContainer[] = []
-    destroyed = false
-    scale = { set: vi.fn() }
-    x = 0
-    y = 0
+    class MockContainer {
+      children: MockContainer[] = []
+      destroyed = false
+      scale = {
+        x: 1,
+        y: 1,
+        set: vi.fn(function (this: { x: number; y: number }, x: number, y = x) {
+          this.x = x
+          this.y = y
+        }),
+      }
+      x = 0
+      y = 0
 
-    constructor() {
-      createdContainers.push(this)
+      constructor() {
+        createdContainers.push(this)
+      }
+
+      addChild(child: MockContainer): MockContainer {
+        this.children.push(child)
+        return child
+      }
+
+      removeChild(child: MockContainer): MockContainer {
+        this.children = this.children.filter((c) => c !== child)
+        return child
+      }
+
+      destroy(_opts?: unknown): void {
+        this.destroyed = true
+      }
     }
 
-    addChild(child: MockContainer): MockContainer {
-      this.children.push(child)
-      return child
+    class MockGraphics extends MockContainer {
+      clear = vi.fn().mockReturnThis()
+      rect = vi.fn().mockReturnThis()
+      fill = vi.fn().mockReturnThis()
     }
 
-    removeChild(child: MockContainer): MockContainer {
-      this.children = this.children.filter((c) => c !== child)
-      return child
+    class MockHTMLText extends MockContainer {
+      resolution = 1
     }
 
-    destroy(_opts?: unknown): void {
-      this.destroyed = true
+    const mockExtract = {
+      canvas: vi.fn(() => ({
+        toBlob: (done: (blob: Blob | null) => void, type: string) =>
+          done(new Blob(['STUB'], { type })),
+      })),
     }
-  }
 
-  class MockGraphics extends MockContainer {
-    clear = vi.fn().mockReturnThis()
-    rect = vi.fn().mockReturnThis()
-    fill = vi.fn().mockReturnThis()
-  }
+    const mockRenderer = {
+      render: vi.fn(),
+      extract: mockExtract,
+      resolution: 1,
+    }
 
-  const mockExtract = {
-    canvas: vi.fn(() => ({
-      toBlob: (done: (blob: Blob | null) => void, type: string) =>
-        done(new Blob(['STUB'], { type })),
-    })),
-  }
+    const mockApp = {
+      init: vi.fn().mockResolvedValue(undefined),
+      stage: new MockContainer(),
+      renderer: mockRenderer,
+      destroy: vi.fn(),
+    }
 
-  const mockRenderer = {
-    render: vi.fn(),
-    extract: mockExtract,
-  }
-
-  const mockApp = {
-    init: vi.fn().mockResolvedValue(undefined),
-    stage: new MockContainer(),
-    renderer: mockRenderer,
-    destroy: vi.fn(),
-  }
-
-  return { MockContainer, MockGraphics, mockExtract, mockRenderer, mockApp, createdContainers }
-})
+    return {
+      MockContainer,
+      MockGraphics,
+      MockHTMLText,
+      mockExtract,
+      mockRenderer,
+      mockApp,
+      createdContainers,
+    }
+  })
 
 vi.mock('pixi.js', () => ({
   Application: class {
@@ -87,6 +109,9 @@ vi.mock('pixi.js', () => ({
   },
   Container: MockContainer,
   Graphics: MockGraphics,
+  HTMLText: MockHTMLText,
+  RenderTexture: { create: vi.fn(() => ({ destroy: vi.fn() })) },
+  Texture: { EMPTY: {} },
 }))
 
 // ---------------------------------------------------------------------------
@@ -117,7 +142,7 @@ vi.mock('./objectRenderers/index.js', () => ({
 // Import under test (after mocks are in place)
 // ---------------------------------------------------------------------------
 
-import { createThumbnailRenderer } from './thumbnails.js'
+import { createThumbnailRenderer, fitTextResolutions, TEXT_OVERSAMPLE } from './thumbnails.js'
 import type { SlideObject } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
@@ -264,5 +289,43 @@ describe('createThumbnailRenderer', () => {
     )
 
     renderer.destroy()
+  })
+})
+
+describe('fitTextResolutions', () => {
+  it('rasterises a text at the size the thumbnail draws it, oversampled, within floor and cap', () => {
+    const slide = new MockContainer()
+    slide.scale.set(0.4)
+    const plain = new MockHTMLText()
+    // A text node scaled down (autofit) inside a group scaled up.
+    const group = new MockContainer()
+    group.scale.set(2)
+    const shrunk = new MockHTMLText()
+    shrunk.scale.set(0.5, 0.25)
+    group.addChild(shrunk)
+    const huge = new MockContainer()
+    huge.scale.set(40)
+    const big = new MockHTMLText()
+    huge.addChild(big)
+    slide.addChild(plain)
+    slide.addChild(group)
+    slide.addChild(huge)
+
+    fitTextResolutions(slide as never, 1, 1)
+
+    expect(plain.resolution).toBeCloseTo(0.4 * TEXT_OVERSAMPLE)
+    // max(|sx|, |sy|) of its own scale: 2 × 0.5.
+    expect(shrunk.resolution).toBeCloseTo(0.4 * TEXT_OVERSAMPLE)
+    // What Pixi would have used (the renderer's resolution) at most.
+    expect(big.resolution).toBe(1)
+  })
+
+  it('never rasterises a glyph below half its font size (small sizes draw thin strokes)', () => {
+    const slide = new MockContainer()
+    slide.scale.set(200 / 1920)
+    const text = new MockHTMLText()
+    slide.addChild(text)
+    fitTextResolutions(slide as never, 1, 1)
+    expect(text.resolution).toBe(0.5)
   })
 })

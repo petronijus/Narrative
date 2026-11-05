@@ -22,7 +22,13 @@
 
 import { trackRenderWork } from './renderWork.js'
 import { perfCount } from '@narrative/shared'
-import { Assets, Texture, type TextureSource, type TextureSourceOptions } from 'pixi.js'
+import {
+  Assets,
+  Texture,
+  TexturePool,
+  type TextureSource,
+  type TextureSourceOptions,
+} from 'pixi.js'
 import type { TextureUploadGate, UploadPriority } from './textureUploadGate.js'
 
 interface TextureEntry {
@@ -92,6 +98,80 @@ const PROCEDURAL_LRU_CAP = 128
 export function textureSourceBytes(source: TextureSource): number {
   const px = Math.max(0, source.pixelWidth) * Math.max(0, source.pixelHeight)
   return Math.round(px * 4 * (source.autoGenerateMipmaps ? 4 / 3 : 1))
+}
+
+/** What `releaseIdlePooledTextures` reads of Pixi's private pool and render-target state. */
+interface PoolInternals {
+  _buckets: Map<number, Texture[]>
+  _poolKey: Record<number, number>
+  _poolStyle: Record<number, unknown>
+}
+
+/**
+ * Free the GPU textures of what Pixi's `TexturePool` keeps idle for
+ * `renderer` (its own HTMLText rasters, filter targets): a texture handed
+ * back to the pool keeps its GPU allocation, power-of-two sized, until
+ * Pixi's collector finds it unused for a minute — and the collector runs
+ * only after a render. A zoom's staging hands back a texture for every text
+ * it rasterises again, at the old resolution; called once a staging has
+ * landed (SceneGraph.restageTextResolution). (Run-text rasters on the editor
+ * canvas are textures of their own, freed when they are replaced —
+ * runText/runTextSystem.ts → RunTextureShape; before 2026-10-31 they went to
+ * the pool too: 1.7 GB idle at the fitted zoom after a zoom to 544 %.)
+ *
+ * Two kinds of idle texture, freed two ways:
+ *   - **a render target** (a filter's, a mask's — drawn into within one
+ *     frame and returned): destroyed, and out of the pool. Pixi's
+ *     render-target system keeps the framebuffer it built for one until the
+ *     texture is destroyed; unloaded and handed out again, it got a new GL
+ *     texture while the framebuffer still pointed at the deleted one, and
+ *     every filter drawn into it drew nothing — after a zoom, a drop shadow
+ *     redrawn (its token colour changed) vanished (2026-11-01,
+ *     `e2e/folder-tokens.spec.ts`).
+ *   - **a raster** (HTMLText's, a pooled run raster's): unloaded and kept.
+ *     "Idle" is the pool's word, not a promise: Pixi hands an HTMLText's
+ *     texture back as soon as its next raster starts, and the text draws
+ *     the old one until the new one lands. Unloaded, it is uploaded again
+ *     from its resource if it is drawn; destroyed, the next frame's batch
+ *     read a texture without a source and threw (2026-11-01,
+ *     `e2e/text-import-parity.spec.ts`, the `html` side).
+ *
+ * Returns the pixels freed.
+ */
+export function releaseIdlePooledTextures(renderer: { uid: number }): number {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TexturePool's buckets and the render-target system's map are private
+  const pool = TexturePool as any as PoolInternals
+  const targets = (
+    renderer as { renderTarget?: { _renderSurfaceToRenderTargetHash?: Map<unknown, unknown> } }
+  ).renderTarget?._renderSurfaceToRenderTargetHash
+  if (pool._buckets === undefined) return 0
+  let px = 0
+  for (const list of pool._buckets.values()) {
+    const kept: Texture[] = []
+    for (const texture of list) {
+      const source = texture.source
+      const gpu = (source as unknown as { _gpuData?: Record<number, unknown> })._gpuData
+      if (source.destroyed || gpu?.[renderer.uid] === undefined) {
+        kept.push(texture)
+        continue
+      }
+      px += source.pixelWidth * source.pixelHeight
+      if (targets?.has(source) === true) {
+        // Out of the pool as Pixi drops one (TexturePool._dropTextures);
+        // destroying it releases its render target and framebuffer.
+        delete pool._poolKey[texture.uid]
+        delete pool._poolStyle[texture.uid]
+        texture.destroy(true)
+      } else {
+        source.unload()
+        kept.push(texture)
+      }
+    }
+    list.length = 0
+    list.push(...kept)
+  }
+  if (px > 0) perfCount('gl.pool.releasedKpx', Math.round(px / 1000))
+  return px
 }
 
 /**

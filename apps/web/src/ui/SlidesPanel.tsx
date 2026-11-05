@@ -44,6 +44,7 @@ import {
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideThumbnailStore, useThumbnailUrl } from '../state/useSlideThumbnails.js'
+import { useThumbnailPixelWidth } from './useThumbnailPixelWidth.js'
 import type { ThumbnailStore } from '../renderer/thumbnailStore.js'
 import { thumbnailDataUrl } from '../renderer/thumbnailImages.js'
 import { useVisibleSlideRows, type RowVisibility } from './useVisibleSlideRows.js'
@@ -401,6 +402,7 @@ function SlideItemImpl({
                 'relative cursor-pointer rounded ring-1 ring-inset ring-gray-700 hover:ring-gray-500',
               ].join(' ')}
               style={{ aspectRatio: '16/9', width: '100%' }}
+              data-thumbnail-frame=""
               onPointerDown={(e) => onPointerDown(e, slide.id, index)}
               onClick={(e) =>
                 onActivate(slide.id, {
@@ -590,6 +592,17 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   const command = useCommand()
   const { clear: clearSelection } = useSelection()
   const listRef = useRef<HTMLUListElement>(null)
+  /**
+   * The list element itself, for the hooks that observe it (the pictures'
+   * width, the rows in view): a list that remounts is a new element, which
+   * they must observe anew — bound to the old one they measured a detached
+   * list and showed no row's picture again.
+   */
+  const [listElement, setListElement] = useState<HTMLUListElement | null>(null)
+  const setList = useCallback((el: HTMLUListElement | null) => {
+    listRef.current = el
+    setListElement(el)
+  }, [])
   const headerId = useId()
   const { role, folderId, isLoading: roleLoading } = useDeckRole()
   const isViewer = role === 'viewer'
@@ -600,9 +613,14 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   const tokensFinal = !roleLoading && (folderId === null || folderTokensSettled)
 
   const allSlideIds = slides.map((s) => s.id)
-  const thumbnails = useSlideThumbnailStore(allSlideIds, { liveActiveSlide: true })
+  // Thumbnails drawn at the size the rows show them (performance.md → F10).
+  const thumbnailWidth = useThumbnailPixelWidth(listElement, allSlideIds.join('|'))
+  const thumbnails = useSlideThumbnailStore(allSlideIds, {
+    liveActiveSlide: true,
+    pixelWidth: thumbnailWidth,
+  })
   // The rows on screen are drawn first, the rest of the deck at idle.
-  const rowVisibility = useVisibleSlideRows(listRef, thumbnails, allSlideIds.join('|'))
+  const rowVisibility = useVisibleSlideRows(listElement, thumbnails, allSlideIds.join('|'))
 
   // P13: persist the first-slide thumbnail to localStorage so the home
   // page can show a deck preview without re-opening every deck. The
@@ -1496,7 +1514,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
           </div>
         ) : (
           <ul
-            ref={listRef}
+            ref={setList}
             role="listbox"
             aria-labelledby={headerId}
             aria-orientation="vertical"

@@ -12,6 +12,8 @@ interface ImportMetaEnv {
   readonly VITE_CLIENT_METRICS_SAMPLE_RATE?: string
   /** The canvas's text engine of this build when the page chooses none: `html` | `runs` (renderer/runText/flag.ts). */
   readonly VITE_TEXT_ENGINE?: string
+  /** `off`: no first raster waits for its face (runText/flag.ts → faceHoldEnabled; a perf A/B builds one side with it). */
+  readonly VITE_TEXT_FACE_HOLD?: string
 }
 
 interface ImportMeta {

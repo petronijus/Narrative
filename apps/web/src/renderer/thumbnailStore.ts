@@ -80,6 +80,13 @@ export interface ThumbnailStoreOptions {
   debounceMs?: number
   /** Pictures kept after no slide shows them any more. */
   cacheSize?: number
+  /**
+   * Renders running at once. The offscreen renderer draws one thumbnail at a
+   * time, but its read-back and PNG encode run on after the draw: with two
+   * in flight the next thumbnail is mounted meanwhile instead of after them
+   * (performance.md → F10).
+   */
+  concurrency?: number
 }
 
 /**
@@ -99,6 +106,7 @@ export type ThumbnailRenderFn = (inputs: ThumbnailInputs) => Promise<Blob>
 const DESTROYED = 'renderer has been destroyed'
 const DEBOUNCE_MS = 500
 const CACHE_SIZE = 48
+const CONCURRENCY = 2
 /** Live captures of one content before it is rendered offscreen instead. */
 export const LIVE_ATTEMPTS = 3
 /** Delay before a live capture that did not settle is tried again. */
@@ -126,17 +134,58 @@ interface Picture {
   refs: number
 }
 
+/** The idle fallback's pending callbacks: handle → its frame and timers. */
+const afterFrames = new Map<number, { frame: number; timers: number[] }>()
+let afterFrameHandles = 0
+/** Longest wait for a frame before the fallback runs anyway (a page hidden meanwhile gets none). */
+const AFTER_FRAME_BACKSTOP_MS = 100
+
+/**
+ * Where there is no requestIdleCallback (WebKit: Safari, the Tauri shell):
+ * the first task after the next frame — its input handled, its paint done —
+ * or at once on a hidden page, which gets no frames. Was a fixed 16 ms timer:
+ * on a deck's opening pass, where every thumbnail waits for one, it added
+ * 16 ms to each (1.6 s on 100 slides; performance.md → F10).
+ */
+export function runAfterNextFrame(fn: () => void): number {
+  const handle = ++afterFrameHandles
+  const run = (): void => {
+    const pending = afterFrames.get(handle)
+    if (pending === undefined) return
+    cancelAfterFrame(handle)
+    fn()
+  }
+  const entry = { frame: 0, timers: [] as number[] }
+  afterFrames.set(handle, entry)
+  if (document.visibilityState === 'hidden') {
+    entry.timers.push(window.setTimeout(run, 0))
+  } else {
+    entry.frame = window.requestAnimationFrame(() => {
+      entry.timers.push(window.setTimeout(run, 0))
+    })
+    entry.timers.push(window.setTimeout(run, AFTER_FRAME_BACKSTOP_MS))
+  }
+  return handle
+}
+
+export function cancelAfterFrame(handle: number): void {
+  const pending = afterFrames.get(handle)
+  if (pending === undefined) return
+  afterFrames.delete(handle)
+  if (pending.frame !== 0) window.cancelAnimationFrame(pending.frame)
+  for (const t of pending.timers) window.clearTimeout(t)
+}
+
 const browserClock: ThumbnailClock = {
   setTimeout: (fn, ms) => window.setTimeout(fn, ms),
   clearTimeout: (h) => window.clearTimeout(h),
   requestIdle: (fn, timeoutMs) =>
     typeof window.requestIdleCallback === 'function'
       ? window.requestIdleCallback(() => fn(), { timeout: timeoutMs })
-      : // Safari has no requestIdleCallback: a frame later, after the input and paint.
-        window.setTimeout(fn, 16),
+      : runAfterNextFrame(fn),
   cancelIdle: (h) => {
     if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(h)
-    else window.clearTimeout(h)
+    else cancelAfterFrame(h)
   },
 }
 
@@ -164,8 +213,11 @@ export class ThumbnailStore {
   private live: LiveCaptureFn | null = null
   private readonly debounceMs: number
   private readonly cacheSize: number
+  private readonly concurrency: number
 
   private render: ThumbnailRenderFn | null = null
+  /** The width the pictures are rendered at (device px): part of every key. */
+  private pictureWidth = 0
   private readonly slides = new Map<string, SlideState>()
   /** Rendered pictures by key; `unused` orders the ones no slide shows, oldest first. */
   private readonly pictures = new Map<string, Picture>()
@@ -183,7 +235,8 @@ export class ThumbnailStore {
   private readonly parked = new Set<string>()
   private consecutiveFailures = 0
 
-  private inFlight: { slideId: string; key: string } | null = null
+  /** The renders running (a slide edited meanwhile may have two, of two keys). */
+  private readonly inFlight = new Set<{ slideId: string; key: string }>()
   private idleHandle: number | null = null
   private idleGranted = false
   /** Until start() and after stop(): nothing is kept or rendered. */
@@ -201,6 +254,7 @@ export class ThumbnailStore {
     this.clock = options.clock ?? browserClock
     this.debounceMs = options.debounceMs ?? DEBOUNCE_MS
     this.cacheSize = options.cacheSize ?? CACHE_SIZE
+    this.concurrency = Math.max(1, options.concurrency ?? CONCURRENCY)
   }
 
   // -------------------------------------------------------------------------
@@ -241,7 +295,7 @@ export class ThumbnailStore {
       this.debounces.size +
       this.held.size +
       this.retries.size +
-      (this.inFlight !== null ? 1 : 0)
+      this.inFlight.size
     )
   }
 
@@ -276,7 +330,7 @@ export class ThumbnailStore {
       state !== undefined && sameDocumentInputs(state.inputs, inputs)
         ? state.serialised
         : serialiseThumbnailInputs(inputs)
-    const key = thumbnailKeyOf(serialised, inputs, this.env)
+    const key = `${thumbnailKeyOf(serialised, inputs, this.env)}@${this.pictureWidth}`
     if (state === undefined) {
       this.slides.set(slideId, {
         inputs,
@@ -304,6 +358,17 @@ export class ThumbnailStore {
     }
     if (how.debounce === true) this.debounce(slideId)
     else this.enqueue(slideId, how.request)
+  }
+
+  /**
+   * The width the renderer draws the pictures at (device px). A new width is
+   * a new picture for every slide: each is rendered again at idle, showing
+   * its old picture meanwhile.
+   */
+  setPictureWidth(width: number): void {
+    if (width === this.pictureWidth) return
+    this.pictureWidth = width
+    this.refreshKeys()
   }
 
   /**
@@ -372,7 +437,7 @@ export class ThumbnailStore {
   stop(): void {
     this.stopped = true
     this.generation += 1
-    this.inFlight = null
+    this.inFlight.clear()
     liveStores.delete(this)
     this.render = null
     for (const t of this.debounces.values()) this.clock.clearTimeout(t)
@@ -497,7 +562,8 @@ export class ThumbnailStore {
     const state = this.slides.get(slideId)
     if (state === undefined) return false
     if (this.showCached(slideId)) return false
-    return !(this.inFlight !== null && this.inFlight.key === state.key)
+    for (const running of this.inFlight) if (running.key === state.key) return false
+    return true
   }
 
   private isVisible(slideId: string): boolean {
@@ -523,34 +589,38 @@ export class ThumbnailStore {
   }
 
   private pump(): void {
-    if (this.stopped || this.inFlight !== null || this.gesture) return
-    const render = this.render
-    if (render === null) return
-    const next = this.next()
-    if (next === null) return
-    if (!next.now && !this.idleGranted) {
-      if (this.idleHandle === null) {
-        this.idleHandle = this.clock.requestIdle(() => {
-          this.idleHandle = null
-          this.idleGranted = true
-          try {
-            this.pump()
-          } finally {
-            this.idleGranted = false
-          }
-        }, IDLE_TIMEOUT_MS)
+    while (!this.stopped && this.inFlight.size < this.concurrency && !this.gesture) {
+      const render = this.render
+      if (render === null) return
+      const next = this.next()
+      if (next === null) return
+      if (!next.now && !this.idleGranted) {
+        if (this.idleHandle === null) {
+          this.idleHandle = this.clock.requestIdle(() => {
+            this.idleHandle = null
+            this.idleGranted = true
+            try {
+              this.pump()
+            } finally {
+              this.idleGranted = false
+            }
+          }, IDLE_TIMEOUT_MS)
+        }
+        return
       }
-      return
+      this.urgent.delete(next.slideId)
+      this.idle.delete(next.slideId)
+      // One idle render per idle callback: the next asks for one of its own.
+      if (!next.now) this.idleGranted = false
+      this.run(next.slideId, render)
     }
-    this.urgent.delete(next.slideId)
-    this.idle.delete(next.slideId)
-    this.run(next.slideId, render)
   }
 
   private run(slideId: string, render: ThumbnailRenderFn): void {
     const state = this.slides.get(slideId)!
     const { key, inputs } = state
-    this.inFlight = { slideId, key }
+    const running = { slideId, key }
+    this.inFlight.add(running)
     const generation = this.generation
     const isCurrent = (): boolean => !this.stopped && this.generation === generation
 
@@ -595,7 +665,7 @@ export class ThumbnailStore {
       })
       .finally(() => {
         if (this.generation !== generation) return
-        this.inFlight = null
+        this.inFlight.delete(running)
         this.pump()
       })
   }
@@ -608,7 +678,8 @@ export class ThumbnailStore {
    */
   private liveMissed(slideId: string, key: string): boolean {
     const state = this.slides.get(slideId)
-    if (state === undefined || this.stopped || this.inFlight?.slideId !== slideId) return true
+    if (state === undefined || this.stopped) return true
+    if (![...this.inFlight].some((r) => r.slideId === slideId)) return true
     if (state.key !== key) return true // edited meanwhile: its new content is queued
     state.liveMisses += 1
     if (state.shown === undefined || state.liveMisses >= LIVE_ATTEMPTS) {

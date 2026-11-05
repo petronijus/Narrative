@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { Container, Graphics, GraphicsContext } from 'pixi.js'
 import { releaseOwnedGraphicsContexts } from './graphicsContextRelease.js'

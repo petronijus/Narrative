@@ -78,11 +78,14 @@ export function engineRules(): EngineRules {
         // Underlines follow Blink's or WebKit's rules (decorations.ts); another
         // engine's are not known: its decorated texts stay HTMLText.
         decorations: engine !== 'other',
+        underlinesHangingSpace: webkit,
+        baselineFromFontAscent: webkit,
       },
       paint: {
         snapBaseline: true,
         decorations: webkit ? 'webkit' : 'chromium',
         strokeMiterLimit: webkit ? 10 : 4,
+        shapeAcrossSpaces: engine === 'blink',
       },
     }
   }

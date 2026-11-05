@@ -52,6 +52,7 @@ import {
 import { trackRenderWork } from '../renderWork.js'
 import { applyFit } from '../mediaFit.js'
 import { setThumbnailReady } from '../thumbnailReady.js'
+import { currentThumbnailPictures, type ThumbnailPictures } from '../thumbnailPictures.js'
 import { applyFilterEffects, destroyFilterEffects, patchFilterEffects } from '../filterEffects.js'
 import { markRenderDirty } from '../RenderScheduler.js'
 import { applyFlip } from './applyFlip.js'
@@ -87,6 +88,11 @@ const MASK_SHAPE_TAG = Symbol('imgMaskShape')
  * this tag every thumbnail re-render would orphan a GPU texture + its source.
  */
 const THUMB_TEXTURE_TAG = Symbol('imgThumbTexture')
+/**
+ * The thumbnail renderer's shared picture this thumbnail holds
+ * (renderer/thumbnailPictures.ts): released, not destroyed, by `destroy()`.
+ */
+const THUMB_PICTURE_TAG = Symbol('imgThumbPicture')
 /** The density of the canvas the node is drawn on (device px per slide unit), null when unknown. */
 const DENSITY_TAG = Symbol('imgDensity')
 /** The mounting scene's variant floor (pixelDensityContext.ts), null for none. */
@@ -161,6 +167,21 @@ function getThumbTexture(node: Container): Texture | undefined {
 
 function setThumbTexture(node: Container, texture: Texture | undefined): void {
   asAny(node)[THUMB_TEXTURE_TAG] = texture
+}
+
+interface ThumbPicture {
+  pictures: ThumbnailPictures
+  url: string
+}
+
+function takeThumbPicture(node: Container): ThumbPicture | undefined {
+  const held = asAny(node)[THUMB_PICTURE_TAG] as ThumbPicture | undefined
+  asAny(node)[THUMB_PICTURE_TAG] = undefined
+  return held
+}
+
+function setThumbPicture(node: Container, held: ThumbPicture): void {
+  asAny(node)[THUMB_PICTURE_TAG] = held
 }
 
 /** An upgrade in flight (ensureVariant); its identity tells it from a later one. */
@@ -1007,6 +1028,10 @@ export const imageRenderer = {
 
     destroyFilterEffects(node)
 
+    // A picture shared by the thumbnail renderer's thumbnails: handed back.
+    const held = takeThumbPicture(node)
+    if (held !== undefined) held.pictures.release(held.url)
+
     // Thumbnail-owned texture (Texture.from(img)) — not tracked by the
     // ResourceManager, so free it and its GPU source here. Destroy the
     // sprite first (texture:false default), then the texture, so we don't
@@ -1042,6 +1067,9 @@ export const imageRenderer = {
 
     const fit = data.fit ?? 'cover'
     const resolver = getDefaultImageUrlResolver()
+    // The thumbnail renderer's shared pictures, asked for while mounting (the
+    // load below runs after the mount has returned).
+    const pictures = currentThumbnailPictures()
 
     const ready = (async () => {
       // The slide-panel thumbnail PNG is rendered at 200×113 px. Each
@@ -1071,20 +1099,34 @@ export const imageRenderer = {
       }
       if (isAborted(container)) return
 
-      const img = new Image()
-      img.crossOrigin = 'anonymous'
-      img.src = url
-      try {
-        await img.decode()
-      } catch {
-        return
+      let texture: Texture
+      if (pictures !== null) {
+        // Held from now on: destroy() hands it back, also mid-load.
+        setThumbPicture(container, { pictures, url })
+        try {
+          texture = await pictures.acquire(url)
+        } catch {
+          // A failed load is forgotten by the cache: nothing to hand back
+          // (a later acquire of the url is another thumbnail's).
+          takeThumbPicture(container)
+          return
+        }
+        if (isAborted(container)) return
+      } else {
+        const img = new Image()
+        img.crossOrigin = 'anonymous'
+        img.src = url
+        try {
+          await img.decode()
+        } catch {
+          return
+        }
+        if (isAborted(container)) return
+        texture = Texture.from(img)
+        // This texture is owned solely by the thumbnail — tag it so destroy()
+        // can free it (Sprite.destroy doesn't release textures by default).
+        setThumbTexture(container, texture)
       }
-      if (isAborted(container)) return
-
-      const texture = Texture.from(img)
-      // This texture is owned solely by the thumbnail — tag it so destroy()
-      // can free it (Sprite.destroy doesn't release textures by default).
-      setThumbTexture(container, texture)
       const spriteWrap = new Container()
       const sprite = new Sprite(texture)
       // Reuse the same imageRect-aware layout so cropped thumbnails

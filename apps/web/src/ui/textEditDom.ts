@@ -12,9 +12,9 @@
  * translate between DOM points and that string:
  *   - top-level <div>/<p>   → a paragraph; a U+2029 separates consecutive ones
  *   - text node             → its characters
- *   - <br> (not data-empty) → one '\n' (soft line break inside a paragraph)
+ *   - <br>                  → one '\n' (soft line break inside a paragraph)
  *   - <span data-marker>    → 0 chars (the glyph is not part of the body)
- *   - <br data-empty>       → 0 chars (empty-paragraph placeholder)
+ *   - a placeholder <br>    → 0 chars (see isPlaceholderBr)
  */
 
 import { PARAGRAPH_SEP } from '@narrative/slide-model'
@@ -29,14 +29,109 @@ export function isEmptyBr(n: Node): boolean {
   return n.nodeName === 'BR' && (n as HTMLElement).dataset?.['empty'] === '1'
 }
 
+/** The block a node's line belongs to: its paragraph, or for bare content the editor (a div). */
+function blockOf(n: Node): Node | null {
+  let block = n.parentNode
+  // Runs are inline elements, never a div or a p.
+  while (block !== null && !isParaBlock(block)) block = block.parentNode
+  return block
+}
+
+/** A block's leaves in order: text nodes with characters, and line breaks (markers left out). */
+function leavesOf(block: Node): Node[] {
+  const leaves: Node[] = []
+  const walk = (node: Node): void => {
+    for (let c = node.firstChild; c !== null; c = c.nextSibling) {
+      if (c.nodeType === Node.TEXT_NODE) {
+        if ((c.nodeValue ?? '') !== '') leaves.push(c)
+      } else if (c.nodeName === 'BR') leaves.push(c)
+      else if (!isMarkerEl(c)) walk(c)
+    }
+  }
+  walk(block)
+  return leaves
+}
+
+/**
+ * Whether the last leaf of a block, coming after `before`, holds an empty
+ * line open rather than breaking one: it is the block's only content, or what
+ * comes before it ends in a line break. HTML (and `white-space: pre-wrap`) draws no line
+ * after a break that ends its block, so an empty last line takes a second
+ * break, which is no character of the body:
+ *   - the document's own, `<br data-empty>` (an empty paragraph; the line
+ *     after a paragraph's closing soft break — buildListedHtml);
+ *   - the browser's, added as it edits: a lone `<br>` (`<u><br></u>` once
+ *     every character is deleted), `a<br><br>`, or — the browser's own line
+ *     break in pre-wrap text — `a\n\n`. Both engines do it.
+ * Counted as characters, Shift+Enter at a paragraph's end sent "\n\n" (a new
+ * paragraph) and an emptied box kept a "\n".
+ */
+function holdsLastLine(before: Node | undefined): boolean {
+  if (before === undefined) return true
+  if (before.nodeName === 'BR') return true
+  return (before.nodeValue ?? '').endsWith('\n')
+}
+
+/** A `<br>` that holds a line open (see holdsLastLine): no character of the body. */
+export function isPlaceholderBr(n: Node): boolean {
+  if (n.nodeName !== 'BR') return false
+  if (isEmptyBr(n)) return true
+  const block = blockOf(n)
+  if (block === null) return false
+  const leaves = leavesOf(block)
+  return leaves[leaves.length - 1] === n && holdsLastLine(leaves[leaves.length - 2])
+}
+
+/**
+ * The body characters of a text node: its text, without a closing newline
+ * that only holds the block's last line open (see holdsLastLine).
+ */
+export function textChars(n: Node): string {
+  const value = n.nodeValue ?? ''
+  if (!value.endsWith('\n')) return value
+  // "a\n" breaks a line (nothing holds a line after it); "a\n\n" or a lone
+  // "\n" after a break holds the last one open.
+  if (value.length >= 2 && value[value.length - 2] !== '\n') return value
+  const block = blockOf(n)
+  if (block === null) return value
+  const leaves = leavesOf(block)
+  if (leaves[leaves.length - 1] !== n) return value
+  const holds = value.length >= 2 || holdsLastLine(leaves[leaves.length - 2])
+  return holds ? value.slice(0, -1) : value
+}
+
 /** Count body chars contributed by an inline subtree (markers/empty skipped). */
 export function countInline(node: Node): number {
-  if (node.nodeType === Node.TEXT_NODE) return (node.nodeValue ?? '').length
-  if (node.nodeName === 'BR') return isEmptyBr(node) ? 0 : 1
+  if (node.nodeType === Node.TEXT_NODE) return textChars(node).length
+  if (node.nodeName === 'BR') return isPlaceholderBr(node) ? 0 : 1
   if (isMarkerEl(node)) return 0
   let n = 0
   for (let i = 0; i < node.childNodes.length; i++) n += countInline(node.childNodes[i]!)
   return n
+}
+
+/**
+ * Whether the editor's DOM is exactly the markup `html` builds (elements,
+ * attributes and text; adjacent and empty text nodes do not count). The
+ * overlay's look is its markup: every run's formatting is an element of its
+ * own (`<u>`, `<i>`, a styled span), the root carries nothing the runs could
+ * not take back (an underline on the root would draw a second line under
+ * every `<u>` and could not be removed from a plain run). So where the
+ * browser put typed text outside the run the document gave it — into an
+ * empty paragraph, over a selection it replaced with a bare text node —
+ * the editor shows less than the canvas would, and this says so.
+ */
+export function domShowsHtml(el: HTMLElement, html: string): boolean {
+  const want = el.ownerDocument.createElement('template')
+  want.innerHTML = html
+  want.content.normalize()
+  const live = el.cloneNode(true)
+  live.normalize()
+  const a = live.childNodes
+  const b = want.content.childNodes
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (!a[i]!.isEqualNode(b[i]!)) return false
+  return true
 }
 
 /** Reconstruct the editable-string body from the contenteditable DOM. */
@@ -45,11 +140,11 @@ export function getElementInnerText(el: HTMLElement): string {
   let paraStarted = false
   const inline = (node: Node): void => {
     if (node.nodeType === Node.TEXT_NODE) {
-      out += node.nodeValue ?? ''
+      out += textChars(node)
       return
     }
     if (node.nodeName === 'BR') {
-      if (!isEmptyBr(node)) out += '\n'
+      if (!isPlaceholderBr(node)) out += '\n'
       return
     }
     if (isMarkerEl(node)) return
@@ -102,7 +197,7 @@ export function domPositionToCharIndex(root: Node, container: Node, offset: numb
   let result = 0
   const stopAt = (node: Node, off: number): void => {
     if (node.nodeType === Node.TEXT_NODE) {
-      count += Math.min(off, (node.nodeValue ?? '').length)
+      count += Math.min(off, textChars(node).length)
     } else {
       for (let i = 0; i < off && i < node.childNodes.length; i++)
         count += countInline(node.childNodes[i]!)
@@ -117,11 +212,11 @@ export function domPositionToCharIndex(root: Node, container: Node, offset: numb
       return
     }
     if (node.nodeType === Node.TEXT_NODE) {
-      count += (node.nodeValue ?? '').length
+      count += textChars(node).length
       return
     }
     if (node.nodeName === 'BR') {
-      if (!isEmptyBr(node)) count += 1
+      if (!isPlaceholderBr(node)) count += 1
       return
     }
     if (isMarkerEl(node)) return
@@ -166,7 +261,7 @@ function placeInParagraph(block: Node, local: number): { node: Node; offset: num
   const walk = (node: Node): boolean => {
     if (result !== null) return true
     if (node.nodeType === Node.TEXT_NODE) {
-      const len = (node.nodeValue ?? '').length
+      const len = textChars(node).length
       if (remaining <= len) {
         result = { node, offset: remaining }
         return true
@@ -175,7 +270,15 @@ function placeInParagraph(block: Node, local: number): { node: Node; offset: num
       return false
     }
     if (node.nodeName === 'BR') {
-      if (isEmptyBr(node)) return false
+      if (isPlaceholderBr(node)) {
+        // The caret on a placeholder's line sits before it (where the
+        // browser puts it), not after the block's last child.
+        if (remaining !== 0) return false
+        const parent = node.parentNode
+        if (parent === null) return false
+        result = { node: parent, offset: Array.prototype.indexOf.call(parent.childNodes, node) }
+        return true
+      }
       if (remaining === 0) {
         const parent = node.parentNode
         if (parent !== null) {

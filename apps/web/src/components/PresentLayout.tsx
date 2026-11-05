@@ -55,21 +55,24 @@ import { useDeckInputsWaitingFor } from '../state/useDeckInputs.js'
 import { EditorVideoPreview } from '../ui/EditorVideoPreview.js'
 import { PresenterOverlay } from '../ui/PresenterOverlay.js'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
-import type { VideoObject } from '@narrative/shared'
-import { sanitizeHref } from '@narrative/shared'
+import type { ImageVariant, VideoObject } from '@narrative/shared'
+import { perfCount, sanitizeHref } from '@narrative/shared'
 import { presentStartSlideId } from './presentStartSlide.js'
 import { PresentDisplayPicker } from '../present/PresentDisplayPicker.js'
 import { requestPresentationFullscreen } from '../present/presentScreen.js'
 import { Presentation } from '../present/presentation.js'
 import { preloadDeckMedia, type MediaPreloadProgress } from '../present/preloadMedia.js'
 import { PresentSlideCache } from '../renderer/presentSlides.js'
+import { DensityHandover } from '../present/densityHandover.js'
+import { watchDevicePixelRatio } from '../renderer/devicePixelRatioWatch.js'
 import { PresentVideoPool } from '../renderer/presentVideos.js'
 import { presentDeviceScale } from '../renderer/videoRendition.js'
+import { playsSmoothly } from '../renderer/videoPlaybackTrial.js'
 import { getDefaultResourceManager } from '../renderer/ResourceManager.js'
 import { whenRenderWorkIdle } from '../renderer/renderWork.js'
 import { PresentVideosContext, type PresentVideosValue } from '../present/presentVideosContext.js'
 
-/** Vypočte scale-to-fit pro slide do daného viewportu při zachování aspect ratio. */
+/** The scale that fits the slide into the given viewport, its aspect ratio kept. */
 function computeScale(viewportW: number, viewportH: number): number {
   if (viewportW <= 0 || viewportH <= 0) return 1
   return Math.min(viewportW / SLIDE_WIDTH, viewportH / SLIDE_HEIGHT)
@@ -208,13 +211,23 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
         const slide = store.getSlides().find((s) => s.id === shown)
         return slide === undefined || !slide.objects.some((o) => o.id === objectId)
       },
-      onSwitched: (objectId) => cache.rewarmContaining(objectId),
+      onSwitched: (objectId) => presentation.presentingCache.rewarmContaining(objectId),
+      // An original plays only if it plays smoothly here (P3: smooth over sharp).
+      playsSmoothly: (el) => playsSmoothly(canvasInstance.sceneGraph.getApp().renderer, el),
     })
-    const cache = new PresentSlideCache({
-      sceneGraph: canvasInstance.sceneGraph,
-      resourceManager,
-      liveVideo: (objectId) => pool.get(objectId)?.element ?? null,
-    })
+    /** Each picture's variant on every slide (the preload's), for every set prepared from here on. */
+    let variantFloor: ReadonlyMap<string, ImageVariant> | null = null
+    const newCache = (standby?: { density: number; textResolution: number }): PresentSlideCache => {
+      const c = new PresentSlideCache({
+        sceneGraph: canvasInstance.sceneGraph,
+        resourceManager,
+        liveVideo: (objectId) => pool.get(objectId)?.element ?? null,
+        ...(standby !== undefined ? { ...standby, standby: true } : {}),
+      })
+      if (variantFloor !== null) c.setVariantFloor(variantFloor)
+      return c
+    }
+    const cache = newCache()
     const presentation = new Presentation({
       sceneGraph: canvasInstance.sceneGraph,
       cache,
@@ -222,16 +235,76 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       setActiveSlideId,
     })
     presentationRef.current = presentation
+    // The display's density changed (the window moved to another screen):
+    // the slides are prepared again for it while the old set presents, and
+    // the new set takes over once whole — on a still slide at once, else at
+    // the next advance (present/densityHandover.ts). The handover is the
+    // only owner of the canvas's density here: the canvas does not follow
+    // the window's ratio itself (`followPixelRatio={false}`), and is switched
+    // through its region in the task the new set takes over (ADR 0020 →
+    // Present mode). The standby set's texts are placed on the device grid
+    // the canvas will have at the new density (`preparePixelRatio`), as a
+    // presentation opened at it places them; a layout that moves that grid
+    // before the swap prepares the set again.
+    /** The standby set's hold on the canvas's prospective grid. */
+    let releaseProspect: (() => void) | null = null
+    const handover = new DensityHandover<PresentSlideCache>({
+      currentDensity: () =>
+        presentation.presentingCache.preparedDensity ?? canvasInstance.pixelRatio(),
+      createSet: (density) => {
+        perfCount('present.density.standby')
+        releaseProspect?.()
+        const prospect = canvasInstance.preparePixelRatio(density, () => {
+          perfCount('present.density.restart')
+          handover.restart()
+        })
+        releaseProspect = prospect.release
+        const c = newCache({ density, textResolution: prospect.resolution })
+        presentation.setStandby(c, density, {
+          apply: (d) => canvasInstance.setPixelRatio(d),
+          adopted: () => {
+            // The switch made the prospective grid the canvas's own.
+            releaseProspect?.()
+            releaseProspect = null
+            handover.adopted()
+            // The videos choose their file for the canvas's new density (off stage).
+            pool.displayChanged()
+          },
+        })
+        return c
+      },
+      destroySet: (c) => {
+        releaseProspect?.()
+        releaseProspect = null
+        presentation.clearStandby(c)
+        c.destroy()
+      },
+      subscribe: (c, listener) => c.subscribe(listener),
+      isReady: (c) => presentation.standbyReady(c),
+      swapNow: () => presentation.swapToStandbyNow(),
+      armBoundary: () => presentation.armStandby(true),
+      disarmBoundary: () => presentation.armStandby(false),
+    })
+    const unwatchDensity = watchDevicePixelRatio((ratio) => {
+      perfCount('present.density.change')
+      handover.densityChanged(ratio)
+    })
+    // A set armed for the next advance: taken over at once when the slide shown allows it.
+    const unsubscribeHandover = presentation.subscribe(() => {
+      if (handover.state.kind === 'armed') handover.retry()
+    })
     setVideos({
       pool,
       released: (objectId) => {
-        void pool.rewind(objectId).then(() => cache.rewarmContaining(objectId))
+        void pool
+          .rewind(objectId)
+          .then(() => presentation.presentingCache.rewarmContaining(objectId))
       },
     })
     const abort = new AbortController()
     let cancelled = false
-    const unsubscribeCache = cache.subscribe(() => {
-      const p = cache.progress()
+    const unsubscribeCache = presentation.subscribe(() => {
+      const p = presentation.progress()
       setPreparation((prev) =>
         prev.phase === 'ready'
           ? prev
@@ -244,8 +317,12 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
         cancelled = true
         abort.abort()
         unsubscribeCache()
+        unwatchDensity()
+        unsubscribeHandover()
+        handover.destroy()
+        const presenting = presentation.presentingCache
         presentation.destroy()
-        cache.destroy()
+        presenting.destroy()
         pool.destroy()
         if (presentationRef.current === presentation) presentationRef.current = null
       },
@@ -262,7 +339,8 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       })
       if (cancelled) return
       // Each picture drawn from the variant fetched for it, on every slide.
-      cache.setVariantFloor(media.variants)
+      variantFloor = media.variants
+      presentation.presentingCache.setVariantFloor(media.variants)
       // Skipped during the media: the presentation runs, planned around the slide shown.
       if (startedRef.current) return
       // 2. The slides, prepared off stage.
@@ -282,7 +360,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
               resolve()
             }
           }
-          const stop = cache.subscribe(check)
+          const stop = presentation.subscribe(check)
           check()
         })
         // 3. The presenter view's pictures, and anything still loading for the canvas.
@@ -781,6 +859,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
               onReady={onCanvasReady}
               artboardSize={{ width: SLIDE_WIDTH, height: SLIDE_HEIGHT }}
               gc={false}
+              followPixelRatio={false}
             />
           </div>
 

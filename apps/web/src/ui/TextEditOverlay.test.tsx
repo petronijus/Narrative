@@ -17,6 +17,11 @@ vi.mock('../state/useCommand.js', () => ({
   useCommand: () => ({ run: vi.fn(), tryRun: vi.fn() }),
 }))
 
+/** Undo while editing goes through the document's history; these tests never undo. */
+vi.mock('../state/useSlideDoc.js', () => ({
+  useSlideDoc: () => ({ undoManager: { undo: vi.fn(), redo: vi.fn() } }),
+}))
+
 /** A body in a document (a Y.Text reads its content once integrated). */
 function bodyOf(doc: Y.Doc, key: string, text: string): Y.Text {
   const yText = new Y.Text(text)

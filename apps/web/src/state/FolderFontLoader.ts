@@ -18,10 +18,16 @@
  */
 
 import { trackRenderWork } from '../renderer/renderWork.js'
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useId, useRef, useCallback } from 'react'
 import { useFolderFonts } from './useFolderFonts.js'
 import { useDeckFontsOptional } from './useDeckFonts.js'
-import { removeHtmlTextFace, setHtmlTextFace } from '../renderer/fontChanges.js'
+import {
+  clearHtmlTextFacePending,
+  markHtmlTextFacePending,
+  removeHtmlTextFace,
+  setFontListPending,
+  setHtmlTextFace,
+} from '../renderer/fontChanges.js'
 import type { FolderFontSummary } from '../api/client.js'
 import {
   readFontVerticalMetrics,
@@ -59,7 +65,12 @@ export function faceRanges(font: Pick<FolderFontSummary, 'weight' | 'axes'>): {
 }
 
 export function FolderFontLoader(): null {
-  const { fonts: folderFonts, refresh: refreshFolderFonts } = useFolderFonts()
+  const {
+    fonts: folderFonts,
+    refresh: refreshFolderFonts,
+    folderId,
+    loading: folderFontsLoading,
+  } = useFolderFonts()
   // When mounted inside a deck, also pull deck-scoped promoted fonts so
   // they install through the same Pixi cache pipeline. Outside a deck
   // (e.g. folder grid preload), useDeckFontsOptional returns null.
@@ -67,6 +78,18 @@ export function FolderFontLoader(): null {
   const fonts: FolderFontSummary[] =
     deckCtx === null ? folderFonts : [...folderFonts, ...deckCtx.fonts]
   const installedRef = useRef<Map<string, InstalledFont>>(new Map())
+
+  // Until the font lists are here, canvas text in a family that is neither
+  // registered nor on the system holds its first raster: it may be one of
+  // them (renderer/fontChanges.ts → setFontListPending). A deck's folder is
+  // unknown for a moment after the editor mounts — that counts as on its way.
+  const listToken = useId()
+  const listsPending =
+    folderId === null || folderFontsLoading || (deckCtx !== null && deckCtx.loading)
+  useEffect(() => {
+    setFontListPending(listToken, listsPending)
+  }, [listToken, listsPending])
+  useEffect(() => () => setFontListPending(listToken, false), [listToken])
 
   // MEDIA-1: font `url`s are short-TTL presigned MinIO URLs. If a FontFace
   // load fails (most likely an expired URL on a deck left open > the URL TTL
@@ -110,6 +133,10 @@ export function FolderFontLoader(): null {
         style: font.style,
       })
       pendingIds.add(font.assetId)
+      // Canvas text in this family holds its first raster until the face is
+      // registered (or the download fails) instead of painting a fallback
+      // and moving when the face lands (renderer/fontChanges.ts).
+      markHtmlTextFacePending(font.assetId, font.family)
 
       // Counted until it settles, so the render page waits for the folder's
       // fonts before it measures or paints text (renderer/renderWork.ts).
@@ -144,7 +171,12 @@ export function FolderFontLoader(): null {
             // If cleanup ran while we were loading, bail without installing.
             // The cleanup will have already deleted the placeholder slot, so
             // the next effect invocation will retry.
-            if (cancelled) return
+            if (cancelled) {
+              // Still awaited only if a later run of this effect took the
+              // slot again (its own load registers or clears it).
+              if (!installed.has(font.assetId)) clearHtmlTextFacePending(font.assetId)
+              return
+            }
 
             document.fonts.add(face)
 
@@ -174,6 +206,7 @@ export function FolderFontLoader(): null {
             // Drop the placeholder so a future re-emit retries
             installed.delete(font.assetId)
             pendingIds.delete(font.assetId)
+            clearHtmlTextFacePending(font.assetId)
             console.warn('[FolderFontLoader] failed to install', font.assetId, err)
             // MEDIA-1: likely an expired presigned URL — pull a fresh list so
             // the next effect run loads with a valid URL.
@@ -196,6 +229,7 @@ export function FolderFontLoader(): null {
         // FontFaceSet.delete throws if face was never fully added — ignore
       }
       removeHtmlTextFace(id)
+      clearHtmlTextFacePending(id)
       installed.delete(id)
     }
 

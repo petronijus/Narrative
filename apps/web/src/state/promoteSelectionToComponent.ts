@@ -20,6 +20,7 @@
 import { promoteToComponent, type DeckMutationContext } from '@narrative/slide-model'
 import { invalidateFolderComponentsCache } from './useFolderComponents.js'
 import { createThumbnailRenderer } from '../renderer/thumbnails.js'
+import { SLIDE_WIDTH } from '../renderer/constants.js'
 import { blobToDataUrl } from '../renderer/thumbnailImages.js'
 import type { ApiClient } from '../api/client.js'
 
@@ -66,7 +67,9 @@ async function renderAndUploadInitialThumbnail(
 ): Promise<void> {
   let renderer: Awaited<ReturnType<typeof createThumbnailRenderer>> | null = null
   try {
-    renderer = await createThumbnailRenderer({ width: 200, resolution: 1 })
+    // The slide's own width: what this picture always was (until F10 Pixi's
+    // extract read the slide at its own size, whatever width was asked for).
+    renderer = await createThumbnailRenderer({ width: SLIDE_WIDTH, resolution: 1 })
     const png = await renderer.renderSlide(masterTree)
     await api.uploadComponentThumbnail(componentId, await blobToDataUrl(png))
     invalidateFolderComponentsCache(folderId)

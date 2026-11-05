@@ -43,7 +43,12 @@ const layout = (font = '400 16px Arial'): TextRunLayout => ({
   decorations: [],
 })
 
-const rules = { snapBaseline: true, decorations: 'chromium' as const, strokeMiterLimit: 4 }
+const rules = {
+  snapBaseline: true,
+  decorations: 'chromium' as const,
+  strokeMiterLimit: 4,
+  shapeAcrossSpaces: false,
+}
 const bitmap = { width: 10, height: 10, close() {} } as unknown as ImageBitmap
 
 function makePool(size = 1, readyTimeoutMs = 1000) {

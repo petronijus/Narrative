@@ -8,6 +8,11 @@
  *
  * - One ThumbnailRenderer (an offscreen Pixi app) per hook, created a frame
  *   after mount so the editor's first paint goes first; destroyed on unmount.
+ * - The pictures are drawn `pixelWidth` device pixels wide — the size they
+ *   are shown at (the slide panel measures its rows:
+ *   ui/useThumbnailPixelWidth.ts); a caller that does not say gets the
+ *   slide's own width, what every thumbnail was until F10. The width is part
+ *   of every key: a new one renders each slide again, at idle.
  * - A SINGLE subscribeToDeckSlideEvents() observer on ctx.slides: objects are
  *   read by fresh traversal for the affected slides (a per-slide observer
  *   captured a Y.Array orphaned by a slide rebuild — the initial sync,
@@ -42,8 +47,9 @@ import { subscribeToDeckSlideEvents, yMapToPlainObject } from '@narrative/slide-
 import type { DeckStore, SlideMutationContext } from '@narrative/slide-model'
 import type { Slide, SlideObject, SlideBackground } from '@narrative/shared'
 import { computeSlideNumber } from '@narrative/shared'
+import { SLIDE_WIDTH } from '../renderer/constants.js'
 import type * as Y from 'yjs'
-import { createThumbnailRenderer } from '../renderer/thumbnails.js'
+import { createThumbnailRenderer, type ThumbnailRenderer } from '../renderer/thumbnails.js'
 import { captureLiveThumbnail } from '../renderer/liveThumbnail.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { subscribeColourResolver, tokenColourSignature } from '../renderer/colourResolver.js'
@@ -180,10 +186,16 @@ function watchPointerGestures(onChange: (active: boolean) => void): () => void {
 export interface UseSlideThumbnailsOptions {
   /** Draw the active slide from the editor's canvas (the editor's slide panel). */
   liveActiveSlide?: boolean
+  /**
+   * The pictures' width in device pixels — the size they are shown at
+   * (`useThumbnailPixelWidth`); null while that is not known yet (nothing is
+   * rendered meanwhile). Default: the slide's own width, 1920 — what every
+   * thumbnail was until F10 (Pixi's extract read the slide at its own size,
+   * whatever width the renderer was given), so a caller that does not say
+   * how big it shows them keeps its pictures as they were.
+   */
+  pixelWidth?: number | null
 }
-
-/** Thumbnail width in px — the renderer's and the live capture's. */
-const THUMBNAIL_WIDTH = 200
 
 interface SlideSnapshot {
   background: SlideBackground | undefined
@@ -251,6 +263,8 @@ export function useSlideThumbnailStore(
   const activeSlideId = useContext(ActiveSlideContext)?.activeSlideId ?? null
   const canvasScene = useCanvasInstance()?.sceneGraph ?? null
   const liveScene = options.liveActiveSlide === true ? canvasScene : null
+  const pixelWidth = options.pixelWidth === undefined ? SLIDE_WIDTH : options.pixelWidth
+  const pixelWidthRef = useRef(pixelWidth)
   // Background, surface and the order with the skipped flags, selected from
   // the shared deck store (useDeckStore.ts, performance.md → E1).
   const allSlides = useDeckSelector(selectSlideLooks, sameSlideLooks)
@@ -261,6 +275,7 @@ export function useSlideThumbnailStore(
   const slidesRef = useRef(allSlides)
   useLayoutEffect(() => {
     activeSlideIdRef.current = activeSlideId
+    pixelWidthRef.current = pixelWidth
     deckCtxRef.current = deckCtx
     slidesRef.current = allSlides
   })
@@ -281,7 +296,7 @@ export function useSlideThumbnailStore(
 
   // The active slide from the editor's canvas, while there is one to read.
   useEffect(() => {
-    if (liveScene === null) {
+    if (liveScene === null || pixelWidth === null) {
       store.setLiveCapture(null)
       return
     }
@@ -290,12 +305,12 @@ export function useSlideThumbnailStore(
         ? captureLiveThumbnail(
             liveScene,
             inputs.objects.map((o) => o.id),
-            THUMBNAIL_WIDTH,
+            pixelWidth,
           )
         : null,
     )
     return () => store.setLiveCapture(null)
-  }, [store, liveScene])
+  }, [store, liveScene, pixelWidth])
 
   // What the hook knows about each slide, for its lifetime (never reassigned).
   const [known] = useState(() => ({
@@ -327,29 +342,46 @@ export function useSlideThumbnailStore(
     }
   }, [store, known])
 
+  // The pictures' width: part of every key (a new one renders every slide
+  // again, at idle), read by the renderer at each render. Nothing is rendered
+  // while it is not known.
+  const [renderer, setRenderer] = useState<ThumbnailRenderer | null>(null)
+  useEffect(() => {
+    if (renderer === null || pixelWidth === null) {
+      store.setRenderer(null)
+      return
+    }
+    store.setPictureWidth(pixelWidth)
+    store.setRenderer((inputs) =>
+      renderer.renderSlide(
+        [...inputs.objects],
+        inputs.background,
+        inputs.slideNumber,
+        inputs.surface,
+        pixelWidth,
+      ),
+    )
+    return () => store.setRenderer(null)
+  }, [store, renderer, pixelWidth])
+
   // The offscreen renderer, a frame after mount: it contends with the editor
-  // canvas for the GPU driver during cold start (P12d). The unit suite's fake
-  // timers would hang on the deferral, so tests start it at once.
+  // canvas for the GPU driver during cold start (P12d). Created before the
+  // width is known (its creation takes ~1 s of a cold start in Chromium); the
+  // width only sizes its render target. The unit suite's fake timers would
+  // hang on the deferral, so tests start it at once.
   useEffect(() => {
     let cancelled = false
-    let renderer: Awaited<ReturnType<typeof createThumbnailRenderer>> | null = null
+    let created: ThumbnailRenderer | null = null
     const start = (): void => {
       if (cancelled) return
-      createThumbnailRenderer({ width: THUMBNAIL_WIDTH, resolution: 1 })
-        .then((created) => {
+      createThumbnailRenderer({ width: pixelWidthRef.current ?? SLIDE_WIDTH, resolution: 1 })
+        .then((r) => {
           if (cancelled) {
-            created.destroy()
+            r.destroy()
             return
           }
-          renderer = created
-          store.setRenderer((inputs) =>
-            created.renderSlide(
-              [...inputs.objects],
-              inputs.background,
-              inputs.slideNumber,
-              inputs.surface,
-            ),
-          )
+          created = r
+          setRenderer(r)
         })
         .catch((err: unknown) => {
           console.error('[useSlideThumbnails] createThumbnailRenderer failed:', err)
@@ -360,7 +392,8 @@ export function useSlideThumbnailStore(
       cancelled = true
       if (startTimer !== 0) window.clearTimeout(startTimer)
       store.setRenderer(null)
-      renderer?.destroy()
+      setRenderer(null)
+      created?.destroy()
     }
   }, [store])
 

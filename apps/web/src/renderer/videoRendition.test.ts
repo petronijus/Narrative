@@ -5,6 +5,7 @@ import {
   forcePlaybackKind,
   presentDeviceScale,
   presentStageScale,
+  playbackTrialSmooth,
 } from './videoRendition.js'
 
 const info = {
@@ -89,6 +90,49 @@ describe('choosePlayback (performance.md P3)', () => {
       ).toBe('playback')
       forcePlaybackKind(null)
       expect(choosePlayback(info, { width: 960, height: 540 }, 1)?.kind).toBe('present')
+    })
+  })
+
+  describe('playbackTrialSmooth (a trial playback of the original)', () => {
+    const frames = (n: number, ms = 16.7): number[] => Array.from({ length: n }, () => ms)
+    const media = (n: number, step = 1 / 30, skipEvery = 0): number[] => {
+      const out: number[] = []
+      let t = 0
+      for (let i = 0; i < n; i++) {
+        t += skipEvery > 0 && i > 0 && i % skipEvery === 0 ? 2 * step : step
+        out.push(t)
+      }
+      return out
+    }
+
+    it('is smooth at the refresh rate, its start not counted', () => {
+      expect(
+        playbackTrialSmooth({ frameMs: [80, 40, 33, ...frames(70)], mediaTimes: media(36) }),
+      ).toBe(true)
+      // One miss is allowed (a shared machine).
+      expect(playbackTrialSmooth({ frameMs: [...frames(70), 33.4], mediaTimes: media(36) })).toBe(
+        true,
+      )
+    })
+
+    it('is not smooth when display frames are missed', () => {
+      // WebKit at 2× with a 4K original: ~26 fps.
+      expect(
+        playbackTrialSmooth({ frameMs: [...frames(10), ...frames(30, 38)], mediaTimes: media(36) }),
+      ).toBe(false)
+      expect(playbackTrialSmooth({ frameMs: [...frames(70), 50], mediaTimes: media(36) })).toBe(
+        false,
+      )
+    })
+
+    it('is not smooth when video frames are skipped', () => {
+      expect(playbackTrialSmooth({ frameMs: frames(70), mediaTimes: media(36, 1 / 30, 5) })).toBe(
+        false,
+      )
+    })
+
+    it('an empty trial says nothing: smooth', () => {
+      expect(playbackTrialSmooth({ frameMs: [], mediaTimes: [] })).toBe(true)
     })
   })
 })

@@ -55,15 +55,7 @@
  * Pixi's ticker is presenting frames anyway).
  */
 
-import {
-  Container,
-  Graphics,
-  Matrix,
-  RenderTexture,
-  Sprite,
-  Texture,
-  type TextureSource,
-} from 'pixi.js'
+import { Container, Graphics, RenderTexture, Sprite, Texture, type TextureSource } from 'pixi.js'
 import type { ColourResolverFn } from './colourResolver.js'
 import type { ImageVariant, Slide, SlideObject } from '@narrative/shared'
 import { DEFAULT_BACKGROUND, perfCount, perfCountFor } from '@narrative/shared'
@@ -84,6 +76,7 @@ import { scaledUpObjectIds } from './imageVariant.js'
 import { getRenderer } from './objectRenderers/index.js'
 import { attachLiveVideo } from './objectRenderers/videoRenderer.js'
 import { pendingRenderWork, whenRenderWorkIdle } from './renderWork.js'
+import { holdPlacementRepaints } from './runText/placement.js'
 import { getDefaultResourceManager, type ResourceManager } from './ResourceManager.js'
 import { outsideFadeAlpha, type SceneGraph, type SlideScene } from './SceneGraph.js'
 import {
@@ -92,8 +85,6 @@ import {
   KEEP_WARM_MS,
   keepWarmEnabled,
   keepWarmFrame,
-  keepWarmTarget,
-  type KeepWarmTarget,
   whenPresentIdle,
 } from './presentKeepWarm.js'
 import { getDefaultRenderScheduler } from './RenderScheduler.js'
@@ -149,6 +140,28 @@ export interface PresentSlideCacheOptions {
    * scene with that video draws its live first frame from the start.
    */
   liveVideo?: (objectId: string) => HTMLVideoElement | null
+  /**
+   * The density to prepare for, when it is not the canvas's (a standby set
+   * prepared for a display the window has just moved to:
+   * present/densityHandover.ts): its pictures choose their variants for it
+   * and its texts rasterise at it (or at `textResolution`), whatever the
+   * canvas draws at meanwhile. Default: the canvas's, and texts follow the
+   * renderer.
+   */
+  density?: number
+  /**
+   * The resolution a standby set's texts rasterise at: the one the canvas
+   * will draw at once it switches to `density`
+   * (CanvasInstance.preparePixelRatio) — their rasters are placed on that
+   * canvas's device grid then. Default: `density`.
+   */
+  textResolution?: number
+  /**
+   * A standby set (see `density`): it builds in idle time and keeps nothing
+   * warm until `activate()` — the set on stage does that — and its scenes
+   * count against the GPU budget under keys of their own.
+   */
+  standby?: boolean
 }
 
 /** Loads and rasters of one scene: given up on (and the scene kept as drawn) after this long. */
@@ -226,6 +239,22 @@ function collectSources(root: Container, rendererUid: number): Set<TextureSource
   return out
 }
 
+/**
+ * Give every text under `root` its own resolution (Pixi's texts follow the
+ * renderer's otherwise): a standby set's texts rasterise at the density it
+ * is prepared for while the canvas still draws at the old one. Texts are
+ * the nodes with an anchor and Pixi's text-update flag (SceneGraph
+ * `forEachText`).
+ */
+function pinTextResolution(root: Container, resolution: number): void {
+  const walk = (c: Container): void => {
+    const node = c as unknown as { anchor?: unknown; resolution?: number }
+    if (node.anchor !== undefined && '_didTextUpdate' in node) node.resolution = resolution
+    for (const child of c.children) if (child instanceof Container) walk(child)
+  }
+  walk(root)
+}
+
 /** Destroy a scene taken off the stage or never shown: every node through its renderer, then the root. */
 export function destroySlideScene(scene: SlideScene): void {
   for (const node of scene.nodes) {
@@ -293,8 +322,6 @@ export class PresentSlideCache {
   private readonly listeners = new Set<() => void>()
   private warmTarget: RenderTexture | null = null
   private keepWarmTarget: RenderTexture | null = null
-  /** What `keepWarmTarget` was made for (presentKeepWarm.ts → KeepWarmTarget) and at which resolution. */
-  private keepWarmTargetOf = ''
   /** The pending keep-warm turn (a timer, then an idle callback): cancels it. */
   private keepWarmCancel: (() => void) | null = null
   private destroyed = false
@@ -307,12 +334,32 @@ export class PresentSlideCache {
   private variantFloor: ReadonlyMap<string, ImageVariant> = new Map()
   private readonly unsubscribeColours: () => void
   private readonly unsubscribeFonts: () => void
+  /** See PresentSlideCacheOptions.density (null: the canvas's). */
+  private readonly density: number | null
+  /** The resolution a standby set's texts are pinned to (null: they follow the renderer). */
+  private readonly textResolution: number | null
+  /** See PresentSlideCacheOptions.standby. */
+  private standby: boolean
+  /** The ResourceManager's resident keys of this cache's scenes (`${prefix}${slideId}`). */
+  private readonly residentPrefix: string
+  /**
+   * The canvas's placement watch held for as long as the cache lives
+   * (runText/placement.ts → holdPlacementRepaints): every text is painted
+   * while its slide is prepared, at rest, and builds and transitions only
+   * move it for a while — nothing is painted again for where they took it.
+   */
+  private readonly releasePlacement: () => void
 
   constructor(opts: PresentSlideCacheOptions) {
     this.sceneGraph = opts.sceneGraph
     this.rm = opts.resourceManager
     this.settleTimeoutMs = opts.settleTimeoutMs ?? SETTLE_TIMEOUT_MS
     this.liveVideo = opts.liveVideo ?? (() => null)
+    this.density = opts.density ?? null
+    this.textResolution = opts.textResolution ?? opts.density ?? null
+    this.standby = opts.standby === true
+    this.residentPrefix = opts.density !== undefined ? `@${opts.density}:` : ''
+    this.releasePlacement = holdPlacementRepaints(this.sceneGraph.getApp().renderer)
     // Token colours changed: a scene whose slide resolves them differently now is stale.
     this.unsubscribeColours = subscribeColourResolver(() => {
       let changed = false
@@ -372,8 +419,26 @@ export class PresentSlideCache {
   setIdleOnly(on: boolean): void {
     this.idleOnly = on
     // Ready: from now on the slides around the presenter are kept warm.
-    if (on) this.scheduleKeepWarm()
+    if (on && !this.standby) this.scheduleKeepWarm()
     else this.stopKeepWarm()
+  }
+
+  /** The density this cache prepares for (null: the canvas's, whatever it is). */
+  get preparedDensity(): number | null {
+    return this.density
+  }
+
+  /**
+   * A standby set takes over the stage (present/densityHandover.ts): from
+   * now on it keeps the slides around the presenter warm, and builds what
+   * the budget refused while the previous set still held its share.
+   */
+  activate(): void {
+    if (this.destroyed || !this.standby) return
+    this.standby = false
+    this.budgetFull = false
+    if (this.idleOnly) this.scheduleKeepWarm()
+    this.pump()
   }
 
   /** Tell the cache when the presentation is moving (a transition, a build): it builds nothing then. */
@@ -481,7 +546,7 @@ export class PresentSlideCache {
                       : null
     if (reason !== null || prepared === undefined) {
       perfCountFor('present.give.dropped', reason ?? 'foreign')
-      if (prepared !== undefined) this.rm.releaseResident(scene.slideId)
+      if (prepared !== undefined) this.rm.releaseResident(this.residentPrefix + scene.slideId)
       destroySlideScene(scene)
       this.pump()
       return
@@ -519,11 +584,14 @@ export class PresentSlideCache {
   destroy(): void {
     if (this.destroyed) return
     this.destroyed = true
+    this.releasePlacement()
     this.unsubscribeColours()
     this.unsubscribeFonts()
     this.stopKeepWarm()
     this.rm.setUploadHold(null)
     for (const id of [...this.entries.keys()]) this.evict(id)
+    // A scene still on stage is the scene graph's now; it no longer counts as this cache's.
+    for (const id of this.onStage.keys()) this.rm.releaseResident(this.residentPrefix + id)
     for (const target of [this.warmTarget, this.keepWarmTarget])
       try {
         target?.destroy(true)
@@ -546,7 +614,7 @@ export class PresentSlideCache {
     const e = this.entries.get(slideId)
     this.entries.delete(slideId)
     if (e?.prepared != null) {
-      this.rm.releaseResident(slideId)
+      this.rm.releaseResident(this.residentPrefix + slideId)
       destroySlideScene(e.prepared)
       perfCount('present.prepare.evicted')
     }
@@ -602,28 +670,11 @@ export class PresentSlideCache {
     if (this.destroyed || this.busy() || !keepWarmEnabled()) return
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
     const renderer = this.sceneGraph.getApp().renderer
-    const size: KeepWarmTarget = keepWarmTarget()
-    const scale = size === 'pixel' ? null : size === 'eighth' ? 1 / 8 : 1
-    const madeFor = `${size}@${renderer.resolution}`
-    if (this.keepWarmTarget !== null && this.keepWarmTargetOf !== madeFor) {
-      this.keepWarmTarget.destroy(true)
-      this.keepWarmTarget = null
-    }
     if (this.keepWarmTarget === null) {
-      this.keepWarmTarget =
-        scale === null
-          ? RenderTexture.create({ width: 1, height: 1 })
-          : RenderTexture.create({
-              width: Math.ceil(SLIDE_WIDTH * scale),
-              height: Math.ceil(SLIDE_HEIGHT * scale),
-              resolution: renderer.resolution,
-            })
+      this.keepWarmTarget = RenderTexture.create({ width: 1, height: 1 })
       this.keepWarmTarget.label = KEEP_WARM_LABEL
-      this.keepWarmTargetOf = madeFor
     }
     const target = this.keepWarmTarget
-    // A scene drawn whole into the target, from its own origin, scaled to it.
-    const transform = scale === null ? undefined : new Matrix().scale(scale, scale)
     const roots: Container[] = []
     // The scene on stage: its render group only (a scene mounted change by
     // change has none, and drawing it alone would make the stage's root one).
@@ -633,13 +684,7 @@ export class PresentSlideCache {
       const p = this.entries.get(id)?.prepared
       if (p != null && !p.root.destroyed) roots.push(p.root)
     }
-    for (const root of roots)
-      renderer.render({
-        container: root,
-        target,
-        clear: true,
-        ...(transform !== undefined ? { transform } : {}),
-      })
+    for (const root of roots) renderer.render({ container: root, target, clear: true })
     // The screen path too (see the module comment) — unless Pixi's ticker
     // presents frames anyway (a video or a timeline playing).
     const mode = keepWarmFrame()
@@ -761,14 +806,18 @@ export class PresentSlideCache {
     const rank = (id: string): number => this.plan.findIndex((s) => s.slide.id === id)
     const mine = rank(spec.slide.id)
     const force = this.required.has(spec.slide.id)
-    let admitted = this.rm.admitResident(spec.slide.id, scene.sources, { force })
+    let admitted = this.rm.admitResident(this.residentPrefix + spec.slide.id, scene.sources, {
+      force,
+    })
     while (!admitted) {
       const victim = [...this.entries.keys()]
         .filter((id) => !this.required.has(id) && (rank(id) < 0 || rank(id) > mine))
         .sort((a, b) => rank(b) - rank(a))[0]
       if (victim === undefined) break
       this.evict(victim)
-      admitted = this.rm.admitResident(spec.slide.id, scene.sources, { force })
+      admitted = this.rm.admitResident(this.residentPrefix + spec.slide.id, scene.sources, {
+        force,
+      })
     }
     if (!admitted || mine < 0) {
       if (mine >= 0) this.budgetFull = true
@@ -841,11 +890,12 @@ export class PresentSlideCache {
           perfCountFor('sg.mount', data.type)
           // For the canvas it will be shown on, at the deck's variants.
           const container = withPixelDensity(
-            this.sceneGraph.getPixelDensity(),
+            this.density ?? this.sceneGraph.getPixelDensity(),
             () => renderer.mount(data),
             (picture) => (scaledUp.has(picture.id) ? 'display' : floor.get(picture.assetId)),
           )
           container.alpha = outsideFadeAlpha(data as SlideObject, bounds.width, bounds.height)
+          if (this.textResolution !== null) pinTextResolution(container, this.textResolution)
           root.addChild(container)
           nodes.push({ id: data.id, container, data })
         }

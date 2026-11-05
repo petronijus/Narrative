@@ -17,6 +17,7 @@ import {
 } from '@narrative/slide-model'
 import {
   getElementInnerText,
+  domShowsHtml,
   domPositionToCharIndex,
   charIndexToDomPosition,
 } from './textEditDom.js'
@@ -117,5 +118,120 @@ describe('char-index ↔ DOM-position round-trip', () => {
       const dom = charIndexToDomPosition(el, i)
       expect(domPositionToCharIndex(el, dom.node, dom.offset)).toBe(i)
     }
+  })
+})
+
+describe('domShowsHtml', () => {
+  const underlined = (yt: Y.Text): string =>
+    buildListedHtml(getParagraphDeltas(yt), { underline: true })
+
+  it('holds for the markup as built, and for text the browser typed into its run', () => {
+    const yt = makeYText('Hello')
+    const el = document.createElement('div')
+    el.innerHTML = underlined(yt)
+    expect(domShowsHtml(el, underlined(yt))).toBe(true)
+    // Typing at the end of the run: the browser grows (or splits) its text node.
+    el.querySelector('u')!.append(document.createTextNode(' world'))
+    yt.insert(5, ' world')
+    expect(domShowsHtml(el, underlined(yt))).toBe(true)
+  })
+
+  it('fails for typed text left outside the run the document gives it', () => {
+    const yt = makeYText(`Hello${PARAGRAPH_SEP}${PARAGRAPH_SEP}`)
+    const el = document.createElement('div')
+    el.innerHTML = underlined(yt)
+    // The browser types into the empty paragraph's block, not into a <u>.
+    const empty = el.querySelectorAll('div')[1]!
+    empty.replaceChildren(document.createTextNode('x'))
+    yt.insert(6, 'x')
+    expect(getElementInnerText(el)).toBe(editable(yt))
+    expect(domShowsHtml(el, underlined(yt))).toBe(false)
+  })
+
+  it('fails when the box-wide formatting changed under unchanged text', () => {
+    const yt = makeYText('Hello')
+    const el = renderToDom(yt)
+    expect(domShowsHtml(el, underlined(yt))).toBe(false)
+  })
+})
+
+describe('placeholder line breaks', () => {
+  const textOf = (html: string): string => {
+    const el = document.createElement('div')
+    el.innerHTML = html
+    return getElementInnerText(el)
+  }
+
+  it('counts the breaks the browser leaves holding a line open as no character', () => {
+    // Shift+Enter at the end of "a": the browser's `<br><br>`.
+    expect(textOf('<div data-pb="1">a<br><br></div>')).toBe('a\n')
+    expect(textOf('<div data-pb="1"><u>a<br></u><br></div>')).toBe('a\n')
+    expect(textOf('<div data-pb="1">a<br><br><br></div>')).toBe('a\n\n')
+    // Every character deleted: the block holds a lone `<br>`.
+    expect(textOf('<div data-pb="1"><br></div>')).toBe('')
+    expect(textOf('<div data-pb="1"><u><br></u></div>')).toBe('')
+    expect(textOf(`<div data-pb="1">a</div><div data-pb="1"><br></div>`)).toBe(`a${PARAGRAPH_SEP}`)
+    // Bare content (before a rebuild).
+    expect(textOf('a<br><br>')).toBe('a\n')
+  })
+
+  it('counts every other break', () => {
+    expect(textOf('<div data-pb="1">a<br>b</div>')).toBe('a\nb')
+    expect(textOf('<div data-pb="1">a<br><br>b</div>')).toBe('a\n\nb')
+    expect(textOf('<div data-pb="1"><br>b</div>')).toBe('\nb')
+    // A lone `<br>` that ends a line of text is a break (nothing holds a line after it).
+    expect(textOf('<div data-pb="1">a<br></div>')).toBe('a\n')
+  })
+
+  it('round-trips a closing soft break and its caret positions', () => {
+    for (const body of ['a\n', 'a\n\n', `a\n${PARAGRAPH_SEP}b`, 'a\nb\n', '\n']) {
+      const yt = makeYText(body)
+      const el = renderToDom(yt)
+      expect(getElementInnerText(el)).toBe(editable(yt))
+      for (let i = 0; i <= editable(yt).length; i++) {
+        const dom = charIndexToDomPosition(el, i)
+        expect(domPositionToCharIndex(el, dom.node, dom.offset)).toBe(i)
+      }
+    }
+  })
+
+  it("puts the caret on the closing break's line before its placeholder", () => {
+    const yt = makeYText('a\n')
+    const el = renderToDom(yt)
+    const placeholder = el.querySelector('br[data-empty]')!
+    const dom = charIndexToDomPosition(el, 2)
+    expect(dom.node.childNodes[dom.offset]).toBe(placeholder)
+  })
+})
+
+describe('line breaks the browser types into pre-wrap text', () => {
+  const textOf = (html: string): string => {
+    const el = document.createElement('div')
+    el.innerHTML = html
+    return getElementInnerText(el)
+  }
+
+  it('counts a newline that holds the last line open as no character', () => {
+    expect(textOf('<div data-pb="1">One\n\n</div>')).toBe('One\n')
+    expect(textOf('<div data-pb="1"><u>One</u>\n\n</div>')).toBe('One\n')
+    expect(textOf('<div data-pb="1">One\n\n\n</div>')).toBe('One\n\n')
+    expect(textOf('<div data-pb="1">One<br>\n</div>')).toBe('One\n')
+    expect(textOf('<div data-pb="1">\n</div>')).toBe('')
+  })
+
+  it('counts every other newline', () => {
+    expect(textOf('<div data-pb="1">One\nTwo</div>')).toBe('One\nTwo')
+    expect(textOf('<div data-pb="1">One\n</div>')).toBe('One\n')
+    expect(textOf('<div data-pb="1">One\n\nTwo</div>')).toBe('One\n\nTwo')
+  })
+
+  it('maps the caret around a held line', () => {
+    const el = document.createElement('div')
+    el.innerHTML = '<div data-pb="1">One\n\n</div>'
+    const text = el.firstChild!.firstChild!
+    // The caret on the held line (after the break) is character 4, the end.
+    expect(domPositionToCharIndex(el, text, 4)).toBe(4)
+    expect(domPositionToCharIndex(el, text, 5)).toBe(4)
+    expect(charIndexToDomPosition(el, 4)).toEqual({ node: text, offset: 4 })
   })
 })

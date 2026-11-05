@@ -76,7 +76,12 @@ import {
 } from './renderLook.js'
 import { measureGrownText, measureTextOverflow } from './textFit.js'
 import type { DeckFontsContextValue } from '../state/useDeckFonts.js'
-import { startJobTimer, type JobTimer, type JobTimings } from './renderTimings.js'
+import {
+  keepResourceTimings,
+  startJobTimer,
+  type JobTimer,
+  type JobTimings,
+} from './renderTimings.js'
 import { decodeBase64, untilCoversStateVector } from '../lib/stateVector.js'
 import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
@@ -98,6 +103,10 @@ const SETTLE_TIMEOUT_MS = 30_000
  * at its compile (the page's first capture) and on every pixel drawn after.
  */
 const RENDER_BATCH_TEXTURES = 4
+
+// As this page's code loads, before the rest of the load can fill the
+// default buffer: the worker reads the load's resource timings (renderTimings.ts).
+keepResourceTimings()
 
 export type RenderErrorReason =
   | 'access-refused'

@@ -11,11 +11,15 @@
  * PERF_KEEP_WARM_AB=1, to price present mode's keep-warm).
  */
 
-import type { Application, Container } from 'pixi.js'
+import { TexturePool } from 'pixi.js'
+import type { Application, Container, Texture } from 'pixi.js'
 import type { SlideObject } from '@narrative/shared'
 import type { RenderScheduler } from './RenderScheduler.js'
 import type { SceneGraph } from './SceneGraph.js'
 import { isKeepWarmFrame, KEEP_WARM_LABEL } from './presentKeepWarm.js'
+import { textureSourceBytes } from './ResourceManager.js'
+import { drawnRegionOf } from './runText/placement.js'
+import { runTextureMemory } from './runText/runTextSystem.js'
 
 /**
  * What a `render` drew into: the screen, a slide prepared off stage being
@@ -115,12 +119,128 @@ export function stripMasks(sceneGraph: SceneGraph): number {
 export {
   setKeepWarmEnabled,
   setKeepWarmFrame,
-  setKeepWarmTarget,
   setPresentIdleFallback,
   type KeepWarmFrame,
-  type KeepWarmTarget,
   type PresentIdleFallback,
 } from './presentKeepWarm.js'
 
 /** Thumbnails waiting or rendering (the store's queues, debounces and retries): settle waits for 0. */
 export { pendingThumbnailWork } from './thumbnailStore.js'
+
+/** What the canvas's text rasters hold on the GPU, and what Pixi's texture pool keeps idle (textTextureMemory). */
+export interface TextTextureMemory {
+  /** The editor canvas's run-text textures (runText/runTextSystem.ts → runTextureMemory). */
+  run: {
+    count: number
+    /** Pixels of the rasters themselves. */
+    rasterPx: number
+    /** Pixels of the textures holding them (≥ rasterPx: a texture may be larger than its raster). */
+    texturePx: number
+    /** Textures with a mipmap chain. */
+    mipmapped: number
+    /** Their GPU bytes (4 a pixel, a third more with mipmaps). */
+    bytes: number
+    /** The texts whose box meets the canvas's drawn region (ADR 0020), and their rasters' pixels. */
+    inRegion: number
+    inRegionRasterPx: number
+    /** Of those pixels, the ones of the part of each text inside the region (world area × resolution²). */
+    inRegionShownPx: number
+    /** The largest resolution a live raster has, and the renderer's. */
+    maxResolution: number
+    rendererResolution: number
+  }
+  /** The thumbnails' run-text textures. */
+  thumb: { count: number; rasterPx: number; texturePx: number; bytes: number }
+  /**
+   * Pixi's `TexturePool` (shared by every renderer of the page): textures
+   * returned and waiting for reuse, and those of them still holding a GPU
+   * texture in the editor's context (Pixi's collector frees one a minute
+   * after its last use, and only after a render).
+   */
+  pool: {
+    idle: number
+    idlePx: number
+    resident: number
+    residentPx: number
+    residentBytes: number
+  }
+}
+
+/** The idle textures of Pixi's pool (its buckets are private: read, never changed). */
+function pooledTextures(): Texture[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TexturePool's buckets are private
+  const buckets = (TexturePool as any)._buckets as Map<number, Texture[]> | undefined
+  const out: Texture[] = []
+  if (buckets !== undefined) for (const list of buckets.values()) out.push(...list)
+  return out
+}
+
+/** What the editor's text rasters and Pixi's texture pool hold now (the perf harness: `textureMemory`). */
+export function textTextureMemory(app: Application): TextTextureMemory {
+  const renderer = app.renderer as unknown as { uid: number; resolution: number }
+  const run = runTextureMemory('text')
+  const region = drawnRegionOf(app.renderer)
+  let inRegion = 0
+  let inRegionRasterPx = 0
+  let inRegionShownPx = 0
+  let maxResolution = 0
+  for (const t of run.textures) {
+    maxResolution = Math.max(maxResolution, t.resolution)
+    const text = t.text
+    if (text === null || text.destroyed) continue
+    const b = text.getBounds()
+    const meets =
+      region === null ||
+      (b.x < region.x + region.width &&
+        b.x + b.width > region.x &&
+        b.y < region.y + region.height &&
+        b.y + b.height > region.y)
+    if (meets) {
+      inRegion++
+      inRegionRasterPx += t.raster.width * t.raster.height
+      if (region !== null) {
+        const w = Math.min(b.x + b.width, region.x + region.width) - Math.max(b.x, region.x)
+        const h = Math.min(b.y + b.height, region.y + region.height) - Math.max(b.y, region.y)
+        inRegionShownPx += Math.max(0, w) * Math.max(0, h) * t.resolution ** 2
+      } else inRegionShownPx += t.raster.width * t.raster.height
+    }
+  }
+  const thumb = runTextureMemory('thumb.text')
+  let idlePx = 0
+  let resident = 0
+  let residentPx = 0
+  let residentBytes = 0
+  const idle = pooledTextures()
+  for (const texture of idle) {
+    const source = texture.source
+    const px = source.pixelWidth * source.pixelHeight
+    idlePx += px
+    const gpu = (source as unknown as { _gpuData?: Record<number, unknown> })._gpuData
+    if (gpu?.[renderer.uid] !== undefined) {
+      resident++
+      residentPx += px
+      residentBytes += textureSourceBytes(source)
+    }
+  }
+  return {
+    run: {
+      count: run.count,
+      rasterPx: run.rasterPx,
+      texturePx: run.texturePx,
+      mipmapped: run.mipmapped,
+      bytes: run.bytes,
+      inRegion,
+      inRegionRasterPx,
+      inRegionShownPx,
+      maxResolution,
+      rendererResolution: renderer.resolution,
+    },
+    thumb: {
+      count: thumb.count,
+      rasterPx: thumb.rasterPx,
+      texturePx: thumb.texturePx,
+      bytes: thumb.bytes,
+    },
+    pool: { idle: idle.length, idlePx, resident, residentPx, residentBytes },
+  }
+}

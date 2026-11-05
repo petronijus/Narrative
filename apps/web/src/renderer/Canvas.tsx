@@ -14,7 +14,7 @@
 // Dev has no CSP, so this only ever mattered in prod.
 import { API_BASE } from '../lib/endpoints.js'
 import 'pixi.js/unsafe-eval'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Application, TextureSource } from 'pixi.js'
 
 // Enable mipmaps globally so large images (e.g. 4267×3200 imported logos)
@@ -36,7 +36,12 @@ import {
 import { installPixiBindGroupPatch } from './pixiBindGroupPatch.js'
 import { releaseOwnedGraphicsContexts } from './graphicsContextRelease.js'
 import { patchHTMLTextRace } from './patchHTMLTextRace.js'
-import { installRunText } from './runText/runTextSystem.js'
+import { installRunText, type RunTextMipmaps } from './runText/runTextSystem.js'
+import { CanvasRegionController } from './canvasRegionController.js'
+import type { ResolutionMargin } from './textResolutionStaging.js'
+import { holdPlacementRepaints } from './runText/placement.js'
+import { watchDevicePixelRatio } from './devicePixelRatioWatch.js'
+import { renderStage } from './stageRender.js'
 import { registerPerfCanvas, whenPerfHarnessReady } from '../perf/activation.js'
 import { destroyPixiApplication } from './pixiApplication.js'
 import { limitBatchTextures } from './batchTextures.js'
@@ -65,35 +70,7 @@ import { disposeComponentDocCache } from '../state/componentDocCache.js'
 import { markFirstPaint, markPixiReady } from '../state/loadTimings.js'
 import type { ObjectChangeSet } from '@narrative/slide-model'
 import type { CanvasInstance } from './CanvasInstanceContext.js'
-import { whenIdle, widenRect, type Rect } from './textResolutionStaging.js'
-
-/**
- * The part of the canvas the window shows, in the canvas's own CSS pixels
- * (Pixi's stage space), widened by 25 % so text just off screen comes next.
- * The editor scales the canvas with a CSS transform (the zoom), so the
- * on-screen box is mapped back through the canvas's layout width. Null when
- * the canvas is not laid out or entirely off screen.
- */
-function visibleCanvasRect(canvas: HTMLCanvasElement): Rect | null {
-  const box = canvas.getBoundingClientRect()
-  if (box.width <= 0 || box.height <= 0 || canvas.clientWidth <= 0) return null
-  const left = Math.max(box.left, 0)
-  const top = Math.max(box.top, 0)
-  const right = Math.min(box.right, window.innerWidth)
-  const bottom = Math.min(box.bottom, window.innerHeight)
-  if (right <= left || bottom <= top) return null
-  const kx = canvas.clientWidth / box.width
-  const ky = canvas.clientHeight / box.height
-  return widenRect(
-    {
-      x: (left - box.left) * kx,
-      y: (top - box.top) * ky,
-      width: (right - left) * kx,
-      height: (bottom - top) * ky,
-    },
-    0.25,
-  )
-}
+import { whenIdle } from './textResolutionStaging.js'
 
 /**
  * A zoom commits once neither the zoom nor wheel / pinch input changed for
@@ -107,10 +84,10 @@ const ZOOM_COMMIT_QUIET_MS = 300
 
 export interface CanvasProps {
   /**
-   * Callback volaný po úspěšném inicializaci Pixi (async).
-   * Při unmount volán s null pro signalizaci cleanup — consumers (DeckShell)
-   * musí vynulovat svůj canvasInstance state, aby stálé konzumery (VideoOverlay)
-   * neměly referenci na zničený SceneGraph/Compositor.
+   * Called once Pixi has initialised (async). Called with null on unmount:
+   * consumers (DeckShell) must clear their canvasInstance state, so that
+   * long-lived consumers (VideoOverlay) keep no reference to a destroyed
+   * SceneGraph / compositor.
    */
   onReady?: ((instance: CanvasInstance | null) => void) | undefined
   /**
@@ -173,6 +150,90 @@ export interface CanvasProps {
    * render page sets it. Fixed for the canvas's lifetime.
    */
   batchTextures?: number
+  /**
+   * Which canvas text rasters get mipmaps (runText/runTextSystem.ts →
+   * mipmapsFor). Default `always`: present mode's builds and transitions
+   * scale texts down while they play, and the render page's captures are
+   * drawn smaller than the canvas. The editor passes `resampled`: its texts
+   * rest on the device grid, drawn texel for device pixel, and a mipmap
+   * chain there is a third more GPU memory nothing samples. Fixed for the
+   * canvas's lifetime.
+   */
+  textMipmaps?: RunTextMipmaps
+  /**
+   * Default true: the canvas follows the window's devicePixelRatio itself —
+   * a new ratio (the window moved to another display, the browser's zoom)
+   * commits the zoom's resolution on the new grid and restages the texts
+   * (the editor). false: the canvas keeps the ratio it opened at until its
+   * owner switches it (`CanvasInstance.setPixelRatio`): present mode, whose
+   * DensityHandover prepares the slides for the new ratio off stage and
+   * switches the canvas in the task its set takes over — the canvas's own
+   * watch restaged the texts on stage, and the first advance after a change
+   * rasterised them (ADR 0020 → Present mode). Fixed for the canvas's
+   * lifetime.
+   */
+  followPixelRatio?: boolean
+}
+
+/** The highest resolution the canvas draws at (DPR 2 at the editor's 400 %). */
+const MAX_RESOLUTION = 8
+
+/**
+ * Off-screen texts are held to this resolution, at most (SceneGraph
+ * restageTextResolution): what the canvas's old 25 Mpx cap gave every text,
+ * so text memory stays where it was; texts in view get the full resolution.
+ */
+const OFFSCREEN_TEXT_RESOLUTION = 2.2
+
+/**
+ * The raster pixels the texts at the zoom's full resolution may hold
+ * together before those beyond the view are held to
+ * OFFSCREEN_TEXT_RESOLUTION as well (SceneGraph.restageTextResolution's
+ * `margin`; textResolutionStaging.ts → planTextResolutions). Texts in view
+ * always get the full resolution; within this budget, so do the texts in the
+ * drawn region's margin (a short scroll shows them sharp at once), and texts
+ * a scroll left keep theirs. 64 Mpx is 256 MB of exact-size, unmipmapped
+ * rasters: the crowded slide (120 texts, DPR 2) zoomed to 544 % held 149 Mpx
+ * without it — 81 Mpx of it the texts in view, 49 Mpx texts only the margin
+ * met — and 1.86 GB of textures in all before the exact textures
+ * (2026-10-31, ADR 0020 → texture memory); HEAD's capped canvas held 571 MB.
+ */
+const FULL_RESOLUTION_TEXT_BUDGET_PX = 64_000_000
+
+/** The texts beyond the view that may have the full resolution (FULL_RESOLUTION_TEXT_BUDGET_PX). */
+function textMargin(region: CanvasRegionController): ResolutionMargin | null {
+  const rect = region.visibleStageRect()
+  return rect === null ? null : { rect, budgetPx: FULL_RESOLUTION_TEXT_BUDGET_PX }
+}
+
+/**
+ * Run a layout of the region (`layout`: whether anything moved) and draw what
+ * it did: in this task when it reallocated the backbuffer — an empty one
+ * must not reach the compositor, and a frame asked for from a ResizeObserver
+ * or an animation-frame callback comes a frame late (present mode's density
+ * change composited an empty frame that way, 2026-10-31) — otherwise in the
+ * next frame when anything moved.
+ */
+function drawAfterLayout(
+  region: CanvasRegionController,
+  scheduler: RenderScheduler,
+  layout: () => boolean,
+): void {
+  const before = region.reallocations
+  const moved = layout()
+  if (region.reallocations !== before) scheduler.renderNow()
+  else if (moved) scheduler.markDirty()
+}
+
+/**
+ * The renderer's resolution for `zoom`: one backing pixel per device pixel
+ * at every zoom (ADR 0018 → Placement, ADR 0020). Below 100 % too: a canvas
+ * drawn at 1× and shrunk by the compositor cannot put a text's lines where
+ * the edit overlay draws them. The backing store's size does not depend on
+ * it (canvasRegion.ts): the canvas draws the region the window shows.
+ */
+function resolutionFor(zoom: number, pixelRatio: number): number {
+  return Math.max(0.05, Math.min(MAX_RESOLUTION, pixelRatio * zoom))
 }
 
 export function Canvas({
@@ -184,17 +245,83 @@ export function Canvas({
   gc = true,
   paceUploads = true,
   batchTextures,
+  textMipmaps = 'always',
+  followPixelRatio = true,
 }: CanvasProps = {}) {
   // Read once: the canvas is set up for one way of drawing.
   const onScreenRef = useRef(onScreen)
   const gcRef = useRef(gc)
   const paceUploadsRef = useRef(paceUploads)
   const batchTexturesRef = useRef(batchTextures)
+  const textMipmapsRef = useRef(textMipmaps)
+  const followPixelRatioRef = useRef(followPixelRatio)
   const containerRef = useRef<HTMLDivElement>(null)
   const overlayRootRef = useRef<HTMLDivElement>(null)
+  /** The zoom as last rendered (the canvas starts at its resolution). */
+  const zoomRef = useRef(zoom)
+  const bleedRef = useRef(bleedPx)
+  useLayoutEffect(() => {
+    zoomRef.current = zoom
+    bleedRef.current = bleedPx
+  }, [zoom, bleedPx])
+  /** The region the canvas draws (canvasRegionController.ts); null until Pixi is up, and offscreen. */
+  const regionRef = useRef<CanvasRegionController | null>(null)
+  /** The device px per CSS px the canvas draws for: the region's (the window's before it exists). */
+  const pixelRatio = useCallback(
+    (): number => regionRef.current?.pixelRatio ?? (window.devicePixelRatio || 1),
+    [],
+  )
+  /**
+   * Lay the canvas out again for its resolution (a resize, a new viewport):
+   * the backing store, the region, the device-grid shift; drawn again when
+   * anything moved.
+   */
+  const realign = useCallback((): void => {
+    const region = regionRef.current
+    const inst = instanceRef.current
+    if (region === null || inst === null || !onScreenRef.current) return
+    drawAfterLayout(region, inst.scheduler, () => region.layout())
+  }, [])
+
+  /**
+   * Give the canvas `resolution` (a zoom commit, a new pixel ratio): the
+   * region laid out for it — no reallocation while the window keeps its
+   * size (ADR 0020) — pictures at its density, texts staged to it, those in
+   * view first and in full, the others up to OFFSCREEN_TEXT_RESOLUTION.
+   */
+  const commitResolution = useCallback((resolution: number): void => {
+    const inst = instanceRef.current
+    const region = regionRef.current
+    if (inst === null || region === null) return
+    inst.sceneGraph.pinTextResolution()
+    const reallocationsBefore = region.reallocations
+    region.layout(resolution)
+    // A picture that now covers more pixels than its texture holds loads
+    // its larger variant and swaps it in (objectRenderers/imageRenderer.ts).
+    inst.sceneGraph.setPixelDensity(resolution)
+    inst.sceneGraph.restageTextResolution(
+      resolution,
+      region.visibleStageRect(0),
+      OFFSCREEN_TEXT_RESOLUTION,
+      textMargin(region),
+    )
+    // A reallocated backbuffer (a new pixel ratio) is drawn in this task (drawAfterLayout).
+    if (region.reallocations !== reallocationsBefore) inst.scheduler.renderNow()
+    else inst.scheduler.markDirty()
+  }, [])
 
   /** `performance.now()` of the last wheel / pinch input (the zoom commit waits for it to stop). */
   const lastZoomInputAt = useRef(-Infinity)
+  /**
+   * The placement watch's hold while a zoom gesture is under way (released
+   * at its commit): texts are compared with their rasters' places once, at
+   * the gesture's end, not at every phase the region passed through.
+   */
+  const zoomPlacementHold = useRef<(() => void) | null>(null)
+  const releaseZoomPlacementHold = useCallback((): void => {
+    zoomPlacementHold.current?.()
+    zoomPlacementHold.current = null
+  }, [])
 
   /** Pending changes from before Pixi is ready. Buffer and flush once instance exists. */
   const pendingChangesRef = useRef<
@@ -259,8 +386,14 @@ export function Canvas({
       app = new Application()
 
       await app.init({
-        ...(onScreenRef.current ? { resizeTo: containerEl } : { width: 1, height: 1 }),
-        resolution: window.devicePixelRatio || 1,
+        // Sized by the region controller below (canvasRegionController.ts);
+        // the zoom's own resolution from the first paint (resolutionFor): a
+        // deck opened at the fitted zoom is not rasterised twice.
+        width: 1,
+        height: 1,
+        resolution: onScreenRef.current
+          ? resolutionFor(zoomRef.current, pixelRatio())
+          : window.devicePixelRatio || 1,
         autoDensity: true,
         backgroundAlpha: 0,
         // P12b: don't run Pixi's built-in 60 Hz auto-render loop. The
@@ -307,7 +440,11 @@ export function Canvas({
       patchHTMLTextRace(app.renderer, { wakeRenderScheduler: true, counters: 'text' })
       // Where the page draws text from glyph runs (ADR 0018); the race-patched
       // raster above stays the fallback for what the runs cannot draw.
-      installRunText(app.renderer, { wakeRenderScheduler: true, counters: 'text' })
+      installRunText(app.renderer, {
+        wakeRenderScheduler: true,
+        counters: 'text',
+        mipmaps: textMipmapsRef.current,
+      })
       // A Graphics destroyed with its tree releases its own context (graphicsContextRelease.ts).
       releaseOwnedGraphicsContexts()
 
@@ -329,7 +466,27 @@ export function Canvas({
       const scheduler = new RenderScheduler(app)
       setDefaultRenderScheduler(scheduler)
       sceneGraph.setRenderScheduler(scheduler)
-      if (bleedPx !== 0) {
+      if (onScreenRef.current) {
+        const region = new CanvasRegionController(
+          app,
+          sceneGraph,
+          containerEl,
+          overlayRootEl,
+          () => bleedRef.current,
+          followPixelRatioRef.current ? 'window' : 'owned',
+        )
+        regionRef.current = region
+        region.layout(resolutionFor(zoomRef.current, region.pixelRatio))
+        // E2E / debugging: the region the canvas draws (dev builds only).
+        if (import.meta.env.DEV) {
+          ;(
+            window as unknown as { __narrative_canvas_region?: CanvasRegionController }
+          ).__narrative_canvas_region = region
+        }
+        // The ticker (a playing timeline) draws through the region too.
+        const liveApp = app
+        liveApp.render = (): void => renderStage(liveApp)
+      } else if (bleedPx !== 0) {
         sceneGraph.setSlideOrigin(bleedPx, bleedPx)
       }
       const initialArtboard = artboardSizeRef.current
@@ -352,7 +509,7 @@ export function Canvas({
         resourceManager.setUploadGate(
           new TextureUploadGate(pixiUploadTarget(liveApp.renderer), {
             budget: adaptiveUploadBudget(),
-            viewport: () => visibleCanvasRect(liveApp.canvas),
+            viewport: () => regionRef.current?.visibleStageRect() ?? null,
             locate: stageLocator(liveApp.stage),
           }),
         )
@@ -394,8 +551,8 @@ export function Canvas({
         w.__narrative_perf = { ...existing, app, resourceManager }
       }
 
-      // Flush pending changes co přišly před initem (např. initial emission
-      // z useSlideObjectChanges subscribe synchronně po subscribe).
+      // Flush the changes that arrived before the init (e.g. the initial
+      // emission of useSlideObjectChanges, synchronous on subscribe).
       for (const pending of pendingChangesRef.current) {
         applySlideChangesRef.current(sceneGraph, pending.changes, pending.info)
       }
@@ -408,8 +565,32 @@ export function Canvas({
       scheduler.renderNow()
       markFirstPaint()
 
-      // Informuj konzumenty (DeckShell → CanvasInstanceContext) o dostupné instanci
-      onReady?.({ sceneGraph, compositor })
+      // Tell the consumers (DeckShell → CanvasInstanceContext) the instance is ready.
+      onReady?.({
+        sceneGraph,
+        compositor,
+        pixelRatio,
+        setPixelRatio: (ratio: number): void => {
+          const region = regionRef.current
+          const live = instanceRef.current
+          if (!onScreenRef.current || region === null || live === null) {
+            throw new Error('Canvas.setPixelRatio: an on-screen canvas only')
+          }
+          if (Math.abs(region.pixelRatio - ratio) < 1e-9) return
+          region.switchPixelRatio(ratio, resolutionFor(zoomRef.current, ratio))
+          // Drawn before this task ends: the reallocated backbuffer is empty,
+          // and the owner's own draw (the swapped-in slide) counts.
+          live.scheduler.renderBeforeTaskEnds()
+        },
+        preparePixelRatio: (ratio: number, moved: () => void) => {
+          const region = regionRef.current
+          if (!onScreenRef.current || region === null) {
+            throw new Error('Canvas.preparePixelRatio: an on-screen canvas only')
+          }
+          const resolution = resolutionFor(zoomRef.current, ratio)
+          return { resolution, release: region.prepareFor(ratio, resolution, moved) }
+        },
+      })
 
       if (import.meta.env.DEV) {
         console.debug('[Canvas] Pixi initialized, Y.Doc observer active, OverlayCompositor ready')
@@ -483,6 +664,10 @@ export function Canvas({
         const w = window as unknown as { __narrative_perf?: unknown }
         if (w.__narrative_perf !== undefined) delete w.__narrative_perf
 
+        regionRef.current?.destroy()
+        regionRef.current = null
+        // The renderer (and its watch) went: nothing left to hold.
+        zoomPlacementHold.current = null
         instanceRef.current = null
         setPixiReady(false)
       }
@@ -710,14 +895,23 @@ export function Canvas({
     // The zoom moved: rasters for the committed resolution may be about to
     // be replaced. The commit below replaces the staging, or resumes it.
     instance.sceneGraph.pauseTextRestage()
+    if (onScreenRef.current)
+      zoomPlacementHold.current ??= holdPlacementRepaints(instance.app.renderer)
 
-    const dpr = window.devicePixelRatio || 1
-    const container = containerRef.current
-    const cw = container?.clientWidth ?? 1
-    const ch = container?.clientHeight ?? 1
-    const maxPixels = 25_000_000
-    const pixelCap = Math.sqrt(maxPixels / (cw * ch))
-    const effectiveRes = Math.min(pixelCap, dpr * Math.max(1, zoom))
+    const effectiveRes = resolutionFor(zoom, pixelRatio())
+    // The live zoom (a CSS scale) may show more of the world than the
+    // region holds, or another part of it: follow it now — a new transform,
+    // no reallocation; texts keep their rasters until the commit.
+    if (onScreenRef.current) {
+      const region = regionRef.current
+      if (region !== null) {
+        drawAfterLayout(
+          region,
+          instance.scheduler,
+          () => region.follow(() => instance.sceneGraph.pinTextResolution()).moved,
+        )
+      }
+    }
 
     let cancelIdle: (() => void) | null = null
     let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -738,7 +932,10 @@ export function Canvas({
     const commit = (): void => {
       cancelIdle = null
       const inst = instanceRef.current
-      if (inst === null || !onScreenRef.current) return
+      if (inst === null || !onScreenRef.current) {
+        releaseZoomPlacementHold()
+        return
+      }
       // Input that arrived while the idle callback waited: still the gesture.
       const quiet = performance.now() - lastZoomInputAt.current
       if (quiet < ZOOM_COMMIT_QUIET_MS) {
@@ -746,19 +943,15 @@ export function Canvas({
         return
       }
       const renderer = inst.app.renderer
-      if (Math.abs(renderer.resolution - effectiveRes) < 0.01) {
+      if (Math.abs(renderer.resolution - effectiveRes) < 1e-6) {
+        realign()
         inst.sceneGraph.resumeTextRestage()
-        return
+      } else {
+        commitResolution(effectiveRes)
       }
-      inst.sceneGraph.pinTextResolution()
-      renderer.resolution = effectiveRes
-      if (container !== null && cw > 0 && ch > 0) {
-        renderer.resize(cw, ch)
-      }
-      // A picture that now covers more pixels than its texture holds loads
-      // its larger variant and swaps it in (objectRenderers/imageRenderer.ts).
-      inst.sceneGraph.setPixelDensity(effectiveRes)
-      inst.sceneGraph.restageTextResolution(effectiveRes, visibleCanvasRect(inst.app.canvas))
+      // The gesture is over: what moved off its place is painted again
+      // (a resolution change is the staging's, not the watch's).
+      releaseZoomPlacementHold()
     }
 
     arm(ZOOM_COMMIT_QUIET_MS)
@@ -767,7 +960,39 @@ export function Canvas({
       if (debounceTimer !== null) clearTimeout(debounceTimer)
       cancelIdle?.()
     }
-  }, [zoom, pixiReady])
+  }, [zoom, pixiReady, realign, commitResolution, releaseZoomPlacementHold, pixelRatio])
+
+  // A pointer gesture (a drag, a resize, a slider scrubbed in the inspector)
+  // holds the placement watch until the button is released: a text that
+  // moves is painted again for where it rests at the gesture's end, not
+  // wherever the page stalled for 150 ms along the way (a garbage
+  // collection mid-drag painted every dragged text once more —
+  // `transform.move.multi`, 2026-10-30).
+  useEffect(() => {
+    const inst = instanceRef.current
+    if (inst === null || !onScreenRef.current) return
+    const renderer = inst.app.renderer
+    let release: (() => void) | null = null
+    const down = (): void => {
+      release ??= holdPlacementRepaints(renderer)
+    }
+    const up = (): void => {
+      release?.()
+      release = null
+    }
+    const opts: AddEventListenerOptions = { capture: true, passive: true }
+    window.addEventListener('pointerdown', down, opts)
+    window.addEventListener('pointerup', up, opts)
+    window.addEventListener('pointercancel', up, opts)
+    window.addEventListener('blur', up)
+    return () => {
+      window.removeEventListener('pointerdown', down, opts)
+      window.removeEventListener('pointerup', up, opts)
+      window.removeEventListener('pointercancel', up, opts)
+      window.removeEventListener('blur', up)
+      up()
+    }
+  }, [pixiReady])
 
   // When the last zoom input arrived (the zoom commit above waits for it to
   // stop): a wheel with Ctrl/Cmd (Chrome's trackpad pinch is one too) or
@@ -797,27 +1022,80 @@ export function Canvas({
     }
   }, [])
 
-  // ResizeObserver — reaguje na změnu velikosti parent kontejneru.
-  // Uses clientWidth/clientHeight (CSS-transform-independent) so the
-  // resize is correct when the container sits inside a scaled wrapper.
+  // The region follows what the window shows (canvasRegionController.ts):
+  // a resize of the viewport or the window lays the canvas out again (a new
+  // backing store only when its pixel count changes); a scroll moves the
+  // region when the view leaves it, and once the scroll has settled, texts
+  // that came into view get the full resolution (the off-screen ones were
+  // held to OFFSCREEN_TEXT_RESOLUTION). A pass that finds nothing changed
+  // writes nothing.
   useEffect(() => {
+    const inst = instanceRef.current
+    if (inst === null || !onScreenRef.current) return
+    let frame = 0
+    let settleTimer: ReturnType<typeof setTimeout> | null = null
+    const promoteInView = (): void => {
+      settleTimer = null
+      const live = instanceRef.current
+      const region = regionRef.current
+      if (live === null || region === null) return
+      const res = live.app.renderer.resolution
+      // Only at the zoom's own resolution: a gesture's staging is the commit's.
+      if (Math.abs(res - resolutionFor(zoomRef.current, pixelRatio())) > 1e-6) return
+      live.sceneGraph.restageTextResolution(
+        res,
+        region.visibleStageRect(0),
+        OFFSCREEN_TEXT_RESOLUTION,
+        textMargin(region),
+      )
+    }
+    const onScroll = (): void => {
+      if (frame !== 0) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        const region = regionRef.current
+        const live = instanceRef.current
+        if (region === null || live === null) return
+        drawAfterLayout(
+          region,
+          live.scheduler,
+          () => region.follow(() => live.sceneGraph.pinTextResolution()).moved,
+        )
+        if (settleTimer !== null) clearTimeout(settleTimer)
+        settleTimer = setTimeout(promoteInView, 200)
+      })
+    }
+    const onLayout = (): void => {
+      if (frame !== 0) cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        realign()
+      })
+    }
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true })
+    window.addEventListener('resize', onLayout)
+    const observer = new ResizeObserver(onLayout)
     const containerEl = containerRef.current
-    if (containerEl === null) return
-
-    const observer = new ResizeObserver(() => {
-      const instance = instanceRef.current
-      if (instance === null || !onScreenRef.current) return
-
-      const width = containerEl.clientWidth
-      const height = containerEl.clientHeight
-      if (width > 0 && height > 0) {
-        instance.app.renderer.resize(width, height)
-      }
-    })
-
-    observer.observe(containerEl)
-    return () => observer.disconnect()
-  }, [])
+    if (containerEl !== null) observer.observe(containerEl)
+    const viewport = containerEl?.closest('.artboard')?.parentElement ?? null
+    if (viewport !== null) observer.observe(viewport)
+    observer.observe(document.body)
+    // A new pixel ratio (the window moved to another display, the browser's
+    // zoom): the canvas takes the zoom's resolution on the new grid. Not on a
+    // canvas whose owner switches the ratio (`followPixelRatio`: present
+    // mode's DensityHandover, through `setPixelRatio`).
+    const unwatch = followPixelRatioRef.current
+      ? watchDevicePixelRatio(() => commitResolution(resolutionFor(zoomRef.current, pixelRatio())))
+      : () => undefined
+    return () => {
+      window.removeEventListener('scroll', onScroll, { capture: true })
+      window.removeEventListener('resize', onLayout)
+      observer.disconnect()
+      unwatch()
+      if (frame !== 0) cancelAnimationFrame(frame)
+      if (settleTimer !== null) clearTimeout(settleTimer)
+    }
+  }, [pixiReady, realign, commitResolution, pixelRatio])
 
   // Re-paint whenever the page becomes user-visible again. Two ways to get
   // here, both of which leave a blank or half-drawn canvas:

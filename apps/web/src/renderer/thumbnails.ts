@@ -4,25 +4,39 @@
  * Slide thumbnail renderer — rasterises a SlideObject[] to a PNG blob.
  *
  * Design:
- * - One shared offscreen Pixi Application per ThumbnailRenderer instance.
- * - The app is scaled so that the full 1920×1080 slide fits inside opts.width × derived-height.
- * - Each renderSlide() call builds a temporary Container, pipes SlideObject[] through the
- *   same objectRenderers registry (mount()), renders the frame, encodes it as a PNG blob
- *   (asynchronously: canvas.toBlob), then destroys the temp container. The offscreen app is reused across calls.
- * - Concurrent renderSlide() calls are serialised through a Promise chain so the offscreen
- *   canvas is never used by two renders simultaneously.
- * - Textures from the main ResourceManager are NOT used here — thumbnails render shapes
- *   and text inline. This keeps the thumbnail renderer self-contained and lightweight.
- *
- * Performance target (M9):
- *   < 16 ms per render with 10 objects on mid-range hardware.
- *   Further optimisation deferred to M29.
+ * - One shared offscreen Pixi Application per ThumbnailRenderer instance,
+ *   drawing into one render texture of the picture's size (never onto its
+ *   own canvas, which stays 1×1), anti-aliased (MSAA). The size is the
+ *   renderer's `width` or the one a render asks for — the size the picture
+ *   is shown at (ui/useThumbnailPixelWidth.ts). Until F10 every picture came
+ *   out 1920 × 1080 whatever was asked: Pixi's `extract.canvas(container)`
+ *   reads a container's local bounds, before its scale.
+ * - Each renderSlide() call builds a temporary Container scaled so that the
+ *   1920×1080 slide fits the thumbnail, pipes SlideObject[] through the same
+ *   objectRenderers registry (thumbnailMount() / mount()), waits for its
+ *   pictures and text rasters, draws it, queues the read-back of the pixels
+ *   and destroys the container. The read (a pixel-pack buffer behind a fence,
+ *   captureSlide.ts → queueTextureReadback) and the PNG encode finish while
+ *   the next thumbnail is already being mounted: the main thread never waits
+ *   for the GPU, and the GPU's work of one thumbnail overlaps the CPU's of
+ *   the next.
+ * - Concurrent renderSlide() calls are serialised through a Promise chain so
+ *   two renders never share the render texture.
+ * - Pictures (image objects, image backgrounds) come from the renderer's own
+ *   cache (thumbnailPictures.ts): loaded, decoded and uploaded once per
+ *   renderer, not once per thumbnail. The editor's ResourceManager cannot
+ *   lend them: this renderer has a WebGL context of its own.
+ * - Text is rasterised at the size it is drawn at, twice over
+ *   (`TEXT_OVERSAMPLE`) and never below half its font size
+ *   (`MIN_TEXT_RESOLUTION`), not at the slide's own size: a panel row shows
+ *   a 1920-wide slide ~224 px wide (performance.md → F10).
  *
  * Limitations:
  * - WebGL is required. Environments without WebGL (e.g. plain jsdom without canvas mock)
  *   will cause Application.init() to reject. Tests stub createThumbnailRenderer().
  * - Only object types registered in rendererRegistry are rendered; unknown types are skipped.
- * - resolution=1 is intentional — thumbnails are cheap display-only assets.
+ * - `resolution` multiplies the width; callers pass the device-pixel width
+ *   they want and resolution 1.
  */
 
 // Pixi generates shader/uniform sync code with `new Function`, which the
@@ -34,22 +48,67 @@
 // Dev has no CSP, so this only ever mattered in prod.
 import { collectHtmlTextRasters } from './htmlTextRaster.js'
 import 'pixi.js/unsafe-eval'
-import { Application, Container, Graphics } from 'pixi.js'
+import { Application, Container, Graphics, HTMLText, RenderTexture } from 'pixi.js'
 import { getRenderer } from './objectRenderers/index.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import { getThumbnailReady } from './thumbnailReady.js'
 import { stripFilterEffectsTree } from './filterEffects.js'
-import { applyBackground } from './ArtboardBackground.js'
+import { applyBackground, releaseBackground } from './ArtboardBackground.js'
 import { getDefaultImageUrlResolver } from './imageUrl.js'
 import { releaseOwnedGraphicsContexts } from './graphicsContextRelease.js'
 import { patchHTMLTextRace } from './patchHTMLTextRace.js'
 import { installRunText } from './runText/runTextSystem.js'
 import { destroyPixiApplication } from './pixiApplication.js'
-import { DEFAULT_BACKGROUND, perfCount } from '@narrative/shared'
+import { DEFAULT_BACKGROUND, perfCount, perfCountersOn } from '@narrative/shared'
 import type { SlideBackground, SlideObject } from '@narrative/shared'
 import { setRenderingSlideNumber } from './slideNumberContext.js'
 import { withRenderingSurface } from './colourResolver.js'
-import { canvasToPng } from './captureSlide.js'
+import { canvasToPng, queueTextureReadback } from './captureSlide.js'
+import { createThumbnailPictures, withThumbnailPictures } from './thumbnailPictures.js'
+
+/**
+ * A User Timing span (`thumb.<phase>`) of one phase of a thumbnail, while the
+ * perf harness counts (`?perf=1`): where a deck's thumbnail time goes, per
+ * engine, without a profiler (WebKit under Playwright has none).
+ */
+function span(name: string, start: number): number {
+  const end = performance.now()
+  if (perfCountersOn()) performance.measure(`thumb.${name}`, { start, end })
+  return end
+}
+
+/**
+ * Raster pixels per picture pixel of a text: sampled down 2:1 (mipmapped),
+ * its edges as smooth as the slide-size raster shrunk by the browser was.
+ */
+export const TEXT_OVERSAMPLE = 2
+/**
+ * Raster pixels per CSS pixel of a text, at least: a glyph is never
+ * rasterised below half its font size. Smaller, the browser's small-size
+ * rendering thins the strokes, and a 1× panel's text came out visibly lighter
+ * than the slide-size raster shrunk by the browser (F10, sampled pictures:
+ * mean difference to it 3.8 → 3.3 levels with this floor, 2.5 with MSAA too).
+ */
+const MIN_TEXT_RESOLUTION = 0.5
+
+/**
+ * Give every HTMLText under `node` the resolution it is drawn at (`scale`:
+ * device px per unit of `node`'s parent) times `TEXT_OVERSAMPLE`, at least
+ * `MIN_TEXT_RESOLUTION`, never more than `cap` (the renderer's own
+ * resolution: what Pixi would have used).
+ * Before the first frame: the first frame starts each raster at the
+ * resolution it then has.
+ */
+export function fitTextResolutions(node: Container, scale: number, cap: number): void {
+  const s = scale * Math.max(Math.abs(node.scale.x), Math.abs(node.scale.y))
+  if (node instanceof HTMLText) {
+    node.resolution = Math.min(cap, Math.max(MIN_TEXT_RESOLUTION, s * TEXT_OVERSAMPLE))
+  }
+  for (const child of node.children) fitTextResolutions(child as Container, s, cap)
+}
+
+/** Read-backs in flight before the next thumbnail waits for the oldest. */
+const MAX_PENDING_READS = 4
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -92,6 +151,8 @@ export interface ThumbnailRenderer {
     slideNumber?: number,
     /** The slide's surface (its layout's, A4.2d): its colour tokens resolve on it. */
     surface?: string,
+    /** The picture's width in pixels (before `resolution`); default: the renderer's `width`. */
+    width?: number,
   ): Promise<Blob>
 
   /**
@@ -114,19 +175,16 @@ export interface ThumbnailRenderer {
  * @param opts Optional configuration for width and resolution.
  */
 export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<ThumbnailRenderer> {
-  const outputWidth = opts?.width ?? 200
+  const defaultWidth = opts?.width ?? 200
   const resolution = opts?.resolution ?? 1
-
-  // Scale factor: map 1920-wide slide into outputWidth pixels.
-  const scale = outputWidth / SLIDE_WIDTH
-  const outputHeight = Math.round(SLIDE_HEIGHT * scale)
 
   // Offscreen Pixi Application — WebGL preferred, transparent background.
   // autoDensity:false means canvas CSS size = logical size (no extra scaling layer).
   const app = new Application()
   await app.init({
-    width: outputWidth,
-    height: outputHeight,
+    // Never drawn on: every frame goes into `target` below.
+    width: 1,
+    height: 1,
     backgroundAlpha: 0,
     autoDensity: false,
     resolution,
@@ -147,7 +205,37 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
   // A Graphics destroyed with its tree releases its own context (graphicsContextRelease.ts).
   releaseOwnedGraphicsContexts()
 
+  /**
+   * What every frame draws into, and the read-backs read from: the picture's
+   * size, made again when a render asks for another width. (A read still
+   * pending from the old one is not disturbed: GL keeps a texture deleted
+   * after a queued read alive until the read is done.)
+   */
+  let target: RenderTexture | null = null
+  let targetWidth = 0
+  const targetFor = (width: number): RenderTexture => {
+    if (target !== null && targetWidth === width) return target
+    target?.destroy(true)
+    targetWidth = width
+    target = RenderTexture.create({
+      width,
+      // A whole number of rows: 1080 × 200/1920 = 112.5 → 113 (as Pixi's extract rounded).
+      height: Math.max(1, Math.round((SLIDE_HEIGHT * width) / SLIDE_WIDTH)),
+      resolution,
+      // Edges anti-aliased (MSAA, resolved before the read): the picture used to
+      // be the slide at its own size shrunk by the browser, whose edges blend.
+      antialias: true,
+      // Read back as drawn; the page's default (Canvas.tsx) would add mipmaps per frame.
+      autoGenerateMipmaps: false,
+    })
+    return target
+  }
+  const pictures = createThumbnailPictures()
+  /** Read-backs and encodes still running, oldest first. */
+  const pendingReads: Promise<unknown>[] = []
+
   let destroyed = false
+  const gone = (): Error => new Error('[ThumbnailRenderer] renderer has been destroyed')
 
   // Serialisation queue — ensures the offscreen canvas is not shared across concurrent renders.
   // Each renderSlide() chains onto this promise so calls execute one-at-a-time.
@@ -169,11 +257,11 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
    * pools had been released under this renderer (pixiApplication.ts) — its
    * thumbnails silently stopped updating.
    */
-  function renderFrame(slideContainer: Container): void {
+  function renderFrame(target: RenderTexture, dispose: () => void): void {
     try {
-      app.renderer.render(app.stage)
+      app.renderer.render({ container: app.stage, target, clear: true })
     } catch (err) {
-      if (!slideContainer.destroyed) slideContainer.destroy({ children: true })
+      dispose()
       throw new Error(
         `[ThumbnailRenderer] render failed: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
@@ -183,16 +271,20 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
 
   async function renderSlideInternal(
     objects: SlideObject[],
-    background?: SlideBackground,
-    slideNumber?: number,
-    surface?: string,
-  ): Promise<Blob> {
+    background: SlideBackground | undefined,
+    slideNumber: number | undefined,
+    surface: string | undefined,
+    width: number,
+  ): Promise<{ picture: Promise<Blob> }> {
+    // Map the 1920-wide slide into `width` pixels.
+    const scale = width / SLIDE_WIDTH
     // Set the page-number context so any text leaf flagged
     // `isSlideNumber` rasterises with this slide's value. Cleared
     // before any await — concurrent thumbnail renders are serialised
     // through `renderQueue`, so we never have two slides racing for the
     // global, but we still defensively reset on each call.
     setRenderingSlideNumber(slideNumber)
+    let t = performance.now()
     // Build a temp container that holds the full slide content scaled to thumbnail size.
     const slideContainer = new Container()
     // Scale the entire slide down to thumbnail dimensions.
@@ -232,6 +324,33 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // ready promise. Declared above the bg block so the bg's promise can
     // be pushed alongside the per-object ones.
     const readyPromises: Promise<unknown>[] = []
+    const backgrounds: Container[] = []
+    // P12g: remember which renderer mounted each child so the destroy
+    // pass routes through `renderer.destroy()` instead of Pixi's generic
+    // `Container.destroy({ children: true })`. Without it, image / video
+    // child containers leaked their textures every render.
+    const mounted: Array<{ node: Container; type: string }> = []
+
+    /** Take the thumbnail apart: every object through its renderer, the background released. */
+    const dispose = (): void => {
+      app.stage?.removeChild(slideContainer)
+      for (const bg of backgrounds) releaseBackground(bg, (url) => pictures.release(url))
+      for (const { node, type } of mounted) {
+        if (node.destroyed) continue
+        const renderer = getRenderer(type)
+        if (renderer !== undefined) {
+          try {
+            renderer.destroy(node)
+          } catch (err) {
+            console.error(`[thumbnails] renderer.destroy(${type}) threw`, err)
+            if (!node.destroyed) node.destroy({ children: true })
+          }
+        } else if (!node.destroyed) {
+          node.destroy({ children: true })
+        }
+      }
+      if (!slideContainer.destroyed) slideContainer.destroy({ children: true })
+    }
 
     const effectiveBackground: SlideBackground = background ?? DEFAULT_BACKGROUND
     const bgResolver = (() => {
@@ -252,7 +371,10 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
         ...(bgResolver !== null
           ? { resolveAssetUrl: (assetId) => bgResolver({ assetId, variant: 'display' }) }
           : {}),
+        acquireTexture: (url) => pictures.acquire(url),
+        releaseTexture: (url) => pictures.release(url),
       })
+      backgrounds.push(bgContainer)
       // Wait for the image background's async decode before the one-shot
       // render below. Color + gradient backgrounds resolve synchronously,
       // so this is effectively a no-op for those.
@@ -265,13 +387,6 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // rasters or video posters, we must wait for those to resolve before
     // taking the one-shot render frame, otherwise the PNG captures only the
     // grey placeholder.
-    // P12g: remember which renderer mounted each child so the destroy
-    // pass below can route through `renderer.destroy()` instead of
-    // Pixi's generic `Container.destroy({ children: true })`. Without
-    // it, image / video child containers leaked their acquired
-    // ResourceManager textures every render — the registered
-    // releasePosterTexture / releaseTexture hooks never fired.
-    const mounted: Array<{ node: Container; type: string }> = []
     for (const obj of objects) {
       const renderer = getRenderer(obj.type)
       if (renderer === undefined) {
@@ -281,7 +396,9 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
       const mountFn = renderer.thumbnailMount ?? renderer.mount
       // Colours are read while mounting: on this slide's surface, without
       // repainting the editor's canvas (which shows another slide).
-      const node = withRenderingSurface(surface, () => mountFn.call(renderer, obj))
+      const node = withThumbnailPictures(pictures, () =>
+        withRenderingSurface(surface, () => mountFn.call(renderer, obj)),
+      )
       slideContainer.addChild(node)
       mounted.push({ node, type: obj.type })
       const ready = getThumbnailReady(node)
@@ -291,16 +408,18 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // Await all async mounts (image decode, video-info fetch). Each ready-
     // promise is already wrapped in its own try/catch inside thumbnailMount,
     // so a single failed asset does not reject the whole render.
+    t = span('mount', t)
     if (readyPromises.length > 0) {
       await Promise.allSettled(readyPromises)
     }
+    t = span('ready', t)
 
     // The app may have been destroyed during the await above (e.g. the
     // user navigated to present mode while thumbnails were still being
     // rendered). Abort instead of touching a torn-down renderer.
     if (destroyed || app.renderer === null) {
-      slideContainer.destroy({ children: true })
-      throw new Error('[ThumbnailRenderer] renderer has been destroyed')
+      dispose()
+      throw gone()
     }
 
     // P5c: DropShadowFilter + BlurFilter crash the offscreen thumbnail
@@ -309,10 +428,15 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // and blur in exchange for a render that actually succeeds.
     stripFilterEffectsTree(slideContainer)
 
+    // Text rasters at the size the thumbnail shows them (TEXT_OVERSAMPLE).
+    fitTextResolutions(slideContainer, resolution, app.renderer.resolution)
+
     app.stage.addChild(slideContainer)
 
     // Render one frame synchronously — the offscreen app is not running a ticker.
-    renderFrame(slideContainer)
+    const target = targetFor(width)
+    renderFrame(target, dispose)
+    t = span('frame1', t)
 
     // Pixi v8's HTMLText rasterizes its SVG asynchronously. The first
     // render() above kicks off that work but the Texture is still EMPTY
@@ -324,59 +448,44 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     const textPromises = collectHtmlTextRasters(slideContainer, app.renderer.uid)
     if (textPromises.length > 0) {
       await Promise.allSettled(textPromises)
+      t = span('text', t)
       if (destroyed || app.renderer === null) {
-        slideContainer.destroy({ children: true })
-        throw new Error('[ThumbnailRenderer] renderer has been destroyed')
+        dispose()
+        throw gone()
       }
-      renderFrame(slideContainer)
+      renderFrame(target, dispose)
+      t = span('frame2', t)
     }
 
-    // The frame as a canvas (synchronous: the read-back), then a PNG encoded
-    // asynchronously — the encode is off the main thread in Chromium, and no
-    // base64 string is made (renderer/thumbnailImages.ts). The container is
-    // destroyed only after the encode: the canvas holds the pixels by then.
-    const canvas = app.renderer.extract.canvas(slideContainer) as
-      HTMLCanvasElement | OffscreenCanvas
-    const png = await canvasToPng(canvas)
+    // The frame's pixels: queued now, in GL order (what the next thumbnail
+    // draws into `target` does not reach them), read and encoded while the
+    // next thumbnail is mounted. Without WebGL2, read at once.
+    const queued = queueTextureReadback(app.renderer, target, {
+      cpuCanvas: true,
+      lost: () => destroyed,
+    })
+    const canvas: Promise<HTMLCanvasElement | OffscreenCanvas> =
+      queued ??
+      Promise.resolve(app.renderer.extract.canvas(target) as HTMLCanvasElement | OffscreenCanvas)
+    t = span('extract', t)
 
-    // The renderer can be destroyed mid-await above (user navigated to
-    // present mode or the SlidesPanel unmounted). Pixi nullifies app.stage
-    // and app.renderer on destroy; touching them here would throw
-    // `Cannot read properties of null (reading 'removeChild')`. Bail out
-    // cleanly and let the caller .catch suppress it.
-    if (destroyed || app.stage === null || app.renderer === null) {
-      if (!slideContainer.destroyed) slideContainer.destroy({ children: true })
-      throw new Error('[ThumbnailRenderer] renderer has been destroyed')
-    }
+    // The container can go now: the read is queued behind its draws.
+    dispose()
+    span('destroy', t)
 
-    // Cleanup: remove from stage, destroy temp container and all mounted children.
-    app.stage.removeChild(slideContainer)
-
-    // P12g: route destroy through the registered renderer for each
-    // mounted child so texture / poll / Symbol-tag cleanup actually
-    // runs. The previous bare `child.destroy({ children: true })`
-    // bypassed videoRenderer.destroy()'s `releasePosterTexture` and
-    // imageRenderer.destroy()'s `releaseImageFill`, slowly draining
-    // ResourceManager refcounts on every thumbnail re-render.
-    for (const { node, type } of mounted) {
-      if (node.destroyed) continue
-      const renderer = getRenderer(type)
-      if (renderer !== undefined) {
-        try {
-          renderer.destroy(node)
-        } catch (err) {
-          console.error(`[thumbnails] renderer.destroy(${type}) threw`, err)
-          if (!node.destroyed) node.destroy({ children: true })
-        }
-      } else if (!node.destroyed) {
-        node.destroy({ children: true })
-      }
-    }
-    if (!slideContainer.destroyed) {
-      slideContainer.destroy()
-    }
-
-    return png
+    const encodeStart = performance.now()
+    const picture = canvas.then(
+      async (c) => {
+        if (destroyed) throw gone()
+        const png = await canvasToPng(c)
+        span('readEncode', encodeStart)
+        return png
+      },
+      (err: unknown) => {
+        throw destroyed ? gone() : err
+      },
+    )
+    return { picture }
   }
 
   // ---------------------------------------------------------------------------
@@ -389,6 +498,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
       background?: SlideBackground,
       slideNumber?: number,
       surface?: string,
+      width?: number,
     ): Promise<Blob> {
       if (destroyed) {
         return Promise.reject(new Error('[ThumbnailRenderer] renderer has been destroyed'))
@@ -412,10 +522,26 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
           }
           try {
             perfCount('thumb.render')
-            return renderSlideInternal(objects, background, slideNumber, surface).then(
-              resolveRender,
-              rejectRender,
-            )
+            return renderSlideInternal(
+              objects,
+              background,
+              slideNumber,
+              surface,
+              width ?? defaultWidth,
+            ).then(async ({ picture }) => {
+              picture.then(resolveRender, rejectRender)
+              // The read and the encode run on; the next thumbnail starts
+              // unless too many of them are still running.
+              const settled = picture.then(
+                () => undefined,
+                () => undefined,
+              )
+              pendingReads.push(settled)
+              void settled.then(() => {
+                pendingReads.splice(pendingReads.indexOf(settled), 1)
+              })
+              if (pendingReads.length >= MAX_PENDING_READS) await pendingReads[0]
+            }, rejectRender)
           } catch (err) {
             rejectRender(err)
           }
@@ -435,6 +561,8 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     destroy(): void {
       if (destroyed) return
       destroyed = true
+      pictures.destroy()
+      target?.destroy(true)
       // Destroy the offscreen Application and all GPU resources it holds —
       // but not Pixi's page-wide pools, which the editor canvas is drawing
       // with (pixiApplication.ts).

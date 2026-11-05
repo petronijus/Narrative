@@ -29,6 +29,7 @@
  */
 
 import { fontBox } from './fontBox.js'
+import { htmlTextCompatible } from './flag.js'
 import type { Decoration, GlyphRun, TextRunLayout } from './glyphRuns.js'
 import { stretchKeyword } from './glyphRuns.js'
 import { layoutHostRoot } from './layoutHost.js'
@@ -54,6 +55,17 @@ export interface ReadRunsOptions {
   canvas: { letterSpacing: boolean; fontStretch: boolean }
   /** Whether underlines can be drawn by the engine's rules (decorations.ts). */
   decorations: boolean
+  /**
+   * Whether the engine underlines the spaces that hang at the end of a
+   * wrapped line (WebKit does, Blink ends the line before them).
+   */
+  underlinesHangingSpace?: boolean
+  /**
+   * Baselines where the engine paints them: the content area's top plus the
+   * font's unrounded ascent (WebKit; fontBox.ts → paintAscent), not where
+   * the layout's baseline sits (Blink paints there).
+   */
+  baselineFromFontAscent?: boolean
 }
 
 interface ResolvedStyle {
@@ -310,8 +322,16 @@ function bidiRunsOf(range: Range, node: Text, f: Fragment): Fragment[] {
     const end = code >= 0xd800 && code <= 0xdbff && at + 1 < f.end ? at + 2 : at + 1
     range.setStart(node, at)
     range.setEnd(node, end)
+    // The character's own box is its widest rect: at a direction boundary
+    // WebKit adds a zero-width one at the neighbouring box's edge after it
+    // ("1" of "עברית 123": its glyph, then the Hebrew box's edge), and that
+    // one put the digit in the Hebrew run — drawn there, the "23" moved onto
+    // its place.
     const rects = [...range.getClientRects()].filter((q) => q.height > 0)
-    const q = rects[rects.length - 1]
+    const q = rects.reduce<DOMRect | undefined>(
+      (widest, r) => (widest === undefined || r.width > widest.width ? r : widest),
+      undefined,
+    )
     if (q === undefined || q.width === 0) {
       // A mark without a box of its own: it goes with the character before it.
       const prev = chars[chars.length - 1]
@@ -340,7 +360,19 @@ function bidiRunsOf(range: Range, node: Text, f: Fragment): Fragment[] {
   return out
 }
 
-const WORD = /\S+/gu
+/**
+ * The parts a fragment is drawn in where the layout places them: words, and
+ * on their own each piece of CJK punctuation and each CJK character (the
+ * layout's CJK advances need not be the canvas's: Japanese drifted a pixel
+ * every few characters). Chromium's layout trims and kerns fullwidth punctuation
+ * (`text-spacing-trim`) and spaces CJK from Latin (`text-autospace`); a canvas
+ * does neither, so the glyphs after such a place are put where the layout put
+ * them.
+ */
+const WORD =
+  /[\u3000-\u303f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65]|[\u2e80-\u2fdf\u3040-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]|[^\s\u3000-\u303f\u2e80-\u2fdf\u3040-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65]+/gu
+/** A fragment with CJK, whose glyphs the layout may have placed otherwise than the canvas. */
+const CJK_SPACING = /[\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff01-\uff65]/u
 const COLLAPSIBLE = /[\t\n\r\f]| {2}/u
 
 /** The words of a fragment at the positions the layout gave them (offsets from the run's x). */
@@ -410,6 +442,55 @@ export function containerDeclarations(cssStyle: string): string | null {
   return decls
 }
 
+/**
+ * The width of the spaces a fragment ends in where they hang at a soft wrap
+ * (the fragment is followed by another line of its node): they are in the
+ * fragment's box, but Blink's line ends before them and its decoration with
+ * it (e2e/text-runs-artboard.spec.ts: an underline 7 px too long at the end
+ * of each wrapped line). WebKit underlines them (the edit overlay, 2026-10-28:
+ * `u-small`), `underlinesHangingSpace`.
+ */
+function hangingWidth(range: Range, node: Text, f: Fragment): number {
+  if (f.end >= node.length || f.rtl === true) return 0
+  let k = f.end
+  while (k > f.start && /[ \t\n\r\f]/u.test(node.data[k - 1]!)) k--
+  if (k === f.end) return 0
+  range.setStart(node, k)
+  range.setEnd(node, f.end)
+  let w = 0
+  for (const q of range.getClientRects()) w += q.width
+  return Math.min(w, f.rect.width)
+}
+
+let spaceCtx: OffscreenCanvasRenderingContext2D | null = null
+
+/**
+ * The advance of the spaces a fragment ends in where they hang at a soft
+ * wrap, as the engine underlines them (WebKit: the line's decoration runs on
+ * through them, while their boxes report no width): the font's space advance
+ * and its letter spacing, once per space (one where white space collapses).
+ */
+function hangingAdvance(
+  node: Text,
+  f: Fragment,
+  font: string,
+  letterSpacing: number,
+  collapses: boolean,
+): number {
+  if (f.end >= node.length || f.rtl === true) return 0
+  // The spaces at the wrap, whichever line's box the layout counts them to.
+  let k = f.end
+  while (k > f.start && /[ \t]/u.test(node.data[k - 1]!)) k--
+  let e = f.end
+  while (e < node.length && /[ \t]/u.test(node.data[e]!)) e++
+  const n = collapses ? Math.min(1, e - k) : e - k
+  if (n === 0 || typeof OffscreenCanvas !== 'function') return 0
+  spaceCtx ??= new OffscreenCanvas(1, 1).getContext('2d')
+  if (spaceCtx === null) return 0
+  spaceCtx.font = font
+  return n * (spaceCtx.measureText(' ').width + letterSpacing)
+}
+
 /** Timings of the last `readRuns` call, ms (the harness reads them). */
 export const readRunsTimings = { layoutMs: 0, extractMs: 0 }
 
@@ -432,11 +513,26 @@ export function readRuns(
     domElement.innerHTML = `<style>${style.cssStyle}</style><div style='padding:0'>${markup}</div>`
     domElement.setAttribute('style', CONTAINER_INLINE)
   }
-  const width = domElement.scrollWidth - style.padding * 2
-  const height = domElement.scrollHeight - style.padding * 2
   const t1 = performance.now()
   const origin = domElement.getBoundingClientRect()
   const content = domElement.lastElementChild as HTMLElement
+  // The width the page anchors right- and centre-aligned text by: the
+  // content's own (a box is rarely a whole px wide); `scrollWidth` rounds it,
+  // and the raster's anchor correction (placement.ts) was off by the
+  // fraction — 0.7 device px at DPR 2. As for the height below.
+  const scrolledWidth = domElement.scrollWidth - style.padding * 2
+  const exactWidth = content.getBoundingClientRect().width
+  const width =
+    Math.abs(scrolledWidth - exactWidth) < 1 && !htmlTextCompatible() ? exactWidth : scrolledWidth
+  // The height the page aligns the block by: the content's own, in
+  // LayoutUnits. `scrollHeight` (what Pixi measures) rounds it to a whole
+  // px, and a bottom-aligned block then sat up to half a px higher than in
+  // the edit overlay — one of its lines a whole px off (ADR 0018 →
+  // Placement). Where the two disagree by more than the rounding (content
+  // overflowing its box), `scrollHeight` as before.
+  const scrolled = domElement.scrollHeight - style.padding * 2
+  const exact = content.getBoundingClientRect().height
+  const height = Math.abs(scrolled - exact) < 1 && !htmlTextCompatible() ? exact : scrolled
   const styles = new Map<Element, ResolvedStyle>()
   const decorators = new Map<Element, Decorator | null>()
   const runs: GlyphRun[] = []
@@ -488,7 +584,7 @@ export function readRuns(
     const decorBox =
       decorator === null ? null : fontBox(decorator.font, decorator.stretchCss, opts.generation)
     const box = fontBox(rs.font, rs.stretchCss, opts.generation)
-    const ascent = box.ascent
+    const ascent = opts.baselineFromFontAscent === true ? box.paintAscent : box.ascent
     const fragments = fragmentsOf(range, node, box.ascent + box.descent)
     for (const f of bidi ? fragments.flatMap((q) => bidiRunsOf(range, node, q)) : fragments) {
       const raw = node.data.slice(f.start, f.end)
@@ -502,12 +598,22 @@ export function readRuns(
           ? null
           : {
               x: f.rect.left - origin.left,
-              width: f.rect.width,
+              width:
+                f.rect.width -
+                hangingWidth(range, node, f) +
+                (opts.underlinesHangingSpace === true
+                  ? hangingAdvance(node, f, rs.font, rs.letterSpacing, rs.collapses)
+                  : 0),
               top,
               fontSize: decorator.fontSize,
               font: decorator.font,
-              ascent: decorBox.ascent,
-              descent: decorBox.descent,
+              // WebKit places the line from the font's unrounded ascent
+              // (InlineTextBoxStyle → computedUnderlineOffset).
+              ascent: opts.baselineFromFontAscent === true ? decorBox.paintAscent : decorBox.ascent,
+              descent:
+                opts.baselineFromFontAscent === true
+                  ? decorBox.ascent + decorBox.descent - decorBox.paintAscent
+                  : decorBox.descent,
               color: decorator.color,
               runs: [],
             }
@@ -535,7 +641,10 @@ export function readRuns(
       // collapsed string is drawn from the box's start.
       const tabbed = !rs.collapses && /\t/u.test(raw)
       const collapsed = rs.collapses && COLLAPSIBLE.test(raw)
-      if (f.rtl !== true && (tabbed || (opts.wordsAtSpaces && (spaced || collapsed)))) {
+      if (
+        f.rtl !== true &&
+        (tabbed || (opts.wordsAtSpaces && (spaced || collapsed || CJK_SPACING.test(raw))))
+      ) {
         run.parts = wordParts(
           range,
           node,

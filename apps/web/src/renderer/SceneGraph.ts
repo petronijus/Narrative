@@ -27,7 +27,7 @@
  * node is left alone.
  */
 
-import { Container, Point } from 'pixi.js'
+import { Container, HTMLText, Point } from 'pixi.js'
 import { perfCount, perfCountFor } from '@narrative/shared'
 import type { Application } from 'pixi.js'
 import * as Y from 'yjs'
@@ -52,9 +52,17 @@ import { fontFamilyNames } from '@narrative/slide-model'
 import type { SlideObject, SlideObjectType, ObjectChangeSet } from '@narrative/shared'
 import type { ObjectBounds } from './types'
 import type { RenderScheduler } from './RenderScheduler'
-import { BatchStager, rectDistance, stagingOrder, type Rect } from './textResolutionStaging.js'
-import { AdaptiveBudget, LongTaskWatch } from './restageBudget.js'
+import {
+  BatchStager,
+  planTextResolutions,
+  type Rect,
+  type ResolutionMargin,
+} from './textResolutionStaging.js'
+import { AdaptiveBudget, FrameGapWatch, LongTaskWatch } from './restageBudget.js'
 import { withPixelDensity, type VariantFloor } from './pixelDensityContext.js'
+import { EDITED_TEXT_ALPHA } from './editedTextAlpha.js'
+import { rasterStaleTextNow } from './runText/runTextSystem.js'
+import { releaseIdlePooledTextures } from './ResourceManager.js'
 
 interface SceneNode {
   container: Container
@@ -134,8 +142,37 @@ interface ResolutionText {
   readonly styleKey: string
   resolution: number | null
   destroyed: boolean
-  /** False when the text or one of its ancestors is hidden: it is not drawn. */
-  readonly worldVisible: boolean
+  visible: boolean
+  renderable: boolean
+  alpha: number
+  parent: ResolutionParent | null
+}
+
+/** What `drawnOnStage` reads up a text's ancestors (Pixi's Container). */
+interface ResolutionParent {
+  visible: boolean
+  renderable: boolean
+  alpha: number
+  parent: ResolutionParent | null
+}
+
+/**
+ * Whether `node` is drawn when `stage` is: it and every ancestor visible,
+ * renderable and not transparent, up to `stage`. Pixi v8 has no
+ * `worldVisible` (v7 had): the staging read it as undefined, took every
+ * text for hidden and handed them all the new resolution in the commit's
+ * first batch — the 121 texts of a crowded slide rasterised and uploaded
+ * within two frames (55–80 Mpx a frame), 33–100 ms frames after every zoom
+ * commit (`viewport.zoom.commit`, 2026-10-30; since 2026-10-18).
+ */
+function drawnOnStage(node: ResolutionParent, stage: unknown): boolean {
+  let n: ResolutionParent | null = node
+  while (n !== null) {
+    if (!n.visible || !n.renderable || n.alpha <= 0) return false
+    if (n === stage) return true
+    n = n.parent
+  }
+  return false
 }
 
 /**
@@ -144,10 +181,15 @@ interface ResolutionText {
  * many texture pixels. The pixels are what costs — rasterising the SVG into
  * a canvas, the upload, its mipmaps (measured on an M3 Pro, ANGLE Metal:
  * 2.5–5 ms of texSubImage2D per Mpx) — and one text of a crowded slide at a
- * high zoom is anything from 0.1 to several Mpx. 8 texts a frame by count
- * alone still left a ~220 ms task behind the zoom commit there.
+ * high zoom is anything from 0.1 to several Mpx. (The "8 texts a frame still
+ * left a ~220 ms task" measured on 2026-10-18 was every text at once: the
+ * staging's visibility check never held a text back until 2026-10-30, see
+ * `drawnOnStage`.) The count is the cap for small texts — a zoom out — once
+ * the pixels no longer are: 24 spread a crowded slide's 121 commits over
+ * 30–60 frames with none over 16.8 ms (probe 2026-10-30, M3 Pro, run text;
+ * 8: the same frames, 30 % more of them).
  */
-const TEXT_RESTAGE_MAX_PER_FRAME = 8
+const TEXT_RESTAGE_MAX_PER_FRAME = 24
 const TEXT_RESTAGE_PX_PER_FRAME = 2_000_000
 /**
  * Where the browser reports long tasks, the pixel budget follows them
@@ -158,6 +200,12 @@ const TEXT_RESTAGE_PX_PER_FRAME = 2_000_000
  */
 const TEXT_RESTAGE_MIN_PX = 250_000
 const TEXT_RESTAGE_MAX_PX = 4_000_000
+/**
+ * A page whose frames come further apart than this, whatever the staging
+ * does (four 60 Hz frames), gets the rest of a staging at once
+ * (SceneGraph.nextRestageBudget).
+ */
+const TEXT_RESTAGE_SLOW_FRAME_MS = 66
 /** A text off screen gets its new resolution this long after it was due at the latest, idle or not. */
 const TEXT_RESTAGE_IDLE_TIMEOUT_MS = 1000
 /**
@@ -215,6 +263,15 @@ export class SceneGraph {
   private readonly nodeTypes = new Map<string, SlideObjectType>()
   /** Text being edited inline, drawn faded under the editing overlay (setTextNodeFaded). */
   private readonly fadedText = new Set<string>()
+  /**
+   * Texts the edit overlay has just left, shown again in the next frame this
+   * canvas draws (`prerender`): by then the last keystroke has reached the
+   * node, and a raster of it still in a worker is painted on the page first
+   * (rasterStaleTextsNow) — the frame that no longer has the overlay draws
+   * the text as typed, never the text from before.
+   */
+  private readonly unfadeNextFrame = new Set<string>()
+  private readonly unfadeRunner = { prerender: (): void => this.flushUnfades() }
   /**
    * Reverse lookup Container → objectId, kept in sync with `nodes`.
    * Used by hitTest to walk root.children (visual z-order is the source
@@ -276,7 +333,7 @@ export class SceneGraph {
 
   /** Hands a zoom's new resolution to the texts, a batch per frame (restageTextResolution). */
   private readonly textStager = new BatchStager({
-    maxJobs: TEXT_RESTAGE_MAX_PER_FRAME,
+    maxJobs: () => (this.framesSlow() ? Infinity : TEXT_RESTAGE_MAX_PER_FRAME),
     budget: () => this.nextRestageBudget(),
     maxWaitFrames: TEXT_RESTAGE_MAX_WAIT_FRAMES,
     idleTimeout: TEXT_RESTAGE_IDLE_TIMEOUT_MS,
@@ -288,8 +345,10 @@ export class SceneGraph {
     TEXT_RESTAGE_MIN_PX,
     TEXT_RESTAGE_MAX_PX,
   )
-  /** The page's long tasks; null where the browser reports none (the budget stays fixed). */
+  /** The page's long tasks; null where the browser reports none. */
   private readonly longTasks = LongTaskWatch.create()
+  /** The frames missed while a staging runs: its uploads land on the GPU, not in a task. */
+  private readonly frameGaps = new FrameGapWatch()
   /** When the current staging's last batch began (null before its first). */
   private lastRestageBatchAt: number | null = null
 
@@ -323,6 +382,8 @@ export class SceneGraph {
     this.app = app
     this.root = new Container()
     this.app.stage.addChild(this.root)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi's runners are untyped on Renderer
+    ;(app.renderer as any)?.runners?.prerender?.add(this.unfadeRunner)
     this.unsubscribeColourResolver = subscribeColourResolver(({ prev, next }) => {
       if (this.ignoreColourChanges) return
       this.repaintTokenColours(prev, next)
@@ -838,9 +899,32 @@ export class SceneGraph {
    */
   setTextNodeFaded(id: string, faded: boolean, silent = false): void {
     if (!silent) {
-      if (faded) this.fadedText.add(id)
-      else this.fadedText.delete(id)
+      if (faded) {
+        this.fadedText.add(id)
+        this.unfadeNextFrame.delete(id)
+      } else {
+        // Shown again in the next frame (unfadeNextFrame).
+        this.fadedText.delete(id)
+        this.unfadeNextFrame.add(id)
+        this.markDirty()
+        return
+      }
     }
+    this.applyTextFade(id, faded, silent)
+  }
+
+  /** Show again the texts the overlay left (the renderer's `prerender`, before the frame is drawn). */
+  private flushUnfades(): void {
+    if (this.unfadeNextFrame.size === 0) return
+    const ids = [...this.unfadeNextFrame]
+    this.unfadeNextFrame.clear()
+    for (const id of ids) {
+      this.rasterStaleTextsNow(id)
+      this.applyTextFade(id, false, true)
+    }
+  }
+
+  private applyTextFade(id: string, faded: boolean, silent: boolean): void {
     const dirty = (): void => {
       if (!silent) this.markDirty()
     }
@@ -871,8 +955,68 @@ export class SceneGraph {
     const textChild = container.children.find((c) => (c as any).anchor !== undefined) as
       { alpha: number } | undefined
     if (textChild === undefined) return
-    textChild.alpha = faded ? 0 : 1
+    textChild.alpha = faded ? EDITED_TEXT_ALPHA : 1
     dirty()
+  }
+
+  /** Every text of object `id` (a cell id: its table) whose raster is stale, painted now (runText). */
+  private rasterStaleTextsNow(id: string): void {
+    const hash = id.indexOf('#')
+    const container = this.nodes.get(hash > 0 ? id.slice(0, hash) : id)?.container
+    if (container === undefined) return
+    const renderer = this.app.renderer
+    const walk = (c: Container): void => {
+      if (c instanceof HTMLText) rasterStaleTextNow(renderer, c)
+      for (const child of c.children) walk(child as Container)
+    }
+    walk(container)
+  }
+
+  /**
+   * Resolves once every text of object `id` (a text box, or a table — a
+   * cell id `table#r,c` stands for its table) has on the canvas a raster of
+   * its current text and style, or after `timeoutMs`. What the edit overlay
+   * waits for before it goes: the frame that removes it then draws what was
+   * typed, not the text from before the last keystroke for the frames a
+   * raster takes (ADR 0018; e2e/text-edit-transition.spec.ts). The texts
+   * keep rasterising while faded (editedTextAlpha.ts).
+   */
+  whenTextRasterCurrent(id: string, timeoutMs = 300): Promise<void> {
+    const hash = id.indexOf('#')
+    const container = this.nodes.get(hash > 0 ? id.slice(0, hash) : id)?.container
+    if (container === undefined) return Promise.resolve()
+    const uid = (this.app.renderer as unknown as { uid: number }).uid
+    interface Rasterised {
+      destroyed: boolean
+      styleKey?: string
+      anchor?: unknown
+      children?: Rasterised[]
+      _gpuData?: Record<number, { generatingTexture?: boolean; currentKey?: string }>
+    }
+    const current = (n: Rasterised): boolean => {
+      if (n.destroyed) return true
+      if (n.anchor !== undefined && typeof n.styleKey === 'string') {
+        const gpu = n._gpuData?.[uid]
+        if (gpu === undefined || gpu.generatingTexture === true || gpu.currentKey !== n.styleKey)
+          return false
+      }
+      return (n.children ?? []).every(current)
+    }
+    const root = container as unknown as Rasterised
+    if (current(root)) return Promise.resolve()
+    this.markDirty()
+    const deadline = performance.now() + timeoutMs
+    return new Promise((resolve) => {
+      const check = (): void => {
+        if (current(root) || performance.now() >= deadline) {
+          resolve()
+          return
+        }
+        this.markDirty()
+        requestAnimationFrame(check)
+      }
+      requestAnimationFrame(check)
+    })
   }
 
   /**
@@ -1103,17 +1247,30 @@ export class SceneGraph {
    * `wireRedrawOnAsyncTextureUpdate`) follows it with frames of its own —
    * and lays the text out again if its measured size moved.
    */
-  restageTextResolution(resolution: number, visibleRect: Rect | null): void {
-    const texts: Array<{ text: ResolutionText; ownerId: string | undefined }> = []
+  restageTextResolution(
+    resolution: number,
+    visibleRect: Rect | null,
+    /**
+     * The most a text outside `visibleRect` gets (ADR 0020: the canvas has
+     * the zoom's own resolution at every zoom, up to 8 — a whole slide of
+     * texts at that would be hundreds of MB). An off-screen text already
+     * sharper keeps its raster (a scroll does not churn rasters); a later
+     * call with the text in view gives it `resolution`.
+     */
+    offscreenCap = Infinity,
+    /**
+     * The texts beyond `visibleRect` that may have `resolution` too: those
+     * meeting `margin.rect` (the drawn region), while the texts at full
+     * resolution add up to `margin.budgetPx` (planTextResolutions). Null:
+     * none beyond `visibleRect`.
+     */
+    margin: ResolutionMargin | null = null,
+  ): void {
+    const all: Array<{ text: ResolutionText; ownerId: string | undefined }> = []
     this.forEachText((text, ownerId) => {
-      if (!text._autoResolution && text._resolution !== resolution) texts.push({ text, ownerId })
+      if (!text._autoResolution) all.push({ text, ownerId })
     })
-    perfCount('text.restage')
-    perfCount('text.restage.texts', texts.length)
-    this.lastRestageBatchAt = null
-    // The canvas was just resized (its backbuffer is empty): draw it again
-    // even when no text needs a new raster.
-    this.markDirty()
+    const texts = all.filter(({ text }) => text._resolution !== resolution)
     const boxes = new Map<string, Rect | null>()
     const boxOf = ({ ownerId }: { ownerId: string | undefined }): Rect | null => {
       if (ownerId === undefined) return null
@@ -1144,27 +1301,61 @@ export class SceneGraph {
       const gpu = text._gpuData?.[rendererUid]
       return gpu !== undefined && gpu.generatingTexture !== true && gpu.currentKey === text.styleKey
     }
-    const ordered = stagingOrder(texts, boxOf, visibleRect)
-    const onScreen =
-      visibleRect === null
-        ? ordered.length
-        : ordered.findIndex((item) => {
-            const box = boxOf(item)
-            return box === null || rectDistance(box, visibleRect) > 0
-          })
+    const plan = planTextResolutions(
+      all.map((item) => ({
+        box: boxOf(item),
+        now: item.text._resolution ?? 0,
+        px: rasterPixels(item.text),
+      })),
+      resolution,
+      visibleRect,
+      margin,
+      offscreenCap,
+    )
+    const ordered = plan.order.map((k) => all[k]!)
+    const deferFrom = plan.deferFrom
+    const targetOf = (_text: ResolutionText, i: number): number => plan.targets[i]!
+    if (ordered.every(({ text }, i) => text._resolution === targetOf(text, i))) {
+      // Nothing to hand out (every text in view at `resolution`, those out
+      // of it at what they may keep): an older staging's rest is moot, and
+      // no frame is drawn — a commit draws its own (Canvas.tsx →
+      // commitResolution). A settled scroll asked for this after every zoom
+      // gesture that scrolled, one that ended where it started included, and
+      // drew a frame and moved a counter 200 ms later (`viewport.zoom.wheel`
+      // settle 21 → 321 ms, 2026-10-30).
+      this.textStager.cancel()
+      return
+    }
+    perfCount('text.restage')
+    perfCount('text.restage.texts', texts.length)
+    this.lastRestageBatchAt = null
+    // The frames are watched while the staging has work left, and for a few
+    // frames after its last batch (its uploads land then).
+    let tail = TEXT_RESTAGE_MAX_WAIT_FRAMES
+    this.frameGaps.watch(() => {
+      if (this.textStager.pending > 0 && !this.textStager.paused)
+        tail = TEXT_RESTAGE_MAX_WAIT_FRAMES
+      if (tail-- > 0) return true
+      // Landed: what the staging handed back to Pixi's pool leaves the GPU
+      // now, not a minute later (ResourceManager → releaseIdlePooledTextures).
+      if (this.textStager.pending === 0) releaseIdlePooledTextures(this.app.renderer)
+      return false
+    })
+    this.markDirty()
     this.textStager.stage(
-      ordered.map(({ text }) => () => {
-        if (text.destroyed || text._autoResolution || text._resolution === resolution) return null
-        if (!text.worldVisible) {
+      ordered.map(({ text }, i) => () => {
+        const target = targetOf(text, i)
+        if (text.destroyed || text._autoResolution || text._resolution === target) return null
+        if (!drawnOnStage(text, this.app.stage)) {
           // Nothing is drawn for it, so nothing rasterises now: no place in a batch.
-          text.resolution = resolution
+          text.resolution = target
           return null
         }
-        const cost = rasterPixels(text)
-        text.resolution = resolution
+        const cost = rasterPixels(text) * (target / resolution) ** 2
+        text.resolution = target
         return { cost, settled: () => landed(text) }
       }),
-      { deferFrom: onScreen === -1 ? ordered.length : onScreen },
+      { deferFrom },
     )
   }
 
@@ -1175,14 +1366,37 @@ export class SceneGraph {
    * budget as it stands — the commit before it is a long task of its own.
    */
   private nextRestageBudget(): number {
-    if (this.longTasks === null) return TEXT_RESTAGE_PX_PER_FRAME
     const now = performance.now()
     const since = this.lastRestageBatchAt
     this.lastRestageBatchAt = now
+    // A page that draws slower than an interactive rate whatever the batch
+    // (software GL, a starved machine): spreading the uploads cannot keep
+    // its frames smooth and only multiplies them — every frame then takes
+    // what one costs anyway (a dev page at 400 % on SwiftShader drew one
+    // frame a second, and a staging of 121 texts at a text a frame took
+    // two minutes, 2026-10-30). The rest is handed out at once.
+    if (this.framesSlow()) {
+      this.longTasks?.since(now)
+      this.frameGaps.since(now)
+      return Infinity
+    }
     if (since === null) return this.restageBudget.value
-    const longTask = this.longTasks.since(since)
+    // Both asked (each forgets what is older than `since`). A long task is
+    // the batch's when it is longer than the page's frames are anyway.
+    const longTask = this.longTasks?.since(since, 1.5 * this.frameGaps.interval) ?? false
+    const frameGap = this.frameGaps.since(since)
     if (longTask) perfCount('text.restage.shrunk')
-    return this.restageBudget.next(longTask)
+    if (frameGap) perfCount('text.restage.shrunk.frame')
+    return this.restageBudget.next(longTask || frameGap)
+  }
+
+  /**
+   * Whether the page draws slower than `TEXT_RESTAGE_SLOW_FRAME_MS`: its
+   * typical frame (FrameGapWatch's median), not its quickest — one quick
+   * frame among slow ones does not make a slow page fast.
+   */
+  private framesSlow(): boolean {
+    return this.frameGaps.typicalInterval > TEXT_RESTAGE_SLOW_FRAME_MS
   }
 
   /**
@@ -1412,8 +1626,11 @@ export class SceneGraph {
    * proper error handling, then the node tree is torn down.
    */
   destroy(): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi's runners are untyped on Renderer
+    ;(this.app.renderer as any)?.runners?.prerender?.remove(this.unfadeRunner)
     this.textStager.cancel()
     this.longTasks?.disconnect()
+    this.frameGaps.stop()
     this.unsubscribeColourResolver()
     this.unsubscribeFontChanges()
     this.unsubscribeTextLayout()

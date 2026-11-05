@@ -48,6 +48,7 @@ import { extractFontFamilies, getFontCss, HTMLTextRenderData, isSafari } from 'p
 import type { HTMLTextStyle, Renderer, Texture } from 'pixi.js'
 import { perfCount, perfCountersOn } from '@narrative/shared'
 import { markRenderDirty } from './RenderScheduler.js'
+import { maxTextureSide } from './maxTextureSide.js'
 import { createGroupRaster, htmlTextRasterGroup } from './htmlTextGroupRaster.js'
 
 const PATCHED = Symbol('narrativeHtmlTextPatched')
@@ -307,6 +308,42 @@ export function rebindSourceListeners(
   }
 }
 
+/**
+ * `options` as Pixi rasterises it, at a resolution whose pooled texture the
+ * GPU holds. Pixi's raster is the measured text plus its padding times the
+ * resolution, in a power-of-two pooled texture (`_buildTexturePromise`); past
+ * the GPU's largest texture it was drawn as a black block (a 120 px line at
+ * 400 %: e2e/text-runs-artboard, the HTMLText side). Such a text is
+ * rasterised at the largest resolution that fits — a little soft, never
+ * missing. The run painter does the same where it cannot cut a raster to the
+ * drawn region (runText/runTextSystem.ts); here it serves the `html` engine
+ * and the runs' per-text fallback.
+ */
+function withinTexture(renderer: Renderer, options: unknown, softened: string): unknown {
+  const text = options as {
+    resolution?: number
+    bounds?: { width: number; height: number }
+    style?: { padding?: number }
+  }
+  const resolution = text.resolution
+  const bounds = text.bounds
+  if (resolution === undefined || !(resolution > 0) || bounds === undefined) return options
+  const padding = text.style?.padding ?? 0
+  const side = Math.max(
+    Math.ceil(Math.max(1, bounds.width) + padding * 2),
+    Math.ceil(Math.max(1, bounds.height) + padding * 2),
+  )
+  // Pixi's image is the raster plus a 2 px UV margin, pooled to a power of two.
+  const limit = maxTextureSide(renderer) - 3
+  if (Math.ceil(side * resolution) <= limit) return options
+  perfCount(softened)
+  // The node itself keeps its resolution (setting it would ask for another
+  // raster); Pixi reads everything else through the prototype.
+  return Object.create(options as object, {
+    resolution: { value: Math.floor((limit / side) * 64) / 64 },
+  }) as unknown
+}
+
 export function patchHTMLTextRace(
   renderer: Renderer,
   opts: {
@@ -321,6 +358,7 @@ export function patchHTMLTextRace(
   const kpx = `${counters}.raster.kpx`
   const fontKb = `${counters}.raster.fontKb`
   const safariDelay = `${counters}.raster.safariDelay`
+  const softened = `${counters}.raster.softened`
   // TEMP: regression-test bypass — set window.__disableHtmlTextRacePatch
   // before app init to skip this patch and confirm the test catches
   // the underlying Pixi race. Production never sets this.
@@ -354,7 +392,8 @@ export function patchHTMLTextRace(
     deferred.building++
     let texture: TextureLike | undefined
     try {
-      texture = (await original(options)) as TextureLike | undefined
+      texture = (await original(withinTexture(renderer, options, softened))) as
+        TextureLike | undefined
     } finally {
       deferred.building--
     }

@@ -2426,6 +2426,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                       bleedPx={400}
                       artboardSize={canvasSize}
                       zoom={zoom}
+                      textMipmaps="resampled"
                     />
 
                     {/* Artboard rim — drawn ABOVE the Pixi canvas since Pixi bleeds

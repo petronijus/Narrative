@@ -19,6 +19,11 @@ vi.mock('pixi.js', () => ({ FontStylePromiseCache: pixi.fontCss, Cache: pixi.Cac
 import {
   _resetFontChangesForTests,
   announceFontFamilyChanged,
+  clearHtmlTextFacePending,
+  familiesOnTheWayIn,
+  markHtmlTextFacePending,
+  setFontListPending,
+  whenFamiliesSettled,
   createFontLoadFilter,
   isEmbeddableFamilyName,
   htmlTextFontKeys,
@@ -210,6 +215,67 @@ describe('subscribeHtmlTextFaces (the canvas text workers, ADR 0018)', () => {
     setHtmlTextFace({ key: 'x', family: 'Bad"Name', weight: '400', style: 'normal', bytes: ttf(1) })
     stop()
     expect(seen).toEqual([])
+  })
+})
+
+describe('faces on their way (first rasters wait for them, ADR 0018 → Fonts)', () => {
+  afterEach(() => {
+    _resetFontChangesForTests()
+    vi.useRealTimers()
+  })
+
+  it('finds the families a text names that have a face downloading', () => {
+    markHtmlTextFacePending('a1', 'Narrative Tall Test')
+    expect(
+      familiesOnTheWayIn(`<span style="font-family: 'Narrative Tall Test'">x</span>`, ''),
+    ).toEqual(['Narrative Tall Test'])
+    expect(familiesOnTheWayIn('plain', "font-family: 'Inter'")).toEqual([])
+  })
+
+  it('settles when the face is registered, when it fails, or after the timeout', async () => {
+    const order: string[] = []
+    markHtmlTextFacePending('a1', 'Tall')
+    markHtmlTextFacePending('a2', 'Var')
+    markHtmlTextFacePending('a3', 'Gone')
+    void whenFamiliesSettled(['Tall'], 10_000).then(() => order.push('tall'))
+    void whenFamiliesSettled(['Gone'], 10_000).then(() => order.push('gone'))
+    await Promise.resolve()
+    expect(order).toEqual([])
+    setHtmlTextFace({
+      key: 'a1',
+      family: 'Tall',
+      weight: '400',
+      style: 'normal',
+      bytes: new ArrayBuffer(8),
+    })
+    clearHtmlTextFacePending('a3')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(order).toEqual(['tall', 'gone'])
+    vi.useFakeTimers()
+    let late = false
+    void whenFamiliesSettled(['Var'], 500).then(() => (late = true))
+    await vi.advanceTimersByTimeAsync(499)
+    expect(late).toBe(false)
+    await vi.advanceTimersByTimeAsync(2)
+    expect(late).toBe(true)
+  })
+
+  it('while a font list is on its way, waits for a family no face and no system font has', async () => {
+    // Node has no canvas: every family counts as installed but the ones
+    // this test cannot measure — so stub the measurement by registering.
+    setFontListPending('deck', true)
+    expect(familiesOnTheWayIn(`<span style="font-family: 'Inter'">x</span>`, '')).toEqual(
+      typeof OffscreenCanvas === 'function' ? expect.any(Array) : [],
+    )
+    let done = false
+    void whenFamiliesSettled(['Narrative Tall Test'], 10_000).then(() => (done = true))
+    setFontListPending('deck', false)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(done).toBe(true)
+  })
+
+  it('resolves at once for a family with nothing on the way', async () => {
+    await expect(whenFamiliesSettled(['Inter'], 10_000)).resolves.toBeUndefined()
   })
 })
 

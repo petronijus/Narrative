@@ -65,9 +65,13 @@ export function SlidesPanelContextMenu({
     skipped: false,
   })
 
-  if (readOnly) return <>{children}</>
-
+  // A read-only panel keeps the same element tree, with the trigger disabled
+  // (the browser's own menu, nothing of ours): the role is 'viewer' until the
+  // deck's role arrives (state/DeckRoleContext.tsx), and a tree that changed
+  // with it remounted the whole slide list under the panel's observers —
+  // rows that never showed their pictures again (useVisibleSlideRows.ts).
   const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>): void => {
+    if (readOnly) return
     const t = e.target as Element | null
     const slideEl = t?.closest('[data-slide-id]') ?? null
     if (slideEl !== null) {
@@ -87,56 +91,62 @@ export function SlidesPanelContextMenu({
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>
+      <ContextMenuTrigger asChild disabled={readOnly}>
         <div onContextMenu={handleContextMenu} style={{ display: 'contents' }}>
           {children}
         </div>
       </ContextMenuTrigger>
 
-      <ContextMenuContent className="w-48" data-mode={mode}>
-        {mode === 'row' && targetId !== null && (
-          <>
-            <ContextMenuItem action="slide.rename" onSelect={() => onRename(targetId)}>
-              Rename
-            </ContextMenuItem>
-            <ContextMenuItem action="slide.duplicate" onSelect={() => onDuplicate(targetId)}>
-              Duplicate
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem action="slide.copy" onSelect={() => onCopy(targetId)}>
-              Copy slide
-            </ContextMenuItem>
+      {!readOnly && (
+        <ContextMenuContent className="w-48" data-mode={mode}>
+          {mode === 'row' && targetId !== null && (
+            <>
+              <ContextMenuItem action="slide.rename" onSelect={() => onRename(targetId)}>
+                Rename
+              </ContextMenuItem>
+              <ContextMenuItem action="slide.duplicate" onSelect={() => onDuplicate(targetId)}>
+                Duplicate
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem action="slide.copy" onSelect={() => onCopy(targetId)}>
+                Copy slide
+              </ContextMenuItem>
+              <ContextMenuItem
+                action="slide.paste"
+                disabled={!canPaste}
+                onSelect={() => onPaste(targetId)}
+              >
+                Paste slide
+              </ContextMenuItem>
+              <ContextMenuItem action="slide.exportPng" onSelect={() => onExportPng(targetId)}>
+                Export as PNG
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem action="slide.toggleSkip" onSelect={() => onToggleSkip(targetId)}>
+                {targetSkipped ? 'Unskip in present' : 'Skip in present'}
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                action="slide.delete"
+                onSelect={() => onDelete(targetId)}
+                className="text-destructive focus:text-destructive"
+              >
+                Delete
+              </ContextMenuItem>
+            </>
+          )}
+
+          {mode === 'empty' && (
             <ContextMenuItem
               action="slide.paste"
               disabled={!canPaste}
-              onSelect={() => onPaste(targetId)}
+              onSelect={() => onPaste(null)}
             >
               Paste slide
             </ContextMenuItem>
-            <ContextMenuItem action="slide.exportPng" onSelect={() => onExportPng(targetId)}>
-              Export as PNG
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem action="slide.toggleSkip" onSelect={() => onToggleSkip(targetId)}>
-              {targetSkipped ? 'Unskip in present' : 'Skip in present'}
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem
-              action="slide.delete"
-              onSelect={() => onDelete(targetId)}
-              className="text-destructive focus:text-destructive"
-            >
-              Delete
-            </ContextMenuItem>
-          </>
-        )}
-
-        {mode === 'empty' && (
-          <ContextMenuItem action="slide.paste" disabled={!canPaste} onSelect={() => onPaste(null)}>
-            Paste slide
-          </ContextMenuItem>
-        )}
-      </ContextMenuContent>
+          )}
+        </ContextMenuContent>
+      )}
     </ContextMenu>
   )
 }

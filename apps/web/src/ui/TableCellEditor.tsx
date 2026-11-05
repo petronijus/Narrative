@@ -39,6 +39,8 @@ import type { TokenRef } from '@narrative/shared'
 import { useTableEdit } from '../state/TableEditContext.js'
 import { TextEditOverlay } from './TextEditOverlay.js'
 import { DEFAULT_FONT_STACK } from '../renderer/objectRenderers/tableRenderer.js'
+import { resolveColour } from '../renderer/colourResolver.js'
+import { useColourResolverTick, type ClipMargin } from './textEditOverlayLook.js'
 import { useCommand } from '../state/useCommand.js'
 
 export interface TableCellEditorProps {
@@ -59,10 +61,15 @@ function liveTable(ctx: ObjectsMutationContext, tableId: string): TableObject | 
   return map === undefined ? null : yMapToPlainObject<TableObject>(map)
 }
 
-function hexResolve(n: number | TokenRef | undefined, fallback: number): number {
-  if (n === undefined) return fallback
-  if (typeof n === 'object' && isTokenRef(n)) return fallback
-  return n as number
+/**
+ * A cell's text colour as the table renderer paints it (resolveCellStyle): a
+ * literal as it is (black included), a token through the canvas's resolver,
+ * and the renderer's dark grey for a token that does not resolve or nothing.
+ */
+function cellColour(n: number | TokenRef | undefined): number {
+  if (typeof n === 'number') return n
+  if (n !== undefined && isTokenRef(n)) return resolveColour(n) || 0x111111
+  return 0x111111
 }
 
 /**
@@ -118,12 +125,11 @@ function cellLocalBbox(
 
 /**
  * Rotate a local-frame point around the table's centre into world
- * coords. The TextEditOverlay positions itself at world (obj.x, obj.y)
- * and applies `transform: rotate(obj.rotation)` with `transformOrigin:
- * top-left`, so we feed it the cell's INNER top-left in world space.
- * The overlay's transform then rotates the cell-content frame by the
- * same angle, producing the same visual orientation as the rotated
- * Pixi cells underneath.
+ * coords. The TextEditOverlay turns its box about the box's centre (as
+ * the canvas turns an object about its own), so it is fed the box whose
+ * centre is the cell's inner centre turned into world space: turned
+ * about its own centre by the table's angle, that box lies exactly on
+ * the rotated Pixi cell underneath.
  */
 function localToWorld(table: TableObject, lx: number, ly: number): { x: number; y: number } {
   const cx = table.x + table.width / 2
@@ -163,6 +169,7 @@ export function TableCellEditor({ table, slideId, mutationCtx }: TableCellEditor
   // Synthetic TextObject driving TextEditOverlay. `obj.id` is the
   // `${tableId}#${r},${c}` form SceneGraph.setTextNodeFaded walks back
   // to the per-cell HTMLText.
+  const colourTick = useColourResolverTick()
   const synthetic = useMemo<TextObject | null>(() => {
     if (binding === null) return null
     const table = binding.table
@@ -173,20 +180,21 @@ export function TableCellEditor({ table, slideId, mutationCtx }: TableCellEditor
     const innerY = binding.local.y + padding.top
     const innerW = Math.max(1, binding.local.w - padding.left - padding.right)
     const innerH = Math.max(1, binding.local.h - padding.top - padding.bottom)
-    const world = localToWorld(table, innerX, innerY)
+    const centre = localToWorld(table, innerX + innerW / 2, innerY + innerH / 2)
     const obj: TextObject = {
       id: `${table.id}#${binding.r},${binding.c}`,
       type: 'text',
-      x: world.x,
-      y: world.y,
+      x: centre.x - innerW / 2,
+      y: centre.y - innerH / 2,
       width: innerW,
       height: innerH,
       rotation: table.rotation,
-      opacity: 1,
+      // The table's container is drawn at the table's opacity, its cells with it.
+      opacity: table.opacity,
       text: binding.yText,
       fontSize: cell.fontSize ?? d.fontSize,
       fontWeight: cell.fontWeight ?? d.fontWeight,
-      color: hexResolve(cell.color ?? d.color, 0x111111),
+      color: cellColour(cell.color ?? d.color),
       align: cell.align ?? d.align,
       vAlign: cell.vAlign ?? d.vAlign,
       // Every value below that shapes the line boxes is resolved exactly as
@@ -196,11 +204,30 @@ export function TableCellEditor({ table, slideId, mutationCtx }: TableCellEditor
       // caret ran on different lines from the glyphs under it.
       lineHeight: cell.lineHeight ?? d.lineHeight ?? 1.2,
       italic: cell.italic ?? d.italic ?? false,
+      underline: cell.underline ?? d.underline ?? false,
+      paragraphSpaceBefore: d.paragraphSpaceBefore ?? 0,
+      paragraphSpaceAfter: d.paragraphSpaceAfter ?? 0,
       letterSpacing: cell.letterSpacing ?? d.letterSpacing ?? 0,
       textTransform: cell.textTransform ?? d.textTransform ?? 'none',
       fontFamily: d.fontFamily ?? DEFAULT_FONT_STACK,
     }
     return obj
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- colourTick: a token colour resolves anew
+  }, [binding, colourTick])
+
+  // The canvas clips a cell's text at the cell's edge (tableRenderer's
+  // per-cell mask), its padding outside the text box.
+  const clipMargin = useMemo<ClipMargin | null>(() => {
+    if (binding === null) return null
+    const padding = binding.cell.padding ?? binding.table.defaults.padding
+    const innerW = Math.max(1, binding.local.w - padding.left - padding.right)
+    const innerH = Math.max(1, binding.local.h - padding.top - padding.bottom)
+    return {
+      top: padding.top,
+      left: padding.left,
+      right: binding.local.w - padding.left - innerW,
+      bottom: binding.local.h - padding.top - innerH,
+    }
   }, [binding])
 
   // The cell body as commands address it.
@@ -214,7 +241,8 @@ export function TableCellEditor({ table, slideId, mutationCtx }: TableCellEditor
     [row, col, slideId, table.id],
   )
 
-  if (binding === null || synthetic === null || cellTarget === null) return null
+  if (binding === null || synthetic === null || cellTarget === null || clipMargin === null)
+    return null
   const current = binding.table
 
   // Cell nav — intercept Tab / Shift+Tab BEFORE TextEditOverlay's
@@ -291,7 +319,13 @@ export function TableCellEditor({ table, slideId, mutationCtx }: TableCellEditor
         }
       }}
     >
-      <TextEditOverlay key={synthetic.id} obj={synthetic} target={cellTarget} onEnd={endEdit} />
+      <TextEditOverlay
+        key={synthetic.id}
+        obj={synthetic}
+        target={cellTarget}
+        onEnd={endEdit}
+        clipMargin={clipMargin}
+      />
     </div>
   )
 }

@@ -98,11 +98,16 @@ function signature(bg: SlideBackground | undefined, width: number, height: numbe
 // Canvas → Texture helpers
 // ---------------------------------------------------------------------------
 
-function canvasForGradient(width: number, height: number): HTMLCanvasElement {
-  const c = document.createElement('canvas')
+/** Device pixels per slide pixel of a gradient's canvas: the display's density, 2 at most. */
+function gradientScale(): number {
   // Use device pixel rounding cap — 2× for HiDPI thumbs but not beyond,
   // gradients are smooth so extra resolution is wasted.
-  const scale = Math.min(2, window.devicePixelRatio ?? 1)
+  return Math.min(2, window.devicePixelRatio ?? 1)
+}
+
+function canvasForGradient(width: number, height: number): HTMLCanvasElement {
+  const c = document.createElement('canvas')
+  const scale = gradientScale()
   c.width = Math.max(1, Math.round(width * scale))
   c.height = Math.max(1, Math.round(height * scale))
   return c
@@ -228,7 +233,9 @@ export function applyBackground(args: ApplyBackgroundArgs): Promise<void> {
     // procedural cache (ref-counted, LRU-bounded). Without this,
     // clearContainer() would destroy the Sprite but leak the texture
     // every time the user nudged the gradient slider.
-    const key = `bg:${sig}`
+    // The canvas is painted at the display's density (canvasForGradient):
+    // a set prepared for another display gets a texture of its own.
+    const key = `bg:${sig}@${gradientScale()}`
     let texture: Texture
     try {
       const rm = getDefaultResourceManager()
@@ -336,6 +343,24 @@ async function mountImageBackground(
   // P12b: Pixi auto-render is OFF — when this async path resolves it has
   // mutated the scene without anyone calling markDirty for us.
   markRenderDirty()
+}
+
+/** The signature of a released container: no background has it. */
+const RELEASED = '\u0000released'
+
+/**
+ * Let go of what a background container holds — an acquired picture (through
+ * `releaseTexture`, the hook it was acquired with), a procedural texture's
+ * reference — and empty it. For a container destroyed by its owner (the
+ * thumbnail renderer's slides); an image still loading into it is handed back
+ * when it lands.
+ */
+export function releaseBackground(
+  container: Container,
+  releaseTexture?: (url: string) => void,
+): void {
+  clearContainer(container, releaseTexture)
+  setSignature(container, RELEASED)
 }
 
 function clearContainer(container: Container, release?: (url: string) => void): void {

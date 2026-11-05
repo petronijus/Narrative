@@ -298,7 +298,10 @@ export function setHtmlTextFace(face: {
   stretch?: string
   bytes: ArrayBuffer
 }): void {
-  if (!isEmbeddableFamilyName(face.family)) return
+  if (!isEmbeddableFamilyName(face.family)) {
+    clearHtmlTextFacePending(face.key)
+    return
+  }
   const previous = faces.get(face.key)
   const view = new Uint8Array(face.bytes)
   const next: Face = {
@@ -325,6 +328,9 @@ export function setHtmlTextFace(face: {
   }
   republishFamily(face.family)
   announceFontFamilyChanged(face.family)
+  // Texts waiting for this face (first rasters held back) go now: the feeds
+  // above gave the workers its bytes first, and they paint after them.
+  clearHtmlTextFacePending(face.key)
 }
 
 /** Forget a face registered with `setHtmlTextFace`. */
@@ -416,6 +422,161 @@ export function createFontLoadFilter(): (faces: Iterable<FontFace>) => boolean {
   }
 }
 
+/**
+ * Faces on their way: listed (a folder or deck font the loader is
+ * downloading) but not registered yet, by key → family. A canvas text in a
+ * family with a face on its way waits for it before its first raster
+ * (`whenFamiliesSettled`) instead of painting the fallback face and then
+ * moving when the face lands (ADR 0018 → Fonts).
+ */
+const facesOnTheWay = new Map<string, string>()
+/** Who waits for a family to have no face on its way. */
+const settleWaiters = new Set<() => void>()
+/**
+ * Font lists on their way (a deck's folder fonts before the list arrived):
+ * while any is, a family with no registered face that the system does not
+ * have either may be one of them, and is waited for too.
+ */
+const listsOnTheWay = new Set<string>()
+
+/** A font list (`token`: whoever loads it) is, or is no longer, on its way. */
+export function setFontListPending(token: string, pending: boolean): void {
+  if (pending) {
+    listsOnTheWay.add(token)
+    return
+  }
+  if (listsOnTheWay.delete(token)) wakeSettleWaiters()
+}
+
+/** Whether the system draws `family` itself (a measurement against two generic fallbacks; memoised). */
+const installedFamilies = new Map<string, boolean>()
+function installedLocally(family: string): boolean {
+  const known = installedFamilies.get(family)
+  if (known !== undefined) return known
+  let installed = true
+  const canvas =
+    typeof OffscreenCanvas === 'function'
+      ? new OffscreenCanvas(8, 8)
+      : typeof document !== 'undefined'
+        ? document.createElement('canvas')
+        : null
+  const ctx = canvas?.getContext('2d') as
+    CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
+  if (ctx != null) {
+    const sample = 'mmmmmmmmmmlli10WQ@#jÅ'
+    const quoted = `"${family.replace(/["\\]/g, (c) => `\\${c}`)}"`
+    installed = ['monospace', 'serif'].some((generic) => {
+      ctx.font = `72px ${generic}`
+      const fallback = ctx.measureText(sample).width
+      ctx.font = `72px ${quoted}, ${generic}`
+      return ctx.measureText(sample).width !== fallback
+    })
+  }
+  installedFamilies.set(family, installed)
+  return installed
+}
+
+/** Is `family` awaited: a face of it downloading, or a font list on its way that may hold it? */
+function awaited(family: string): boolean {
+  if (facesOnTheWay.size > 0 && [...facesOnTheWay.values()].includes(family)) return true
+  return listsOnTheWay.size > 0 && !facesByFamily.has(family) && !installedLocally(family)
+}
+
+/** The family names the `font-family` declarations of `source` (markup or CSS) name, generics left out. */
+function declaredFamilies(source: string, markup: boolean): string[] {
+  const re = markup
+    ? /font-family\s*:\s*((?:'[^']*'|[^;"'}<>])+)/g
+    : /font-family\s*:\s*((?:'[^']*'|"[^"]*"|[^;"'}])+)/g
+  const out: string[] = []
+  for (const m of source.matchAll(re))
+    for (const name of m[1]!.split(',')) {
+      const n = name
+        .trim()
+        .replace(/^(["'])(.*)\1$/s, '$2')
+        .trim()
+      if (n !== '' && !GENERIC_FAMILIES.has(n.toLowerCase()) && !out.includes(n)) out.push(n)
+    }
+  return out
+}
+
+const GENERIC_FAMILIES = new Set([
+  'serif',
+  'sans-serif',
+  'monospace',
+  'cursive',
+  'fantasy',
+  'system-ui',
+  'ui-serif',
+  'ui-sans-serif',
+  'ui-monospace',
+  'ui-rounded',
+  'math',
+  'emoji',
+  'fangsong',
+  'inherit',
+  'initial',
+  'unset',
+])
+
+/** A face of `family` is being downloaded under `key` (registered later with `setHtmlTextFace`). */
+export function markHtmlTextFacePending(key: string, family: string): void {
+  if (!isEmbeddableFamilyName(family)) return
+  facesOnTheWay.set(key, family)
+}
+
+/** The face under `key` will not come (its download failed or was cancelled). */
+export function clearHtmlTextFacePending(key: string): void {
+  if (!facesOnTheWay.delete(key)) return
+  wakeSettleWaiters()
+}
+
+function wakeSettleWaiters(): void {
+  for (const wake of [...settleWaiters]) wake()
+}
+
+/** Is any face, or font list, on its way? */
+export function anyFaceOnTheWay(): boolean {
+  return facesOnTheWay.size > 0 || listsOnTheWay.size > 0
+}
+
+/**
+ * The awaited families (`awaited`) a text names: the `font-family`
+ * declarations of its markup and its CSS.
+ */
+export function familiesOnTheWayIn(markup: string, css: string): string[] {
+  if (!anyFaceOnTheWay()) return []
+  const names = [...new Set([...declaredFamilies(markup, true), ...declaredFamilies(css, false)])]
+  return names.filter(awaited)
+}
+
+/** The families of `families` (CSS names, unquoted) still awaited. */
+export function familiesOnTheWay(families: Iterable<string>): string[] {
+  if (!anyFaceOnTheWay()) return []
+  return [...new Set(families)].filter(awaited)
+}
+
+/**
+ * Settles when none of `families` has a face on its way, or after
+ * `timeoutMs` (a download that hangs: the text then paints in the fallback
+ * face, and again when the face lands). Resolves at once when none has.
+ */
+export function whenFamiliesSettled(families: readonly string[], timeoutMs: number): Promise<void> {
+  if (familiesOnTheWay(families).length === 0) return Promise.resolve()
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const done = (): void => {
+      settleWaiters.delete(check)
+      if (timer !== undefined) clearTimeout(timer)
+      resolve()
+    }
+    const check = (): void => {
+      if (familiesOnTheWay(families).length === 0) done()
+    }
+    settleWaiters.add(check)
+    timer = setTimeout(done, timeoutMs)
+  })
+}
+
 /** Test helper. */
 export function _resetFontChangesForTests(): void {
   for (const set of faceSets.values()) if (set.css !== '') sink?.dropCss(set.key)
@@ -423,6 +584,10 @@ export function _resetFontChangesForTests(): void {
   nextFaceSet = 0
   faces.clear()
   facesByFamily.clear()
+  facesOnTheWay.clear()
+  listsOnTheWay.clear()
+  installedFamilies.clear()
+  settleWaiters.clear()
   pending.clear()
   flushScheduled = false
   listeners.clear()

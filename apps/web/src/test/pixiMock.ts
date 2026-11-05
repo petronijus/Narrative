@@ -62,6 +62,7 @@ class MockContainer {
   width = 0
   height = 0
   visible = true
+  renderable = true
   // applyFlip / applyObjectTransform read these as ObservablePoints; a
   // {x, y, set} mock is enough — tests inspect resulting numeric values,
   // not the live ObservablePoint API surface.
@@ -398,5 +399,11 @@ export function pixiMock(): Record<string, unknown> {
     // BindGroup is referenced through Pixi internals; tests don't construct
     // one but the import must resolve.
     BindGroup: vi.fn(),
+    // The run-text raster upload registers itself with Pixi's extensions at
+    // import (renderer/runText/runRasterUpload.ts; its registration is
+    // tested against the real Pixi in runRasterUpload.test.ts).
+    extensions: { add: vi.fn(), remove: vi.fn() },
+    ExtensionType: { TextureUploaderWebGL: 'texture-uploader-webgl' },
+    glUploadImageResource: { id: 'image', upload: vi.fn() },
   }
 }

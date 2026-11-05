@@ -31,6 +31,12 @@ import type { FromWorker, PaintRules, ToWorker } from './protocol.js'
 
 /** How long a worker may take to say it is ready before the page paints without it. */
 export const READY_TIMEOUT_MS = 4000
+/**
+ * How long a worker may take to answer a paint before it is taken out and its
+ * texts painted on the page — a worker that stops answering (killed for
+ * memory without an error event) must not leave a raster pending for ever.
+ */
+export const PAINT_TIMEOUT_MS = 15_000
 
 /** Workers in the pool: a quarter of the cores, 1 to 3 (each holds a copy of every face). */
 export function defaultPoolSize(): number {
@@ -269,9 +275,11 @@ export class TextRasterPool {
     layout: TextRunLayout,
     resolution: number,
     rules: PaintRules,
+    /** The canvas to paint into, device px (default: the raster's own size, `rasterSize`). */
+    canvas: { width: number; height: number } = rasterSize(layout, resolution),
   ): Promise<PaintResult | null> {
     this.start()
-    const { width, height } = rasterSize(layout, resolution)
+    const { width, height } = canvas
     const slot = this.pickSlot()
     if (slot === null) return this.paintOnPage(layout, resolution, rules, width, height)
     // Counted as the worker's from the pick, so paints asked for together
@@ -284,7 +292,17 @@ export class TextRasterPool {
     }
     const id = this.nextId++
     return await new Promise<PaintResult | null>((resolve) => {
-      this.pending.set(id, { slot, resolve, layout, resolution, rules, width, height })
+      const timer = setTimeout(() => {
+        if (!this.pending.has(id)) return
+        console.warn('[runText] a text raster worker stopped answering; painting on the page')
+        perfCount('text.worker.failed')
+        this.breakSlot(slot)
+      }, PAINT_TIMEOUT_MS)
+      const done = (r: PaintResult | null): void => {
+        clearTimeout(timer)
+        resolve(r)
+      }
+      this.pending.set(id, { slot, resolve: done, layout, resolution, rules, width, height })
       this.post(slot, { type: 'paint', id, layout, resolution, width, height, rules })
     })
   }

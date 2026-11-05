@@ -181,4 +181,62 @@ describe('PresentVideoPool (performance.md P3)', () => {
     expect(pool.get('v1')!.kind).toBe('present')
     pool.destroy()
   })
+
+  it('has nothing to wait for after a display change when it holds no video', async () => {
+    const pool = new PresentVideoPool({ deviceScale: () => 1 })
+    await pool.prepare([])
+    pool.displayChanged()
+    let done = false
+    void pool.whenSwitched().then(() => {
+      done = true
+    })
+    // A microtask, not the 400 ms quiet moment a video's choice waits out.
+    await vi.advanceTimersByTimeAsync(0)
+    expect(done).toBe(true)
+    pool.destroy()
+  })
+
+  it('plays the rendition where the original did not play smoothly, and stays with it', async () => {
+    // WebKit at 2×: the 4K original's trial missed frames.
+    let scale = 2
+    const tried: string[] = []
+    const pool = new PresentVideoPool({
+      deviceScale: () => scale,
+      playsSmoothly: (el) => {
+        tried.push(srcOf(el)!)
+        return Promise.resolve(false)
+      },
+    })
+    const prepared = pool.prepare([video])
+    await vi.advanceTimersByTimeAsync(50)
+    await prepared
+    expect(pool.get('v1')?.kind).toBe('present')
+    expect(srcOf(pool.get('v1')?.element)).toBe(RENDITION)
+    expect(tried).toEqual([ORIGINAL])
+    // A later display change does not bring the original back.
+    scale = 3
+    pool.displayChanged()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(pool.get('v1')?.kind).toBe('present')
+    pool.destroy()
+  })
+
+  it('does not take a switch to an original that does not play smoothly', async () => {
+    let scale = 1
+    const pool = new PresentVideoPool({
+      deviceScale: () => scale,
+      playsSmoothly: () => Promise.resolve(false),
+    })
+    const prepared = pool.prepare([video])
+    await vi.advanceTimersByTimeAsync(10)
+    await prepared
+    expect(pool.get('v1')?.kind).toBe('present')
+    const first = pool.get('v1')!.element
+    scale = 2
+    pool.displayChanged()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(pool.get('v1')!.element).toBe(first)
+    expect(pool.get('v1')?.kind).toBe('present')
+    pool.destroy()
+  })
 })

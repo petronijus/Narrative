@@ -212,11 +212,19 @@ describe('useSlideThumbnails', () => {
     expect(Object.keys(thumbnails()).sort()).toEqual([ids[0]!, added].sort())
   })
 
+  it('renders nothing while the width the pictures are shown at is not known', async () => {
+    renderDeck(2, { pixelWidth: null })
+    await advance(1_000)
+    expect(mockRenderSlide).not.toHaveBeenCalled()
+  })
+
   it('draws the active slide from the canvas and every other slide in the renderer', async () => {
-    const { ids, thumbnails } = renderDeck(2, { liveActiveSlide: true })
+    const { ids, thumbnails } = renderDeck(2, { liveActiveSlide: true, pixelWidth: 448 })
     await advance(1_000)
     expect(mockCaptureLive).toHaveBeenCalledTimes(1)
-    expect(mockCaptureLive).toHaveBeenCalledWith({ id: 'scene' }, ['seed-0'], 200)
+    // At the width the pictures are shown at, as the offscreen ones.
+    expect(mockCaptureLive).toHaveBeenCalledWith({ id: 'scene' }, ['seed-0'], 448)
+    expect(mockRenderSlide.mock.calls[0]![4]).toBe(448)
     expect(mockRenderSlide).toHaveBeenCalledTimes(1)
     expect(Object.keys(thumbnails()).sort()).toEqual([...ids].sort())
   })

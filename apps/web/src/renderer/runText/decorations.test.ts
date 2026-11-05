@@ -26,10 +26,14 @@ describe('chromiumUnderline (Blink 156)', () => {
 })
 
 describe('webkitUnderline', () => {
-  it('is a sixteenth of the size thick, its top rounded up to a device px', () => {
+  it('is a sixteenth of the size thick, ceiled to a device px, its top rounded up to one', () => {
     const g = webkitUnderline({ x: 10.4, top: 5.3, fontSize: 24 }, 21.7, 1.5)
-    // gap ⌈24 / 16 / 2⌉ = 1; origin (10, round(28.0) = 28); device top ⌈42⌉ = 42.
-    expect(g.h).toBeCloseTo(1.5)
+    // gap ⌈24 / 16 / 2⌉ = 1; origin (10, round(28.0) = 28); device top ⌈42⌉ = 42;
+    // thickness 1.5 ceiled to a whole px (DPR 1).
+    expect(g.h).toBeCloseTo(2)
+    expect(
+      webkitUnderline({ x: 0, top: 0, fontSize: 24 }, 21.7, 1.5, undefined, undefined, 2).h,
+    ).toBeCloseTo(1.5)
     expect(g.x).toBeCloseTo(10)
     expect(g.y).toBeCloseTo(28)
   })

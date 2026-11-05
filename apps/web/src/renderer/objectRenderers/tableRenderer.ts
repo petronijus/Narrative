@@ -67,6 +67,7 @@ import {
   releaseAllImageFillsKeyed,
   releaseImageFillKeyed,
 } from '../imageFillLoader.js'
+import { EDITED_TEXT_ALPHA } from '../editedTextAlpha.js'
 
 /** Default font stack — kept in lockstep with TextEditOverlay so cell
  *  text glyphs sit on the same baselines between edit and render. */
@@ -972,7 +973,7 @@ function reconcileCells(
         // Re-attach to ensure z-order is post-grid.
         parent.addChild(cn.clip)
       }
-      cn.htmlText.alpha = fadedYText !== null && fadedYText === yText ? 0 : 1
+      cn.htmlText.alpha = fadedYText !== null && fadedYText === yText ? EDITED_TEXT_ALPHA : 1
       next.set(yText, cn)
     }
   }
@@ -1080,7 +1081,7 @@ export function setTableCellFaded(node: Container, yText: Y.Text | null, faded: 
   if (cells === undefined) return false
   let any = false
   for (const [k, cn] of cells) {
-    const alpha = faded && yText !== null && yText === k ? 0 : 1
+    const alpha = faded && yText !== null && yText === k ? EDITED_TEXT_ALPHA : 1
     if (cn.htmlText.alpha !== alpha) {
       cn.htmlText.alpha = alpha
       any = true

@@ -12,9 +12,11 @@
  * `?perf=1`, runTextSystem.ts).
  */
 
-import { Container, Graphics, HTMLText, Rectangle, Sprite } from 'pixi.js'
+import { Container, Graphics, HTMLText, measureHtmlText, Rectangle, Sprite } from 'pixi.js'
 import type { Renderer, Texture } from 'pixi.js'
 import { mountedTextObjectId } from '../objectRenderers/textRenderer.js'
+import { compareInkPlacement, inkOf, type InkPlacement } from './inkCentres.js'
+import { runLayoutFor } from './layoutCache.js'
 import { isRunTexture } from './runTextSystem.js'
 
 /** How two rasters of one text differ (both RGBA over white, same size). */
@@ -38,6 +40,36 @@ export interface TextDiff {
   /** Pixels with ink (darker than white by > 32) in the HTMLText raster / the canvas's. */
   inkHtml: number
   inkCanvas: number
+  /**
+   * The content size Pixi's own measurement gives (`measureHtmlText`, in the
+   * page) and the run layout's — what bounds, alignment and autofit use.
+   */
+  measuredHtml: { width: number; height: number }
+  measuredRuns: { width: number; height: number }
+  /**
+   * Where the canvas raster puts the lines and words of the HTMLText one
+   * (inkCentres.ts; coverage from alpha, so any text colour), raster px.
+   */
+  placement?: InkPlacement
+  /**
+   * How far a bottom-aligned box would move between the two measurements
+   * (run layout height − HTMLText's, device px): the most a vertical
+   * alignment can differ, a top-aligned box moving not at all.
+   */
+  alignDy?: number
+  /** With `images` and some pixel over 32: both rasters as PNG data URLs (HTMLText, runs). */
+  images?: [string, string]
+}
+
+async function pngDataUrl(rgba: Uint8ClampedArray, w: number, h: number): Promise<string> {
+  const c = new OffscreenCanvas(w, h)
+  c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(rgba), w, h), 0, 0)
+  const blob = await c.convertToBlob({ type: 'image/png' })
+  return await new Promise((resolve) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result))
+    r.readAsDataURL(blob)
+  })
 }
 
 /** The Pixi internals the probe reads (per-renderer GPU data of a text). */
@@ -59,9 +91,10 @@ function extractOverWhite(
   w: number,
   h: number,
   resolution: number,
-): Uint8ClampedArray {
+  white = true,
+): { data: Uint8ClampedArray; width: number; height: number } {
   const wrap = new Container()
-  wrap.addChild(new Graphics().rect(0, 0, w, h).fill(0xffffff))
+  if (white) wrap.addChild(new Graphics().rect(0, 0, w, h).fill(0xffffff))
   const sprite = new Sprite(texture)
   wrap.addChild(sprite)
   const out = renderer.extract.pixels({
@@ -72,7 +105,7 @@ function extractOverWhite(
   wrap.removeChild(sprite)
   sprite.destroy()
   wrap.destroy({ children: true })
-  return new Uint8ClampedArray(out.pixels)
+  return { data: new Uint8ClampedArray(out.pixels), width: out.width, height: out.height }
 }
 
 /** Compare two RGBA rasters of the same size. */
@@ -108,7 +141,9 @@ export async function compareTexts(
   htmlRaster: (text: HTMLText) => Promise<Texture>,
   returnHtml: (p: Promise<Texture>) => void,
   root?: Container,
+  options: { images?: number } = {},
 ): Promise<TextDiff[]> {
+  let imagesLeft = options.images ?? 0
   const stage = root ?? (renderer.lastObjectRendered as Container | undefined)
   if (stage === undefined) return []
   const texts: HTMLText[] = []
@@ -131,14 +166,56 @@ export async function compareTexts(
     const promise = htmlRaster(t)
     const html = await promise
     try {
-      const a = extractOverWhite(renderer, html, w, h, resolution)
-      const b = extractOverWhite(renderer, shown, w, h, resolution)
+      const ea = extractOverWhite(renderer, html, w, h, resolution)
+      const eb = extractOverWhite(renderer, shown, w, h, resolution)
+      const a = ea.data
+      const b = eb.data
       const sameSize = html.frame.width === w && html.frame.height === h
+      // Rasters of other sizes (the run layout's exact content height rounds
+      // up where Pixi's scrollHeight rounded down): no pixel diff, but each
+      // raster's ink still counts (text-runs-first-raster.spec.ts reads it).
+      const inkPixels = (px: Uint8ClampedArray): number => {
+        let n = 0
+        for (let i = 0; i < px.length; i += 4)
+          if (255 - Math.min(px[i]!, px[i + 1]!, px[i + 2]!) > 32) n++
+        return n
+      }
       const d =
         sameSize && a.length === b.length
           ? diffText(a, b)
-          : { differing: -1, over8: -1, over32: -1, maxDelta: -1, inkHtml: -1, inkCanvas: -1 }
+          : {
+              differing: -1,
+              over8: -1,
+              over32: -1,
+              maxDelta: -1,
+              inkHtml: inkPixels(a),
+              inkCanvas: inkPixels(b),
+            }
+      let images: [string, string] | undefined
+      if (imagesLeft > 0 && d.over32 > 0) {
+        imagesLeft--
+        images = [
+          await pngDataUrl(a, ea.width, ea.height),
+          await pngDataUrl(b, eb.width, eb.height),
+        ]
+      }
+      const pixi = measureHtmlText(t.text, t.style)
+      const own = runLayoutFor(t.text, t.style)
+      let placement: InkPlacement | undefined
+      if (sameSize) {
+        const ta = extractOverWhite(renderer, html, w, h, resolution, false)
+        const tb = extractOverWhite(renderer, shown, w, h, resolution, false)
+        placement = compareInkPlacement(
+          inkOf(ta.data, ta.width, ta.height),
+          inkOf(tb.data, tb.width, tb.height),
+        )
+      }
       rows.push({
+        ...(placement !== undefined ? { placement } : {}),
+        alignDy: (own.height - pixi.height) * resolution,
+        ...(images !== undefined ? { images } : {}),
+        measuredHtml: { width: pixi.width, height: pixi.height },
+        measuredRuns: { width: own.width, height: own.height },
         text: t.text.replace(/^<!--n:\d+-->/u, '').slice(0, 160),
         objectId: objectIdOf(t),
         width: Math.round(w * resolution),

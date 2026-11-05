@@ -23,8 +23,15 @@ function recorder(): { ctx: Paint2D; calls: Array<[string, string, number, numbe
     textBaseline: 'alphabetic',
     textAlign: 'left',
     direction: 'ltr',
+    canvas: { width: 100, height: 40 },
     setTransform: () => undefined,
+    transform: () => undefined,
     clearRect: () => undefined,
+    save: () => undefined,
+    restore: () => undefined,
+    beginPath: () => undefined,
+    rect: (x: number, _y: number, w: number) => calls.push(['clip', `${w}`, x, 0]),
+    clip: () => undefined,
     measureText: (t: string) => ({ width: t.length * 10 }),
     fillText: (t: string, x: number, y: number) =>
       calls.push([ctx.direction === 'rtl' ? 'fill-rtl' : 'fill', t, x, y]),
@@ -57,7 +64,12 @@ const layout = (runs: GlyphRun[]): TextRunLayout => ({
   decorations: [],
 })
 
-const snap = { snapBaseline: true, decorations: 'chromium' as const, strokeMiterLimit: 4 }
+const snap = {
+  snapBaseline: true,
+  decorations: 'chromium' as const,
+  strokeMiterLimit: 4,
+  shapeAcrossSpaces: false,
+}
 
 describe('paintRuns', () => {
   it('draws a run at its x on the baseline rounded to a whole CSS pixel', () => {
@@ -72,27 +84,43 @@ describe('paintRuns', () => {
       snapBaseline: false,
       decorations: 'chromium',
       strokeMiterLimit: 4,
+      shapeAcrossSpaces: false,
     })
     expect(calls).toEqual([['fill', 'ab cd', 5, 20.4]])
   })
 
-  it('follows the shaper between words unless the layout disagrees by more than the snapping', () => {
+  it('draws the whole run where the layout and the pen agree within the snapping', () => {
     const { ctx, calls } = recorder()
-    // "cd" is where the pen is (30) within 1/64: drawn at the pen; "ef" was
-    // kerned by the layout (68.5 against a pen of 60): drawn where the layout put it.
+    const r = run({
+      text: 'ab cd',
+      parts: [
+        { text: 'ab', dx: 0 },
+        { text: 'cd', dx: 30 + 1 / 64 },
+      ],
+    })
+    paintRuns(ctx, layout([r]), 1, snap)
+    expect(calls).toEqual([['fill', 'ab cd', 5, 20]])
+  })
+
+  it('moves the words the layout placed elsewhere, drawing the whole run clipped to them', () => {
+    const { ctx, calls } = recorder()
+    // "ef" was kerned by the layout (63.5 against a pen of 60): the run is drawn
+    // twice, clipped at the middle of the gap before "ef" (cd ends at 50, ef
+    // starts at 63.5 → 56.75 + 5).
     const r = run({
       text: 'ab cd ef',
       parts: [
         { text: 'ab', dx: 0 },
-        { text: 'cd', dx: 30 + 1 / 64 },
+        { text: 'cd', dx: 30 },
         { text: 'ef', dx: 63.5 },
       ],
     })
     paintRuns(ctx, layout([r]), 1, snap)
     expect(calls).toEqual([
-      ['fill', 'ab', 5, 20],
-      ['fill', 'cd', 35, 20],
-      ['fill', 'ef', 68.5, 20],
+      ['clip', String(61.75 + 1e6), -1e6, 0],
+      ['fill', 'ab cd ef', 5, 20],
+      ['clip', String(1e6 - 61.75), 61.75, 0],
+      ['fill', 'ab cd ef', 8.5, 20],
     ])
   })
 

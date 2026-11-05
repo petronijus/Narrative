@@ -25,11 +25,28 @@ export interface JobTimer {
   done(): JobTimings
 }
 
+/** Resource entries the render page keeps (Chrome's default is 250, then it drops new ones). */
+const RESOURCE_TIMING_BUFFER = 2_000
+
+/**
+ * Keep the page's load in its resource timings: the render worker reads them
+ * once the page is up (apps/render-worker/src/loadSplit.ts), and a full
+ * default buffer would drop the late scripts and requests of the load before
+ * the first job's timer makes room. Called as the render page's code loads,
+ * while the buffer still has room for the rest of the load.
+ */
+export function keepResourceTimings(): void {
+  // Not every environment has it (jsdom in the unit tests).
+  if (typeof globalThis.performance?.setResourceTimingBufferSize === 'function') {
+    performance.setResourceTimingBufferSize(RESOURCE_TIMING_BUFFER)
+  }
+}
+
 export function startJobTimer(): JobTimer {
   // This page's earlier loads say nothing about this job, and the buffer
   // (250 entries by default) would otherwise fill up and drop this job's.
   performance.clearResourceTimings()
-  performance.setResourceTimingBufferSize(2_000)
+  performance.setResourceTimingBufferSize(RESOURCE_TIMING_BUFFER)
   const start = performance.now()
   let last = start
   const steps: Array<[string, number]> = []

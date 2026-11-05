@@ -120,25 +120,3 @@ export function whenPresentIdle(cb: () => void, timeout: number): () => void {
     cancel()
   }
 }
-
-/**
- * What keep-warm draws the slides into (a diagnostic for the perf harness,
- * `setKeepWarmTarget`):
- *   - `pixel`: a 1 × 1 target — every texture is bound and sampled, at one
- *     texel each (default);
- *   - `eighth`: a target an eighth of the slide's size at the canvas's
- *     resolution, the slide scaled into it — every texture sampled every
- *     eight device pixels or so, across its whole area;
- *   - `full`: a slide-sized target at the canvas's resolution — every texel.
- */
-export type KeepWarmTarget = 'pixel' | 'eighth' | 'full'
-
-let targetMode: KeepWarmTarget = 'pixel'
-
-export function setKeepWarmTarget(mode: KeepWarmTarget): void {
-  targetMode = mode
-}
-
-export function keepWarmTarget(): KeepWarmTarget {
-  return targetMode
-}

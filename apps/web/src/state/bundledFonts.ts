@@ -22,7 +22,11 @@
  * base64 per raster; docs/plans/performance.md → E2).
  */
 
-import { setHtmlTextFace } from '../renderer/fontChanges.js'
+import {
+  clearHtmlTextFacePending,
+  markHtmlTextFacePending,
+  setHtmlTextFace,
+} from '../renderer/fontChanges.js'
 // `?url` returns the public URL to the asset Vite emits at build time.
 import interLatinNormalUrl from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url'
 import interLatinItalicUrl from '@fontsource-variable/inter/files/inter-latin-wght-italic.woff2?url'
@@ -45,6 +49,9 @@ export async function registerBundledFonts(): Promise<void> {
     { url: interLatinNormalUrl, style: 'normal' },
     { url: interLatinItalicUrl, style: 'italic' },
   ] as const
+  // Canvas text in Inter waits for these faces before its first raster
+  // instead of painting a fallback first (renderer/fontChanges.ts).
+  for (const { style } of files) markHtmlTextFacePending(`bundled:inter:${style}`, family)
   let loaded: { style: 'normal' | 'italic'; bytes: ArrayBuffer; face: FontFace }[]
   try {
     loaded = await Promise.all(
@@ -59,6 +66,7 @@ export async function registerBundledFonts(): Promise<void> {
     )
   } catch (err) {
     console.warn('[bundledFonts] Inter load failed', err)
+    for (const { style } of files) clearHtmlTextFacePending(`bundled:inter:${style}`)
     return
   }
   for (const { face } of loaded) document.fonts.add(face)

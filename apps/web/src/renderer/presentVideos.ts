@@ -32,6 +32,11 @@
  * (`canSwitch`: not on the slide shown, nothing moving); its scenes are then
  * warmed again (`onSwitched`). Until then the first file plays on.
  *
+ * Where the original would play, it is first tried for a moment through
+ * the renderer (`playsSmoothly`, renderer/videoPlaybackTrial.ts); if this
+ * engine cannot draw it at the canvas's size without missing frames, the
+ * rendition plays instead, then and after every later display change.
+ *
  * Leaving a video's slide pauses the element and puts it back on its first
  * frame (`rewind`), as a new element would start there.
  */
@@ -40,7 +45,12 @@ import type { Slide, VideoObject } from '@narrative/shared'
 import { attachLiveVideo, releaseLiveVideoElement } from './objectRenderers/videoRenderer.js'
 import { getDefaultVideoInfoResolver, type VideoInfoResult } from './videoInfo.js'
 import { trackRenderWork } from './renderWork.js'
-import { choosePlayback, presentStageScale, type PlaybackChoice } from './videoRendition.js'
+import {
+  choosePlayback,
+  playbackForced,
+  presentStageScale,
+  type PlaybackChoice,
+} from './videoRendition.js'
 
 /** One buffered video: its element and the info it was opened with. */
 export interface PresentVideo {
@@ -67,11 +77,22 @@ export interface PresentVideoPoolOptions {
   canSwitch?: (objectId: string) => boolean
   /** Video `objectId` plays its other file now: the scenes that show it are to be warmed again. */
   onSwitched?: (objectId: string) => void
+  /**
+   * Whether a buffered original plays smoothly on this canvas
+   * (renderer/videoPlaybackTrial.ts → playsSmoothly); where it does not,
+   * the rendition plays. Default: it does (no trial).
+   */
+  playsSmoothly?: (el: HTMLVideoElement) => Promise<boolean>
 }
 
 interface Entry extends PresentVideo {
   /** The object as it was opened: its box and fit choose the file. */
   object: VideoObject
+  /**
+   * Its original did not play smoothly on this canvas (its trial,
+   * renderer/videoPlaybackTrial.ts): the rendition plays wherever there is one.
+   */
+  originalTooSlow: boolean
   /** The other file, being buffered or buffered and waiting for the video to leave the stage. */
   next: {
     kind: PlaybackChoice['kind']
@@ -130,7 +151,10 @@ export class PresentVideoPool {
   private readonly deviceScale: () => number
   private readonly canSwitch: (objectId: string) => boolean
   private readonly onSwitched: (objectId: string) => void
+  private readonly playsSmoothly: (el: HTMLVideoElement) => Promise<boolean>
   private displayTimer: ReturnType<typeof setTimeout> | null = null
+  /** Videos being opened now: each chooses its file for the display as it is then. */
+  private opening = 0
   /** Switches whose second element is still buffering (`whenSwitched`). */
   private readonly buffering = new Set<Promise<unknown>>()
   private readonly unwatchDensity: () => void
@@ -140,6 +164,7 @@ export class PresentVideoPool {
     this.deviceScale = opts.deviceScale ?? (() => presentStageScale())
     this.canSwitch = opts.canSwitch ?? (() => true)
     this.onSwitched = opts.onSwitched ?? (() => undefined)
+    this.playsSmoothly = opts.playsSmoothly ?? (() => Promise.resolve(true))
     // The elements live in the document (some engines decode a detached
     // element lazily), out of sight and out of the way.
     this.host = document.createElement('div')
@@ -180,7 +205,14 @@ export class PresentVideoPool {
     await Promise.all(
       videos.map(async (v) => {
         try {
-          if (!this.videos.has(v.id)) await this.open(v)
+          if (!this.videos.has(v.id)) {
+            this.opening++
+            try {
+              await this.open(v)
+            } finally {
+              this.opening--
+            }
+          }
         } catch (err) {
           console.warn('[presentVideos] could not buffer a video', v.id, err)
         } finally {
@@ -213,6 +245,11 @@ export class PresentVideoPool {
    */
   displayChanged(): void {
     if (this.destroyed) return
+    // No video, none on its way: nothing to choose again (a video opened
+    // later chooses for the display it finds). Not a quiet moment to wait
+    // out either — present mode's ready waits for it (whenSwitched), and a
+    // deck without videos waited 400 ms for nothing (2026-10-30).
+    if (this.videos.size === 0 && this.opening === 0) return
     if (this.displayTimer !== null) clearTimeout(this.displayTimer)
     this.displayTimer = setTimeout(() => {
       this.displayTimer = null
@@ -289,7 +326,7 @@ export class PresentVideoPool {
     if (this.destroyed) return
     const scale = this.deviceScale()
     for (const v of this.videos.values()) {
-      const wanted = choosePlayback(v.info, v.object, scale)
+      const wanted = this.costAware(choosePlayback(v.info, v.object, scale), v.info, v)
       if (wanted === null || wanted.kind === v.kind) {
         // Back to the file it plays: a switch under way is not wanted any more.
         this.dropNext(v)
@@ -337,6 +374,13 @@ export class PresentVideoPool {
       v.next = null
       return
     }
+    if (wanted.kind === 'playback' && !(await this.originalFits(el))) {
+      // Its frames would not upload in time: it keeps the rendition.
+      v.originalTooSlow = true
+      discard(el)
+      v.next = null
+      return
+    }
     next.element = el
     for (;;) {
       if (next.cancelled || this.destroyed) return
@@ -353,14 +397,46 @@ export class PresentVideoPool {
     this.onSwitched(v.objectId)
   }
 
+  /**
+   * Whether the buffered original `el` plays smoothly here (`playsSmoothly`,
+   * a trial playback through the renderer: renderer/videoPlaybackTrial.ts).
+   * A file the perf harness forces is not tried.
+   */
+  private async originalFits(el: HTMLVideoElement): Promise<boolean> {
+    if (playbackForced()) return true
+    return this.playsSmoothly(el)
+  }
+
+  /** `choice`, but the rendition where this video's original was measured too slow. */
+  private costAware(
+    choice: PlaybackChoice | null,
+    info: VideoInfoResult,
+    v: Entry,
+  ): PlaybackChoice | null {
+    if (choice?.kind !== 'playback' || !v.originalTooSlow || info.presentPlayback === null)
+      return choice
+    return playbackForced() ? choice : { url: info.presentPlayback.url, kind: 'present' }
+  }
+
   private async open(v: VideoObject): Promise<void> {
     const info = await trackRenderWork(getDefaultVideoInfoResolver()({ assetId: v.assetId }))
     if (this.destroyed || info.transcodeStatus !== 'done') return
-    const chosen = choosePlayback(info, v, this.deviceScale())
+    let chosen = choosePlayback(info, v, this.deviceScale())
     if (chosen === null) return
     const startAt = startOf(v)
-    const el = await this.buffer(v, chosen.url, startAt, true)
+    let el = await this.buffer(v, chosen.url, startAt, true)
     if (el === null) return
+    // The original, where the rendition would do if it had to: measured first.
+    let originalTooSlow = false
+    if (chosen.kind === 'playback' && info.presentPlayback !== null && !this.destroyed) {
+      if (!(await this.originalFits(el))) {
+        originalTooSlow = true
+        discard(el)
+        chosen = { url: info.presentPlayback.url, kind: 'present' }
+        el = await this.buffer(v, chosen.url, startAt, true)
+        if (el === null) return
+      }
+    }
     if (this.destroyed) {
       discard(el)
       return
@@ -372,6 +448,7 @@ export class PresentVideoPool {
       startAt,
       kind: chosen.kind,
       object: v,
+      originalTooSlow,
       next: null,
     })
     // Every scene of this video — on stage and prepared — draws the live frame.

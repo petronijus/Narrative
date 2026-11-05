@@ -195,6 +195,20 @@ class FakeCache {
     this.ready.add(id)
     for (const l of [...this.listeners]) l()
   }
+  subscribe(l: () => void): () => void {
+    this.listeners.add(l)
+    return () => this.listeners.delete(l)
+  }
+  destroyed = false
+  destroy(): void {
+    this.destroyed = true
+    calls.push(`destroy:${this.name}`)
+  }
+  active = false
+  activate(): void {
+    this.active = true
+  }
+  constructor(readonly name = 'cache') {}
 }
 
 function makeSceneGraph() {
@@ -209,6 +223,8 @@ function makeSceneGraph() {
     getRoot: () => ({}),
     getMountedIds: () => [],
     getNode: () => undefined,
+    pinTextResolution: vi.fn(() => calls.push('pin')),
+    setPixelDensity: vi.fn((d: number) => calls.push(`density:${d}`)),
   }
 }
 
@@ -410,6 +426,9 @@ class VersionedCache {
     this.notify()
   }
   setIdleOnly(): void {}
+  subscribe(): () => void {
+    return () => undefined
+  }
   setBusyProbe(): void {}
   isReady(id: string): boolean {
     const built = this.built.get(id)
@@ -611,5 +630,80 @@ describe('Presentation — the presenter skips the preparation', () => {
     p.prepare('a')
     expect(cache.plans.length).toBe(plans)
     expect(cache.plans.at(-1)!.required[0]).toBe('c')
+  })
+})
+
+describe('Presentation — a display density change (standby set)', () => {
+  function withStandby(deck: Slide[]) {
+    const t = setup(deck)
+    t.p.start(deck[0]!.id)
+    const standby = new FakeCache('standby')
+    for (const s of deck) standby.ready.add(s.id)
+    const applied: number[] = []
+    const adopted = vi.fn()
+    t.p.setStandby(standby as unknown as PresentSlideCache, 2, {
+      apply: (d) => {
+        applied.push(d)
+        calls.push(`apply:${d}`)
+      },
+      adopted,
+    })
+    calls.length = 0
+    return { ...t, standby, applied, adopted }
+  }
+
+  it('follows the plan alongside the presenting set', () => {
+    const { p, cache, standby } = withStandby(['s1', 's2', 's3'].map((id) => slide(id)))
+    p.next()
+    expect(standby.plans.at(-1)).toEqual(cache.plans.at(-1))
+  })
+
+  it('swaps now on a still slide: pin, resize, swap from the new set, density after the swap', () => {
+    const { p, cache, standby, adopted } = withStandby(['s1', 's2'].map((id) => slide(id)))
+    expect(p.standbyReady(standby as unknown as PresentSlideCache)).toBe(true)
+    expect(p.swapToStandbyNow()).toBe(true)
+    expect(calls).toEqual([
+      'pin',
+      'apply:2',
+      'destroy:cache',
+      'take:s1',
+      'swap:s1',
+      'give:s1',
+      'density:2',
+    ])
+    expect(p.presentingCache).toBe(standby as unknown as PresentSlideCache)
+    expect(cache.destroyed).toBe(true)
+    expect(standby.active).toBe(true)
+    expect(adopted).toHaveBeenCalledTimes(1)
+  })
+
+  it('a slide with builds waits for the boundary; the next advance comes from the new set', () => {
+    const deck = [slide('s1', { animations: [STEP] }), slide('s2')]
+    const { p, standby, cache } = withStandby(deck)
+    expect(p.swapToStandbyNow()).toBe(false)
+    p.armStandby(true)
+    p.next()
+    expect(calls.slice(0, 4)).toEqual(['pin', 'apply:2', 'destroy:cache', 'take:s2'])
+    expect(standby.taken).toEqual(['s2'])
+    expect(cache.taken).toEqual(['s1'])
+    expect(calls).toContain('density:2')
+    expect(calls.indexOf('density:2')).toBeGreaterThan(calls.indexOf('swap:s2'))
+  })
+
+  it('an armed set without the target ready stays armed (the old set shows it)', () => {
+    const { p, standby, cache } = withStandby(['s1', 's2', 's3'].map((id) => slide(id)))
+    standby.ready.delete('s2')
+    p.armStandby(true)
+    p.next()
+    expect(calls).not.toContain('apply:2')
+    expect(cache.taken).toContain('s2')
+    expect(p.presentingCache).toBe(cache as unknown as PresentSlideCache)
+  })
+
+  it('a dropped standby set is forgotten', () => {
+    const { p, standby } = withStandby(['s1', 's2'].map((id) => slide(id)))
+    p.clearStandby(standby as unknown as PresentSlideCache)
+    expect(p.swapToStandbyNow()).toBe(false)
+    expect(p.standbyReady(standby as unknown as PresentSlideCache)).toBe(false)
   })
 })

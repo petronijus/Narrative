@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * ui/useVisibleSlideRows.test.ts — RowVisibility: each row hears only about
  * its own visibility changing (performance.md → B3).

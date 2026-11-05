@@ -67,6 +67,7 @@ import type { TextObject } from '../types'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { markRenderDirty } from '../RenderScheduler.js'
 import { applyFlip } from './applyFlip.js'
+import { markTextBoxNode } from '../runText/pagePlacement.js'
 import { resolveAlpha, resolveColour } from '../colourResolver.js'
 import { cssFontFamily } from '../fontFallback.js'
 import {
@@ -1133,6 +1134,9 @@ function mountTextContainer(data: TextObject, opts: { wireCatchup: boolean }): C
   textNode.text = buildHtmlForNode(textNode, data)
 
   container.addChild(textNode)
+  // The edit overlay draws this text in the box (ui/TextEditOverlay.tsx): a
+  // turned or shrunk box's raster is painted as the page draws it.
+  markTextBoxNode(textNode)
 
   asAny(container)[TEXT_TAG] = textNode
   if (opts.wireCatchup) {

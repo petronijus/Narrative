@@ -21,14 +21,14 @@ describe('textEngine', () => {
   })
 
   it('takes the global first, then the URL, then the stored choice', () => {
-    localStorage.setItem(TEXT_ENGINE_STORAGE_KEY, 'runs')
-    expect(textEngine()).toBe('runs')
-    _resetTextEngineForTests()
-    window.history.replaceState(null, '', '/?textEngine=html')
+    localStorage.setItem(TEXT_ENGINE_STORAGE_KEY, 'html')
     expect(textEngine()).toBe('html')
     _resetTextEngineForTests()
-    g.__narrative_textEngine = 'runs'
+    window.history.replaceState(null, '', '/?textEngine=runs')
     expect(textEngine()).toBe('runs')
+    _resetTextEngineForTests()
+    g.__narrative_textEngine = 'html'
+    expect(textEngine()).toBe('html')
   })
 
   it('ignores unknown names', () => {

@@ -10,7 +10,7 @@
  * peer cursors are the editor's).
  */
 
-import { DOMAdapter, Rectangle, type Texture } from 'pixi.js'
+import { DOMAdapter, Rectangle, type Renderer, type Texture } from 'pixi.js'
 import { SLIDE_HEIGHT, SLIDE_WIDTH } from './constants.js'
 import type { SceneGraph } from './SceneGraph.js'
 
@@ -81,7 +81,6 @@ export async function captureSlideCanvasAsync(
     !(gl instanceof WebGL2RenderingContext)
   )
     return around(() => captureSlideCanvas(sceneGraph, resolution))
-  const cpu = opts.cpuCanvas === true
   const height =
     resolution === 1 ? SLIDE_HEIGHT : Math.floor(SLIDE_HEIGHT * resolution) / resolution
   const texture = around(() =>
@@ -91,15 +90,61 @@ export async function captureSlideCanvasAsync(
       resolution,
     }),
   )
+  try {
+    const read = queueTextureReadback(renderer, texture, { ...opts, lost })
+    if (read === null) throw new Error('no WebGL2 for the slide read-back')
+    return await read
+  } finally {
+    texture.destroy(true)
+  }
+}
+
+/**
+ * Queue a read of `texture`'s pixels (a render texture of `renderer`) and
+ * return the canvas they become, without the main thread ever waiting for the
+ * GPU: the read goes into a pixel-pack buffer behind a fence now — in GL
+ * command order, so whatever is drawn into the texture afterwards does not
+ * reach it — and the pixels are fetched once the GPU has passed the fence (a
+ * poll on a timer). The canvas is made exactly as Pixi's `extract.canvas`
+ * makes it (the same `readPixels` of the texture's resolved framebuffer, put
+ * into a 2D canvas as they are), so the picture is the same.
+ *
+ * Null without WebGL2 (no pixel-pack buffers, no fences): read synchronously
+ * then (`renderer.extract.canvas`). The texture stays the caller's; it may be
+ * drawn into again, or destroyed, as soon as this returns.
+ */
+export function queueTextureReadback(
+  renderer: Renderer,
+  texture: Texture,
+  opts: CaptureCanvasOptions & { lost?: () => boolean } = {},
+): Promise<HTMLCanvasElement | OffscreenCanvas> | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi's WebGL renderer exposes `gl` untyped on the base type
+  const gl = (renderer as any).gl as WebGLRenderingContext | WebGL2RenderingContext | undefined
+  if (
+    gl === undefined ||
+    typeof WebGL2RenderingContext === 'undefined' ||
+    !(gl instanceof WebGL2RenderingContext)
+  )
+    return null
+  const lost = (): boolean => gl.isContextLost() || opts.lost?.() === true
+  if (lost()) return Promise.reject(new Error('the WebGL context was lost'))
+  const cpu = opts.cpuCanvas === true
+  // As GlTextureSystem.getPixels reads it.
+  const res = texture.source.resolution
+  const frame = texture.frame
+  const width = Math.max(Math.round(frame.width * res), 1)
+  const rows = Math.max(Math.round(frame.height * res), 1)
+  const bytes = 4 * width * rows
   let pbo: WebGLBuffer | null = null
   let sync: WebGLSync | null = null
+  const release = (): void => {
+    if (gl.isContextLost()) return
+    if (sync !== null) gl.deleteSync(sync)
+    if (pbo !== null) gl.deleteBuffer(pbo)
+    sync = null
+    pbo = null
+  }
   try {
-    // As GlTextureSystem.getPixels reads it.
-    const res = texture.source.resolution
-    const frame = texture.frame
-    const width = Math.max(Math.round(frame.width * res), 1)
-    const rows = Math.max(Math.round(frame.height * res), 1)
-    const bytes = 4 * width * rows
     // Pixi's GL systems are reached through their untyped internals here (as in getPixels).
     const rt = renderer.renderTarget as unknown as {
       getRenderTarget(t: Texture): unknown
@@ -123,33 +168,38 @@ export async function captureSlideCanvasAsync(
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null)
     sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
     gl.flush()
-    if (sync === null) throw new Error('no fence for the slide read-back')
-    await waitForFence(gl, sync, lost)
-    if (lost()) throw new Error('the slide came back empty (the WebGL context was lost)')
-    const pixels = new Uint8Array(bytes)
-    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo)
-    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, pixels)
-    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null)
-    // As GlTextureSystem.generateCanvas makes it.
-    const canvas = DOMAdapter.get().createCanvas(width, rows) as HTMLCanvasElement | OffscreenCanvas
-    canvas.width = width
-    canvas.height = rows
-    const ctx = (
-      cpu ? canvas.getContext('2d', { willReadFrequently: true }) : canvas.getContext('2d')
-    ) as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
-    if (ctx !== null) {
-      const image = ctx.createImageData(width, rows)
-      image.data.set(pixels)
-      ctx.putImageData(image, 0, 0)
-    }
-    return canvas
-  } finally {
-    if (!gl.isContextLost()) {
-      if (sync !== null) gl.deleteSync(sync)
-      if (pbo !== null) gl.deleteBuffer(pbo)
-    }
-    texture.destroy(true)
+    if (sync === null) throw new Error('no fence for the read-back')
+  } catch (err) {
+    release()
+    return Promise.reject(err instanceof Error ? err : new Error(String(err)))
   }
+  const fence = sync
+  return (async () => {
+    try {
+      await waitForFence(gl, fence, lost)
+      if (lost()) throw new Error('the picture came back empty (the WebGL context was lost)')
+      const pixels = new Uint8Array(bytes)
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo)
+      gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, pixels)
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null)
+      // As GlTextureSystem.generateCanvas makes it.
+      const canvas = DOMAdapter.get().createCanvas(width, rows) as
+        HTMLCanvasElement | OffscreenCanvas
+      canvas.width = width
+      canvas.height = rows
+      const ctx = (
+        cpu ? canvas.getContext('2d', { willReadFrequently: true }) : canvas.getContext('2d')
+      ) as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
+      if (ctx !== null) {
+        const image = ctx.createImageData(width, rows)
+        image.data.set(pixels)
+        ctx.putImageData(image, 0, 0)
+      }
+      return canvas
+    } finally {
+      release()
+    }
+  })()
 }
 
 export interface CaptureCanvasOptions {

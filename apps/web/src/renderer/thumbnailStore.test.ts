@@ -10,7 +10,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SlideObject } from '@narrative/shared'
-import { LIVE_ATTEMPTS, pendingThumbnailWork, ThumbnailStore } from './thumbnailStore.js'
+import {
+  cancelAfterFrame,
+  LIVE_ATTEMPTS,
+  pendingThumbnailWork,
+  runAfterNextFrame,
+  ThumbnailStore,
+} from './thumbnailStore.js'
 import type { ThumbnailEnvironment, ThumbnailInputs } from './thumbnailKey.js'
 
 const IDLE_MS = 50
@@ -185,6 +191,29 @@ describe('ThumbnailStore — a render only for a new picture', () => {
 })
 
 describe('ThumbnailStore — order', () => {
+  it('keeps two renders in flight: the next starts while the last one is still encoding', async () => {
+    const r = rig()
+    const finish: Array<() => void> = []
+    r.render.mockImplementation((i: ThumbnailInputs) => {
+      r.rendered.push(i.objects.map((o) => o.id))
+      return new Promise<Blob>((resolve) => finish.push(() => resolve(new Blob(['png']))))
+    })
+    for (const id of ['s1', 's2', 's3']) {
+      r.store.setSlide(id, inputs([rect(id)]), { request: 'urgent' })
+    }
+    // The same content again while it renders: not a second render of it.
+    r.store.setSlide('s1', inputs([rect('s1')]), { request: 'urgent' })
+    await r.advance(0)
+    expect(r.rendered).toEqual([['s1'], ['s2']])
+    finish.shift()!()
+    await r.advance(0)
+    expect(r.rendered).toEqual([['s1'], ['s2'], ['s3']])
+    for (const f of finish.splice(0)) f()
+    await r.advance(0)
+    expect(pendingThumbnailWork()).toBe(0)
+    expect(r.store.get('s3')).toBeDefined()
+  })
+
   it('renders the slides in view first and the rest one per idle callback', async () => {
     const r = rig()
     r.store.setVisible(['s3', 's4'])
@@ -407,5 +436,55 @@ describe('ThumbnailStore — URLs', () => {
     expect(listener).toHaveBeenCalledTimes(1)
     r.store.stop()
     expect(r.revoked).toEqual(['blob:thumb-1', 'blob:thumb-2'])
+  })
+})
+
+describe('runAfterNextFrame (the idle fallback without requestIdleCallback)', () => {
+  let frames: Array<() => void>
+  beforeEach(() => {
+    vi.useFakeTimers()
+    frames = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      frames.push(() => cb(0))
+      return frames.length
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  it('runs in the first task after the next frame, once', () => {
+    const fn = vi.fn()
+    runAfterNextFrame(fn)
+    vi.advanceTimersByTime(50)
+    expect(fn).not.toHaveBeenCalled()
+    frames.shift()!()
+    vi.advanceTimersByTime(0)
+    expect(fn).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(1_000)
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
+
+  it('runs anyway when no frame comes (the page was hidden meanwhile)', () => {
+    const fn = vi.fn()
+    runAfterNextFrame(fn)
+    vi.advanceTimersByTime(100)
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
+
+  it('runs at once on a hidden page, and not at all once cancelled', () => {
+    const hidden = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    const fn = vi.fn()
+    runAfterNextFrame(fn)
+    vi.advanceTimersByTime(0)
+    expect(fn).toHaveBeenCalledTimes(1)
+    hidden.mockRestore()
+    const cancelled = vi.fn()
+    cancelAfterFrame(runAfterNextFrame(cancelled))
+    frames.shift()?.()
+    vi.advanceTimersByTime(1_000)
+    expect(cancelled).not.toHaveBeenCalled()
   })
 })

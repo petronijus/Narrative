@@ -67,6 +67,97 @@ export function stagingOrder<T>(
   return keyed.map((k) => k.item)
 }
 
+/** One text as `planTextResolutions` sees it. */
+export interface ResolutionPlanItem {
+  /** Its box (stage space); null: unknown (staged last, held to the cap when there is one). */
+  box: Rect | null
+  /** The resolution its raster has now (0: none yet). */
+  now: number
+  /** The pixels its raster would have at the staging's resolution (an estimate). */
+  px: number
+}
+
+/**
+ * The texts beyond the view that may be held at the staging's full
+ * resolution: their boxes meet `rect` (the canvas's drawn region around the
+ * view), and the texts at full resolution — those in view included — add up
+ * to at most `budgetPx` raster pixels.
+ */
+export interface ResolutionMargin {
+  rect: Rect
+  budgetPx: number
+}
+
+/**
+ * Where each text goes in a zoom's staging (SceneGraph.restageTextResolution)
+ * and in what order:
+ *
+ *   1. the texts meeting `viewport`: `resolution`, whatever it costs — what
+ *      is visible is sharp and exact;
+ *   2. those meeting only `margin.rect`, nearest first: `resolution` while
+ *      the full-resolution pixels stay within `margin.budgetPx` — a short
+ *      scroll then shows them sharp at once; past the budget, the cap;
+ *   3. the rest, nearest first: `offscreenCap`, or what they have when it
+ *      lies between the cap and `resolution` (a scroll does not churn
+ *      rasters) and the budget still holds it — over the budget a text that
+ *      left the view goes down to the cap, so scrolling about a crowded slide
+ *      at a high zoom cannot gather every text at full resolution.
+ *
+ * Without a viewport every text gets `resolution`. `deferFrom`: the first
+ * position not at full resolution in group 1 or 2 (the stager runs the
+ * groups before it in frames, the rest in idle callbacks). Pure.
+ */
+export function planTextResolutions(
+  items: readonly ResolutionPlanItem[],
+  resolution: number,
+  viewport: Rect | null,
+  margin: ResolutionMargin | null,
+  offscreenCap: number,
+): { order: number[]; targets: number[]; deferFrom: number } {
+  if (viewport === null) {
+    return {
+      order: items.map((_, i) => i),
+      targets: items.map(() => resolution),
+      deferFrom: items.length,
+    }
+  }
+  const capped = Math.min(resolution, offscreenCap)
+  const keyed = items.map((item, index) => {
+    const d = item.box === null ? Infinity : rectDistance(item.box, viewport)
+    const group =
+      d === 0
+        ? 0
+        : item.box !== null && margin !== null && rectDistance(item.box, margin.rect) === 0
+          ? 1
+          : 2
+    return { item, index, d, group }
+  })
+  keyed.sort((a, b) => a.group - b.group || a.d - b.d || a.index - b.index)
+  const budget = margin?.budgetPx ?? Infinity
+  let full = 0
+  let exhausted = false
+  let deferFrom = keyed.length
+  const targets = keyed.map(({ item, group }, i) => {
+    if (group === 0 || capped >= resolution) {
+      full += item.px
+      return resolution
+    }
+    const wants =
+      group === 1 ? resolution : item.now >= capped && item.now <= resolution ? item.now : capped
+    let target = capped
+    if (wants > capped && !exhausted) {
+      const px = item.px * (wants / resolution) ** 2
+      if (full + px <= budget) {
+        full += px
+        target = wants
+      } else exhausted = true
+    } else if (wants <= capped) target = wants
+    if (deferFrom === keyed.length && !(group === 1 && target === resolution)) deferFrom = i
+    return target
+  })
+  return { order: keyed.map((k) => k.index), targets, deferFrom }
+}
+
 /**
  * What one job set going: its cost in the stager's budget units
  * (SceneGraph: texture pixels), and, when the work finishes later (a
@@ -85,10 +176,44 @@ export interface FrameSource {
   cancel(handle: number): void
 }
 
-/** The window's animation frames. A hidden page gets none: a staging waits there, as the renderer does. */
+/** How long a staging waits for an animation frame before it goes on without one. */
+export const FRAME_FALLBACK_MS = 250
+
+/**
+ * The window's animation frames — or `FRAME_FALLBACK_MS`, whichever comes
+ * first. A page that draws no frames (a hidden or occluded window, a
+ * compositor that stalled: a dev page at 400 % on battery drew none for over
+ * a minute, 2026-10-30) still gets its texts' new resolutions; their rasters
+ * follow when it draws again, as they did before the staging spread them.
+ */
+const frameTimers = new Map<number, ReturnType<typeof setTimeout>>()
+const rafOf = new Map<number, number>()
+let nextFrameHandle = 1
 export const animationFrames: FrameSource = {
-  request: (cb) => requestAnimationFrame(cb),
-  cancel: (handle) => cancelAnimationFrame(handle),
+  request: (cb) => {
+    const handle = nextFrameHandle++
+    let done = false
+    const run = (): void => {
+      if (done) return
+      done = true
+      cancelAnimationFrame(raf)
+      clearTimeout(frameTimers.get(handle))
+      frameTimers.delete(handle)
+      rafOf.delete(handle)
+      cb()
+    }
+    const raf = requestAnimationFrame(run)
+    frameTimers.set(handle, setTimeout(run, FRAME_FALLBACK_MS))
+    rafOf.set(handle, raf)
+    return handle
+  },
+  cancel: (handle) => {
+    const raf = rafOf.get(handle)
+    if (raf !== undefined) cancelAnimationFrame(raf)
+    clearTimeout(frameTimers.get(handle))
+    frameTimers.delete(handle)
+    rafOf.delete(handle)
+  },
 }
 
 /** Callbacks for when the main thread is idle, `timeout` ms at the latest. */
@@ -114,8 +239,11 @@ export const idleCallbacks: IdleSource = {
 }
 
 export interface BatchStagerOptions {
-  /** At most this many jobs that did work per frame. */
-  maxJobs: number
+  /**
+   * At most this many jobs that did work per frame. A function is asked at
+   * the start of every batch (Infinity: no count limit).
+   */
+  maxJobs: number | (() => number)
   /**
    * A batch ends once its jobs have cost this much (default: no limit). The
    * job that crosses it still runs, so every frame makes progress. A
@@ -159,7 +287,7 @@ export interface StageOptions {
  * until `resume()` (or a new `stage()`).
  */
 export class BatchStager {
-  private readonly maxJobs: number
+  private readonly maxJobs: () => number
   private readonly budget: () => number
   private readonly maxWaitFrames: number
   private readonly frames: FrameSource
@@ -179,7 +307,11 @@ export class BatchStager {
   private generation = 0
 
   constructor(opts: BatchStagerOptions) {
-    this.maxJobs = Math.max(1, Math.floor(opts.maxJobs))
+    const maxJobs = opts.maxJobs
+    this.maxJobs =
+      typeof maxJobs === 'function'
+        ? () => Math.max(1, Math.floor(maxJobs()))
+        : () => Math.max(1, Math.floor(maxJobs))
     const budget = opts.budget ?? Infinity
     this.budget = typeof budget === 'function' ? budget : () => budget
     this.maxWaitFrames = Math.max(0, Math.floor(opts.maxWaitFrames ?? 0))
@@ -256,7 +388,12 @@ export class BatchStager {
       this.inFlight = this.inFlight.filter((settled) => !settled())
       if (this.inFlight.length > 0 && this.waited < this.maxWaitFrames) {
         this.waited++
-        this.next(generation)
+        // Waited a frame at a time in the deferred part too: a wait is for
+        // the GPU to take the last batch, not for the main thread to be
+        // idle — counted in idle callbacks, a page that is never idle (each
+        // one then comes at its timeout) waited a second a wait, and an
+        // off-screen tail of 100 texts took minutes.
+        this.handle = { id: this.frames.request(() => this.runBatch(generation)), source: 'frame' }
         return
       }
     }
@@ -266,9 +403,10 @@ export class BatchStager {
     const end =
       this.cursor < this.deferFrom ? Math.min(this.deferFrom, this.queue.length) : this.queue.length
     const budget = this.budget()
+    const maxJobs = this.maxJobs()
     let done = 0
     let spent = 0
-    while (done < this.maxJobs && spent < budget && this.cursor < end) {
+    while (done < maxJobs && spent < budget && this.cursor < end) {
       const work = this.queue[this.cursor++]!()
       if (work === null) continue
       done++

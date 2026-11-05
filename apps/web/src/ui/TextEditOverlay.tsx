@@ -36,8 +36,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { powerpointLineOffsetPx, resolveLineHeightPx } from '../lib/fontLineMetrics.js'
 import { firstLineFontSizePx, listedHtmlOptionsFor, paragraphsOf } from '../lib/textLayout.js'
 import * as Y from 'yjs'
-import { isTokenRef } from '@narrative/shared'
-import type { TokenRef } from '@narrative/shared'
 import {
   buildListedHtml,
   getParagraphs,
@@ -47,31 +45,43 @@ import {
 import type { TextObject } from '@narrative/shared'
 import { MAX_BODY_LENGTH, displayRangeOf, rawOffsetOf, type TextTarget } from '@narrative/commands'
 import { useCommand } from '../state/useCommand.js'
+import { useSlideDoc } from '../state/useSlideDoc.js'
+import { isModHeld } from '../state/useShortcuts.js'
 import { setActiveTextSelection } from './textEditSelection.js'
 import {
   getElementInnerText,
+  domShowsHtml,
   domPositionToCharIndex,
   charIndexToDomPosition,
 } from './textEditDom.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { cssFontFamily } from '../renderer/fontFallback.js'
 import { useTextEdit } from '../state/TextEditContext.js'
+import {
+  boxFilterCss,
+  boxTransformCss,
+  textClipPath,
+  textPaintCss,
+  useColourResolverTick,
+  type ClipMargin,
+} from './textEditOverlayLook.js'
 
 export interface TextEditOverlayProps {
   obj: TextObject
   /** The body as commands address it: the text box, or a table cell (`cell`). */
   target: TextTarget
   onEnd: () => void
+  /**
+   * A table cell: the room between the text box (the cell's inner box) and
+   * the cell's edge, where the canvas clips the cell's text. Missing: a text
+   * box, clipped as its own mask clips it (textEditOverlayLook.ts).
+   */
+  clipMargin?: ClipMargin
 }
 
 function weightToCss(w: TextObject['fontWeight']): string {
   if (w === 'normal' || w === 'bold') return w
   return String(w)
-}
-
-function hexToCss(n: number | TokenRef): string {
-  if (isTokenRef(n)) return '#000000' // TokenRef: fallback to black until token picker lands (M16 P4)
-  return '#' + n.toString(16).padStart(6, '0')
 }
 
 /**
@@ -116,9 +126,32 @@ function toDisplayText(s: string): string {
   return s.split(PARAGRAPH_SEP).join('\n\n')
 }
 
-export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
+/**
+ * Where a Y.Text change ends (a Y.Text offset; the editor's are the same):
+ * after the last text it inserted, or where it last deleted. Null for a
+ * change of formatting only.
+ */
+function changeEnd(delta: Y.YTextEvent['delta']): number | null {
+  let pos = 0
+  let end: number | null = null
+  for (const op of delta) {
+    if (op.retain !== undefined) {
+      if (op.attributes !== undefined) end = pos + op.retain
+      pos += op.retain
+    } else if (op.insert !== undefined) {
+      pos += typeof op.insert === 'string' ? op.insert.length : 1
+      end = pos
+    } else if (op.delete !== undefined) {
+      end = pos
+    }
+  }
+  return end
+}
+
+export function TextEditOverlay({ obj, target, onEnd, clipMargin }: TextEditOverlayProps) {
   const editorRef = useRef<HTMLDivElement>(null)
   const command = useCommand()
+  const { undoManager } = useSlideDoc()
   const canvas = useCanvasInstance()
   const { consumeSelectAllOnEnter, clearSelectAllOnEnter } = useTextEdit()
   /**
@@ -147,6 +180,16 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
   const builtFromRef = useRef<Y.Text | null>(null)
   const onEndRef = useRef(onEnd)
   onEndRef.current = onEnd
+  /**
+   * Where the caret goes once the editor is rebuilt from a body that is not
+   * there yet (display offset): a legacy plain-string body, which the first
+   * edit's command replaces with rich text that arrives with the next render.
+   */
+  const pendingCaretRef = useRef<number | null>(null)
+
+  // Token colours resolve through the canvas's resolver; when the folder's
+  // tokens arrive or change, the canvas repaints and so does the editor.
+  const colourTick = useColourResolverTick()
 
   // Defaults applied to runs that don't override the corresponding
   // attribute. Box-wide values come from the TextObject.
@@ -164,7 +207,13 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
       fontWeight: weightToCss(obj.fontWeight),
       fontStyle: obj.italic === true ? 'italic' : 'normal',
       ...(obj.fontStretch !== undefined ? { fontStretch: `${obj.fontStretch}%` } : {}),
-      textDecoration: obj.underline === true ? 'underline' : 'none',
+      // No `text-decoration` here: the box's underline is each run's `<u>`
+      // (buildListedHtml applies the box-wide default to every run, as it
+      // does for the canvas). One on the root drew a second line under every
+      // `<u>` — at a fractional zoom two antialiased bands, darker and
+      // heavier than the canvas's one (e2e/text-edit-parity.spec.ts) — and a
+      // run the document leaves plain could not take it off. Typed text the
+      // browser leaves outside its run is put back in it (syncMarkup).
       // Match Pixi: fixed pixel line heights. Each paragraph carries its own
       // (buildListedHtml, from the fonts in it); this is the frame's, for
       // anything outside a paragraph. A unitless multiplier would let each
@@ -180,26 +229,16 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
       top: powerpointLineOffsetPx(obj, firstLineFontSizePx(obj)),
       letterSpacing: `${obj.letterSpacing ?? 0}px`,
       textAlign: obj.align,
-      color: hexToCss(obj.color),
-      caretColor: hexToCss(obj.color),
+      // Fill (with its alpha) and glyph stroke, resolved as the canvas does.
+      ...textPaintCss(obj),
       ...(obj.textTransform !== undefined && obj.textTransform !== 'none'
         ? { textTransform: obj.textTransform }
         : {}),
     }),
-    [
-      obj.color,
-      obj.fontFamily,
-      obj.fontSize,
-      obj.fontWeight,
-      obj.italic,
-      obj.underline,
-      obj.lineHeight,
-      obj.lineSpacing,
-      obj.letterSpacing,
-      obj.align,
-      obj.textTransform,
-      obj.fontStretch,
-    ],
+    // The object is selected by fields (ActiveObjectOverlays): a new one is a
+    // field change, and typing (inside its Y.Text) does not make one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- colourTick: the resolver is an input
+    [obj, colourTick],
   )
 
   // ── Mount: render initial HTML, focus, hide Pixi text node ───────────
@@ -209,7 +248,10 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
     el.innerHTML = buildOverlayHtml(obj)
     builtFromRef.current = obj.text instanceof Y.Text ? obj.text : null
     setFaded(true)
-    el.focus()
+    // Never scroll the stage to the caret: the text stays where the canvas
+    // drew it (an unwrapped line running past its box scrolled the editor
+    // by up to 1400 px — e2e/text-edit-parity.spec.ts).
+    el.focus({ preventScroll: true })
     // For freshly-created text (toolbar drop), select everything so the first
     // keystroke replaces the placeholder. Otherwise place caret at end so the
     // user continues from where they left off (double-click-to-edit case).
@@ -247,8 +289,7 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
   // keystroke then diffed against.
   useLayoutEffect(() => {
     const yText = obj.text instanceof Y.Text ? obj.text : null
-    if (yText === null) return
-    const onYTextChange = (): void => {
+    const onYTextChange = (event?: Y.YTextEvent, tr?: Y.Transaction): void => {
       if (localEditRef.current) return
       const el = editorRef.current
       if (el === null) return
@@ -271,6 +312,17 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
         const r = sel.getRangeAt(0)
         savedStart = domPositionToCharIndex(el, r.startContainer, r.startOffset)
         savedEnd = domPositionToCharIndex(el, r.endContainer, r.endOffset)
+        // Undo and redo put the caret where they changed the text, as a
+        // text editor does (the stored offsets are the editable ones).
+        if (event !== undefined && tr?.origin === undoManager) {
+          const at = changeEnd(event.delta)
+          if (at !== null) savedStart = savedEnd = at
+        }
+      }
+      if (pendingCaretRef.current !== null && yText !== null) {
+        const at = rawOffsetOf(getPlainString(yText), pendingCaretRef.current)
+        pendingCaretRef.current = null
+        if (editorIsFocused) savedStart = savedEnd = at
       }
       el.innerHTML = buildOverlayHtml(obj)
       builtFromRef.current = yText
@@ -289,14 +341,25 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
         }
       }
     }
-    yText.observe(onYTextChange)
+    yText?.observe(onYTextChange)
     // The object's Y.Text was replaced (its object map was: a collaborator's
     // replacement, a sync swapping the map under the same id): the editor
     // shows the old one's text, and nothing will ever tell it otherwise.
-    if (builtFromRef.current !== yText) onYTextChange()
-    return () => {
-      yText.unobserve(onYTextChange)
+    // Or a field the markup is built from changed under the same text (the
+    // box's underline, italic, size or spacing set from the Inspector while
+    // editing): the runs' elements and the paragraphs' line heights are the
+    // old ones.
+    const el = editorRef.current
+    if (
+      builtFromRef.current !== yText ||
+      (el !== null && !domShowsHtml(el, buildOverlayHtml(obj)))
+    ) {
+      onYTextChange()
     }
+    return () => {
+      yText?.unobserve(onYTextChange)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- undoManager: one per document, as obj
   }, [obj])
 
   // ── Selection publish for Inspector inline-format buttons ────────────
@@ -310,7 +373,7 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
       const target = editorRef.current
       if (target === null) return
       const sel = window.getSelection()
-      target.focus()
+      target.focus({ preventScroll: true })
       if (sel === null) return
       // Restore the last-published selection range so the user can
       // see what the Inspector mutation just hit. Without this, a
@@ -392,10 +455,13 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
    * the DOM cannot show by itself — a structural edit, or typed text the
    * command turned into more (a pasted blank line becomes a paragraph).
    */
-  const redraw = (caret: { start: number; end: number } | null): void => {
+  const redraw = (
+    caret: { start: number; end: number } | null,
+    html: string = buildOverlayHtml(obj),
+  ): void => {
     const el = editorRef.current
     if (el === null) return
-    el.innerHTML = buildOverlayHtml(obj)
+    el.innerHTML = html
     lastPlainRef.current = editableString(obj.text)
     if (caret !== null) restoreCaret(caret.start, caret.end)
   }
@@ -421,7 +487,7 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
     return { start: pos, end: pos }
   }
 
-  const handleInput = (): void => {
+  const handleInput = (composing: boolean): void => {
     // The first real input means the user accepted the placeholder
     // selection (or typed past the initial caret); the select-all-on-enter
     // intent has been served.
@@ -468,8 +534,28 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
       return
     }
     const model = editableString(obj.text)
-    if (model === next) lastPlainRef.current = next
-    else redraw(caretFromDisplay(result.caret))
+    if (model !== next) {
+      redraw(caretFromDisplay(result.caret))
+      return
+    }
+    lastPlainRef.current = next
+    // Mid-composition the browser owns the composed text's DOM (a rebuild
+    // would end the composition); it is checked when the composition ends.
+    if (!composing) syncMarkup()
+  }
+
+  /**
+   * Put the editor's markup back to what the document builds when the
+   * browser typed text outside the run the document gave it (an empty
+   * paragraph, a replaced selection: a bare text node, without the run's
+   * `<u>` or styled span), keeping the caret.
+   */
+  const syncMarkup = (): void => {
+    const el = editorRef.current
+    if (el === null) return
+    const html = buildOverlayHtml(obj)
+    if (domShowsHtml(el, html)) return
+    redraw(getCaretRange(), html)
   }
 
   // ── Structural edits (Enter / Tab / list Backspace) ──────────────────
@@ -519,6 +605,49 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
       edits: [{ at: d.start, delete: d.length, insert: text }],
     })
     redraw(result === null ? range : caretFromDisplay(result.caret))
+  }
+
+  /**
+   * Shift+Enter: a line break in the paragraph (a list item's continuation
+   * line), over the selection — a command, as Enter is. The browser's own
+   * line break is not the document's: in pre-wrap text it types "\n\n" or
+   * `<br><br>` (the second only holds the new line open), and engines
+   * differ in which.
+   */
+  const handleSoftBreak = (): void => {
+    const range = getCaretRange()
+    if (range === null) return
+    clearSelectAllOnEnter()
+    const d = displayRangeOf(storedText(obj.text), range.start, range.end)
+    const result = dispatch<{ caret: number }>('text.edit', {
+      target,
+      edits: [{ at: d.start, delete: d.length, insert: '\n' }],
+    })
+    if (result === null) {
+      redraw(range)
+      return
+    }
+    // A legacy plain-string body is now rich text, which arrives with the
+    // next render; the editor is rebuilt from it then (the observer below).
+    if (!(obj.text instanceof Y.Text)) {
+      pendingCaretRef.current = result.caret
+      return
+    }
+    redraw(caretFromDisplay(result.caret))
+  }
+
+  /**
+   * Undo / redo while editing: the document's history (the commands this
+   * editor ran are on it), not the browser's, which knows nothing of the
+   * edits made as commands and replays its own DOM changes against markup
+   * rebuilt since. The same history as `history.undo` / `history.redo`
+   * outside the editor; the Y.Text observer redraws and puts the caret at
+   * the change.
+   */
+  const historyStep = (redo: boolean): void => {
+    clearSelectAllOnEnter()
+    if (redo) undoManager.redo()
+    else undoManager.undo()
   }
 
   /** Tab / Shift+Tab: indent / outdent the covered paragraphs. */
@@ -578,21 +707,55 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
   const shrinkScale =
     obj.autofit === 'shrink' ? (canvas?.sceneGraph.textLayout(obj.id)?.scale ?? 1) : 1
 
-  const wrapperStyle = useMemo<React.CSSProperties>(
+  // Three boxes, each doing what one part of the canvas's text node does:
+  // - the rig: the object's box, turned and flipped about its centre as the
+  //   container is (its pivot is the centre of the box as drawn — for a
+  //   growing box, as tall as its text, which `height: auto` is here too);
+  //   it carries the edit outline;
+  // - the look: the object's shadow and blur, applied to the text as
+  //   clipped, as the container's filters are (the object's opacity is the
+  //   editor's own: a group opacity there is the same picture, and WebKit
+  //   leaves out the opacity of an element whose own content is hidden —
+  //   the parity gate's screenshots hide everything but the editor);
+  // - the frame: the text's layout box. For a shrinking box it is `1 / scale`
+  //   as large and scaled down by a transform, as the canvas lays the text
+  //   out at full size in a box `1 / scale` as wide and draws the node at
+  //   `scale` (buildStyleOpts): the same line breaks and the same layout
+  //   numbers, scaled — `zoom` laid the text out at the smaller size instead,
+  //   0.5–1.7 px from the canvas. It aligns the text vertically (Pixi's
+  //   applyVerticalAlign) and clips it where the canvas's mask does.
+  const rigStyle = useMemo<React.CSSProperties>(
     () => ({
       position: 'absolute',
       left: obj.x,
       top: obj.y,
       width: obj.width,
       height: grows ? 'auto' : obj.height,
-      transform: `rotate(${obj.rotation}rad)`,
-      transformOrigin: 'top left',
+      transform: boxTransformCss(obj),
+      transformOrigin: 'center',
       outline: '2px dashed rgba(59, 130, 246, 0.8)',
       outlineOffset: '0px',
-      // Mirror Pixi's applyVerticalAlign — without this, edit mode
-      // always rendered text from the top while the rendered Pixi
-      // glyphs sat at middle/bottom, producing a vertical jump on
-      // edit-enter and a snap-back on edit-exit.
+    }),
+    [obj, grows],
+  )
+
+  const lookStyle = useMemo<React.CSSProperties>(() => {
+    const filter = boxFilterCss(obj)
+    return {
+      width: '100%',
+      height: grows ? 'auto' : '100%',
+      ...(filter !== undefined ? { filter } : {}),
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- colourTick: the shadow's token colour
+  }, [obj, grows, colourTick])
+
+  const frameStyle = useMemo<React.CSSProperties>(() => {
+    const scaled = shrinkScale !== 1 && shrinkScale > 0
+    const clipPath = textClipPath(obj, clipMargin, scaled ? shrinkScale : 1)
+    return {
+      width: scaled ? obj.width / shrinkScale : '100%',
+      height: grows ? 'auto' : scaled ? obj.height / shrinkScale : '100%',
+      ...(scaled ? { transform: `scale(${shrinkScale})`, transformOrigin: 'top left' } : {}),
       display: 'flex',
       flexDirection: 'column',
       justifyContent:
@@ -601,23 +764,18 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
           : obj.vAlign === 'middle'
             ? 'center'
             : 'flex-end',
-      // An unwrapped line may extend past the box, as it renders; clipping
-      // it here would hide the caret at the end of it.
-      overflow: obj.wrap === 'none' || grows ? 'visible' : 'hidden',
-    }),
-    [obj.x, obj.y, obj.width, obj.height, obj.rotation, obj.vAlign, obj.wrap, grows],
-  )
+      ...(clipPath !== undefined ? { clipPath } : {}),
+    }
+  }, [obj, grows, shrinkScale, clipMargin])
 
   const editorStyle = useMemo<React.CSSProperties>(
     () => ({
-      // Flex child — the wrapper handles vertical positioning, so we
-      // size to content (auto height) and only cap at the box height
-      // so very tall text still clips inside the box edge.
+      // Flex child — the frame handles vertical positioning, so we size to
+      // content (auto height), capped at the box height: text taller than
+      // the box starts at its top and runs past its bottom, as the canvas
+      // aligns it (no negative offset for a middle or bottom box).
       width: '100%',
       maxHeight: grows ? 'none' : '100%',
-      // `zoom` (not a transform) so the scaled text also lays out scaled:
-      // lines break at the box width at the smaller size, as rendered.
-      ...(shrinkScale !== 1 ? { zoom: shrinkScale } : {}),
       boxSizing: 'border-box',
       background: 'transparent',
       border: 'none',
@@ -637,78 +795,105 @@ export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
               obj.align === 'right' ? 'flex-end' : obj.align === 'center' ? 'center' : 'flex-start',
           }
         : {}),
+      // The object's opacity: the canvas fades the container (text and stroke
+      // as one picture), a group opacity here.
+      ...((obj.opacity ?? 1) < 1 ? { opacity: Math.max(0, obj.opacity) } : {}),
       ...baseStyle,
     }),
-    [baseStyle, obj.wrap, obj.align, grows, shrinkScale],
+    [baseStyle, obj.wrap, obj.align, obj.opacity, grows],
   )
 
   return (
-    <div style={wrapperStyle}>
-      <div
-        ref={editorRef}
-        contentEditable
-        suppressContentEditableWarning
-        spellCheck={false}
-        style={editorStyle}
-        onInput={handleInput}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.preventDefault()
-            onEnd()
-            return
-          }
-          if (e.key === 'Enter' && !e.shiftKey) {
-            // Enter starts a new paragraph (= new list item / <a:p>) by
-            // inserting a U+2029 separator that carries the paragraph's
-            // block attributes. Handled explicitly rather than via
-            // contenteditable's default (which inserts a bare <div>).
-            e.preventDefault()
-            handleEnter()
-            return
-          }
-          if (e.key === 'Enter' && e.shiftKey) {
-            // Shift+Enter is a soft line break (continuation line inside
-            // the same paragraph / list item) — a plain <br> = '\n'.
-            e.preventDefault()
-            document.execCommand('insertLineBreak')
-            return
-          }
-          if (e.key === 'Tab') {
-            // Tab / Shift+Tab indent / outdent the current paragraph(s).
-            e.preventDefault()
-            handleIndent(e.shiftKey ? -1 : 1)
-            return
-          }
-          if (e.key === 'Backspace') {
-            // Structural backspace at the start of a list/indented paragraph
-            // (native can't merge across the marker span). Falls through to
-            // the diff path for everything else.
-            if (handleListBackspace()) e.preventDefault()
-            return
-          }
-        }}
-        onBlur={(e) => {
-          const next = e.relatedTarget as HTMLElement | null
-          if (next !== null && next.closest('[data-text-edit-keep-focus]') !== null) {
-            return
-          }
-          onEnd()
-        }}
-        onPaste={(e) => {
-          // Paste plain text only — we never want HTML / styles to
-          // bleed into the contenteditable from the clipboard.
-          e.preventDefault()
-          const txt = e.clipboardData.getData('text/plain')
-          if (txt === '') return
-          handlePaste(txt)
-        }}
-        onPointerDown={(e) => {
-          // User chose a caret position manually — drop the auto-select-all
-          // intent so a subsequent re-mount (StrictMode) doesn't reselect.
-          clearSelectAllOnEnter()
-          e.stopPropagation()
-        }}
-      />
+    <div style={rigStyle}>
+      <div style={lookStyle}>
+        <div style={frameStyle}>
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            spellCheck={false}
+            style={editorStyle}
+            onInput={(e) => handleInput((e.nativeEvent as InputEvent).isComposing)}
+            onCompositionEnd={syncMarkup}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                onEnd()
+                return
+              }
+              if (e.key === 'Enter' && !e.shiftKey) {
+                // Enter starts a new paragraph (= new list item / <a:p>) by
+                // inserting a U+2029 separator that carries the paragraph's
+                // block attributes. Handled explicitly rather than via
+                // contenteditable's default (which inserts a bare <div>).
+                e.preventDefault()
+                handleEnter()
+                return
+              }
+              if (e.key === 'Enter' && e.shiftKey) {
+                // Shift+Enter is a soft line break (continuation line inside
+                // the same paragraph / list item): '\n'.
+                e.preventDefault()
+                handleSoftBreak()
+                return
+              }
+              if (isModHeld(e) && !e.altKey && e.key.toLowerCase() === 'z') {
+                e.preventDefault()
+                historyStep(e.shiftKey)
+                return
+              }
+              if (e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === 'y') {
+                e.preventDefault()
+                historyStep(true)
+                return
+              }
+              if (e.key === 'Tab') {
+                // Tab / Shift+Tab indent / outdent the current paragraph(s).
+                e.preventDefault()
+                handleIndent(e.shiftKey ? -1 : 1)
+                return
+              }
+              if (e.key === 'Backspace') {
+                // Structural backspace at the start of a list/indented paragraph
+                // (native can't merge across the marker span). Falls through to
+                // the diff path for everything else.
+                if (handleListBackspace()) e.preventDefault()
+                return
+              }
+            }}
+            onBlur={(e) => {
+              const next = e.relatedTarget as HTMLElement | null
+              if (next !== null && next.closest('[data-text-edit-keep-focus]') !== null) {
+                return
+              }
+              onEnd()
+            }}
+            onBeforeInput={(e) => {
+              // Undo / Redo from a menu (the browser's, the desktop app's
+              // Edit menu): the document's history, as the keys above.
+              const type = (e.nativeEvent as InputEvent).inputType
+              if (type === 'historyUndo' || type === 'historyRedo') {
+                e.preventDefault()
+                historyStep(type === 'historyRedo')
+              }
+            }}
+            onPaste={(e) => {
+              // Paste plain text only — we never want HTML / styles to
+              // bleed into the contenteditable from the clipboard.
+              e.preventDefault()
+              const txt = e.clipboardData.getData('text/plain')
+              if (txt === '') return
+              handlePaste(txt)
+            }}
+            onPointerDown={(e) => {
+              // User chose a caret position manually — drop the auto-select-all
+              // intent so a subsequent re-mount (StrictMode) doesn't reselect.
+              clearSelectAllOnEnter()
+              e.stopPropagation()
+            }}
+          />
+        </div>
+      </div>
     </div>
   )
 }

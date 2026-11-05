@@ -41,18 +41,19 @@ import {
   renderNow,
   setKeepWarmEnabled,
   setKeepWarmFrame,
-  setKeepWarmTarget,
   setPresentIdleFallback,
   stripMasks,
+  textTextureMemory,
   type KeepWarmFrame,
-  type KeepWarmTarget,
   type PresentIdleFallback,
   type RenderKind,
+  type TextTextureMemory,
 } from '../renderer/perfProbes.js'
 import { getDefaultResourceManager } from '../renderer/ResourceManager.js'
 import type { RenderScheduler } from '../renderer/RenderScheduler.js'
 import type { SceneGraph } from '../renderer/SceneGraph.js'
 import { forcePlaybackKind } from '../renderer/videoRendition.js'
+import { forceTrialVerdict } from '../renderer/videoPlaybackTrial.js'
 import type { LoadTimings } from '../state/loadTimings.js'
 import { COUNTS_KEY, onPerfCanvas } from './activation.js'
 import { GlResidency, type GlResidencySnapshot } from './glResidency.js'
@@ -211,6 +212,14 @@ export interface PerfHarnessApi {
    * CDP-free: the JS heap and the listeners come from CDP (Chromium only).
    */
   memory(): PerfMemory
+  /**
+   * What the editor canvas's text rasters hold on the GPU — the run-text
+   * textures (their rasters' pixels and the textures' own, mipmapped or not)
+   * — and what Pixi's texture pool keeps idle, resident in the editor's
+   * context or not (renderer/perfProbes.ts → textTextureMemory). Null
+   * without a canvas. Read by memory.spec.ts (memory.zoom.cycle).
+   */
+  textureMemory(): TextTextureMemory | null
   /** Present mode's keep-warm draws since the harness loaded (renderer/presentSlides.ts → "Kept warm"). */
   keepWarmDraws(): number
   /**
@@ -241,8 +250,6 @@ export interface PerfHarnessApi {
    * loads starts with that mode.
    */
   setPresentIdleFallback(mode: PresentIdleFallback): void
-  /** A diagnostic: what keep-warm draws into (renderer/presentKeepWarm.ts → KeepWarmTarget). */
-  setKeepWarmTarget(mode: KeepWarmTarget): void
   /**
    * A diagnostic: from now on keep each texture upload of the editor's
    * context (its size, and the stack that made it) until read; null stops.
@@ -675,6 +682,11 @@ export function installPerfHarness(): void {
   ).__narrative_perf_videoRendition
   if (forcedRendition === 'present' || forcedRendition === 'playback')
     forcePlaybackKind(forcedRendition)
+  // present-video-rendition.spec.ts: the trial playback's verdict, whatever this machine can do.
+  const forcedTrial = (window as unknown as { __narrative_perf_videoTrial?: 'smooth' | 'rough' })
+    .__narrative_perf_videoTrial
+  if (forcedTrial === 'smooth' || forcedTrial === 'rough')
+    forceTrialVerdict(forcedTrial === 'smooth')
 
   const harness: PerfHarnessApi = {
     version: 1,
@@ -900,11 +912,11 @@ export function installPerfHarness(): void {
         blobUrls: blobUrls.size,
       }
     },
+    textureMemory: () => (app === null ? null : textTextureMemory(app)),
     keepWarmDraws: () => keepWarmDraws,
     setKeepWarm: (on) => setKeepWarmEnabled(on),
     setKeepWarmFrame: (mode) => setKeepWarmFrame(mode),
     setPresentIdleFallback: (mode) => setPresentIdleFallback(mode),
-    setKeepWarmTarget: (mode) => setKeepWarmTarget(mode),
     setGapProbe(on) {
       gapProbe = on
     },

@@ -34,6 +34,12 @@ export interface PaintRules {
    * canvas's default too).
    */
   strokeMiterLimit: number
+  /**
+   * Draw spaces as no-break spaces so the canvas shapes across them as the
+   * layout does (Blink: its canvas shapes word by word; paintRuns.ts →
+   * `shapedText`).
+   */
+  shapeAcrossSpaces: boolean
 }
 
 /** A face the worker should know: the bytes and descriptors the page registered. */

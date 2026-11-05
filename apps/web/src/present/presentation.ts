@@ -30,7 +30,7 @@
  */
 
 import type { AnimationStep, Slide, SlideTransition } from '@narrative/shared'
-import { computeSlideNumber } from '@narrative/shared'
+import { computeSlideNumber, perfCount } from '@narrative/shared'
 import type { DeckStore } from '@narrative/slide-model'
 import {
   createAnimationRuntime,
@@ -70,6 +70,16 @@ function gatedBridge(inner: InputBridge): InputBridge & { open(): void } {
       open = true
     },
   }
+}
+
+/** A set prepared for a new display density, waiting to take over (Presentation.setStandby). */
+interface Standby {
+  cache: PresentSlideCache
+  density: number
+  /** Take over at the next slide boundary. */
+  armed: boolean
+  apply: (density: number) => void
+  adopted: () => void
 }
 
 interface SlideRuntime {
@@ -112,9 +122,19 @@ export class Presentation {
   private plannedFrom: Slide[] | null = null
   private destroyed = false
   private readonly unsubscribeStore: () => void
+  /** The prepared slides presenting now (a density change hands over to another: `setStandby`). */
+  private cache: PresentSlideCache
+  /** The set prepared for a new display density, until it takes over (present/densityHandover.ts). */
+  private standby: Standby | null = null
+  private readonly listeners = new Set<() => void>()
+  /** The density the scene graph takes at the next swap (adoptStandby → settleDensity). */
+  private densityToSettle: number | null = null
+  private unsubscribeCache: () => void
 
   constructor(deps: PresentationDeps) {
     this.deps = deps
+    this.cache = deps.cache
+    this.unsubscribeCache = this.cache.subscribe(() => this.notify())
     deps.cache.setBusyProbe(() => this.isMoving())
     // A live edit of the deck: the plan follows (stale scenes are rebuilt).
     this.unsubscribeStore = deps.store.subscribe(() => {
@@ -162,14 +182,14 @@ export class Presentation {
    */
   isPrepared(startId: string): boolean {
     this.followDeckBeforeStart()
-    const { cache } = this.deps
+    const cache = this.cache
     return this.required(startId).every((id) => cache.isReady(id)) && cache.settledPlan()
   }
 
   /** Show the first slide (a cut) and switch the cache to idle-time building. */
   start(startId: string): boolean {
     if (!this.show(startId, null)) return false
-    this.deps.cache.setIdleOnly(true)
+    this.cache.setIdleOnly(true)
     return true
   }
 
@@ -185,14 +205,14 @@ export class Presentation {
   startNow(slideId: string): void {
     if (this.destroyed || this.shownId !== null || this.waitingFor !== null) return
     this.replan(slideId)
-    if (this.deps.cache.isReady(slideId)) this.show(slideId, null)
+    if (this.cache.isReady(slideId)) this.show(slideId, null)
     else {
       this.shownId = slideId
       this.startingAt = null
       this.stopRuntime()
       this.playMounted(slideId)
     }
-    this.deps.cache.setIdleOnly(true)
+    this.cache.setIdleOnly(true)
   }
 
   next(): void {
@@ -227,6 +247,9 @@ export class Presentation {
     if (this.destroyed) return
     this.destroyed = true
     this.unsubscribeStore()
+    this.unsubscribeCache()
+    this.listeners.clear()
+    this.standby = null
     if (this.transition !== null) this.abortTransition()
     this.stopRuntime()
     this.incomingRuntime?.runtime.destroy()
@@ -272,7 +295,14 @@ export class Presentation {
    */
   private show(targetId: string, transition: SlideTransition | null): boolean {
     if (this.destroyed) return false
-    const { cache, sceneGraph } = this.deps
+    // A set prepared for the display's new density takes over at this
+    // boundary (setStandby): the incoming slide comes from it.
+    // Only when it has the target: a slide still being prepared would leave
+    // the old scene on a canvas already resized for the new density.
+    const adopted =
+      this.standby?.armed === true && this.standby.cache.isReady(targetId) && this.adoptStandby()
+    const { sceneGraph } = this.deps
+    const cache = this.cache
     // Plan around the target first: the slide leaving the stage is one of
     // its neighbours, and the cache keeps it only when it is planned.
     this.replan(targetId)
@@ -292,7 +322,10 @@ export class Presentation {
 
     if (transition === null) {
       cache.give(sceneGraph.swapSlideScene(scene))
+      this.settleDensity()
       this.arrive(targetId, incoming)
+      // The canvas was resized for the new density: drawn in this task, no blank frame.
+      if (adopted) getDefaultRenderScheduler()?.renderNow()
       return true
     }
     this.incomingRuntime = incoming
@@ -300,9 +333,13 @@ export class Presentation {
       sceneGraph,
       incoming: scene,
       transition,
-      onSwapped: (outgoing) => cache.give(outgoing),
+      onSwapped: (outgoing) => {
+        cache.give(outgoing)
+        this.settleDensity()
+      },
     })
     this.transition = { handle, targetId }
+    if (adopted) getDefaultRenderScheduler()?.renderNow()
     void handle.done.then(() => {
       if (this.transition?.handle !== handle) return // aborted
       this.transition = null
@@ -321,7 +358,7 @@ export class Presentation {
     this.incomingRuntime?.runtime.destroy()
     this.incomingRuntime?.bridge.dispose?.()
     this.incomingRuntime = null
-    if (incoming !== null) this.deps.cache.give(incoming)
+    if (incoming !== null) this.cache.give(incoming)
   }
 
   /** The slide is on stage: its builds play, the page follows, the plan moves on. */
@@ -504,9 +541,147 @@ export class Presentation {
         surface: slide.layout?.surface,
       })
     }
-    this.deps.cache.setPlan(
-      specs,
-      required.filter((id) => byId.has(id)),
-    )
+    const requiredIds = required.filter((id) => byId.has(id))
+    this.cache.setPlan(specs, requiredIds)
+    this.standby?.cache.setPlan(specs, requiredIds)
+  }
+
+  // -------------------------------------------------------------------------
+  // A change of the display's density (present/densityHandover.ts)
+
+  /** Be told whenever the presenting set's preparation moved on (or another set took over). */
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  /** How much of the presenting set's plan is prepared (the preparing overlay). */
+  progress(): ReturnType<PresentSlideCache['progress']> {
+    return this.cache.progress()
+  }
+
+  /** The set presenting now. */
+  get presentingCache(): PresentSlideCache {
+    return this.cache
+  }
+
+  /**
+   * Prepare `cache` (a standby set for `density`) alongside the presenting
+   * one: it follows the plan from now on and builds in idle time once the
+   * presentation is on stage. `apply` switches the canvas to the density in
+   * the task the new set takes over in; `adopted` reports the takeover. A
+   * previous standby set is dropped (its owner destroys it).
+   */
+  setStandby(
+    cache: PresentSlideCache,
+    density: number,
+    hooks: { apply: (density: number) => void; adopted: () => void },
+  ): void {
+    if (this.destroyed) return
+    this.standby = { cache, density, armed: false, ...hooks }
+    cache.setBusyProbe(() => this.isMoving())
+    cache.setIdleOnly(this.shownId !== null)
+    const around = this.waitingFor ?? this.shownId ?? this.startingAt
+    if (around !== null) this.replan(around)
+  }
+
+  /** Drop the standby set `cache` (it is about to be destroyed). */
+  clearStandby(cache: PresentSlideCache): void {
+    if (this.standby?.cache === cache) this.standby = null
+    // The presenting set's probe holds the upload gate again.
+    this.cache.setBusyProbe(() => this.isMoving())
+  }
+
+  /** Whether the standby set can present: the slides around the one shown, and its plan as far as it goes. */
+  standbyReady(cache: PresentSlideCache): boolean {
+    if (this.standby?.cache !== cache) return false
+    const around = this.waitingFor ?? this.shownId ?? this.startingAt
+    if (around === null) return cache.settledPlan()
+    return this.required(around).every((id) => cache.isReady(id)) && cache.settledPlan()
+  }
+
+  /** Swap to the standby set at the next slide boundary (`show`), or not (`false`). */
+  armStandby(armed: boolean): void {
+    if (this.standby !== null) this.standby.armed = armed
+  }
+
+  /**
+   * Swap to the standby set now, when nobody can see it happen: before the
+   * presentation is on stage, or on a slide that is still and as it was
+   * prepared (nothing moves, no build has run on it, no video on it).
+   * False when it has to wait for a boundary.
+   */
+  swapToStandbyNow(): boolean {
+    const standby = this.standby
+    if (this.destroyed || standby === null) return false
+    if (this.shownId === null) {
+      // Not on stage yet: nothing shows the old set.
+      if (this.waitingFor !== null) return false
+      if (!this.adoptStandby()) return false
+      getDefaultRenderScheduler()?.renderNow()
+      return true
+    }
+    if (this.isMoving() || this.transition !== null || this.waitingFor !== null) return false
+    if (this.runtime !== null) return false
+    const shown = this.shownId
+    const slide = this.slides().find((s) => s.id === shown)
+    if (slide?.objects.some((o) => o.type === 'video') === true) return false
+    if (!standby.cache.isReady(shown)) return false
+    if (!this.adoptStandby()) return false
+    const scene = this.cache.take(shown)
+    if (scene !== null) this.cache.give(this.deps.sceneGraph.swapSlideScene(scene))
+    this.settleDensity()
+    this.replan(shown)
+    getDefaultRenderScheduler()?.renderNow()
+    return true
+  }
+
+  /**
+   * The standby set takes over: the slide on stage keeps its texts as they
+   * were drawn (pinned, so the canvas's new resolution does not rasterise
+   * them again), the canvas switches density (`apply`: PresentLayout →
+   * CanvasInstance.setPixelRatio, laid out through the canvas's region and
+   * drawn before this task ends — the callers draw the swapped-in slide in
+   * it, ADR 0020 → Present mode), and the old set is let go —
+   * the scene on stage comes back to the new set when it leaves the stage,
+   * which destroys it (not one of its own).
+   */
+  private adoptStandby(): boolean {
+    const standby = this.standby
+    if (standby === null) return false
+    this.standby = null
+    perfCount('present.density.swap')
+    const old = this.cache
+    this.deps.sceneGraph.pinTextResolution()
+    this.unsubscribeCache()
+    this.cache = standby.cache
+    this.unsubscribeCache = this.cache.subscribe(() => this.notify())
+    standby.apply(standby.density)
+    this.densityToSettle = standby.density
+    old.destroy()
+    // The old set's destroy took the upload hold off the shared gate.
+    this.cache.setBusyProbe(() => this.isMoving())
+    this.cache.setIdleOnly(this.shownId !== null)
+    this.cache.activate()
+    standby.adopted()
+    this.notify()
+    return true
+  }
+
+  /**
+   * After the first swap to a scene of the set that took over: the scene
+   * graph's pictures choose for the new density from here on (before it,
+   * the old scene still on stage would have loaded larger pictures for
+   * nothing). The scene swapped in was prepared for it already.
+   */
+  private settleDensity(): void {
+    const d = this.densityToSettle
+    if (d === null) return
+    this.densityToSettle = null
+    this.deps.sceneGraph.setPixelDensity(d)
+  }
+
+  private notify(): void {
+    for (const l of [...this.listeners]) l()
   }
 }

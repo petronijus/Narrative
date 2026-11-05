@@ -102,6 +102,53 @@ describe('RenderScheduler', () => {
     expect(renders()).toBe(0)
   })
 
+  describe('renderBeforeTaskEnds (a reallocated backbuffer is drawn before the compositor sees it)', () => {
+    it('draws in the same task when nobody else does', async () => {
+      const { app, renders } = makeApp()
+      const scheduler = new RenderScheduler(app)
+      scheduler.renderBeforeTaskEnds()
+      // Not synchronously: the caller may still be changing the scene.
+      expect(renders()).toBe(0)
+      await Promise.resolve()
+      expect(renders()).toBe(1)
+      // No animation frame was needed for it.
+      expect(frames).toHaveLength(0)
+    })
+
+    it('leaves it to the caller’s own draw later in the task (one draw, not two)', async () => {
+      // Present mode: the density switch reallocates, the presentation swaps
+      // the slide in and draws — the outgoing scene is never drawn as well.
+      const { app, renders } = makeApp()
+      const scheduler = new RenderScheduler(app)
+      scheduler.renderBeforeTaskEnds()
+      scheduler.renderNow()
+      await Promise.resolve()
+      expect(renders()).toBe(1)
+    })
+
+    it('does not wait for a pending animation frame (it may come after the compositor)', async () => {
+      const { app, renders } = makeApp()
+      const scheduler = new RenderScheduler(app)
+      scheduler.markDirty()
+      scheduler.renderBeforeTaskEnds()
+      await Promise.resolve()
+      expect(renders()).toBe(1)
+      // The pending frame was taken over, not drawn again.
+      expect(scheduler.framePending).toBe(false)
+      flushFrames()
+      expect(renders()).toBe(1)
+    })
+
+    it('does nothing once destroyed', async () => {
+      const { app, renders } = makeApp()
+      const scheduler = new RenderScheduler(app)
+      scheduler.renderBeforeTaskEnds()
+      scheduler.destroy()
+      await Promise.resolve()
+      expect(renders()).toBe(0)
+    })
+  })
+
   it('says whether a frame is pending and when the last render started', () => {
     // Present mode's keep-warm frame (presentSlides.ts) is skipped when the
     // scheduler draws this frame anyway: it reads both.

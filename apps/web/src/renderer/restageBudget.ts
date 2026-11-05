@@ -19,6 +19,15 @@
  * there is none and the caller keeps its fixed budget). A task that began
  * before the batch — the commit itself, ~110 ms of backbuffer reallocation
  * at the pixel cap — is not the batch's doing and does not count.
+ *
+ * A long task is not the only way a batch overruns. Run-text rasters
+ * (ADR 0018) are painted in workers, so the main thread stays free while
+ * their uploads and mipmaps land on the GPU: after a zoom commit two or three
+ * frames took 33–100 ms with no task over 50 ms (`viewport.zoom.commit`,
+ * 2026-10-30), and WebKit has no Long Tasks API at all (its staging ran at
+ * a fixed budget, frame.p90 49 ms). `FrameGapWatch` counts those: a frame
+ * that came later than one and a half display intervals after the last
+ * while a staging runs is a batch that cost too much, as a long task is.
  */
 
 /** A budget that halves after a long task and grows back without one. */
@@ -92,14 +101,104 @@ export class LongTaskWatch {
     return watch
   }
 
-  /** Whether a long task began at or after `t` (`performance.now()` time); forgets the older ones. */
-  since(t: number): boolean {
+  /**
+   * Whether a long task — at least `minMs` (default: the watch's own
+   * threshold) — began at or after `t` (`performance.now()` time); forgets
+   * the older ones.
+   */
+  since(t: number, minMs = 0): boolean {
     this.entries = this.entries.filter((e) => e.startTime >= t)
-    return this.entries.length > 0
+    return this.entries.some((e) => e.duration >= minMs)
   }
 
   disconnect(): void {
     this.observer.disconnect()
     this.entries = []
+  }
+}
+
+/** Animation frames, for FrameGapWatch (tests hand their own). */
+export interface FrameClock {
+  request(cb: (t: number) => void): number
+  cancel(handle: number): void
+}
+
+const windowFrames: FrameClock = {
+  request: (cb) => requestAnimationFrame(cb),
+  cancel: (handle) => cancelAnimationFrame(handle),
+}
+
+/**
+ * The frames the page missed while something watched for them: an
+ * animation-frame interval longer than 1.5 display intervals is a gap,
+ * reported by when it began (`since`, as LongTaskWatch reports a long task).
+ * The display's interval is the shortest one seen in the last 120 frames
+ * of this watch (a 60 Hz or a 120 Hz display alike; a page that draws a
+ * frame a second whatever happens — software GL — has a long one). It runs only between `watch()` and
+ * the moment the caller's `while` says no more — no frame loop when idle.
+ */
+export class FrameGapWatch {
+  private gaps: number[] = []
+  private recent: number[] = []
+  private handle: number | null = null
+  private last: number | null = null
+  private keepWatching: () => boolean = () => false
+
+  constructor(private readonly frames: FrameClock = windowFrames) {}
+
+  /** The display's frame interval as seen (ms; 1000 / 60 before any frame). */
+  get interval(): number {
+    return this.recent.length < 2 ? 1000 / 60 : Math.min(...this.recent)
+  }
+
+  /**
+   * How far apart this page's frames typically come (ms): the median of the
+   * recent intervals, 1000 / 60 before three are known. Not the shortest, as
+   * `interval` is: on a page that draws slowly whatever is asked of it
+   * (software GL — SwiftShader in a VM, a blocklisted GPU) one quick frame
+   * among second-long ones made the page look fast, the staging kept its
+   * per-frame budget, and the off-screen tail of a crowded slide took 1.5 s a
+   * text (e2e/text-runs-artboard.spec.ts at 400 %, 2026-10-31).
+   */
+  get typicalInterval(): number {
+    if (this.recent.length < 3) return 1000 / 60
+    const sorted = [...this.recent].sort((a, b) => a - b)
+    const mid = sorted.length >> 1
+    return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2
+  }
+
+  /** Watch the frames for as long as `whileTrue()` holds (checked every frame). */
+  watch(whileTrue: () => boolean): void {
+    this.keepWatching = whileTrue
+    if (this.handle !== null) return
+    this.last = null
+    // The display's interval as it is now, not as it was at the last staging.
+    this.recent = []
+    const tick = (t: number): void => {
+      this.handle = null
+      if (this.last !== null) {
+        const dt = t - this.last
+        this.recent.push(dt)
+        if (this.recent.length > 120) this.recent.shift()
+        if (dt > 1.5 * this.interval) this.gaps.push(this.last)
+      }
+      this.last = t
+      if (this.keepWatching()) this.handle = this.frames.request(tick)
+      else this.last = null
+    }
+    this.handle = this.frames.request(tick)
+  }
+
+  /** Whether a gap began at or after `t` (the frames' time base: `performance.now()`); forgets the older. */
+  since(t: number): boolean {
+    this.gaps = this.gaps.filter((g) => g >= t)
+    return this.gaps.length > 0
+  }
+
+  stop(): void {
+    if (this.handle !== null) this.frames.cancel(this.handle)
+    this.handle = null
+    this.last = null
+    this.gaps = []
   }
 }

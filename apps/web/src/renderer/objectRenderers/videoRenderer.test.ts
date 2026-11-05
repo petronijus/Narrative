@@ -27,6 +27,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setDefaultVideoInfoResolver, _resetDefaultVideoInfoResolver } from '../videoInfo'
 import { setDefaultResourceManager, _resetDefaultResourceManager } from '../ResourceManager'
 import { attachLiveVideo, releaseLiveVideoElement, videoRenderer } from './videoRenderer'
+import { withPixelDensity } from '../pixelDensityContext'
 
 /** Every VideoSource the renderer made (the mock's), in order. */
 const videoSources = vi.hoisted(
@@ -35,6 +36,7 @@ const videoSources = vi.hoisted(
       resource: HTMLVideoElement
       autoUpdate: boolean
       destroyed: boolean
+      autoGenerateMipmaps: boolean
       unload: ReturnType<typeof import('vitest').vi.fn>
       destroy: () => void
     }>,
@@ -160,9 +162,12 @@ vi.mock('pixi.js', () => {
     resource: HTMLVideoElement
     autoUpdate = true
     destroyed = false
+    autoGenerateMipmaps: boolean
+    mipLevelCount = 1
     unload = vi.fn()
-    constructor(opts: { resource: HTMLVideoElement }) {
+    constructor(opts: { resource: HTMLVideoElement; autoGenerateMipmaps?: boolean }) {
       this.resource = opts.resource
+      this.autoGenerateMipmaps = opts.autoGenerateMipmaps ?? true
       videoSources.push(this)
     }
     destroy(): void {
@@ -589,6 +594,43 @@ describe('videoRenderer', () => {
       // Its owner lets go of the element: the source goes with it.
       releaseLiveVideoElement(el)
       expect(videoSources[0]!.destroyed).toBe(true)
+    })
+  })
+
+  describe('video mipmaps (P3: none per frame unless drawn minified)', () => {
+    let n = 0
+    let live: typeof baseVideo
+    beforeEach(() => {
+      videoSources.length = 0
+      setDefaultVideoInfoResolver(makeResolver(makeDoneResult()))
+      live = { ...baseVideo, id: `vid-mip-${++n}` }
+    })
+    const element = (): HTMLVideoElement => {
+      const el = document.createElement('video')
+      vi.spyOn(el, 'pause').mockImplementation(() => undefined)
+      return el
+    }
+
+    it('a video drawn at a device pixel or more per texel has none', () => {
+      const node = withPixelDensity(2, () => videoRenderer.mount(live))
+      attachLiveVideo(live.id, element())
+      expect(videoSources[0]!.autoGenerateMipmaps).toBe(false)
+      expect(videoSources[0]!.unload).not.toHaveBeenCalled()
+      videoRenderer.destroy(node)
+    })
+
+    it('gets them while drawn below half a device pixel per texel, and drops them again', () => {
+      const node = withPixelDensity(0.25, () => videoRenderer.mount(live))
+      attachLiveVideo(live.id, element())
+      const source = videoSources[0]!
+      expect(source.autoGenerateMipmaps).toBe(true)
+      // Between 0.5 and 0.6: unchanged (no flip-flop near the edge).
+      videoRenderer.setCanvasDensity!(node, 0.55)
+      expect(source.autoGenerateMipmaps).toBe(true)
+      videoRenderer.setCanvasDensity!(node, 2)
+      expect(source.autoGenerateMipmaps).toBe(false)
+      expect(source.unload).toHaveBeenCalledTimes(2)
+      videoRenderer.destroy(node)
     })
   })
 

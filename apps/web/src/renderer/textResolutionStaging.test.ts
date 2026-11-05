@@ -1,7 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
 import {
+  animationFrames,
   BatchStager,
+  FRAME_FALLBACK_MS,
+  planTextResolutions,
   rectDistance,
   stagingOrder,
   widenRect,
@@ -9,6 +12,7 @@ import {
   type IdleSource,
   type StagedJob,
   type Rect,
+  type ResolutionPlanItem,
 } from './textResolutionStaging.js'
 
 /** Frames that run only when the test says so. */
@@ -252,6 +256,24 @@ describe('BatchStager', () => {
     expect(idle.timeouts.every((t) => t === 700)).toBe(true)
   })
 
+  it('waits for a deferred batch to settle a frame at a time, not an idle callback at a time', () => {
+    const frames = manualFrames()
+    const idle = manualIdle()
+    const stager = new BatchStager({ maxJobs: 1, maxWaitFrames: 10, frames, idle })
+    const ran: string[] = []
+    let landed = false
+    stager.stage([job(ran, 'a', 1, () => landed), job(ran, 'b', 1)], { deferFrom: 0 })
+    idle.flush()
+    expect(ran).toEqual(['a'])
+    // The next batch's turn: 'a' has not landed — the wait is a frame.
+    idle.flush()
+    expect(idle.queued).toBe(0)
+    expect(frames.queued).toBe(1)
+    landed = true
+    frames.flush()
+    expect(ran).toEqual(['a', 'b'])
+  })
+
   it('with everything deferred, nothing runs in the stage() call', () => {
     const frames = manualFrames()
     const idle = manualIdle()
@@ -326,5 +348,200 @@ describe('BatchStager', () => {
     stale()
     expect(log).toEqual([0])
     expect(stager.pending).toBe(0)
+  })
+})
+
+describe('animationFrames', () => {
+  /**
+   * The window's frames, faked: `frame()` runs the frames requested so far
+   * (a cancelled one does not run), `stale` keeps every callback ever handed
+   * over — a browser may still deliver a frame it was asked to cancel too late.
+   */
+  function fakeWindowFrames(): {
+    frame: () => void
+    readonly requested: number
+    stale: FrameRequestCallback[]
+  } {
+    let next = 1
+    const pending = new Map<number, FrameRequestCallback>()
+    const stale: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      pending.set(next, cb)
+      stale.push(cb)
+      return next++
+    })
+    vi.stubGlobal('cancelAnimationFrame', (h: number) => pending.delete(h))
+    return {
+      frame() {
+        const due = [...pending.values()]
+        pending.clear()
+        for (const cb of due) cb(performance.now())
+      },
+      get requested() {
+        return pending.size
+      },
+      stale,
+    }
+  }
+
+  const withFakes = (body: (w: ReturnType<typeof fakeWindowFrames>) => void): void => {
+    vi.useFakeTimers()
+    try {
+      body(fakeWindowFrames())
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  }
+
+  it('runs a request on the next frame, once, and drops its fallback timer', () =>
+    withFakes((w) => {
+      const ran: string[] = []
+      animationFrames.request(() => ran.push('framed'))
+      expect(vi.getTimerCount()).toBe(1)
+      w.frame()
+      expect(ran).toEqual(['framed'])
+      expect(vi.getTimerCount()).toBe(0)
+      vi.advanceTimersByTime(FRAME_FALLBACK_MS * 2)
+      expect(ran).toEqual(['framed'])
+    }))
+
+  it('runs a request after FRAME_FALLBACK_MS when no frame comes, and not again on a late frame', () =>
+    withFakes((w) => {
+      const ran: string[] = []
+      animationFrames.request(() => ran.push('no frame'))
+      vi.advanceTimersByTime(FRAME_FALLBACK_MS - 1)
+      expect(ran).toEqual([])
+      vi.advanceTimersByTime(1)
+      expect(ran).toEqual(['no frame'])
+      // The frame was cancelled when the timer won …
+      expect(w.requested).toBe(0)
+      // … and one the browser delivers anyway does nothing.
+      for (const cb of w.stale) cb(performance.now())
+      expect(ran).toEqual(['no frame'])
+    }))
+
+  it('cancel drops both the frame and the timer; a cancel after it ran is harmless', () =>
+    withFakes((w) => {
+      const ran: string[] = []
+      const h = animationFrames.request(() => ran.push('cancelled'))
+      animationFrames.cancel(h)
+      expect(w.requested).toBe(0)
+      expect(vi.getTimerCount()).toBe(0)
+      vi.advanceTimersByTime(FRAME_FALLBACK_MS * 2)
+      w.frame()
+      expect(ran).toEqual([])
+      const done = animationFrames.request(() => ran.push('ran'))
+      w.frame()
+      animationFrames.cancel(done)
+      expect(ran).toEqual(['ran'])
+    }))
+
+  it('a staging on the window frames finishes in a page that draws no frames at all', () =>
+    withFakes((w) => {
+      const onBatch = vi.fn()
+      const stager = new BatchStager({ maxJobs: 2, maxWaitFrames: 3, onBatch })
+      const ran: number[] = []
+      // Rasters that never land without a frame: each wait gives up after maxWaitFrames.
+      const never: StagedJob[] = Array.from({ length: 6 }, (_, i) => () => {
+        ran.push(i)
+        return { cost: 1, settled: () => false }
+      })
+      stager.stage(never)
+      expect(ran).toEqual([0, 1])
+      // Two batches left, each behind three waits and its own frame: four fallbacks a batch.
+      vi.advanceTimersByTime(FRAME_FALLBACK_MS * 4)
+      expect(ran).toEqual([0, 1, 2, 3])
+      vi.advanceTimersByTime(FRAME_FALLBACK_MS * 4)
+      expect(ran).toEqual([0, 1, 2, 3, 4, 5])
+      expect(stager.pending).toBe(0)
+      expect(onBatch).toHaveBeenCalledTimes(3)
+      expect(vi.getTimerCount()).toBe(0)
+      expect(w.requested).toBe(0)
+    }))
+
+  it('frames that do come drive the staging; the fallback adds no batch of its own', () =>
+    withFakes((w) => {
+      const stager = new BatchStager({ maxJobs: 1 })
+      const log: number[] = []
+      stager.stage(
+        [0, 1, 2].map((i) => () => {
+          log.push(i)
+          return { cost: 1 }
+        }),
+      )
+      w.frame()
+      w.frame()
+      expect(log).toEqual([0, 1, 2])
+      vi.advanceTimersByTime(FRAME_FALLBACK_MS * 4)
+      expect(log).toEqual([0, 1, 2])
+      expect(vi.getTimerCount()).toBe(0)
+    }))
+})
+
+describe("planTextResolutions (the zoom staging's targets, ADR 0020 → texture memory)", () => {
+  const viewport: Rect = { x: 0, y: 0, width: 100, height: 100 }
+  const marginRect: Rect = { x: -25, y: -25, width: 150, height: 150 }
+  const box = (x: number, y: number): Rect => ({ x, y, width: 10, height: 10 })
+  const item = (b: Rect | null, px: number, now = 1): ResolutionPlanItem => ({ box: b, now, px })
+  /** Target per input index. */
+  const byIndex = (p: ReturnType<typeof planTextResolutions>): number[] => {
+    const out: number[] = []
+    p.order.forEach((k, i) => (out[k] = p.targets[i]!))
+    return out
+  }
+
+  it('gives the view the full resolution whatever it costs, the margin while the budget lasts', () => {
+    const items = [
+      item(box(-20, 0), 30), // margin, nearest
+      item(box(50, 50), 100), // in view
+      item(box(-24, -24), 30), // margin, farther
+      item(box(500, 0), 30), // far
+    ]
+    const p = planTextResolutions(items, 5, viewport, { rect: marginRect, budgetPx: 120 }, 2)
+    // In view first (over the budget alone), then the margin nearest first: none fits.
+    expect(p.order).toEqual([1, 0, 2, 3])
+    expect(byIndex(p)).toEqual([2, 5, 2, 2])
+    expect(p.deferFrom).toBe(1)
+    const roomy = planTextResolutions(items, 5, viewport, { rect: marginRect, budgetPx: 145 }, 2)
+    expect(byIndex(roomy)).toEqual([5, 5, 2, 2])
+    expect(roomy.deferFrom).toBe(2)
+  })
+
+  it('is the old staging with an unlimited budget: margin full, the rest kept or capped', () => {
+    const items = [item(box(-20, 0), 30), item(box(500, 0), 30, 4), item(box(600, 0), 30, 8)]
+    const p = planTextResolutions(items, 5, viewport, { rect: marginRect, budgetPx: Infinity }, 2)
+    // Far: a raster between the cap and the resolution is kept, one above it comes down.
+    expect(byIndex(p)).toEqual([5, 4, 2])
+  })
+
+  it('takes texts a scroll left down to the cap once the budget is spent', () => {
+    // Two far texts still at full resolution from an earlier view, nearest first.
+    const items = [item(box(50, 50), 60, 5), item(box(300, 0), 30, 5), item(box(200, 0), 30, 5)]
+    const p = planTextResolutions(items, 5, viewport, { rect: marginRect, budgetPx: 100 }, 2)
+    expect(byIndex(p)).toEqual([5, 2, 5])
+  })
+
+  it('costs a kept raster at its own resolution', () => {
+    const items = [item(box(300, 0), 100, 2.5)]
+    // 100 px at 5 is 25 px at 2.5: within a budget of 30.
+    expect(
+      byIndex(planTextResolutions(items, 5, viewport, { rect: marginRect, budgetPx: 30 }, 2)),
+    ).toEqual([2.5])
+  })
+
+  it('gives every text the resolution without a viewport, or when the cap is above it', () => {
+    const items = [item(box(500, 0), 1e9), item(null, 1e9)]
+    expect(byIndex(planTextResolutions(items, 5, null, null, 2))).toEqual([5, 5])
+    expect(
+      byIndex(planTextResolutions(items, 1.5, viewport, { rect: marginRect, budgetPx: 1 }, 2)),
+    ).toEqual([1.5, 1.5])
+  })
+
+  it('without a margin, holds everything beyond the view to the cap', () => {
+    const items = [item(box(-20, 0), 1), item(null, 1, 0)]
+    const p = planTextResolutions(items, 5, viewport, null, 2)
+    expect(byIndex(p)).toEqual([2, 2])
+    expect(p.deferFrom).toBe(0)
   })
 })

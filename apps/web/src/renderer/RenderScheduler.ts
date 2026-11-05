@@ -31,6 +31,7 @@
  */
 
 import type { Application, Container, RenderGroup } from 'pixi.js'
+import { renderStage } from './stageRender.js'
 
 /**
  * Consecutive failed frames after which the scheduler stops retrying on its
@@ -55,6 +56,8 @@ export class RenderScheduler {
   /** Failed frames since the last one that rendered (0 = healthy). */
   private consecutiveFailures = 0
   private lastRenderStart = -Infinity
+  /** Renders attempted so far (renderBeforeTaskEnds: did one happen since?). */
+  private renderCount = 0
 
   constructor(app: Application) {
     this.app = app
@@ -99,6 +102,25 @@ export class RenderScheduler {
   }
 
   /**
+   * Make sure the canvas is drawn before the current task ends: a render now
+   * unless one runs later in the same task (the caller's own `renderNow`
+   * after it has finished changing the scene). For a change that empties
+   * the backbuffer (a reallocation) where the code making it is not the one
+   * that finishes the frame: present mode's density switch reallocates the
+   * canvas, then the presentation swaps the slide in and draws — one draw,
+   * not one of the outgoing scene and one of the incoming. Checked in a
+   * microtask, which runs before the event loop's next rendering step: the
+   * compositor never sees the empty backbuffer.
+   */
+  renderBeforeTaskEnds(): void {
+    if (this.destroyed) return
+    const at = this.renderCount
+    queueMicrotask(() => {
+      if (this.renderCount === at) this.renderNow()
+    })
+  }
+
+  /**
    * Subscribe a callback that runs after each scheduler-driven render.
    * Replaces the per-tick listener that OverlayCompositor used to install
    * on the Pixi ticker — under autoStart:false the ticker rarely fires,
@@ -129,8 +151,10 @@ export class RenderScheduler {
     // Nothing to draw, nothing wrong.
     if ((app.renderer as unknown) == null || (app.stage as unknown) == null) return
     this.lastRenderStart = performance.now()
+    this.renderCount += 1
     try {
-      app.renderer.render(app.stage)
+      // Through the stage's render transform, where it has one (stageRender.ts).
+      renderStage(app)
     } catch (err) {
       this.renderFailed(app, err)
       return

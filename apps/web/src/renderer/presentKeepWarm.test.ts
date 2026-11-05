@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * renderer/presentKeepWarm.test.ts — present mode's idle turn in an engine
  * without idle callbacks (WebKit): right after the next rendered frame, not

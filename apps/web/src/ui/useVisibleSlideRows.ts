@@ -13,13 +13,17 @@
  * One IntersectionObserver over the rows (`[data-slide-id]` children of the
  * list), rooted at the panel's scroll container with a margin of about two
  * rows each way, so a short scroll finds its thumbnails drawn and mounted.
- * Rows come and go with the deck (`rowsKey`). The rows on screen are measured
+ * Rows come and go with the deck (`rowsKey`), and the observer follows the
+ * list element: a list that remounts (2026-10-30: the context menu's tree
+ * changed with the deck role, SlidesPanelContextMenu.tsx) left the observer on
+ * the detached rows, every row reported out of view, and the panel never
+ * showed a picture again. The rows on screen are measured
  * before the first paint, so a row in view never shows its placeholder for a
  * frame while the observer's first report is on its way. Without
  * IntersectionObserver (jsdom) every row counts as visible.
  */
 
-import { useLayoutEffect, useState, type RefObject } from 'react'
+import { useLayoutEffect, useState } from 'react'
 import type { ThumbnailStore } from '../renderer/thumbnailStore.js'
 
 const MARGIN_PX = 240
@@ -71,14 +75,18 @@ export class RowVisibility {
 }
 
 export function useVisibleSlideRows(
-  listRef: RefObject<HTMLElement | null>,
+  /**
+   * The list element (null while there is none). A new element — the list
+   * remounted — is observed anew; the effect follows the element, not a ref
+   * read when the rows last changed.
+   */
+  list: HTMLElement | null,
   store: ThumbnailStore,
   /** Changes whenever the set of rows does (the deck's slide ids, joined). */
   rowsKey: string,
 ): RowVisibility {
   const [visibility] = useState(() => new RowVisibility())
   useLayoutEffect(() => {
-    const list = listRef.current
     if (list === null || typeof IntersectionObserver === 'undefined') {
       store.setVisible(null)
       // No list (no slides yet: the panel shows its empty state) has no row
@@ -111,7 +119,7 @@ export function useVisibleSlideRows(
     return () => {
       observer.disconnect()
     }
-  }, [listRef, store, rowsKey, visibility])
+  }, [list, store, rowsKey, visibility])
   return visibility
 }
 

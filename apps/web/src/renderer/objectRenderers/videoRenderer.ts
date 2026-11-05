@@ -36,7 +36,9 @@ import { getDefaultImageUrlResolver } from '../imageUrl.js'
 import { getDefaultResourceManager } from '../ResourceManager.js'
 import { applyFit, applyCoverMask } from '../mediaFit.js'
 import { setThumbnailReady } from '../thumbnailReady.js'
+import { currentThumbnailPictures, type ThumbnailPictures } from '../thumbnailPictures.js'
 import { markRenderDirty } from '../RenderScheduler.js'
+import { mountingPixelDensity } from '../pixelDensityContext.js'
 import { applyFlip } from './applyFlip.js'
 import { applyFilterEffects, destroyFilterEffects, patchFilterEffects } from '../filterEffects.js'
 
@@ -130,6 +132,8 @@ function setLive(node: Container, state: LiveVideoState | undefined): void {
 interface SharedVideoSource {
   source: VideoSource
   users: number
+  /** Its containers that draw it minified (`updateVideoMipmaps`): while any does, it has mipmaps. */
+  minified: Set<Container>
 }
 const sharedSources = new WeakMap<HTMLVideoElement, SharedVideoSource>()
 
@@ -141,7 +145,13 @@ function acquireVideoSource(videoEl: HTMLVideoElement): VideoSource {
     // flag. Without that, our markRenderDirty calls would render with a
     // stale texture. autoPlay false so VideoSource doesn't try to start
     // playback (the editor controls that).
-    shared = { source: new VideoSource({ resource: videoEl, autoPlay: false }), users: 0 }
+    // No mipmaps (see `updateVideoMipmaps`): the global default
+    // (Canvas.tsx) would regenerate them for every decoded frame.
+    shared = {
+      source: new VideoSource({ resource: videoEl, autoPlay: false, autoGenerateMipmaps: false }),
+      users: 0,
+      minified: new Set(),
+    }
     sharedSources.set(videoEl, shared)
   }
   // Following the element's frames again (it stopped when its last user went).
@@ -158,6 +168,65 @@ function releaseVideoSource(videoEl: HTMLVideoElement): void {
   // Nothing draws it: off the GPU, no uploads, the element untouched.
   shared.source.autoUpdate = false
   shared.source.unload()
+}
+
+/**
+ * Borrow `videoEl`'s shared VideoSource outside a container (present mode's
+ * trial playback, renderer/videoPlaybackTrial.ts); give it back with
+ * `returnVideoSource`, which leaves the element as it is.
+ */
+export function borrowVideoSource(videoEl: HTMLVideoElement): VideoSource {
+  const source = acquireVideoSource(videoEl)
+  const shared = sharedSources.get(videoEl)!
+  // No container decided its mipmaps: none (the trial draws at the canvas's size).
+  if (shared.users === 1) applyVideoMipmaps(shared)
+  return source
+}
+
+export function returnVideoSource(videoEl: HTMLVideoElement): void {
+  releaseVideoSource(videoEl)
+}
+
+/**
+ * Mipmaps for a video texture only while it is drawn minified.
+ *
+ * Every decoded frame is uploaded; with mipmaps (the canvas's default for
+ * textures, Canvas.tsx) each upload also regenerated the whole mip chain — a
+ * 4K frame 8.3 Mpx plus 2.8 Mpx of mips, 30 times a second, which WebKit at 2×
+ * could not keep up with (2026-10-26: present.video.4k at ~26 fps). Drawn at
+ * or above about one device pixel per texel, linear sampling looks the same
+ * without them. Drawn much smaller (a 4K video in a small box, the editor
+ * zoomed out) linear sampling skips texels and fine detail shimmers: there a
+ * container wants mipmaps, below half a device pixel per texel (and drops
+ * them again above 0.6, so a zoom near the edge does not flip it back and
+ * forth). A change re-creates the GPU texture once (`unload`).
+ */
+const MIPMAP_BELOW = 0.5
+const MIPMAP_OFF_ABOVE = 0.6
+const DENSITY_TAG = Symbol('vidCanvasDensity')
+
+function updateVideoMipmaps(container: Container): void {
+  const live = getLive(container)
+  if (live === undefined) return
+  const shared = sharedSources.get(live.videoEl)
+  if (shared === undefined || shared.source.destroyed) return
+  const density = (asAny(container)[DENSITY_TAG] as number | null | undefined) ?? 1
+  // Device pixels per texel: the fit's scale on the slide times the canvas's density.
+  const k = Math.min(Math.abs(live.sprite.scale.x), Math.abs(live.sprite.scale.y)) * density
+  if (k > 0 && k < MIPMAP_BELOW) shared.minified.add(container)
+  else if (k > MIPMAP_OFF_ABOVE) shared.minified.delete(container)
+  applyVideoMipmaps(shared)
+}
+
+function applyVideoMipmaps(shared: SharedVideoSource): void {
+  const want = shared.minified.size > 0
+  const source = shared.source
+  if (source.destroyed || source.autoGenerateMipmaps === want) return
+  source.autoGenerateMipmaps = want
+  if (!want) source.mipLevelCount = 1
+  // Re-created at the next draw that binds it, with or without its mips.
+  source.unload()
+  markRenderDirty()
 }
 
 /**
@@ -263,6 +332,7 @@ function attachLiveVideoToContainer(container: Container, videoEl: HTMLVideoElem
     if (container.destroyed) return
     const cached = getLatestData(container)
     if (cached !== undefined) refitLiveVideo(container, cached)
+    updateVideoMipmaps(container)
     markRenderDirty()
   }
   refit()
@@ -353,6 +423,9 @@ function teardownLiveVideo(container: Container): void {
   // The texture only: the source is shared, and destroying it would stop the
   // element and empty its src (see `sharedSources`).
   if (!live.texture.destroyed) live.texture.destroy(false)
+  const shared = sharedSources.get(live.videoEl)
+  if (shared !== undefined && shared.minified.delete(container) && shared.users > 1)
+    applyVideoMipmaps(shared)
   releaseVideoSource(live.videoEl)
   setLive(container, undefined)
   setSpriteWrap(container, undefined)
@@ -468,6 +541,20 @@ function getThumbTexture(node: Container): Texture | undefined {
 
 function setThumbTexture(node: Container, texture: Texture | undefined): void {
   asAny(node)[THUMB_TEXTURE_TAG] = texture
+}
+
+/** The thumbnail renderer's shared poster this thumbnail holds (renderer/thumbnailPictures.ts). */
+const THUMB_PICTURE_TAG = Symbol('videoThumbPicture')
+
+interface ThumbPicture {
+  pictures: ThumbnailPictures
+  url: string
+}
+
+function takeThumbPicture(node: Container): ThumbPicture | undefined {
+  const held = asAny(node)[THUMB_PICTURE_TAG] as ThumbPicture | undefined
+  asAny(node)[THUMB_PICTURE_TAG] = undefined
+  return held
 }
 
 function getPollTimer(node: Container): ReturnType<typeof setInterval> | undefined {
@@ -1031,6 +1118,8 @@ export const videoRenderer = {
 
   mount(data: VideoObject): Container {
     const container = new Container()
+    // The canvas's density (device px per slide unit): whether a live video is drawn minified.
+    asAny(container)[DENSITY_TAG] = mountingPixelDensity()
 
     // Initial gray placeholder visible while resolving. With an
     // authored `posterAssetId`, `startLoad` immediately kicks off the
@@ -1066,6 +1155,12 @@ export const videoRenderer = {
     return container
   },
 
+  /** The canvas's density changed (a zoom commit): a live video may now be drawn minified, or not. */
+  setCanvasDensity(node: Container, density: number | null): void {
+    asAny(node)[DENSITY_TAG] = density
+    updateVideoMipmaps(node)
+  },
+
   update(node: Container, prev: VideoObject, next: VideoObject): void {
     applyObjectTransform(node, next)
     applyFilterEffects(node, next.shadow, next.blur)
@@ -1077,6 +1172,7 @@ export const videoRenderer = {
       (prev.fit ?? 'contain') !== (next.fit ?? 'contain')
     ) {
       refitLiveVideo(node, next)
+      updateVideoMipmaps(node)
     }
 
     const box = { w: next.width, h: next.height }
@@ -1267,6 +1363,10 @@ export const videoRenderer = {
     releasePosterTexture(node)
     destroyFilterEffects(node)
 
+    // A poster shared by the thumbnail renderer's thumbnails: handed back.
+    const held = takeThumbPicture(node)
+    if (held !== undefined) held.pictures.release(held.url)
+
     const data = getLatestData(node)
     if (data !== undefined) {
       const set = containerRegistry.get(data.id)
@@ -1317,9 +1417,12 @@ export const videoRenderer = {
 
     // Same reasoning as imageRenderer.thumbnailMount: do NOT go through the
     // main ResourceManager — its textures are bound to the main Canvas's
-    // WebGL context. Load a fresh per-thumbnail Texture from an HTMLImageElement.
+    // WebGL context. The thumbnail renderer's shared pictures when it mounts
+    // this (asked for now: the load below runs after the mount returned), else
+    // a per-thumbnail Texture from an HTMLImageElement.
     // Exposes a ready-promise so the offscreen thumbnail renderer can await
     // the decode before taking its snapshot frame.
+    const pictures = currentThumbnailPictures()
     const ready = (async () => {
       let infoUrl: string
       try {
@@ -1334,20 +1437,33 @@ export const videoRenderer = {
         return
       }
 
-      const img = new Image()
-      img.crossOrigin = 'anonymous'
-      img.src = infoUrl
-      try {
-        await img.decode()
-      } catch {
-        return
+      let texture: Texture
+      if (pictures !== null) {
+        // Held from now on: destroy() hands it back, also mid-load.
+        asAny(container)[THUMB_PICTURE_TAG] = { pictures, url: infoUrl } satisfies ThumbPicture
+        try {
+          texture = await pictures.acquire(infoUrl)
+        } catch {
+          // A failed load is forgotten by the cache: nothing to hand back.
+          takeThumbPicture(container)
+          return
+        }
+        if (isAborted(container)) return
+      } else {
+        const img = new Image()
+        img.crossOrigin = 'anonymous'
+        img.src = infoUrl
+        try {
+          await img.decode()
+        } catch {
+          return
+        }
+        if (isAborted(container)) return
+        texture = Texture.from(img)
+        // Thumbnail-owned texture — tag it so destroy() can free it (the
+        // ResourceManager doesn't track thumbnail textures).
+        setThumbTexture(container, texture)
       }
-      if (isAborted(container)) return
-
-      const texture = Texture.from(img)
-      // Thumbnail-owned texture — tag it so destroy() can free it (the
-      // ResourceManager doesn't track thumbnail textures).
-      setThumbTexture(container, texture)
 
       const spriteWrap = new Container()
       const sprite = new Sprite(texture)
