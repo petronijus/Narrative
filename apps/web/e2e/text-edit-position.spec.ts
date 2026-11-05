@@ -64,7 +64,8 @@ async function probeTextNode(page: Page, id: string): Promise<TextNodeProbe | nu
     const c = sg.getContainer(targetId)
     if (c === undefined) return null
     const local = c.toGlobal({ x: 0, y: 0 })
-    const canvasEl = document.querySelector('canvas')
+    // The world's origin: the canvas's container (the canvas draws a region of it — ADR 0020).
+    const canvasEl = document.querySelector('.artboard canvas')?.parentElement ?? null
     const canvasRect = canvasEl?.getBoundingClientRect() ?? { left: 0, top: 0 }
     const text = c.children.find((ch) => ch.anchor !== undefined) as
       | {

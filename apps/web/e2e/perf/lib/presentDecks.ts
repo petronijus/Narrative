@@ -73,7 +73,7 @@ async function newDeck(context: BrowserContext, title: string, folderId?: string
  * the media asset's id. For files over the command API's 4 MB body
  * (`media.upload` takes base64 in JSON).
  */
-async function tusUpload(
+export async function tusUpload(
   context: BrowserContext,
   deckId: string,
   file: string,

@@ -3,7 +3,44 @@ import { test, expect, type Page } from './fixtures/test'
 /**
  * Repro: edit slide 1 → thumbnail updates. Switch to slide 2 → both
  * slides' thumbnails stop updating + Yjs sync stops working.
+ *
+ * Each step waits for what it needs — the thumbnail of the slide just edited
+ * to be a new picture, the slide clicked to be the active one — instead of
+ * fixed sleeps: a thumbnail is rendered in idle time after a debounce, and
+ * in the full suite (three workers) 1.5 s was not always enough for slide
+ * B's (2026-11-01; it passed alone).
  */
+
+/** Each slide's thumbnail (its object URL), by slide id. */
+function thumbnails(page: Page): Promise<Record<string, string>> {
+  return page.evaluate(() =>
+    Object.fromEntries(
+      Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))
+        .filter((img) => img.src.startsWith('blob:'))
+        .map((img) => [img.closest('[data-slide-id]')!.getAttribute('data-slide-id')!, img.src]),
+    ),
+  )
+}
+
+/** Wait until slide `id`'s thumbnail is a picture other than `before` (one is there at all when `before` is ''). */
+async function thumbnailChanges(
+  page: Page,
+  id: string,
+  before: string,
+  why: string,
+): Promise<string> {
+  await expect
+    .poll(async () => (await thumbnails(page))[id] ?? '', { timeout: 15_000, message: why })
+    .not.toBe(before)
+  return (await thumbnails(page))[id]!
+}
+
+/** Click slide `id` in the slides panel and wait until it is the active one. */
+async function activate(page: Page, id: string): Promise<void> {
+  const row = page.locator(`[data-slide-id="${id}"]`).first()
+  await row.click()
+  await expect(row).toHaveAttribute('aria-selected', 'true')
+}
 
 async function createDeckAndOpen(page: Page): Promise<void> {
   const res = await page.request.post('http://localhost:3001/decks', {
@@ -22,15 +59,6 @@ async function createDeckAndOpen(page: Page): Promise<void> {
 test('thumbnails keep updating after switching active slide', async ({ page }) => {
   test.setTimeout(60_000)
 
-  const errors: string[] = []
-  const consoleLines: string[] = []
-  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
-  page.on('console', (msg) => {
-    consoleLines.push(`[${msg.type()}] ${msg.text()}`)
-    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`)
-    if (msg.text().startsWith('[thumb]')) console.log(msg.text())
-  })
-
   await createDeckAndOpen(page)
 
   // Start with one slide. Add rect on slide 1.
@@ -38,129 +66,55 @@ test('thumbnails keep updating after switching active slide', async ({ page }) =
     const api = window.__narrative_test_api!
     api.addRect({ id: 'rect-A1', x: 200, y: 200, w: 300, h: 200, fill: 0xff5555 })
   })
-  await page.waitForTimeout(500)
 
   // Now mid-session add slide 2 (this is the path the user takes).
   const seeded = await page.evaluate(() => {
     const api = window.__narrative_test_api!
     const ids = api.listSlideIds()
-    const fromSlideId = ids[0]
+    const fromSlideId = ids[0]!
     const toSlideId = api.addSlide()
     return { fromSlideId, toSlideId }
   })
-  await page.waitForTimeout(800)
-  console.log('seeded slides:', seeded)
 
-  // Wait long enough that initial thumbnail renders should have fired.
-  await page.waitForTimeout(1500)
-  const thumbsBefore = await page.evaluate(() => {
-    const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))
-    return imgs.map((img) => ({
-      slideId: img.closest('[data-slide-id]')?.getAttribute('data-slide-id'),
-      hasSrc: img.src.startsWith('blob:'),
-      src: img.src,
-    }))
-  })
-  console.log('thumbs initial:', thumbsBefore)
+  // Both slides have their first pictures.
+  const a0 = await thumbnailChanges(page, seeded.fromSlideId, '', 'slide A has no thumbnail')
+  const b0 = await thumbnailChanges(page, seeded.toSlideId, '', 'slide B has no thumbnail')
 
   // Edit slide 1 — add a second rect.
   await page.evaluate((fromId: string) => {
     const api = window.__narrative_test_api!
     api.addRect({ id: 'rect-A2', x: 800, y: 400, w: 200, h: 200, fill: 0x00ff00 }, fromId)
   }, seeded.fromSlideId)
-  await page.waitForTimeout(1500)
-  const thumbsAfterEdit1 = await page.evaluate(() => {
-    const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))
-    return imgs.map((img) => ({
-      slideId: img.closest('[data-slide-id]')?.getAttribute('data-slide-id'),
-      src: img.src,
-    }))
-  })
-  console.log('thumbs after edit slide 1:', thumbsAfterEdit1)
+  const a1 = await thumbnailChanges(
+    page,
+    seeded.fromSlideId,
+    a0,
+    'slide A thumbnail did not update after first edit',
+  )
 
-  // Switch to slide 2 by clicking its thumbnail in the slide panel. We
-  // don't have a programmatic test-api for this; click the second
-  // [data-slide-id] item.
-  await page.evaluate((toId: string) => {
-    const items = Array.from(document.querySelectorAll<HTMLElement>('[data-slide-id]'))
-    const target = items.find((el) => el.getAttribute('data-slide-id') === toId)
-    target?.click()
-  }, seeded.toSlideId)
-  await page.waitForTimeout(800)
-
-  // Edit slide 2 — add rect (now active slide is slide 2).
+  // Switch to slide 2 in the slides panel, then edit it.
+  await activate(page, seeded.toSlideId)
   await page.evaluate((toId: string) => {
     const api = window.__narrative_test_api!
     api.addRect({ id: 'rect-B1', x: 400, y: 400, w: 200, h: 200, fill: 0x0000ff }, toId)
   }, seeded.toSlideId)
-  await page.waitForTimeout(1500)
-  const thumbsAfterEdit2 = await page.evaluate(() => {
-    const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))
-    return imgs.map((img) => ({
-      slideId: img.closest('[data-slide-id]')?.getAttribute('data-slide-id'),
-      src: img.src,
-    }))
-  })
-  console.log('thumbs after edit slide 2:', thumbsAfterEdit2)
+  await thumbnailChanges(
+    page,
+    seeded.toSlideId,
+    b0,
+    'slide B thumbnail did not update after switching + editing',
+  )
 
   // Switch back to slide 1, edit again.
-  await page.evaluate((fromId: string) => {
-    const items = Array.from(document.querySelectorAll<HTMLElement>('[data-slide-id]'))
-    const target = items.find((el) => el.getAttribute('data-slide-id') === fromId)
-    target?.click()
-  }, seeded.fromSlideId)
-  await page.waitForTimeout(300)
+  await activate(page, seeded.fromSlideId)
   await page.evaluate((fromId: string) => {
     const api = window.__narrative_test_api!
     api.addRect({ id: 'rect-A3', x: 1200, y: 200, w: 200, h: 200, fill: 0xff00ff }, fromId)
   }, seeded.fromSlideId)
-  await page.waitForTimeout(1500)
-  const thumbsAfterEdit3 = await page.evaluate(() => {
-    const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))
-    return imgs.map((img) => ({
-      slideId: img.closest('[data-slide-id]')?.getAttribute('data-slide-id'),
-      src: img.src,
-    }))
-  })
-  console.log('thumbs after edit slide 1 again:', thumbsAfterEdit3)
-
-  // Print interesting console lines.
-  console.log(
-    '== console excerpts ==',
-    consoleLines
-      .filter(
-        (l) =>
-          l.includes('thumbnail') ||
-          l.includes('renderSlide') ||
-          l.includes('error') ||
-          l.includes('Error'),
-      )
-      .slice(0, 40)
-      .join('\n'),
-  )
-
-  // Diagnostic assertions per stage.
-  const lookup = (snapshot: typeof thumbsBefore, id: string) =>
-    snapshot.find((t) => t.slideId === id)?.src ?? ''
-
-  console.log('slide A initial:', lookup(thumbsBefore, seeded.fromSlideId))
-  console.log('slide A after edit-A:', lookup(thumbsAfterEdit1, seeded.fromSlideId))
-  console.log('slide B initial:', lookup(thumbsBefore, seeded.toSlideId))
-  console.log('slide B after edit-B:', lookup(thumbsAfterEdit2, seeded.toSlideId))
-  console.log('slide A after edit-A2:', lookup(thumbsAfterEdit3, seeded.fromSlideId))
-
-  expect(
-    lookup(thumbsAfterEdit1, seeded.fromSlideId),
-    'slide A thumbnail did not update after first edit',
-  ).not.toBe(lookup(thumbsBefore, seeded.fromSlideId))
-
-  expect(
-    lookup(thumbsAfterEdit2, seeded.toSlideId),
-    'slide B thumbnail did not update after switching + editing',
-  ).not.toBe(lookup(thumbsBefore, seeded.toSlideId))
-
-  expect(
-    lookup(thumbsAfterEdit3, seeded.fromSlideId),
+  await thumbnailChanges(
+    page,
+    seeded.fromSlideId,
+    a1,
     'slide A thumbnail did not update on second round-trip',
-  ).not.toBe(lookup(thumbsAfterEdit1, seeded.fromSlideId))
+  )
 })

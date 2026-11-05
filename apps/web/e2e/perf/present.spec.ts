@@ -716,18 +716,12 @@ test('present mode', async ({ browser }) => {
         // (in WebKit one waited 66 ms inside a 145 ms frame of a transition,
         // 2026-10-23, F2) — PERF_INPUT_FENCE=on brings it back.
         await s.page.evaluate(
-          ({ fence, gaps, keepWarmFrame, presentIdle, keepWarmTarget }) => {
+          ({ fence, gaps, keepWarmFrame, presentIdle }) => {
             const h = window.__narrative_perf_harness!
             h.setInputFence(fence)
             if (keepWarmFrame !== null) h.setKeepWarmFrame(keepWarmFrame)
             if (presentIdle === 'frame' || presentIdle === 'timer')
               h.setPresentIdleFallback(presentIdle)
-            if (
-              keepWarmTarget === 'pixel' ||
-              keepWarmTarget === 'eighth' ||
-              keepWarmTarget === 'full'
-            )
-              h.setKeepWarmTarget(keepWarmTarget)
             // An older build's harness (an A/B's "before") has no gap probe.
             ;(h as Partial<typeof h>).setGapProbe?.(gaps)
           },
@@ -742,8 +736,6 @@ test('present mode', async ({ browser }) => {
             keepWarmFrame: keepWarmFrameOf(process.env['PERF_KEEP_WARM_FRAME']),
             // PERF_PRESENT_IDLE=frame|timer: the same for the idle turns (idle-after-frame).
             presentIdle: process.env['PERF_PRESENT_IDLE'] ?? null,
-            // PERF_KEEP_WARM_TARGET=pixel|eighth|full: what keep-warm draws into.
-            keepWarmTarget: process.env['PERF_KEEP_WARM_TARGET'] ?? null,
           },
         )
         let advances: AdvanceRecord[] = []

@@ -95,11 +95,12 @@ async function getObjPageCoords(page: Page, id: string): Promise<{ x: number; y:
   return page.evaluate((targetId: string) => {
     const sg = (window as any).__narrative_scene_graph
     const c = sg?.getContainer(targetId)
-    const canvasEl = document.querySelector('canvas') as HTMLCanvasElement | null
+    // The world's origin: the canvas's container (ADR 0020).
+    const canvasEl = document.querySelector('.artboard canvas')?.parentElement ?? null
     if (!c || !canvasEl) return null
     const cr = canvasEl.getBoundingClientRect()
-    const scaleX = cr.width / canvasEl.width
-    const scaleY = cr.height / canvasEl.height
+    const scaleX = cr.width / canvasEl.offsetWidth
+    const scaleY = cr.height / canvasEl.offsetHeight
     const tl = c.toGlobal({ x: 0, y: 0 })
     return { x: cr.left + tl.x * scaleX, y: cr.top + tl.y * scaleY }
   }, id)
@@ -115,7 +116,14 @@ async function countNonWhitePixels(page: Page, id: string): Promise<number> {
     const c = sg?.getContainer(targetId)
     const canvasEl = document.querySelector('canvas') as HTMLCanvasElement | null
     if (!c || !canvasEl) return -1
-    const tl = c.toGlobal({ x: 0, y: 0 })
+    // World → the canvas's pixels: it draws a region of the world from its
+    // own corner (style left/top, CSS px of the world), at its resolution.
+    const world = c.toGlobal({ x: 0, y: 0 })
+    const k = canvasEl.width / canvasEl.clientWidth
+    const tl = {
+      x: (world.x - parseFloat(canvasEl.style.left || '0')) * k,
+      y: (world.y - parseFloat(canvasEl.style.top || '0')) * k,
+    }
     const sx = Math.max(0, Math.round(tl.x))
     const sy = Math.max(0, Math.round(tl.y))
     const sw = 600

@@ -71,7 +71,8 @@ async function objScreenOrigin(page: Page, id: string): Promise<{ x: number; y: 
   return page.evaluate((targetId) => {
     const sg = window.__narrative_scene_graph
     const c = sg?.getContainer(targetId)
-    const canvasEl = document.querySelector('canvas')
+    // The world's origin: the canvas's container (ADR 0020).
+    const canvasEl = document.querySelector('.artboard canvas')?.parentElement ?? null
     const r = canvasEl?.getBoundingClientRect() ?? { left: 0, top: 0 }
     const g = c?.toGlobal({ x: 0, y: 0 }) ?? { x: 0, y: 0 }
     return { x: g.x + r.left, y: g.y + r.top }
@@ -222,7 +223,8 @@ async function markerGutter(
       fontSize?: number
       height?: number
     } | null
-    const canvasEl = document.querySelector('canvas')
+    // The world's origin: the canvas's container (ADR 0020).
+    const canvasEl = document.querySelector('.artboard canvas')?.parentElement ?? null
     const r = canvasEl?.getBoundingClientRect() ?? { left: 0, top: 0 }
     const fontSize = o?.fontSize ?? 24
     const a = c?.toGlobal({ x: 0, y: 0 }) ?? { x: 0, y: 0 }

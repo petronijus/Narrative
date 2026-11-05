@@ -374,9 +374,9 @@ export function textCorpus(): CorpusSlide[] {
     slides.push(slide(5, 'lists', boxes))
   }
 
-  // 6 — rich runs, transforms, colour alpha, stroke.
+  // 6 — rich runs, transforms, colour alpha, stroke, figures with colons.
   {
-    const cells = grid(9, 3)
+    const cells = grid(11, 3)
     const runs: Paragraph = {
       runs: [
         { text: 'Mixed ' },
@@ -399,6 +399,12 @@ export function textCorpus(): CorpusSlide[] {
       ['stroke-3', { fontSize: 56, fontWeight: 800 }, { stroke: '#111827', strokeWidth: 3 }],
       ['colour', { color: '#0f766e', fontSize: 30 }],
       ['runs-arial', { text: { paragraphs: [runs] }, fontFamily: 'Arial' }],
+      ['digits', { text: 'Times 12:30 and 9:41, ratio 3:2, x2: 4:3 — 1: 2:', fontWeight: 700 }],
+      [
+        'digits-stroke',
+        { text: 'Times 12:30 and 9:41, ratio 3:2, x2: 4:3 — 1: 2:', fontWeight: 700 },
+        { stroke: '#2563eb', strokeWidth: 1 },
+      ],
     ]
     const boxes: TextBox[] = variants.map(([id, b, extra], i) => {
       const c = cells[i]!
@@ -587,6 +593,7 @@ export function textCorpus(): CorpusSlide[] {
     slides.push({ name: 'table', ops, ids: [id] })
   }
 
+  // 11 is added after the crowded slide (below): rotated and flipped boxes.
   // 10 — the perf harness's crowded slide: 120 texts in Arial (and its probe text).
   {
     const { ops } = crowdedSlideOps({ texts: 120, images: 0, rects: 0 }, ['none'])
@@ -601,6 +608,66 @@ export function textCorpus(): CorpusSlide[] {
     slides.push({ name: 'crowded', ops: own, ids })
   }
 
+  // 11 — transformed boxes: rotated, upside down, translucent.
+  {
+    const boxes: TextBox[] = [
+      {
+        id: 'tr-rot15',
+        x: 120,
+        y: 120,
+        width: 520,
+        height: 160,
+        text: `Rotated 15° ${LONG.slice(0, 70)}`,
+        fontSize: 26,
+        extra: { rotation: (15 * Math.PI) / 180 },
+      },
+      {
+        id: 'tr-rot-45',
+        x: 760,
+        y: 160,
+        width: 460,
+        height: 140,
+        text: `Rotated −45° ${SENTENCE}`,
+        fontSize: 24,
+        align: 'center',
+        extra: { rotation: (-45 * Math.PI) / 180 },
+      },
+      {
+        id: 'tr-rot90',
+        x: 1340,
+        y: 300,
+        width: 520,
+        height: 120,
+        text: `Rotated 90° ${SENTENCE}`,
+        fontSize: 24,
+        fontFamily: 'Georgia',
+        extra: { rotation: Math.PI / 2 },
+      },
+      {
+        id: 'tr-rot180',
+        x: 120,
+        y: 620,
+        width: 640,
+        height: 140,
+        text: `Upside down ${LONG.slice(0, 60)}`,
+        fontSize: 26,
+        vAlign: 'middle',
+        extra: { rotation: Math.PI },
+      },
+      {
+        id: 'tr-faded',
+        x: 900,
+        y: 700,
+        width: 640,
+        height: 140,
+        text: `Translucent box ${SENTENCE}`,
+        fontSize: 28,
+        extra: { opacity: 0.6 },
+      },
+    ]
+    slides.push(slide(11, 'transformed', boxes))
+  }
+
   return slides
 }
 
@@ -611,4 +678,134 @@ export function textCorpusOps(): { ops: Op[]; slides: CorpusSlide[] } {
   for (let i = 1; i < slides.length; i++) ops.push({ command: 'slide.add', input: {} })
   for (const s of slides) ops.push(...s.ops)
   return { ops, slides }
+}
+
+/** The families of the custom-font slide, as the folder font upload named them. */
+export interface CustomFontFamilies {
+  /** fixtures/tall-font.ttf: tall ascent, deep descent, a large line gap. */
+  tall: string
+  /** fixtures/var-font.ttf: a variable `wght` axis whose advances change. */
+  variable: string
+  /** fixtures/block-font.ttf: every letter a solid block. */
+  block: string
+}
+
+/** A family no folder has: the text paints in the fallback face, as it lays out. */
+export const MISSING_FAMILY = 'Narrative Missing Face'
+
+/**
+ * A slide of text in folder fonts (the deck must sit in the folder they were
+ * uploaded to): unusual metrics in every vertical alignment and as a list,
+ * a variable face at several weights (and synthesised italic), a block font,
+ * and a family that does not exist. Not part of `textCorpus()`: it needs the
+ * folder.
+ */
+export function customFontSlide(index: number, f: CustomFontFamilies): CorpusSlide {
+  const g = grid(12, 4, 40)
+  const at = (i: number): Pick<TextBox, 'x' | 'y' | 'width' | 'height'> => ({
+    x: g[i]!.x,
+    y: g[i]!.y,
+    width: g[i]!.w,
+    height: g[i]!.h,
+  })
+  const boxes: TextBox[] = [
+    { id: 'cf-tall-top', ...at(0), text: `Tall top ${SENTENCE}`, fontFamily: f.tall, fontSize: 22 },
+    {
+      id: 'cf-tall-middle',
+      ...at(1),
+      text: `Tall middle ${SENTENCE}`,
+      fontFamily: f.tall,
+      fontSize: 22,
+      vAlign: 'middle',
+      align: 'center',
+    },
+    {
+      id: 'cf-tall-bottom',
+      ...at(2),
+      text: `Tall bottom ${SENTENCE}`,
+      fontFamily: f.tall,
+      fontSize: 22,
+      vAlign: 'bottom',
+      align: 'right',
+    },
+    {
+      id: 'cf-tall-list',
+      ...at(3),
+      text: {
+        paragraphs: [
+          { text: 'Tall list first item', list: 'bullet', level: 0 },
+          { text: 'Tall list second item wraps onto another line', list: 'bullet', level: 0 },
+          { text: 'Numbered', list: 'number', level: 0 },
+        ],
+      },
+      fontFamily: f.tall,
+      fontSize: 20,
+    },
+    {
+      id: 'cf-var-200',
+      ...at(4),
+      text: `Var 200 ${SENTENCE}`,
+      fontFamily: f.variable,
+      fontWeight: 200,
+      fontSize: 24,
+    },
+    {
+      id: 'cf-var-400',
+      ...at(5),
+      text: `Var 400 ${SENTENCE}`,
+      fontFamily: f.variable,
+      fontWeight: 400,
+      fontSize: 24,
+    },
+    {
+      id: 'cf-var-700',
+      ...at(6),
+      text: `Var 700 ${SENTENCE}`,
+      fontFamily: f.variable,
+      fontWeight: 700,
+      fontSize: 24,
+      align: 'center',
+    },
+    {
+      id: 'cf-var-900-italic',
+      ...at(7),
+      text: `Var 900 italic ${SENTENCE}`,
+      fontFamily: f.variable,
+      fontWeight: 900,
+      italic: true,
+      fontSize: 24,
+    },
+    {
+      id: 'cf-block',
+      ...at(8),
+      text: 'Block face words 0123 here',
+      fontFamily: f.block,
+      fontSize: 26,
+    },
+    {
+      id: 'cf-missing',
+      ...at(9),
+      text: `Missing face ${SENTENCE}`,
+      fontFamily: MISSING_FAMILY,
+      fontSize: 24,
+    },
+    {
+      id: 'cf-tall-autofit',
+      ...at(10),
+      text: `Tall autofit ${LONG}`,
+      fontFamily: f.tall,
+      fontSize: 30,
+      extra: { autofit: 'shrink' },
+    },
+    {
+      id: 'cf-var-spacing',
+      ...at(11),
+      text: `Var spaced ${SENTENCE}`,
+      fontFamily: f.variable,
+      fontWeight: 600,
+      fontSize: 22,
+      extra: { letterSpacing: 2, lineSpacing: 1.4 },
+    },
+  ]
+  return slide(index, 'custom-fonts', boxes)
 }

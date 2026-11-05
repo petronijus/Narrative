@@ -16,7 +16,12 @@
  *     back up from the slides panel's keys (198 switches a pass; 0 → 50 → 198
  *     → 396 in the details file);
  *   - memory.zoom.cycle: the crowded slide, five zoom commits in and out a
- *     pass (each re-rasterises every text at the new resolution);
+ *     pass (each re-rasterises every text at the new resolution); once a
+ *     session, in its first pass, the first zoom-in is let settle and the
+ *     text rasters are read there (MEMORY_TEXT_WORK / MEMORY_TEXT_METRICS:
+ *     the run-text textures' padding and mipmaps, their megapixels and the
+ *     context's MB), and after each pass what Pixi's texture pool still
+ *     holds on the GPU;
  *   - memory.deck.reopen: the 10-slide deck closed to its folder and opened
  *     again through the app's own navigation, five times a pass;
  *   - memory.present.loop: one presentation of the photo deck, forward through
@@ -86,6 +91,17 @@ interface MemoryState extends SideState {
   crowded?: Deck
   reopen?: Deck & { folderId: string }
   photo?: PresentDeck
+  /** memory.zoom.cycle: the session's zoomed reading (zoomPass), taken once a session. */
+  zoomed?: ZoomedText | null
+}
+
+/** The text rasters with the crowded slide zoomed in eight wheel steps, settled (memory.zoom.cycle). */
+interface ZoomedText {
+  textureBytes: number
+  textPx: number
+  textInRegionPx: number
+  padPx: number
+  mipmapped: number
 }
 
 /** One look at what the page holds. */
@@ -98,6 +114,8 @@ interface Snapshot {
   nodes: number
   listeners: number
   blobUrls: number
+  /** Pixels of idle pooled textures still on the GPU in the editor's context (0: no text probe). */
+  poolResidentPx: number
 }
 
 const chromium = (page: Page): boolean =>
@@ -135,7 +153,10 @@ async function snapshot(page: Page): Promise<Snapshot> {
     }
   }
   const m = await page.evaluate(() => window.__narrative_perf_harness!.memory())
+  // An older revision's harness (an A/B's other side) has no text probe.
+  const t = await page.evaluate(() => window.__narrative_perf_harness!.textureMemory?.() ?? null)
   return {
+    poolResidentPx: t?.pool.residentPx ?? 0,
     heap,
     textures: m.editor?.textures ?? 0,
     textureBytes: m.editor?.textureBytes ?? 0,
@@ -188,6 +209,7 @@ function growthValues(
   [s0, s1, s2, s3]: readonly [Snapshot, Snapshot, Snapshot, Snapshot],
   counters: Record<string, number>,
   wallMs: number,
+  zoomed: ZoomedText | null = null,
 ): Record<string, number> {
   const bound = MEMORY_HEAP_BOUND_MB[def.id]
   if (bound === undefined) throw new Error(`${def.id}: no MEMORY_HEAP_BOUND_MB`)
@@ -219,6 +241,18 @@ function growthValues(
     'mem.leak.nodes': repeated(s2.nodes - s1.nodes, s3.nodes - s2.nodes),
     'mem.leak.listeners': repeated(s2.listeners - s1.listeners, s3.listeners - s2.listeners),
     'mem.leak.blobUrls': repeated(s2.blobUrls - s1.blobUrls, s3.blobUrls - s2.blobUrls),
+  }
+  if ('mem.text.padKpx' in def.metrics) {
+    if (zoomed === null) throw new Error(`${def.id}: no zoomed text reading`)
+    values['mem.zoomed.textureMB'] = round1(zoomed.textureBytes / MB)
+    values['mem.zoomed.textMpx'] = round1(zoomed.textPx / MB)
+    values['mem.zoomed.textInRegionMpx'] = round1(zoomed.textInRegionPx / MB)
+    values['mem.text.padKpx'] = Math.round(zoomed.padPx / 1000)
+    values['mem.text.mipmapped'] = zoomed.mipmapped
+    // The most any pass left resident, its end settled (the pool after a staging landed).
+    values['mem.pool.residentKpx'] = Math.round(
+      Math.max(s1.poolResidentPx, s2.poolResidentPx, s3.poolResidentPx) / 1000,
+    )
   }
   return { ...counterValues(def.metrics, counters, new Set(Object.keys(values))), ...values }
 }
@@ -302,8 +336,12 @@ async function switchPass(
   for (let i = n - 2; i >= 0; i--) await step('ArrowUp', i)
 }
 
-/** In by eight wheel steps, a rest for the commit and its staging, out again, settled; then fitted. */
-async function zoomPass(page: Page): Promise<void> {
+/**
+ * In by eight wheel steps, a rest for the commit and its staging, out again,
+ * settled; then fitted. `read` (once a session): the first zoom-in is let
+ * settle and its text rasters read.
+ */
+async function zoomPass(page: Page, read?: (z: ZoomedText) => void): Promise<void> {
   for (let z = 0; z < ZOOMS; z++) {
     const a = (await page.locator('.artboard').boundingBox())!
     await page.mouse.move(a.x + a.width * 0.47, a.y + a.height * 0.5)
@@ -317,6 +355,22 @@ async function zoomPass(page: Page): Promise<void> {
     }
     await wheel(-50)
     await page.waitForTimeout(1500)
+    if (z === 0 && read !== undefined) {
+      await settle(page, { timeoutMs: 120_000 })
+      const r = await page.evaluate(() => {
+        const h = window.__narrative_perf_harness!
+        const t = h.textureMemory?.() ?? null
+        return { gl: h.memory().editor?.textureBytes ?? 0, t }
+      })
+      if (r.t === null) throw new Error('memory.zoom.cycle: the page has no text probe')
+      read({
+        textureBytes: r.gl,
+        textPx: r.t.run.rasterPx,
+        textInRegionPx: r.t.run.inRegionRasterPx,
+        padPx: r.t.run.texturePx - r.t.run.rasterPx,
+        mipmapped: r.t.run.mipmapped,
+      })
+    }
     await wheel(50)
     await settle(page, { timeoutMs: 60_000 })
     await page.getByRole('button', { name: 'Reset zoom to 100%' }).hover({ timeout: 30_000 })
@@ -426,6 +480,8 @@ test('memory growth', async ({ browser }) => {
       if (page !== s.page) await s.page.goto('about:blank')
       try {
         await open(page, s)
+        // A zoomed reading (memory.zoom.cycle) is the session's own.
+        s.zoomed = undefined
         const notes: Record<string, number> = {}
         const s0 = await snapshot(page)
         await pass(page, s, notes)
@@ -452,7 +508,7 @@ test('memory growth', async ({ browser }) => {
           `PERF memory ${def.id} [${s.side.name}] open: ${fmt(s0)} | first: ${fmt(s1)} | second: ${fmt(s2)} | third: ${fmt(s3)}`,
         )
         s.notes = { snapshots: { open: s0, first: s1, second: s2, third: s3 }, firstPass: notes }
-        return growthValues(def, [s0, s1, s2, s3], counters, wallMs)
+        return growthValues(def, [s0, s1, s2, s3], counters, wallMs, s.zoomed ?? null)
       } finally {
         if (page !== s.page) await page.close()
       }
@@ -485,7 +541,13 @@ test('memory growth', async ({ browser }) => {
       ),
       'memory.zoom.cycle': session(
         async (page, s) => openDeck(page, s.crowded!.id, s.crowded!.perSlide[0]!),
-        async (page) => zoomPass(page),
+        async (page, s) => {
+          // The first pass of the session reads the zoomed text rasters.
+          if (s.zoomed === undefined) {
+            s.zoomed = null
+            await zoomPass(page, (z) => (s.zoomed = z))
+          } else await zoomPass(page)
+        },
       ),
       'memory.deck.reopen': session(
         async (page, s) => openDeck(page, s.reopen!.id, s.reopen!.perSlide[0]!),

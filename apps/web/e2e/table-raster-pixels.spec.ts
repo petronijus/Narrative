@@ -227,6 +227,13 @@ test('a table rasterised cell by cell and grouped draws the same pixels', async 
   request,
 }) => {
   test.setTimeout(240_000)
+  // About HTMLText's grouped table rasters: only a run forced onto HTMLText
+  // (PW_TEXT_ENGINE=html) draws cells through them; the glyph-run engine,
+  // the default everywhere since 2026-10-26, draws none (ADR 0018).
+  test.skip(
+    process.env['PW_TEXT_ENGINE'] !== 'html',
+    'HTMLText grouping is used only when the page is forced onto HTMLText',
+  )
   const deckId = await createDeck(request, `table raster pixels ${Date.now()}`)
   await applyOps(request, deckId, tableSlideOps().ops)
 

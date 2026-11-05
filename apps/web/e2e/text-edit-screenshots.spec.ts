@@ -33,7 +33,8 @@ async function probe(page: Page, id: string) {
     const c = sg.getContainer(targetId)
     if (c === undefined) return null
     const local = c.toGlobal({ x: 0, y: 0 })
-    const canvasEl = document.querySelector('canvas')
+    // The world's origin: the canvas's container (ADR 0020).
+    const canvasEl = document.querySelector('.artboard canvas')?.parentElement ?? null
     const rect = canvasEl?.getBoundingClientRect() ?? { left: 0, top: 0 }
     return { pageX: local.x + rect.left, pageY: local.y + rect.top }
   }, id)

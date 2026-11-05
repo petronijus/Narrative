@@ -56,14 +56,22 @@ async function settleSelection(page: Page) {
   )
 }
 
-/** A deck with one text box holding `body`; opened, fitted, and in edit mode with the caret at the end. */
-async function editBox(page: Page, title: string, body: unknown) {
+/**
+ * A deck with one text box holding `body` (and the box's own `fields`); opened, fitted, and in
+ * edit mode with the caret at the end.
+ */
+async function editBox(
+  page: Page,
+  title: string,
+  body: unknown,
+  fields: Record<string, unknown> = {},
+) {
   const { id: deckId } = await command<{ id: string }>(page.request, {}, 'deck.create', { title })
   const { objectId } = await command<{ objectId: string }>(
     page.request,
     { deckId },
     'object.create',
-    { slide: { index: 0 }, object: { type: 'text', ...BOX, text: 'x', fontSize: 40 } },
+    { slide: { index: 0 }, object: { type: 'text', ...BOX, text: 'x', fontSize: 40, ...fields } },
   )
   await command(page.request, { deckId }, 'text.set', {
     target: { slide: { index: 0 }, object: objectId },
@@ -167,4 +175,171 @@ test('a pasted blank line becomes a new paragraph', async ({ page }) => {
   await expect
     .poll(async () => (await paragraphs(page.request, deckId, objectId)).map((p) => p[0]))
     .toEqual(['Start of it', 'Next paragraph!'])
+})
+
+test('a box underline is one line under each run, typed text and Inspector changes included', async ({
+  page,
+}) => {
+  const { deckId, objectId, editor } = await editBox(
+    page,
+    `underline ${Date.now()}`,
+    'Underlined',
+    { underline: true },
+  )
+  /**
+   * Each run of text in the editor with the number of underlines the page draws under it: one
+   * per decorating box around it (a second, from the editor's root, stacked two antialiased
+   * lines where the canvas draws one — ADR 0018).
+   */
+  const underlines = () =>
+    editor.evaluate((root) => {
+      root.normalize()
+      const out: Array<[string, number]> = []
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+      for (let n = walker.nextNode(); n !== null; n = walker.nextNode()) {
+        const text = n.nodeValue ?? ''
+        if (text === '') continue
+        let lines = 0
+        for (let e = n.parentElement; e !== null; e = e.parentElement) {
+          if (getComputedStyle(e).textDecorationLine.includes('underline')) lines += 1
+          if (e === root) break
+        }
+        out.push([text, lines])
+      }
+      return out
+    })
+  expect(await underlines()).toEqual([['Underlined', 1]])
+
+  // Typed into an empty paragraph, where the browser puts a bare text node.
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('Typed')
+  await expect.poll(underlines).toEqual([
+    ['Underlined', 1],
+    ['Typed', 1],
+  ])
+  // Over a selection the browser replaces with a bare text node.
+  await page.keyboard.press('Shift+ArrowLeft')
+  await page.keyboard.press('Shift+ArrowLeft')
+  await page.keyboard.type('ing')
+  await expect.poll(underlines).toEqual([
+    ['Underlined', 1],
+    ['Typing', 1],
+  ])
+
+  // The box's underline changed while editing (the Inspector's toggle): the runs follow.
+  await command(page.request, { deckId }, 'text.setBoxTypography', {
+    slide: { index: 0 },
+    objects: [objectId],
+    style: { underline: false },
+  })
+  await expect.poll(underlines).toEqual([
+    ['Underlined', 0],
+    ['Typing', 0],
+  ])
+  // The caret stayed where it was.
+  await expect(editor).toBeFocused()
+  await page.keyboard.type('!')
+  await expect
+    .poll(async () => (await paragraphs(page.request, deckId, objectId)).map((p) => p[0]))
+    .toEqual(['Underlined', 'Typing!'])
+})
+
+/** The body as `query.object` shows it: a soft break is "\n", a paragraph break "\n\n". */
+async function bodyText(request: APIRequestContext, deckId: string, id: string) {
+  const { object } = await command<{ object: { text: string } }>(
+    request,
+    { deckId },
+    'query.object',
+    { slide: { index: 0 }, object: id },
+  )
+  return object.text
+}
+
+/** Paragraph blocks and drawn lines of the editor (its height over one line's). */
+async function shape(editor: ReturnType<Page['locator']>, lineHeight: number) {
+  const { blocks, height } = await editor.evaluate((e) => ({
+    blocks: e.querySelectorAll(':scope > div').length,
+    height: e.getBoundingClientRect().height,
+  }))
+  return { blocks, lines: Math.round(height / lineHeight) }
+}
+
+/** Let the undo history close its step (the UndoManager's capture window). */
+const closeStep = (page: Page) => page.waitForTimeout(700)
+
+test('Shift+Enter breaks the line inside its paragraph, mid-text and at its end; undo and redo step through it', async ({
+  page,
+}) => {
+  const { deckId, objectId, editor } = await editBox(page, `soft break ${Date.now()}`, 'One Two')
+  const line = (await editor.boundingBox())!.height
+  const state = async () => ({
+    text: await bodyText(page.request, deckId, objectId),
+    ...(await shape(editor, line)),
+  })
+
+  // At the paragraph's end: a line break, and the new line is there to type on.
+  await page.keyboard.press('Shift+Enter')
+  await expect.poll(state).toEqual({ text: 'One Two\n', blocks: 1, lines: 2 })
+  await page.keyboard.type('Three')
+  await expect.poll(state).toEqual({ text: 'One Two\nThree', blocks: 1, lines: 2 })
+  await closeStep(page)
+
+  // Mid-text.
+  await page.keyboard.press(caret.textStart)
+  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Shift+Enter')
+  await expect.poll(state).toEqual({ text: 'One\n Two\nThree', blocks: 1, lines: 3 })
+  await closeStep(page)
+
+  // Several at the end.
+  await page.keyboard.press(caret.textEnd)
+  await page.keyboard.press('Shift+Enter')
+  await closeStep(page)
+  await page.keyboard.press('Shift+Enter')
+  await expect.poll(state).toEqual({ text: 'One\n Two\nThree\n\n', blocks: 1, lines: 5 })
+  await closeStep(page)
+
+  // Undo, while editing, takes each step back; redo puts it again.
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect.poll(state).toEqual({ text: 'One\n Two\nThree\n', blocks: 1, lines: 4 })
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect.poll(state).toEqual({ text: 'One\n Two\nThree', blocks: 1, lines: 3 })
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect.poll(state).toEqual({ text: 'One Two\nThree', blocks: 1, lines: 2 })
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expect.poll(state).toEqual({ text: 'One\n Two\nThree', blocks: 1, lines: 3 })
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expect.poll(state).toEqual({ text: 'One\n Two\nThree\n', blocks: 1, lines: 4 })
+  // The caret is where the redo put the break: typing lands on the new line.
+  await expect(editor).toBeFocused()
+  await page.keyboard.type('Four')
+  await expect.poll(state).toEqual({ text: 'One\n Two\nThree\nFour', blocks: 1, lines: 4 })
+})
+
+test('select all and delete empties the box; typing starts it again; undo brings the text back', async ({
+  page,
+}) => {
+  const { deckId, objectId, editor } = await editBox(page, `delete all ${Date.now()}`, {
+    paragraphs: [{ text: 'First line' }, { text: 'Second' }],
+  })
+  const line = (await editor.boundingBox())!.height / 2
+  const state = async () => ({
+    text: await bodyText(page.request, deckId, objectId),
+    ...(await shape(editor, line)),
+  })
+  await closeStep(page)
+  await page.keyboard.press('ControlOrMeta+a')
+  await page.keyboard.press('Backspace')
+  await expect.poll(state).toEqual({ text: '', blocks: 1, lines: 1 })
+  await closeStep(page)
+  await page.keyboard.type('New')
+  await expect.poll(state).toEqual({ text: 'New', blocks: 1, lines: 1 })
+  await closeStep(page)
+
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect.poll(state).toEqual({ text: '', blocks: 1, lines: 1 })
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect.poll(state).toEqual({ text: 'First line\n\nSecond', blocks: 2, lines: 2 })
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expect.poll(state).toEqual({ text: '', blocks: 1, lines: 1 })
 })

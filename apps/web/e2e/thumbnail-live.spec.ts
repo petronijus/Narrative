@@ -11,24 +11,24 @@ import { expect, test, type Page } from './fixtures/test'
 import { provisionDeckWithText } from './fixtures/provisionDeck'
 
 const SLIDE_W = 1920
-const THUMB_W = 200
 
 /** The first slide's thumbnail, decoded to RGBA (null until it has one). */
 async function thumbnailPixels(
   page: Page,
 ): Promise<{ w: number; h: number; data: number[] } | null> {
-  return page.evaluate(async (thumbWidth) => {
+  return page.evaluate(async (slideWidth) => {
     const img = document.querySelector<HTMLImageElement>('[data-slide-id] img')
     if (img === null || !img.src.startsWith('blob:')) return null
     // The panel shows a picture the server made until the editor has its own
-    // (1920 wide); the editor's thumbnails are THUMB_W wide. The src can change
-    // under a decode in flight.
+    // (1920 wide); the editor's thumbnails are as wide as the row shows them
+    // (ui/useThumbnailPixelWidth.ts). The src can change under a decode in
+    // flight.
     try {
       await img.decode()
     } catch {
       return null
     }
-    if (img.naturalWidth !== thumbWidth) return null
+    if (img.naturalWidth >= slideWidth) return null
     const canvas = document.createElement('canvas')
     canvas.width = img.naturalWidth
     canvas.height = img.naturalHeight
@@ -39,14 +39,14 @@ async function thumbnailPixels(
       h: canvas.height,
       data: Array.from(ctx.getImageData(0, 0, canvas.width, canvas.height).data),
     }
-  }, THUMB_W)
+  }, SLIDE_W)
 }
 
 type Pixels = NonNullable<Awaited<ReturnType<typeof thumbnailPixels>>>
 
 /** RGB at slide coordinates (x, y). */
 function at(p: Pixels, x: number, y: number): [number, number, number] {
-  const k = THUMB_W / SLIDE_W
+  const k = p.w / SLIDE_W
   const i = (Math.floor(y * k) * p.w + Math.floor(x * k)) * 4
   return [p.data[i]!, p.data[i + 1]!, p.data[i + 2]!]
 }
@@ -59,7 +59,7 @@ function isRed(p: Pixels, x: number, y: number): boolean {
 
 /** How many pixels of the slide rectangle are text ink (thumbnail text is small and light: anything clearly darker than the white page). */
 function ink(p: Pixels, x: number, y: number, w: number, h: number): number {
-  const k = THUMB_W / SLIDE_W
+  const k = p.w / SLIDE_W
   let n = 0
   for (let py = Math.floor(y * k); py < Math.ceil((y + h) * k); py++) {
     for (let px = Math.floor(x * k); px < Math.ceil((x + w) * k); px++) {
@@ -139,4 +139,62 @@ test('the thumbnail of the active slide follows the canvas, edited text included
       { timeout: 15_000 },
     )
     .toBeGreaterThan(inkBefore * 1.5)
+})
+
+/**
+ * The deck's role is 'viewer' until GET /decks/:id answers
+ * (state/DeckRoleContext.tsx). When the slides arrived first, the panel's
+ * list was mounted under a read-only context menu and mounted again under
+ * the editor's: the observers of the rows in view (ui/useVisibleSlideRows.ts)
+ * stayed on the detached rows, every row counted as out of view, and the
+ * panel showed its placeholders for good. Which answer came first was a race
+ * (renderer-visual and inspector-flows failed ~1 in 10 under load,
+ * 2026-10-27/30); here the role is held until the rows are in the panel.
+ */
+test("the slide panel shows its pictures when the deck's role arrives after its slides", async ({
+  page,
+}) => {
+  test.setTimeout(60_000)
+  const res = await page.request.post('http://localhost:3001/decks', {
+    data: { title: `thumbnail late role ${Date.now()}` },
+  })
+  const { id: deckId } = (await res.json()) as { id: string }
+  const created = await page.request.post('http://localhost:3001/commands', {
+    headers: { Origin: 'http://localhost:5173' },
+    data: {
+      target: { deckId },
+      command: 'object.create',
+      input: {
+        slide: { index: 0 },
+        object: { type: 'rectangle', x: 100, y: 100, width: 400, height: 300, fill: '#ff0000' },
+      },
+    },
+  })
+  expect(((await created.json()) as { ok: boolean }).ok).toBe(true)
+
+  let releaseRole!: () => void
+  const roleHeld = new Promise<void>((resolve) => (releaseRole = resolve))
+  await page.route(
+    (url) => url.port === '3001' && url.pathname === `/decks/${deckId}`,
+    async (route) => {
+      if (route.request().method() === 'GET') await roleHeld
+      await route.fallback()
+    },
+  )
+  await page.goto(`/deck/${deckId}`)
+  await expect(page.locator('[role="option"][data-slide-id]')).toHaveCount(1, { timeout: 30_000 })
+  // Read-only until the role is known: no way to add a slide yet.
+  await expect(page.getByRole('button', { name: 'Add slide' })).toHaveCount(0)
+  releaseRole()
+  await expect(page.getByRole('button', { name: 'Add slide' })).toBeVisible()
+
+  await expect
+    .poll(
+      async () => {
+        const p = await thumbnailPixels(page)
+        return p !== null && isRed(p, 300, 250)
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true)
 })

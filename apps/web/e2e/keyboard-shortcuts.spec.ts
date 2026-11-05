@@ -342,6 +342,11 @@ test.describe('Present mode keyboard shortcuts', () => {
     // pressed into the gap is delivered to a view that has not decided which
     // slide it is showing yet.
     await expect.poll(getActiveId, { timeout: 10_000 }).toBe(slideIds[0]!)
+    // Navigation is dropped until preparation finishes (ADR 0016: ready means
+    // ready, keys are not queued), so wait for the overlay to go as well.
+    await expect(page.getByRole('status', { name: 'Preparing presentation' })).toHaveCount(0, {
+      timeout: 15_000,
+    })
 
     // ArrowRight → next.
     await page.keyboard.press('ArrowRight')

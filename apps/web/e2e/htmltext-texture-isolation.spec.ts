@@ -27,6 +27,14 @@
  *   2. Each texture.source.resource is a `<canvas>` (the snapshot the
  *      patch installs), not an `<img>` (the original pooled DOM that
  *      causes the race).
+ *
+ * Both text engines (runText/flag.ts). The race is HTMLText's: the `html`
+ * engine draws every text with it, the default `runs` engine only the texts
+ * its painter cannot draw (the fallback) — there the patch's canvas is
+ * asserted. With `runs` every raster is a bitmap of its own (an exact-size
+ * texture, ADR 0018), never the pooled `<img>`, and the identity checks hold
+ * just the same. (The spec read the default engine's textures as HTMLText's
+ * until 2026-11-01, when run rasters stopped going through Pixi's pool.)
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -191,132 +199,152 @@ async function readResourceIdentitySet(page: Page, ids: string[]): Promise<numbe
   }, ids)
 }
 
-test.describe('Pixi HTMLText texture isolation (Pixi v8 WebGL race)', () => {
-  test.beforeAll(async ({ request }) => {
-    if (deckId !== '') return
-    const res = await request.post(`${API}/decks`, { data: { title: 'e2e htmltext isolation' } })
-    expect(res.ok(), `POST /decks: ${res.status()}`).toBe(true)
-    deckId = ((await res.json()) as { id: string }).id
-    ownDeck = true
-  })
+for (const engine of ['html', 'runs'] as const) {
+  test.describe(`Pixi HTMLText texture isolation (Pixi v8 WebGL race) — ${engine} engine`, () => {
+    test.beforeAll(async ({ request }) => {
+      if (deckId !== '') return
+      const res = await request.post(`${API}/decks`, { data: { title: 'e2e htmltext isolation' } })
+      expect(res.ok(), `POST /decks: ${res.status()}`).toBe(true)
+      deckId = ((await res.json()) as { id: string }).id
+      ownDeck = true
+    })
 
-  test.afterAll(async ({ request }) => {
-    if (ownDeck) await request.delete(`${API}/decks/${deckId}`).catch(() => {})
-  })
+    test.afterAll(async ({ request }) => {
+      if (ownDeck) await request.delete(`${API}/decks/${deckId}`).catch(() => {})
+      // The next engine's describe (same worker) makes a deck of its own.
+      if (ownDeck) deckId = process.env.E2E_DECK_ID ?? ''
+      ownDeck = false
+    })
 
-  test.beforeEach(async ({ page }) => {
-    await page.setViewportSize({ width: 1440, height: 900 })
-    // Honour an env opt-out so we can run the suite with the patch
-    // disabled and confirm the assertions actually fail when the
-    // underlying Pixi race is uncovered.
-    if (process.env.E2E_DISABLE_HTMLTEXT_PATCH === '1') {
-      await page.addInitScript(() => {
-        ;(globalThis as { __disableHtmlTextRacePatch?: boolean }).__disableHtmlTextRacePatch = true
-      })
-    }
-    await page.goto(`/deck/${deckId}`)
-    await waitForTestApi(page)
-
-    // Reset slide: drop any stale objects from previous runs and seed
-    // the five texts side-by-side.
-    await page.evaluate((seeds) => {
-      const api = window.__narrative_test_api!
-      const slideId = api.listSlideIds()[0]!
-      const seedIds = new Set(seeds.map((s) => s.id))
-      const existing = api.debugObjectTypes(slideId)
-      for (const o of existing) {
-        if (!seedIds.has(o.id)) api.removeObject(o.id, slideId)
+    test.beforeEach(async ({ page }) => {
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await page.addInitScript((e) => {
+        ;(globalThis as { __narrative_textEngine?: string }).__narrative_textEngine = e
+      }, engine)
+      // Honour an env opt-out so we can run the suite with the patch
+      // disabled and confirm the assertions actually fail when the
+      // underlying Pixi race is uncovered.
+      if (process.env.E2E_DISABLE_HTMLTEXT_PATCH === '1') {
+        await page.addInitScript(() => {
+          ;(globalThis as { __disableHtmlTextRacePatch?: boolean }).__disableHtmlTextRacePatch =
+            true
+        })
       }
-      seeds.forEach((s, i) => {
-        const opts = { id: s.id, x: 80, y: 80 + i * 140, w: 800, h: 100, text: s.text }
-        const found = existing.find((o) => o.id === s.id)
-        if (found === undefined) {
-          api.addText(opts, slideId)
-        } else {
-          api.updateObject(
-            s.id,
-            { text: s.text, x: opts.x, y: opts.y, width: opts.w, height: opts.h },
-            slideId,
-          )
+      await page.goto(`/deck/${deckId}`)
+      await waitForTestApi(page)
+
+      // Reset slide: drop any stale objects from previous runs and seed
+      // the five texts side-by-side.
+      await page.evaluate((seeds) => {
+        const api = window.__narrative_test_api!
+        const slideId = api.listSlideIds()[0]!
+        const seedIds = new Set(seeds.map((s) => s.id))
+        const existing = api.debugObjectTypes(slideId)
+        for (const o of existing) {
+          if (!seedIds.has(o.id)) api.removeObject(o.id, slideId)
         }
-      })
-    }, TEXTS)
-
-    await waitForAllMounted(
-      page,
-      TEXTS.map((t) => t.id),
-    )
-  })
-
-  test('every HTMLText texture owns an independent canvas snapshot', async ({ page }) => {
-    test.setTimeout(45_000)
-    const ids = TEXTS.map((t) => t.id)
-
-    // Force a re-rasterise on every node simultaneously — this is the
-    // closest deterministic analog to the duplicate/refresh scenario
-    // (many concurrent _buildTexturePromise calls).
-    await page.evaluate((seeds) => {
-      const api = window.__narrative_test_api!
-      for (const s of seeds) {
-        // Keep the displayed text identical so we exercise the cache
-        // path AND the rasterise path — what matters is that all
-        // nodes invalidate at once.
-        api.updateObject(s.id, { text: `${s.text}.` })
-      }
-      for (const s of seeds) {
-        api.updateObject(s.id, { text: s.text })
-      }
-    }, TEXTS)
-    await page.waitForTimeout(1500)
-
-    const summaries = await readTextureResources(page, ids)
-    for (const s of summaries) {
-      expect(s.hasTextNode, `HTMLText container missing for ${s.id}`).toBe(true)
-      expect(s.hasResource, `Texture resource missing for ${s.id}`).toBe(true)
-      // The patch installs a per-call canvas; the unpatched WebGL
-      // path leaves an HTMLImageElement in here.
-      expect(
-        s.resourceTag,
-        `Expected per-node canvas snapshot for ${s.id} (got ${s.resourceTag})`,
-      ).toBe('canvas')
-      expect(s.resourceWidth, `Canvas for ${s.id} should have a non-zero width`).toBeGreaterThan(0)
-      expect(s.resourceHeight, `Canvas for ${s.id} should have a non-zero height`).toBeGreaterThan(
-        0,
-      )
-    }
-
-    const distinctCount = await readResourceIdentitySet(page, ids)
-    expect(
-      distinctCount,
-      'Every HTMLText must have its own texture resource — a shared resource is the race',
-    ).toBe(ids.length)
-  })
-
-  test('rapid invalidations keep each text node bound to its own resource', async ({ page }) => {
-    test.setTimeout(45_000)
-    const ids = TEXTS.map((t) => t.id)
-
-    // Hammer the pipeline: 8 invalidation cycles across all 5 nodes,
-    // simulating the worst-case dirty-flush after a deck reload with
-    // multiple duplicate component instances.
-    for (let cycle = 0; cycle < 8; cycle++) {
-      await page.evaluate(
-        ({ seeds, n }) => {
-          const api = window.__narrative_test_api!
-          for (const s of seeds) {
-            api.updateObject(s.id, { text: `${s.text} #${n}` })
+        seeds.forEach((s, i) => {
+          const opts = { id: s.id, x: 80, y: 80 + i * 140, w: 800, h: 100, text: s.text }
+          const found = existing.find((o) => o.id === s.id)
+          if (found === undefined) {
+            api.addText(opts, slideId)
+          } else {
+            api.updateObject(
+              s.id,
+              { text: s.text, x: opts.x, y: opts.y, width: opts.w, height: opts.h },
+              slideId,
+            )
           }
-        },
-        { seeds: TEXTS, n: cycle },
-      )
-      // No wait between cycles → multiple in-flight texturePromises.
-    }
-    await page.waitForTimeout(2000)
+        })
+      }, TEXTS)
 
-    const distinctCount = await readResourceIdentitySet(page, ids)
-    expect(
-      distinctCount,
-      'After concurrent rasterises, no two HTMLText nodes may share a resource',
-    ).toBe(ids.length)
+      await waitForAllMounted(
+        page,
+        TEXTS.map((t) => t.id),
+      )
+    })
+
+    test('every HTMLText texture owns an independent canvas snapshot', async ({ page }) => {
+      test.setTimeout(45_000)
+      const ids = TEXTS.map((t) => t.id)
+
+      // Force a re-rasterise on every node simultaneously — this is the
+      // closest deterministic analog to the duplicate/refresh scenario
+      // (many concurrent _buildTexturePromise calls).
+      await page.evaluate((seeds) => {
+        const api = window.__narrative_test_api!
+        for (const s of seeds) {
+          // Keep the displayed text identical so we exercise the cache
+          // path AND the rasterise path — what matters is that all
+          // nodes invalidate at once.
+          api.updateObject(s.id, { text: `${s.text}.` })
+        }
+        for (const s of seeds) {
+          api.updateObject(s.id, { text: s.text })
+        }
+      }, TEXTS)
+      await page.waitForTimeout(1500)
+
+      const summaries = await readTextureResources(page, ids)
+      for (const s of summaries) {
+        expect(s.hasTextNode, `HTMLText container missing for ${s.id}`).toBe(true)
+        expect(s.hasResource, `Texture resource missing for ${s.id}`).toBe(true)
+        // The patch installs a per-call canvas; the unpatched WebGL
+        // path leaves an HTMLImageElement in here. A run raster is its own
+        // bitmap (or, in WebKit, its own canvas): never the pooled image.
+        if (engine === 'html')
+          expect(
+            s.resourceTag,
+            `Expected per-node canvas snapshot for ${s.id} (got ${s.resourceTag})`,
+          ).toBe('canvas')
+        else
+          expect(
+            ['ImageBitmap', 'canvas'],
+            `Expected a run raster of its own for ${s.id} (got ${s.resourceTag})`,
+          ).toContain(s.resourceTag)
+        expect(
+          s.resourceWidth,
+          `The resource of ${s.id} should have a non-zero width`,
+        ).toBeGreaterThan(0)
+        expect(
+          s.resourceHeight,
+          `The resource of ${s.id} should have a non-zero height`,
+        ).toBeGreaterThan(0)
+      }
+
+      const distinctCount = await readResourceIdentitySet(page, ids)
+      expect(
+        distinctCount,
+        'Every HTMLText must have its own texture resource — a shared resource is the race',
+      ).toBe(ids.length)
+    })
+
+    test('rapid invalidations keep each text node bound to its own resource', async ({ page }) => {
+      test.setTimeout(45_000)
+      const ids = TEXTS.map((t) => t.id)
+
+      // Hammer the pipeline: 8 invalidation cycles across all 5 nodes,
+      // simulating the worst-case dirty-flush after a deck reload with
+      // multiple duplicate component instances.
+      for (let cycle = 0; cycle < 8; cycle++) {
+        await page.evaluate(
+          ({ seeds, n }) => {
+            const api = window.__narrative_test_api!
+            for (const s of seeds) {
+              api.updateObject(s.id, { text: `${s.text} #${n}` })
+            }
+          },
+          { seeds: TEXTS, n: cycle },
+        )
+        // No wait between cycles → multiple in-flight texturePromises.
+      }
+      await page.waitForTimeout(2000)
+
+      const distinctCount = await readResourceIdentitySet(page, ids)
+      expect(
+        distinctCount,
+        'After concurrent rasterises, no two HTMLText nodes may share a resource',
+      ).toBe(ids.length)
+    })
   })
-})
+}

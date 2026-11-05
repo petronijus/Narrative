@@ -41,9 +41,16 @@ async function countColoredPixels(
   page: Page,
   region: { x: number; y: number; w: number; h: number },
 ): Promise<number> {
-  return page.evaluate(({ x, y, w, h }) => {
-    const canvas = document.querySelector('canvas') as HTMLCanvasElement | null
-    if (!canvas) return -1
+  return page.evaluate(({ x: ax, y: ay, w, h }) => {
+    const canvas = document.querySelector('.artboard canvas') as HTMLCanvasElement | null
+    const artboard = document.querySelector('.artboard')
+    if (!canvas || !artboard) return -1
+    // The region is given in the artboard's page px: to the canvas's own pixels.
+    const a = artboard.getBoundingClientRect()
+    const c = canvas.getBoundingClientRect()
+    const k = canvas.width / c.width
+    const x = Math.round((a.left + ax - c.left) * k)
+    const y = Math.round((a.top + ay - c.top) * k)
     const tmp = document.createElement('canvas')
     tmp.width = w
     tmp.height = h
@@ -226,13 +233,15 @@ test('p15 text-reload-invisible: diagnose invisible text after hard reload', asy
   await page.waitForTimeout(2000)
 
   // Get canvas bounding box
+  // The slide on the page: the canvas draws only the region of it the window
+  // shows (ADR 0020), so the artboard is what is clicked and sampled.
   const canvasRect = await page.evaluate(() => {
-    const canvas = document.querySelector('canvas')
+    const canvas = document.querySelector('.artboard')
     if (!canvas) return null
     const r = canvas.getBoundingClientRect()
     return { left: r.left, top: r.top, width: r.width, height: r.height }
   })
-  console.log('Canvas rect:', JSON.stringify(canvasRect))
+  console.log('Artboard rect:', JSON.stringify(canvasRect))
   if (!canvasRect) throw new Error('No <canvas> found on page')
 
   // ── 2. Click the Text tool button ─────────────────────────────────────────

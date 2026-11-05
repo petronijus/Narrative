@@ -183,6 +183,11 @@ function textsSettled(page: Page): Promise<boolean> {
     const sg = (window as any).__narrative_scene_graph
     const renderer = sg.getApp().renderer
     let ok = sg.pendingTextRestage === 0
+    // A text the staging gave its resolution: the renderer's in view; out of
+    // view it may stay at the off-screen cap (2.2, Canvas.tsx
+    // OFFSCREEN_TEXT_RESOLUTION; ADR 0020) — after the zoom-in, texts the
+    // view no longer shows do (as canvas-sharpness-final reads it).
+    const floor = Math.min(renderer.resolution, 2.2) - 0.01
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const walk = (c: any): void => {
       if (c.anchor !== undefined && '_didTextUpdate' in c) {
@@ -192,7 +197,8 @@ function textsSettled(page: Page): Promise<boolean> {
           gpu === undefined ||
           gpu.generatingTexture === true ||
           gpu.currentKey !== c.styleKey ||
-          Math.abs(res - renderer.resolution) > 0.01
+          res < floor ||
+          res > renderer.resolution + 0.01
         )
           ok = false
       }

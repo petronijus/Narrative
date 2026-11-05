@@ -356,3 +356,37 @@ test('Tab in the last cell adds a row and moves into it; typing at once lands th
       ['next', '', ''],
     ])
 })
+
+test('Shift+Enter breaks a line in a cell, and select all + delete empties it', async ({
+  page,
+}) => {
+  const { deckId, tableId, toScreen } = await openTable(page, `table soft break ${Date.now()}`)
+  const cell = toScreen({ x: TABLE.x + 150, y: TABLE.y + 50 })
+  await page.mouse.dblclick(cell.x, cell.y)
+  await expect(editor(page)).toBeFocused()
+  const first = async () => (await cellTexts(page.request, deckId, tableId))[0]![0]
+  await page.keyboard.type('ab')
+  await page.keyboard.press('Shift+Enter')
+  await expect.poll(first).toBe('ab\n')
+  await page.keyboard.type('c')
+  await expect.poll(first).toBe('ab\nc')
+  // Let the undo history close this step (the UndoManager's capture window).
+  await page.waitForTimeout(700)
+  await page.keyboard.press('ArrowLeft')
+  await page.keyboard.press('ArrowLeft')
+  await page.keyboard.press('Shift+Enter')
+  await expect.poll(first).toBe('ab\n\nc')
+  // One paragraph throughout: the breaks are lines of it.
+  await expect(editor(page).locator(':scope > div')).toHaveCount(1)
+  await page.waitForTimeout(700)
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect.poll(first).toBe('ab\nc')
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expect.poll(first).toBe('ab\n\nc')
+  await page.waitForTimeout(700)
+  await page.keyboard.press('ControlOrMeta+a')
+  await page.keyboard.press('Backspace')
+  await expect.poll(first).toBe('')
+  await page.keyboard.type('x')
+  await expect.poll(first).toBe('x')
+})

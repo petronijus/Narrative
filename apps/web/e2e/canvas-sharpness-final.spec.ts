@@ -67,9 +67,13 @@ function getCanvasMetrics(page: import('@playwright/test').Page) {
   })
 }
 
-function expectedResolution(dpr: number, zoom: number, clientW: number, clientH: number): number {
-  const pixelCap = Math.sqrt(MAX_PIXELS / (clientW * clientH))
-  return Math.min(pixelCap, dpr * Math.max(1, zoom))
+/**
+ * The canvas's resolution: the device's at every zoom, up to 8 (ADR 0020 —
+ * the canvas draws the region the window shows, so its backing store no
+ * longer grows with the zoom and needs no pixel cap on the resolution).
+ */
+function expectedResolution(dpr: number, zoom: number): number {
+  return Math.min(8, dpr * zoom)
 }
 
 test.describe('Canvas Sharpness — zoom-adaptive resolution', () => {
@@ -105,13 +109,15 @@ test.describe('Canvas Sharpness — zoom-adaptive resolution', () => {
     const m = await getCanvasMetrics(page)
     console.log('zoom=2 DPR=1:', JSON.stringify(m))
 
-    const expected = expectedResolution(1, 2, m.clientWidth, m.clientHeight)
+    const expected = expectedResolution(1, 2)
     expect(m.rendererResolution).toBeCloseTo(expected, 1)
     expect(m.totalPixels).toBeLessThan(MAX_PIXELS * 1.05)
     await ctx.close()
   })
 
-  test('zoom=2 DPR=2: resolution capped by pixel budget', async ({ browser }) => {
+  test('zoom=2 DPR=2: resolution is the device resolution, the backing store stays in budget', async ({
+    browser,
+  }) => {
     const ctx = await browser.newContext({
       viewport: { width: 1280, height: 720 },
       deviceScaleFactor: 2,
@@ -123,14 +129,16 @@ test.describe('Canvas Sharpness — zoom-adaptive resolution', () => {
     const m = await getCanvasMetrics(page)
     console.log('zoom=2 DPR=2:', JSON.stringify(m))
 
-    // dpr*zoom = 4, but pixel budget caps it lower
-    const expected = expectedResolution(2, 2, m.clientWidth, m.clientHeight)
-    expect(m.rendererResolution).toBeCloseTo(expected, 0)
+    // dpr*zoom = 4: the canvas draws the region in view, so no cap is needed
+    const expected = expectedResolution(2, 2)
+    expect(m.rendererResolution).toBeCloseTo(expected, 1)
     expect(m.totalPixels).toBeLessThan(MAX_PIXELS * 1.05)
     await ctx.close()
   })
 
-  test('zoom=0.5: resolution stays at DPR (no downscale)', async ({ browser }) => {
+  test('zoom=0.5: resolution is the device resolution (no canvas shrunk by the compositor)', async ({
+    browser,
+  }) => {
     const ctx = await browser.newContext({
       viewport: { width: 1280, height: 720 },
       deviceScaleFactor: 2,
@@ -142,7 +150,7 @@ test.describe('Canvas Sharpness — zoom-adaptive resolution', () => {
     const m = await getCanvasMetrics(page)
     console.log('zoom=0.5 DPR=2:', JSON.stringify(m))
 
-    expect(m.rendererResolution).toBeCloseTo(2, 1)
+    expect(m.rendererResolution).toBeCloseTo(expectedResolution(2, 0.5), 1)
     expect(m.totalPixels).toBeLessThan(MAX_PIXELS * 1.05)
     await ctx.close()
   })
@@ -167,7 +175,7 @@ test.describe('Canvas Sharpness — zoom-adaptive resolution', () => {
     await ctx.close()
   })
 
-  test('no blur-inducing CSS on canvas element', async ({ browser }) => {
+  test('the canvas is drawn texel for device pixel, no blur', async ({ browser }) => {
     const ctx = await browser.newContext({
       viewport: { width: 1280, height: 720 },
       deviceScaleFactor: 2,
@@ -177,29 +185,44 @@ test.describe('Canvas Sharpness — zoom-adaptive resolution', () => {
     await gotoEditorAtZoom(page, deckId, 2)
 
     const cssCheck = await page.evaluate(() => {
-      const canvas = document.querySelector('canvas') as HTMLCanvasElement
-      const cs = window.getComputedStyle(canvas)
+      const canvas = document.querySelector('.artboard canvas') as HTMLCanvasElement
       const blurSources: string[] = []
+      // The canvas may carry a transform (ADR 0020: its box sits at whole CSS
+      // px of the zoomed artboard, a translate and scale about its corner put
+      // its backing store on the device grid) — sharp exactly when every
+      // texel lands on one device pixel: the drawn size is the backing
+      // store's, the corner on a whole device px.
+      const dpr = window.devicePixelRatio
+      const r = canvas.getBoundingClientRect()
+      const off = (v: number): number => Math.abs(v - Math.round(v))
+      if (
+        Math.abs(r.width * dpr - canvas.width) > 0.01 ||
+        Math.abs(r.height * dpr - canvas.height) > 0.01
+      )
+        blurSources.push(
+          `canvas drawn ${r.width * dpr}×${r.height * dpr} device px for a ${canvas.width}×${canvas.height} backing store`,
+        )
+      if (off(r.left * dpr) > 0.01 || off(r.top * dpr) > 0.01)
+        blurSources.push(`canvas corner off the device grid: ${r.left * dpr}, ${r.top * dpr}`)
       let el: HTMLElement | null = canvas
       let depth = 0
       while (el && depth < 15) {
         const s = window.getComputedStyle(el)
-        if (el === canvas && s.transform !== 'none')
-          blurSources.push(`canvas has transform: ${s.transform}`)
         if (s.filter !== 'none' && s.filter.includes('blur'))
           blurSources.push(`${el.tagName} has filter: ${s.filter}`)
         el = el.parentElement
         depth++
       }
-      return { canvasTransform: cs.transform, blurSources }
+      return { blurSources }
     })
 
-    expect(cssCheck.canvasTransform).toBe('none')
     expect(cssCheck.blurSources).toEqual([])
     await ctx.close()
   })
 
-  test('a live zoom redraws every text at the new resolution, off screen too', async ({ page }) => {
+  test('a live zoom redraws every text at the new resolution, off screen up to the cap', async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 1280, height: 720 })
     await provisionDeckWithText(page, {
       title: 'Canvas Sharpness — live zoom',
@@ -263,13 +286,17 @@ test.describe('Canvas Sharpness — zoom-adaptive resolution', () => {
 
     const allAt = async (): Promise<string> => {
       const t = await texts()
+      // Off screen a text may stay at the cap (2.2, Canvas.tsx
+      // OFFSCREEN_TEXT_RESOLUTION; ADR 0020): in view it gets the renderer's.
+      const floor = Math.min(t.renderer, 2.2) - 0.01
       const off = t.nodes.filter(
         (n) =>
           !n.landed ||
           n.res === null ||
-          Math.abs(n.res - t.renderer) > 0.01 ||
+          n.res < floor ||
+          n.res > t.renderer + 0.01 ||
           n.texRes === null ||
-          Math.abs(n.texRes - t.renderer) > 0.01,
+          Math.abs(n.texRes - n.res) > 0.01,
       )
       return t.nodes.length >= 25 && t.pending === 0 && off.length === 0
         ? 'ok'
