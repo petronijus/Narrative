@@ -3,14 +3,14 @@
   "id": "table.mount.styled",
   "counters": {
     "gl.texUpload": 96,
-    "gl.texUploadKpx": 1318,
+    "gl.texUploadKpx": 639,
     "procedural.created": 0,
     "sg.destroy": 1,
     "sg.mount": 1,
     "text.measure.bounds": 96,
-    "text.raster.fontKb": 131,
-    "text.raster.kpx": 779,
-    "text.raster.started": 2,
+    "text.raster.fontKb": 0,
+    "text.raster.kpx": 639,
+    "text.raster.started": 96,
     "y.tx.local": 0
   }
 }

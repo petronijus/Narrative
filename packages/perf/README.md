@@ -112,7 +112,12 @@ The machine directory is the host name without its domain, lowercased
 `$XDG_CACHE_HOME/narrative-perf` (default `~/.cache/narrative-perf`);
 `NARRATIVE_PERF_HOME` replaces it. Baselines are kept per bench, build mode
 and runtime (`fill.solid.mount@prod/chromium-browser`); an accept moves the
-replaced baseline to `baselines.history.jsonl`.
+replaced baseline to `baselines.history.jsonl`. An accept takes the latest
+result of every series of the bench unless `--series` names the ones to take
+(`just perf-accept present.advance.text --series prod/chromium-browser,dev/chromium-browser`;
+`--series none` takes only the counter budget): a series last measured on
+an older revision — a Tauri run of last week, a compare's other side — would
+otherwise become its baseline (`cli/acceptArgs.ts`).
 
 ## Running the benches
 
@@ -183,7 +188,8 @@ working tree, uncommitted changes included), installs it from the pnpm store,
 builds and serves both, and runs them interleaved A B A B on two pages;
 verdicts per time metric (bootstrap CI and threshold) and the counter diff
 are printed, and the exit code is 1 on a regression or a changed counter.
-Both revisions must have the harness (step 2 onwards); the old side talks to
+`--browser webkit` runs both sides in Playwright WebKit (`perf-bisect` takes
+it too; `perf-profile` refuses it, the profile comes over CDP). Both revisions must have the harness (step 2 onwards); the old side talks to
 the current dev backend. A worktree's install runs the build scripts its own
 `allowBuilds` allows and ignores the rest (`--config.strict-dep-builds=false`:
 a revision older than its decline of a script would otherwise fail today's
@@ -217,7 +223,11 @@ mip level; `apps/web/src/perf/glResidency.ts`), followed only on pages that
 ask for it before the harness loads (`window.__narrative_perf_residency`):
 the wraps on every `bindTexture` stay out of the other benches. A bench may
 name its own default runs (`BenchDef.runs`; the growth benches 1 + 3), which
-`--runs` / `--warmup` override. Never `performance.memory`: Chromium buckets
+`--runs` / `--warmup` override. `memory.zoom.cycle` also reads the text rasters
+once a session, with the slide zoomed in and settled (the harness's
+`textureMemory()`): the run-text textures' padding and mipmaps and what
+Pixi's texture pool keeps on the GPU are budgeted at 0 (`MEMORY_TEXT_WORK`),
+the zoomed MB and megapixels are time metrics (`MEMORY_TEXT_METRICS`). Never `performance.memory`: Chromium buckets
 it and caches it for 20 minutes.
 
 Each result also writes a details file (`~/.cache/narrative-perf/<machine>/

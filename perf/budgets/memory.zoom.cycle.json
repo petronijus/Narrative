@@ -8,6 +8,9 @@
     "mem.leak.listeners": 0,
     "mem.leak.nodes": 0,
     "mem.leak.textureMB": 0,
-    "mem.leak.textures": 0
+    "mem.leak.textures": 0,
+    "mem.pool.residentKpx": 0,
+    "mem.text.mipmapped": 0,
+    "mem.text.padKpx": 0
   }
 }

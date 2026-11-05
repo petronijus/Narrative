@@ -7,9 +7,11 @@
  *   run, compare, bisect, profile
  *                     `just perf`, `just perf-compare`, `just perf-bisect`,
  *                     `just perf-profile` (cli/run.ts)
- *   accept <id…>      `just perf-accept`: the latest result of each bench on this
+ *   accept <id…> [--series mode/runtime[,…]|none]
+ *                     `just perf-accept`: the latest result of each bench on this
  *                     machine becomes its counter budget (work metrics, committed)
- *                     and its baseline (time metrics, ~/.cache)
+ *                     and its baseline (time metrics, ~/.cache) — of every
+ *                     series, or of the ones `--series` names (cli/acceptArgs.ts)
  *
  * Exit code 1 on anything to fix. Output is `PERF …` lines (report.ts).
  */
@@ -20,6 +22,7 @@ import { readBudget, writeBudget } from '../node/budgetFiles.js'
 import { machineName } from '../node/fingerprint.js'
 import { baselineKey, openResultStore } from '../node/store.js'
 import { formatBudgetCheck, table } from '../report.js'
+import { parseAcceptArgs, takesSeries } from './acceptArgs.js'
 import { benchRegistry, budgetStatus, coverageInput, repoCoverage } from './checks.js'
 import { lighthouse } from './lighthouse.js'
 import { parseArgs, RUN_COMMANDS } from './run.js'
@@ -91,7 +94,15 @@ function counters(): number {
   return failed ? 1 : 0
 }
 
-function accept(ids: readonly string[]): number {
+function accept(args: readonly string[]): number {
+  let parsed: ReturnType<typeof parseAcceptArgs>
+  try {
+    parsed = parseAcceptArgs(args)
+  } catch (e) {
+    console.error((e as Error).message)
+    return 1
+  }
+  const { ids, series: only } = parsed
   if (ids.length === 0) {
     console.error('perf-accept: name the benches (just perf-accept <id…>)')
     return 1
@@ -137,6 +148,11 @@ function accept(ids: readonly string[]): number {
     // The baselines: the latest result of every series (mode × browser) measured here.
     if (Object.values(bench.metrics).some((m) => m.kind === 'time')) {
       for (const result of series) {
+        const key = baselineKey(id, result.fingerprint)
+        if (!takesSeries(only, key)) {
+          console.log(`PERF accept ${id}: baseline ${key} left as it is (not in --series)`)
+          continue
+        }
         const previous = store.accept(result)
         console.log(
           `PERF accept ${id}: baseline ${baselineKey(id, result.fingerprint)} ${previous === undefined ? 'set' : `replaced (was ${previous.result.at})`}`,

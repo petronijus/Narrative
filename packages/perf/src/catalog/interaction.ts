@@ -212,7 +212,25 @@ export const MEMORY_WORK = [
   'mem.leak.blobUrls',
 ] as const
 
-export type MemoryCounter = (typeof MEMORY_WORK)[number]
+/**
+ * The text-raster memory counts of `memory.zoom.cycle` (ADR 0020 → texture
+ * memory, 2026-10-31), budgeted exactly at 0: the editor canvas's run-text
+ * textures' pixels beyond their rasters' own (a texture sized up — the
+ * pool's powers of two held 2.0× the rasters), its run-text textures with a
+ * mipmap chain (none: an upright text is drawn texel for device pixel), both
+ * read with the slide zoomed in eight wheel steps and settled, and the
+ * kilopixels Pixi's texture pool still holds on the GPU after a pass, the
+ * slide fitted and settled (returned rasters kept there until Pixi's
+ * collector ran: 1.7 GB at DPR 2). The absolute figures are time metrics
+ * (`MEMORY_TEXT_METRICS`).
+ */
+export const MEMORY_TEXT_WORK = [
+  'mem.text.padKpx',
+  'mem.text.mipmapped',
+  'mem.pool.residentKpx',
+] as const
+
+export type MemoryCounter = (typeof MEMORY_WORK)[number] | (typeof MEMORY_TEXT_WORK)[number]
 
 const mb: MetricSpec = { unit: 'count', better: 'lower', kind: 'time' }
 
@@ -246,6 +264,18 @@ export const MEMORY_METRICS: Readonly<Record<string, MetricSpec>> = {
   'mem.blobUrls': timedCount,
   'mem.blobUrls.grow': timedCount,
   wall: ms,
+}
+
+/**
+ * `memory.zoom.cycle`'s text-raster figures, read once a session with the
+ * crowded slide zoomed in eight wheel steps and settled (memory.spec.ts →
+ * zoomPass): the editor context's texture MB then, and the run-text
+ * rasters' megapixels (all, and those of the texts the drawn region meets).
+ */
+export const MEMORY_TEXT_METRICS: Readonly<Record<string, MetricSpec>> = {
+  'mem.zoomed.textureMB': mb,
+  'mem.zoomed.textMpx': mb,
+  'mem.zoomed.textInRegionMpx': mb,
 }
 
 /**
@@ -721,8 +751,8 @@ export const INTERACTION_BENCHES: ReadonlyArray<BenchDef<never>> = [
   // The crowded slide: five zoom commits in and out (each re-rasterises every text), twice.
   interaction('memory.zoom.cycle', {
     scene: SCENES.crowded,
-    time: MEMORY_METRICS,
-    work: MEMORY_WORK,
+    time: { ...MEMORY_METRICS, ...MEMORY_TEXT_METRICS },
+    work: [...MEMORY_WORK, ...MEMORY_TEXT_WORK],
     runs: MEMORY_RUNS,
   }),
   // The 10-slide deck closed to its folder and opened again (in-app navigation), five times, twice.

@@ -7,8 +7,10 @@
  *   perf [ids…] [--mode dev|prod|profiling] [--layer I|C] [--runs N] [--warmup N]
  *        [--browser chromium|webkit] [--headed] [--shell tauri] [--device-scale N]
  *        [--no-build] [--swiftshader]
- *   perf-compare <revA> <revB> [ids…] [--runs N] [--warmup N]   (`.` = this working tree)
- *   perf-bisect <id> <good> <bad> [--runs N] [--warmup N] [--metric m[,m…]]
+ *   perf-compare <revA> <revB> [ids…] [--runs N] [--warmup N] [--browser chromium|webkit]
+ *                (`.` = this working tree)
+ *   perf-bisect <id> <good> <bad> [--runs N] [--warmup N] [--browser chromium|webkit]
+ *               [--metric m[,m…]]
  *   perf-profile <id> [--mode profiling|prod|dev]
  *
  * The mode defaults to prod (the build people use; perf-harness.md →
@@ -206,11 +208,18 @@ async function serve(
   return { url: preview.url, ...(version !== undefined ? { version } : {}), preview }
 }
 
+/** `--browser`, refused unless it names an engine the specs have a project for. */
+function browserFlag(args: Args): 'chromium' | 'webkit' {
+  const b = flag(args, 'browser') ?? 'chromium'
+  if (b !== 'chromium' && b !== 'webkit') throw new Error(`--browser ${b}: chromium or webkit`)
+  return b
+}
+
 async function perf(args: Args): Promise<number> {
   const root = repoRoot()
   const layer = flag(args, 'layer')
   const m = layer === 'C' ? 'dev' : mode(args, 'prod')
-  const browser = (flag(args, 'browser') ?? 'chromium') as 'chromium' | 'webkit'
+  const browser = browserFlag(args)
   const shell = flag(args, 'shell') ?? 'browser'
   if (shell !== 'browser' && shell !== 'tauri')
     throw new Error(`--shell ${shell}: browser or tauri`)
@@ -256,7 +265,11 @@ async function compareRevs(
   revA: string,
   revB: string,
   ids: readonly string[],
-  counts: { runs?: string | undefined; warmup?: string | undefined },
+  counts: {
+    runs?: string | undefined
+    warmup?: string | undefined
+    browser: 'chromium' | 'webkit'
+  },
 ): Promise<{ code: number; verdicts: VerdictRow[] }> {
   await requireDevBackend()
   const a = await checkout(root, revA, perfHome(), log)
@@ -271,7 +284,7 @@ async function compareRevs(
     const code = await playwright(root, {
       ids,
       mode: 'prod',
-      browser: 'chromium',
+      browser: counts.browser,
       sides: [
         {
           name: `A ${revA}`,
@@ -338,6 +351,7 @@ async function compareCmd(args: Args): Promise<number> {
   const { code, verdicts } = await compareRevs(root, revA, revB, resolveIds(named, undefined), {
     runs: flag(args, 'runs'),
     warmup: flag(args, 'warmup'),
+    browser: browserFlag(args),
   })
   if (code !== 0) return code
   return printVerdicts(verdicts) ? 1 : 0
@@ -375,6 +389,7 @@ async function bisectCmd(args: Args): Promise<number> {
     const { code, verdicts } = await compareRevs(root, good, sha, [id], {
       runs: flag(args, 'runs'),
       warmup: flag(args, 'warmup'),
+      browser: browserFlag(args),
     })
     if (code !== 0) throw new Error(`perf-compare failed at ${sha} (exit ${code})`)
     if (printVerdicts(verdicts, metrics)) {
@@ -396,6 +411,8 @@ async function profileCmd(args: Args): Promise<number> {
   resolveIds([id], undefined)
   const root = repoRoot()
   const m = mode(args, 'profiling')
+  // The CPU profile comes over CDP, which only Chromium speaks.
+  if (browserFlag(args) !== 'chromium') throw new Error('perf-profile: Chromium only (CDP)')
   await requireDevBackend()
   const co = await checkout(root, WORKING_TREE, perfHome())
   const s = await serve(co, m, !args.flags.has('no-build'))

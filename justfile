@@ -220,7 +220,8 @@ perf-gate: _stack
     just perf-counters
 
 # The latest result of each named bench on this machine becomes its counter budget (perf/budgets/, committed: the diff
-# is the review) and its baseline (~/.cache/narrative-perf/<machine>/baselines.json)
+# is the review) and its baseline (~/.cache/narrative-perf/<machine>/baselines.json); `--series mode/runtime[,…]` takes the
+# baselines of those series only (`prod/chromium-browser`; `none`: the budget only)
 perf-accept +ids:
     pnpm --silent --filter @narrative/perf run perf accept "$@"
 
