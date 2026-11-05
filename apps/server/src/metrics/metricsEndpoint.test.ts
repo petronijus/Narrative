@@ -8,7 +8,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import Fastify from 'fastify'
 import type { FastifyInstance } from 'fastify'
-import { registerMetricsEndpoint, metrics, metricsRegistrationDecision } from './index.js'
+import {
+  registerMetricsEndpoint,
+  metrics,
+  metricsRegistrationDecision,
+  METRICS_TOKEN_MIN_LENGTH,
+} from './index.js'
 
 describe('GET /metrics endpoint', () => {
   let app: FastifyInstance
@@ -152,9 +157,48 @@ describe('metricsRegistrationDecision — prod must require a token', () => {
     ).toBe(false)
   })
 
-  it('ALLOWS registration in production when METRICS_TOKEN is set', () => {
+  it('ALLOWS registration in production when METRICS_TOKEN is a real token', () => {
     expect(
-      metricsRegistrationDecision({ nodeEnv: 'production', metricsToken: 'secret' }).register,
+      metricsRegistrationDecision({ nodeEnv: 'production', metricsToken: 'a'.repeat(64) }).register,
+    ).toBe(true)
+    // Exactly the minimum length, surrounding whitespace trimmed.
+    expect(
+      metricsRegistrationDecision({
+        nodeEnv: 'production',
+        metricsToken: ` ${'0123456789abcdef'.repeat(2)} `,
+      }).register,
+    ).toBe(true)
+  })
+
+  it('REFUSES TO BOOT in production on a token shorter than the minimum', () => {
+    expect(METRICS_TOKEN_MIN_LENGTH).toBe(32)
+    expect(() =>
+      metricsRegistrationDecision({ nodeEnv: 'production', metricsToken: 'secret' }),
+    ).toThrow(/at least 32 characters/)
+    expect(() =>
+      metricsRegistrationDecision({ nodeEnv: 'production', metricsToken: 'a'.repeat(31) }),
+    ).toThrow(/METRICS_TOKEN/)
+  })
+
+  it('REFUSES TO BOOT in production on the CHANGE_ME placeholder, whatever its length', () => {
+    for (const placeholder of [
+      'CHANGE_ME_64_HEX_CHARS',
+      `CHANGE_ME_${'0'.repeat(64)}`,
+      `${'f'.repeat(40)}changeme`,
+      `${'f'.repeat(40)}Change-Me`,
+    ]) {
+      expect(() =>
+        metricsRegistrationDecision({ nodeEnv: 'production', metricsToken: placeholder }),
+      ).toThrow(/placeholder/)
+    }
+  })
+
+  it('accepts any token outside production (tests and dev use short ones)', () => {
+    expect(
+      metricsRegistrationDecision({ nodeEnv: 'development', metricsToken: 'secret' }).register,
+    ).toBe(true)
+    expect(
+      metricsRegistrationDecision({ nodeEnv: 'test', metricsToken: 'CHANGE_ME' }).register,
     ).toBe(true)
   })
 

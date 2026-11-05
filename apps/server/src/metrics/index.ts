@@ -35,15 +35,31 @@ export interface MetricsEndpointOptions {
   loopbackOnlyWhenUnset?: boolean
 }
 
+/** Shortest METRICS_TOKEN production accepts (`openssl rand -hex 32` gives 64). */
+export const METRICS_TOKEN_MIN_LENGTH = 32
+
+/** The placeholder family of `infra/.env.prod.example` (`CHANGE_ME_…`). */
+const PLACEHOLDER = /change[_-]?me/i
+
 /**
  * Decides whether the /metrics route may be registered.
  *
  * /metrics leaks connection counts / doc sizes, so in production it MUST be
- * gated by a token. If NODE_ENV=production and no METRICS_TOKEN is configured,
- * we refuse to register the route at all (rather than exposing it or
- * boot-failing): the server keeps running, /metrics is simply unreachable
- * until a token is set. In non-prod the loopback fallback inside the endpoint
- * keeps local scraping working, so registration is always allowed.
+ * gated by a token. Two production cases, two answers:
+ *
+ *   - **unset / empty** → the route is not registered (`register: false`):
+ *     metrics are optional, the server keeps running, /metrics is simply
+ *     unreachable until a token is set.
+ *   - **set but weak** (shorter than METRICS_TOKEN_MIN_LENGTH, or a
+ *     `CHANGE_ME` placeholder copied from `.env.prod.example`) → **throws**,
+ *     so the server refuses to boot. The same rule as
+ *     AGENT_PRINCIPAL_KEY_SECRET (agent/principalKeySecret.ts): a secret
+ *     that is configured but guessable is an operator mistake, and skipping
+ *     the route quietly would hide it behind a warning nobody reads, while
+ *     registering it would put a guessable token in front of the endpoint.
+ *
+ * In non-prod the loopback fallback inside the endpoint keeps local scraping
+ * working, so registration is always allowed and any token is accepted.
  *
  * Returns `{ register: false, reason }` to skip registration, else
  * `{ register: true }`.
@@ -54,13 +70,26 @@ export function metricsRegistrationDecision(opts: {
 }): { register: true } | { register: false; reason: string } {
   const isProd = opts.nodeEnv === 'production'
   const token = (opts.metricsToken ?? '').trim()
-  if (isProd && token === '') {
+  if (!isProd) return { register: true }
+  if (token === '') {
     return {
       register: false,
       reason:
         'METRICS_TOKEN is unset in production — /metrics endpoint NOT registered. ' +
         'Set METRICS_TOKEN to expose Prometheus metrics.',
     }
+  }
+  if (PLACEHOLDER.test(token)) {
+    throw new Error(
+      'METRICS_TOKEN is the CHANGE_ME placeholder from .env.prod.example — ' +
+        'set a real one (`openssl rand -hex 32`) or remove the line',
+    )
+  }
+  if (token.length < METRICS_TOKEN_MIN_LENGTH) {
+    throw new Error(
+      `METRICS_TOKEN must be at least ${METRICS_TOKEN_MIN_LENGTH} characters in production ` +
+        '(`openssl rand -hex 32`)',
+    )
   }
   return { register: true }
 }

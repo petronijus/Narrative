@@ -84,10 +84,19 @@ current_marker() {
 # The lock is the directory itself (read-only fd): a lock file would belong to
 # whoever ran first — root's cron, say — and a later run as another user
 # could not open it for writing.
-exec 9<"${MARKER_DIR}"
-if command -v flock >/dev/null; then
-  flock -w 300 9 || { err "Another run holds the lock on ${MARKER_DIR} after 5 min"; exit 1; }
+#
+# Without flock there is no lock, and an unlocked run can lose the race this
+# script exists to win (the cron's backup and a deploy advancing at once, the
+# lower generation written last). So a missing flock fails the run instead of
+# going ahead unlocked: on the VM flock is util-linux (always there); a host
+# without it (macOS) has no business writing a production marker. The caller
+# says what a failed run means (deploy.sh warns, backup.sh fails the backup).
+if ! command -v flock >/dev/null 2>&1; then
+  err "flock not found — refusing to advance the restore generation without the lock (install util-linux)"
+  exit 1
 fi
+exec 9<"${MARKER_DIR}"
+flock -w 300 9 || { err "Another run holds the lock on ${MARKER_DIR} after 5 min"; exit 1; }
 
 if [[ "${IF_MISSING}" == "1" && "$(current_marker)" != "0" ]]; then
   log "Restore marker present (generation $(current_marker)) — left as it is"

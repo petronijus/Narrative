@@ -266,10 +266,12 @@ await registerRateLimit(app, { clientIpHeader: process.env['CLIENT_IP_HEADER'] |
 
 // Metrics: /metrics leaks connection counts / doc sizes. In production it
 // MUST be gated by METRICS_TOKEN. If the token is unset/empty in prod we
-// refuse to register the route at all (rather than exposing it or
-// boot-failing) — the server keeps running, metrics are simply not reachable
-// until a token is configured. Dev keeps the loopback-only fallback (handled
-// inside the endpoint) so local scraping still works without a token.
+// refuse to register the route at all — the server keeps running, metrics are
+// simply not reachable until a token is configured. A token that is set but
+// weak (< 32 characters, or the CHANGE_ME placeholder) throws here and the
+// server refuses to boot, like AGENT_PRINCIPAL_KEY_SECRET below. Dev keeps the
+// loopback-only fallback (handled inside the endpoint) so local scraping
+// still works without a token.
 const metricsDecision = metricsRegistrationDecision({
   nodeEnv,
   metricsToken: process.env['METRICS_TOKEN'],

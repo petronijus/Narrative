@@ -95,8 +95,10 @@ turning Web Analytics off in the Cloudflare dashboard — not by widening
 curl http://localhost:3001/health
 # → { "status": "ok" }
 
-# Prometheus metrics (token-gated — see below)
-curl -H "Authorization: Bearer $METRICS_TOKEN" http://localhost:3001/metrics
+# Prometheus metrics (dev: loopback needs no token unless METRICS_TOKEN is
+# set; with one, `-H @file` keeps it out of curl's argv — printf is a builtin)
+curl http://localhost:3001/metrics
+curl -H @<(printf 'Authorization: Bearer %s\n' "$METRICS_TOKEN") http://localhost:3001/metrics
 ```
 
 In production `/health` answers at `https://<domain>/health` too; `/metrics`
@@ -188,11 +190,12 @@ docker logs narrative-server 2>&1 | infra/scripts/client-metrics.py
 # … since a deploy
 docker logs narrative-server 2>&1 | infra/scripts/client-metrics.py --since 2026-10-21T08:00
 
-# The histograms since the server started (interpolated in the buckets);
-# the token expands inside the container, never on the VM's command line
-docker exec narrative-server sh -c \
-  'wget -qO- --header "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:3001/metrics' \
-  | infra/scripts/client-metrics.py
+# The histograms since the server started (interpolated in the buckets).
+# read-metrics.sh has Node inside the container read METRICS_TOKEN from its
+# own environment: the token is never on a command line (a
+# `wget --header "Authorization: Bearer $METRICS_TOKEN"` puts it in wget's
+# argv, readable in `ps` by every user of the VM)
+infra/scripts/read-metrics.sh | infra/scripts/client-metrics.py
 ```
 
 **Access control** (was a TODO for M29; **done** in the 2026-06-12 audit,
@@ -200,7 +203,11 @@ commit `b89796b`): `/metrics` leaks connection counts and document sizes, so in
 production it is gated by `METRICS_TOKEN` — scrape with
 `Authorization: Bearer <token>`. If `NODE_ENV=production` and `METRICS_TOKEN`
 is unset or empty, the endpoint is **not registered at all**: the server keeps
-running and metrics are simply unreachable until a token is configured. See
+running and metrics are simply unreachable until a token is configured. A
+token that is set but weak — shorter than 32 characters, or containing
+`CHANGE_ME` (the `.env.prod.example` placeholder) — makes the server
+**refuse to start**, like a weak `AGENT_PRINCIPAL_KEY_SECRET`: a guessable
+token is a mistake to stop on, not one to hide behind a warning. See
 `apps/server/src/metrics/index.ts`.
 
 **Production** (since the performance-round release, 2026-10):
@@ -218,12 +225,15 @@ running and metrics are simply unreachable until a token is configured. See
 127.0.0.1:3001` on the VM does not reach it. Read it inside the container:
 
   ```bash
-  docker exec narrative-server sh -c \
-    'wget -qO- --header "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:3001/metrics' | head
+  infra/scripts/read-metrics.sh | head
   ```
 
-  (single quotes: `$METRICS_TOKEN` expands in the container's shell, so the
-  token appears neither in the VM's process list nor in its shell history.)
+  (Node inside the container reads `METRICS_TOKEN` from its environment and
+  makes the request, so the token appears neither in the VM's shell history
+  nor in any process's argv. The older
+  `docker exec … sh -c 'wget --header "Authorization: Bearer $METRICS_TOKEN" …'`
+  expanded it in the container's shell — into wget's argv, which the VM's
+  `ps` lists like any other process's.)
 
 - A Prometheus scraper (M30) belongs on the compose network and scrapes
   `http://server:3001/metrics` with the bearer token — not through Caddy.

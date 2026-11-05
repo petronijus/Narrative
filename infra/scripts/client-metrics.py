@@ -11,10 +11,10 @@ label set, the number of reports and p50 / p75 / p95:
   * `/metrics` (Prometheus text): the in-memory histograms since the server
     started — percentiles interpolated inside the buckets, as Prometheus'
     histogram_quantile does;
-        docker exec narrative-server sh -c \\
-          'wget -qO- --header "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:3001/metrics' \\
-          | infra/scripts/client-metrics.py
-    (on the VM: the token expands inside the container; docs/ops.md "Metrics")
+        infra/scripts/read-metrics.sh | infra/scripts/client-metrics.py
+    (on the VM: Node inside the container reads METRICS_TOKEN from its own
+    environment, so the token is never on a command line; docs/ops.md
+    "Metrics")
 
 Options: --since ISO-8601 (log lines only: reports at or after it).
 docs/ops.md "Client session metrics" explains each metric.

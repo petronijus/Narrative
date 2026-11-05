@@ -34,17 +34,37 @@ BUILDER_CACHE=0
 DROP=()
 DRY_RUN=0
 
+# Every value is checked before anything is removed. --keep goes into an
+# arithmetic context, where bash evaluates a string as an expression (array
+# subscripts included: `a[$(cmd)]` runs cmd), and an empty or non-numeric
+# value would silently compare as 0 and widen the prune to every non-pinned
+# image. --current and --drop are compared with image tags; a value with a
+# glob, a colon or a space can never be one, and is a typo to stop on.
+TAG_RE='^v?[0-9A-Za-z._-]+$'
+need_value() {
+  [[ $# -ge 2 && -n "$2" ]] || { echo "prune-images.sh: $1 needs a value" >&2; exit 2; }
+}
+check_tag() {
+  [[ "$2" =~ $TAG_RE ]] || { echo "prune-images.sh: $1 '$2' is not an image tag (${TAG_RE})" >&2; exit 2; }
+}
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --current) CURRENT="$2"; shift 2 ;;
-    --keep) KEEP="$2"; shift 2 ;;
+    --current) need_value "$@"; check_tag "$1" "$2"; CURRENT="$2"; shift 2 ;;
+    --keep)
+      need_value "$@"
+      [[ "$2" =~ ^[0-9]+$ ]] || { echo "prune-images.sh: --keep '$2' is not a number (^[0-9]+$)" >&2; exit 2; }
+      KEEP="$((10#$2))"; shift 2 ;;
     --builder-cache) BUILDER_CACHE=1; shift ;;
-    --drop) DROP+=("$2"); shift 2 ;;
+    --drop) need_value "$@"; check_tag "$1" "$2"; DROP+=("$2"); shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     *) echo "prune-images.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 [[ -n "$CURRENT" ]] || { echo "prune-images.sh: --current <tag> is required" >&2; exit 2; }
+# `latest` is pinned anyway; dropping it is a mistake, not a request.
+for d in "${DROP[@]:-}"; do
+  [[ "$d" != "latest" ]] || { echo "prune-images.sh: --drop latest is not allowed" >&2; exit 2; }
+done
 
 # Images a container is built from must never go, whatever their tag: the
 # running ones by reference, and every container — stopped ones too — by

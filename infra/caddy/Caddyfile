@@ -108,7 +108,20 @@ http://{$DOMAIN:localhost} {
   # otherwise be /api/metrics, through the tunnel, for anyone to probe.
   # Placed before the REST API block: Caddy runs the first `handle` whose
   # matcher fits, and a named matcher keeps the order as written.
-  @metrics path /api/metrics /api/metrics/*
+  #
+  # A prefix match, not `path /api/metrics /api/metrics/*`: that one only
+  # covered the exact path and its subpaths, and left everything else to the
+  # upstream's router. `/api/metrics;x`, `/api/metrics.`, `/api/metrics%00`
+  # went through to Fastify, which 404s them only because of its defaults —
+  # with find-my-way's `useSemicolonDelimiter` on, `/api/metrics;x` served
+  # the metrics (tested 2026-10-26 with Caddy 2.11.4 and Fastify 5.12.7).
+  # path_regexp sees the decoded, cleaned path (`//`, `%6d`, `%3B` and dot
+  # segments are resolved before it matches), and `(?i)` covers the case.
+  # Blocked: /api/metrics followed by the end or by ANY character that cannot
+  # continue a route name. Proxied on purpose: /api/metricsfoo,
+  # /api/metrics-x, /api/metrics_x — a different route name (none exists;
+  # Fastify 404s them), so a future /metrics-… route is not swallowed here.
+  @metrics path_regexp metrics (?i)^/api/metrics([^a-z0-9_-]|$)
   handle @metrics {
     respond 404
   }

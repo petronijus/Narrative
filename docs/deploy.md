@@ -43,6 +43,23 @@ both Linux (Ubuntu desktop) and macOS workstations as the deploy client.
 - **Ingress**: Cloudflare Tunnel terminates TLS at the edge. An external
   `cloudflared` on VM `192.0.2.101` routes `narrative.example.com` to
   `http://192.0.2.147:80`. Caddy then reverse-proxies to internal services.
+- **The tunnel's ingress must point at Caddy, never at the server.** The
+  service URL of the public hostname (Cloudflare Zero Trust → Networks →
+  Tunnels → the tunnel → Public Hostname) is Caddy's listener:
+  `http://caddy:80` for a `cloudflared` on the compose network, or
+  `http://192.0.2.147:80` (Caddy's host port) for the shared connector —
+  **never** `server:3001` / `:3002` or the VM's `:3001`. Pointed at the
+  server, the tunnel bypasses everything Caddy enforces: the `/api/metrics`
+  block, the `CF-Connecting-IP` overwrite the rate limits trust, the CSP
+  and the `/api` prefix handling. The setting lives in the dashboard, not
+  in this repo, so no deploy can check or fix it: **a check for Petr**
+  after any tunnel change, and part of "After the deploy" in a release
+  that touches ingress.
+  **Last checked 2026-10-26 (Petr, Cloudflare dashboard):** every Narrative
+  public hostname on the shared tunnel routes to `http://192.0.2.147:80`
+  (VM 103's LAN address, Caddy), with no path routes and no `Host` header
+  override, and no other tunnel or connector targets VM 103. Repeat the
+  check, and update this line, whenever the tunnel's configuration changes.
 - **Auth**: Google OIDC with server-side code exchange. `OIDC_CLIENT_SECRET`
   stays server-only. Gated by `OIDC_ALLOWED_EMAILS`.
 - **No git on the server** — `/opt/narrative` is an **rsync of the tagged
@@ -417,7 +434,9 @@ says 0.16.0.
   uploads after 24 h (its container is recreated: a few seconds without
   media).
 - **Caddy**: precompressed, immutable hashed assets (zstd/gzip, D1), and
-  `/api/metrics` answers 404 at the edge. The deploy reloads it.
+  `/api/metrics` answers 404 at the edge — the path and every variant a
+  router might read as it (`;x`, `.`, `%00`, `/…`; a prefix matcher). The
+  deploy reloads it.
 - **Images**: about a third of their old size (server 1.42 GB → ~0.4 GB on
   the VM's count, D2); the server and the video worker run as `node`, not
   root. Entry points and the migrator path are unchanged.
@@ -434,11 +453,13 @@ steps need Petr's consent for the host):
    the source). Compare variable **names** only:
 
    ```bash
-   key="$(op document get "SOPS age key (dev repos)" --account my)"
-   diff <(SOPS_AGE_KEY="$(printf '%s' "$key" | grep '^AGE-SECRET-KEY')" \
-            sops --input-type binary --output-type binary -d private/config/env.prod.sops \
-            | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | sort -u) \
-        <(ssh narrative "sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' /opt/narrative/infra/.env.prod | sort -u")
+   ( # a subshell: the age key never outlives the command in your shell
+     key="$(op document get "SOPS age key (dev repos)" --account my)"
+     diff <(SOPS_AGE_KEY="$(printf '%s' "$key" | grep '^AGE-SECRET-KEY')" \
+              sops --input-type binary --output-type binary -d private/config/env.prod.sops \
+              | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | sort -u) \
+          <(ssh narrative "sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' /opt/narrative/infra/.env.prod | sort -u")
+   )
    ```
 
    `>` lines exist only on the VM: fold them into the source
@@ -448,29 +469,55 @@ steps need Petr's consent for the host):
 
 2. **`METRICS_TOKEN` onto the VM.** It is in the SOPS source since
    2026-10-23 (`private/config/env.prod.sops`, 64 hex characters). Append
-   that one line to the VM's file — the value goes through the pipe only,
-   and the VM keeps a copy of its previous file in `backups/env/` (outside
-   the synced tree: a copy next to the file would be deleted by the next
-   deploy's `rsync --delete`):
+   that one line to the VM's file. The value travels through the pipe only
+   (never an argument, never echoed); the age key lives in a subshell; the
+   VM checks the line before it touches the file. A plaintext copy of the
+   previous file is taken (mode 600, in `backups/env/`, outside the synced
+   tree — a copy next to the file would be deleted by the next deploy's
+   `rsync --delete`) and removed again in the same step: once the check
+   passes, or after it has been put back when the check fails. No copy of
+   the secrets is left behind either way:
 
    ```bash
-   key="$(op document get "SOPS age key (dev repos)" --account my)"
-   SOPS_AGE_KEY="$(printf '%s' "$key" | grep '^AGE-SECRET-KEY')" \
-     sops --input-type binary --output-type binary -d private/config/env.prod.sops \
-     | grep '^METRICS_TOKEN=' \
-     | ssh narrative 'set -eu; f=/opt/narrative/infra/.env.prod
-         if grep -q "^METRICS_TOKEN=" "$f"; then echo "METRICS_TOKEN already set — left as it is"; exit 0; fi
-         mkdir -p -m 700 /opt/narrative/backups/env
-         cp -p "$f" "/opt/narrative/backups/env/.env.prod.bak-$(date -u +%Y%m%dT%H%M%SZ)"
-         [ -z "$(tail -c 1 "$f")" ] || echo >> "$f"
-         echo "# Bearer token of /metrics (docs/ops.md -> Metrics), added 2026-10-23" >> "$f"
-         cat >> "$f"
-         grep -c "^METRICS_TOKEN=[0-9a-f]\{64\}$" "$f"'
+   ( # a subshell: the age key never outlives the command in your shell
+     key="$(op document get "SOPS age key (dev repos)" --account my)"
+     SOPS_AGE_KEY="$(printf '%s' "$key" | grep '^AGE-SECRET-KEY')" \
+       sops --input-type binary --output-type binary -d private/config/env.prod.sops \
+       | grep '^METRICS_TOKEN=' \
+       | ssh narrative 'set -eu; umask 077
+           f=/opt/narrative/infra/.env.prod; d=/opt/narrative/backups/env
+           check() {
+             n="$(grep -c "^METRICS_TOKEN=[0-9a-f]\{64\}$" "$f" || true)"
+             echo "METRICS_TOKEN lines of 64 hex characters in .env.prod: $n (want 1)"
+             [ "$n" = 1 ]
+           }
+           line="$(cat)"
+           if grep -q "^METRICS_TOKEN=" "$f"; then
+             echo "METRICS_TOKEN already set — left as it is"; check; exit
+           fi
+           printf "%s\n" "$line" | grep -qx "METRICS_TOKEN=[0-9a-f]\{64\}" \
+             || { echo "the SOPS source gave no METRICS_TOKEN line of 64 hex characters — nothing changed"; exit 1; }
+           mkdir -p -m 700 "$d"
+           bak="$d/.env.prod.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+           install -m 600 "$f" "$bak"
+           [ -z "$(tail -c 1 "$f")" ] || echo >> "$f"
+           echo "# Bearer token of /metrics (docs/ops.md -> Metrics), added 2026-10-23" >> "$f"
+           printf "%s\n" "$line" >> "$f"
+           if check; then rm -f "$bak"; echo "backup removed"
+           else cat "$bak" > "$f"; rm -f "$bak"; echo "check failed — .env.prod restored, backup removed"; exit 1; fi'
+   )
    ```
 
-   The last line prints `1`. Without this step the release still works;
-   `/metrics` just stays unregistered (the server's `METRICS_TOKEN is unset`
-   warning).
+   The count it prints must be `1` — in the "already set" branch too, where a `0` means the VM's value is not 64 hex characters
+   (fix it with `scripts/secrets-edit.sh prod` and the drift check above;
+   production refuses to boot on a token shorter than 32 characters or one
+   containing `CHANGE_ME`). The exit status is non-zero whenever it is not
+   `1`. Without this step the release still works; `/metrics` just stays
+   unregistered (the server's `METRICS_TOKEN is unset` warning). Older
+   runs of this step left `backups/env/.env.prod.bak-*` behind; delete
+   them (`ssh narrative 'rm -f /opt/narrative/backups/env/.env.prod.bak-*'`)
+   — they are plaintext secrets, and `.env.prod` plus the SOPS source are
+   the copies that count.
 
 3. **The backups directory and the cron's user.** The marker goes to
    `/opt/narrative/backups/marker` (unless `.env.prod` sets `BACKUP_DIR` or
@@ -500,13 +547,12 @@ usual.
 ```bash
 curl -s https://narrative.bastla.com/version.json                                  # v0.16.0+…
 curl -s -o /dev/null -w '%{http_code}\n' https://narrative.bastla.com/api/metrics   # 404
+curl -s -o /dev/null -w '%{http_code}\n' 'https://narrative.bastla.com/api/metrics;x' # 404
 ssh narrative 'bash -s' << 'EOF'
 cd /opt/narrative
 infra/scripts/boot-timing.py --previous "$(ls -1t backups/logs/server-*.log.gz | head -n 1)"
 cat backups/marker/generation
-docker exec narrative-server sh -c \
-  'wget -qO- --header "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:3001/metrics' \
-  | grep -c '^narrative_'
+infra/scripts/read-metrics.sh | grep -c '^narrative_'
 EOF
 ```
 
@@ -520,6 +566,12 @@ EOF
   numbers in the plan's D3 entry beside 2026-10-20's (15.08 s to listening
   after a VM boot) together with the probe's outage.
 - The marker prints a unix-seconds generation; the metric count is > 0.
+- Both `/api/metrics` probes answer `404` with an empty body — Caddy's
+  answer (the Caddyfile's prefix matcher), not Fastify's JSON 404. The
+  `;x` variant is the one the old exact-path matcher left to Fastify.
+- **Petr, in the Cloudflare dashboard**: the tunnel's public hostname still
+  points at Caddy (`caddy:80`, or the VM's `:80` for the shared connector),
+  never at `server:3001` ("Production topology" above).
 - **Old images** (Petr, 2026-10-23: remove v0.13.2 and v0.14.0). The
   deploy's own prune keeps v0.16.0 + two previous, so v0.13.2 is usually
   gone already and v0.14.0 is still in the window. A dry run first, then the
@@ -667,9 +719,12 @@ Deploy dokončen.
    there is none (`infra/scripts/restore-marker.sh --if-missing`; a failure
    only warns: the next backup writes it)
 6. Follows the running server's logs into `backups/logs/server-<old
-tag>-<time>.log.gz` (the newest 20 kept) until `up -d` has replaced the
+tag>-<time>.log.gz` (the newest 20 kept; directory 700, files 600 — they
+   carry e-mails and request lines) until `up -d` has replaced the
    container: its client session reports and its shutdown lines would go
-   with it (`infra/scripts/boot-timing.py --previous` reads them). Then
+   with it (`infra/scripts/boot-timing.py --previous` reads them). An EXIT
+   trap stops the follower when the deploy fails, so no `docker logs
+--follow` outlives the script. Then
    `docker compose up -d --remove-orphans` — once listening, the server also
    runs any pending one-time **data** migrations in the background
    (`apps/server/src/services/dataMigrations.ts`; completed ones are rows in
@@ -853,17 +908,17 @@ An ad-hoc edit made on the VM (e.g. `USE_SHARED_TUNNEL=1`) goes back into
 
 Key secrets and where they come from:
 
-| Variable                     | Source                                                                                                                                                                                                                                                               |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POSTGRES_PASSWORD`          | `openssl rand -hex 32` (generated at setup)                                                                                                                                                                                                                          |
-| `OIDC_CLIENT_ID`             | Google Cloud → petr-apps → OAuth credentials                                                                                                                                                                                                                         |
-| `OIDC_CLIENT_SECRET`         | Same (1Password: `google petr-apps OAuth client`)                                                                                                                                                                                                                    |
-| `SESSION_COOKIE_SECRET`      | `openssl rand -hex 32` (generated at setup)                                                                                                                                                                                                                          |
-| `MINIO_ROOT_USER/PASS`       | Chosen at setup                                                                                                                                                                                                                                                      |
-| `IMGPROXY_KEY/SALT`          | `openssl rand -hex 32` each (generated at setup)                                                                                                                                                                                                                     |
-| `RESEND_API_KEY`             | Resend dashboard                                                                                                                                                                                                                                                     |
-| `METRICS_TOKEN`              | `openssl rand -hex 32` (since 0.16.0). Bearer token of `GET /metrics`; unset = the endpoint is not registered. Passed to the server by `docker-compose.prod.yml`; read on the VM with `docker exec` (docs/ops.md → Metrics) — Caddy never forwards `/api/metrics`.   |
-| `AGENT_PRINCIPAL_KEY_SECRET` | `openssl rand -base64 48` (≥ 32 chars; required — the server refuses to start without it). HMAC key of the "working for" key agent peers carry in awareness; rotating it needs no migration (open editors relabel their agent by display name until they reconnect). |
+| Variable                     | Source                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`          | `openssl rand -hex 32` (generated at setup)                                                                                                                                                                                                                                                                                                                                      |
+| `OIDC_CLIENT_ID`             | Google Cloud → petr-apps → OAuth credentials                                                                                                                                                                                                                                                                                                                                     |
+| `OIDC_CLIENT_SECRET`         | Same (1Password: `google petr-apps OAuth client`)                                                                                                                                                                                                                                                                                                                                |
+| `SESSION_COOKIE_SECRET`      | `openssl rand -hex 32` (generated at setup)                                                                                                                                                                                                                                                                                                                                      |
+| `MINIO_ROOT_USER/PASS`       | Chosen at setup                                                                                                                                                                                                                                                                                                                                                                  |
+| `IMGPROXY_KEY/SALT`          | `openssl rand -hex 32` each (generated at setup)                                                                                                                                                                                                                                                                                                                                 |
+| `RESEND_API_KEY`             | Resend dashboard                                                                                                                                                                                                                                                                                                                                                                 |
+| `METRICS_TOKEN`              | `openssl rand -hex 32` (since 0.16.0). Bearer token of `GET /metrics`; unset = the endpoint is not registered; set but shorter than 32 characters or containing `CHANGE_ME` = the server refuses to start. Passed to the server by `docker-compose.prod.yml`; read on the VM with `infra/scripts/read-metrics.sh` (docs/ops.md → Metrics) — Caddy never forwards `/api/metrics`. |
+| `AGENT_PRINCIPAL_KEY_SECRET` | `openssl rand -base64 48` (≥ 32 chars; required — the server refuses to start without it). HMAC key of the "working for" key agent peers carry in awareness; rotating it needs no migration (open editors relabel their agent by display name until they reconnect).                                                                                                             |
 
 The per-IP rate-limit pre-limit (3000 requests/minute) does not apply to agent
 bearer tokens: requests with a well-formed `nmo_`/`nrt_` token are pre-limited per
@@ -1087,7 +1142,9 @@ directory is `RESTORE_MARKER_DIR`, else `<BACKUP_DIR>/marker`, else
 the server's volume (`docker-compose.prod.yml`), so setting `BACKUP_DIR`
 in `.env.prod` moves both together. The advance and the write run under a
 lock on the directory and the file only ever moves up, so a backup and a
-deploy at the same moment cannot leave the marker behind the database. The
+deploy at the same moment cannot leave the marker behind the database.
+Without `flock` (util-linux; always on the VM, absent on macOS) the script
+refuses to run rather than advance unlocked. The
 user the cron runs `backup.sh` as must be able to write the directory
 (deploy.sh creates it as the deploying user, `petr`).
 

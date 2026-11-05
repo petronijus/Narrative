@@ -181,13 +181,35 @@ bash "${SCRIPT_DIR}/restore-marker.sh" --if-missing .env.prod \
 # backups/logs/ (never synced by a deploy) until that container is gone, so
 # its last lines — SIGTERM, the documents stored — are in the file too. The
 # newest 20 files are kept.
+#
+# The logs carry user e-mails, document ids and request lines: the directory
+# is 700 and every file 600 (umask 077 in the follower's subshell; gzip keeps
+# the mode). The follower must never outlive this script: when `up -d` (or
+# anything after it) fails, `set -e` exits and the EXIT trap stops it — a
+# stray `docker logs --follow` would otherwise go on appending to the file
+# for as long as the old container runs.
 LOGS_DIR="${BACKUP_DIR:-${INFRA_DIR}/../backups}/logs"
 LOG_FOLLOWER=""
 OLD_LOG=""
-if docker inspect narrative-server > /dev/null 2>&1 && mkdir -p "${LOGS_DIR}" 2> /dev/null; then
+finish_log_follower() {
+  [[ -n "${LOG_FOLLOWER}" ]] || return 0
+  kill "${LOG_FOLLOWER}" 2> /dev/null || true
+  wait "${LOG_FOLLOWER}" 2> /dev/null || true
+  LOG_FOLLOWER=""
+  if gzip -f "${OLD_LOG}" 2> /dev/null; then
+    log "The previous server's logs: ${OLD_LOG}.gz"
+  fi
+}
+trap finish_log_follower EXIT
+if docker inspect narrative-server > /dev/null 2>&1 \
+  && (umask 077 && mkdir -p "${LOGS_DIR}") 2> /dev/null \
+  && chmod 700 "${LOGS_DIR}" 2> /dev/null; then
+  # Files kept by deploys before this rule were 644.
+  chmod 600 "${LOGS_DIR}"/server-*.log.gz 2> /dev/null || true
   old_image="$(docker inspect -f '{{.Config.Image}}' narrative-server)"
   OLD_LOG="${LOGS_DIR}/server-${old_image##*:}-$(date -u +%Y%m%dT%H%M%SZ).log"
-  docker logs --timestamps --follow narrative-server > "${OLD_LOG}" 2>&1 &
+  # `exec`: $! is docker itself, so the kill reaches it, not a wrapper shell.
+  (umask 077 && exec docker logs --timestamps --follow narrative-server > "${OLD_LOG}" 2>&1) &
   LOG_FOLLOWER=$!
 fi
 
@@ -199,11 +221,7 @@ if [[ -n "${LOG_FOLLOWER}" ]]; then
   # The follower ends by itself once the old container stopped; when `up -d`
   # left the server running (nothing about it changed) it is stopped here.
   sleep 1
-  kill "${LOG_FOLLOWER}" 2> /dev/null || true
-  wait "${LOG_FOLLOWER}" 2> /dev/null || true
-  if gzip -f "${OLD_LOG}" 2> /dev/null; then
-    log "The previous server's logs: ${OLD_LOG}.gz"
-  fi
+  finish_log_follower
   # shellcheck disable=SC2012  # names without spaces, written above
   ls -1t "${LOGS_DIR}"/server-*.log.gz 2> /dev/null | tail -n +21 | xargs rm -f 2> /dev/null || true
 fi
