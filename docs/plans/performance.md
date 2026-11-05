@@ -147,8 +147,9 @@ L = a month or more.
   recommendation is (a2): the browser lays out the same markup + CSS, a
   worker paints the glyph runs (121 of 121 crowded texts pixel-exact in both
   engines). The port (L, 3–5 weeks) waits for the ADR's approval.
-- **E8** Heap and GPU-texture growth across slide switches — measure first.
-  Not started (2026-10-21).
+- **E8** Heap and GPU-texture growth across slide switches — done
+  2026-10-23 (F3, Log): growth benches `memory.*` budgeted at 0, three leaks
+  fixed.
 
 ### C. Big decks (100+ slides)
 
@@ -361,7 +362,8 @@ Not started or still open after the 2026-10-20/21 round; each points at
 the Log entry or ADR that holds its numbers.
 
 - **Not started**
-  - **E8** heap and GPU-texture growth across slide switches — measure first.
+  - ~~**E8** heap and GPU-texture growth across slide switches~~ — done
+    2026-10-23 (F3, Log).
   - **E3** the editor's slide switch re-mounts and re-rasterises everything
     (raster cache, idle pre-mount of neighbours).
   - **P3** the 4K source in `present.video` (the 1080p rendition's
@@ -468,19 +470,19 @@ metrics keep sampling every session until real traffic says otherwise.
 
 Workstreams (each with before/after numbers in the Log; status kept here):
 
-| Id  | What                                                                                                                              | Owner                  | Status                                                                                                                                                                                                                                                                             |
-| --- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| F1  | ADR 0018 port: canvas text from the browser layout, behind a flag, pixel parity in Chromium + WebKit, then the switch             | renderer               | in progress — phase 1 units green, parity corpus written; paused 2026-10-23 ~17:00 (weekly API limit, resets 2026-10-25 02:00); log `~/.cache/narrative-perf/round-logs/F1.md`                                                                                                     |
-| F2  | Present residuals: WebKit swap-frame misses, Chromium `build.steps` first-entry gap; MSAA-at-2× pixel comparison                  | renderer (present)     | in progress — build.steps gap traced, MSAA-at-2× Chromium pixel comparison done, Tauri 2× idle-turn work; paused 2026-10-23 (API limit); log F2.md                                                                                                                                 |
-| F3  | E8 heap / GPU growth across slide switches (CDP heap after GC, texture counts); the +22 `react.commits` per present run (bisect)  | perf                   | in progress — +22 react.commits found (useSlideNotes double render) and fixed; memory benches built, three leak fixes measured; paused 2026-10-23 (API limit); log F3.md                                                                                                           |
-| F4  | P3 the 4K source in `present.video`                                                                                               | media                  | in progress — root cause found: present mode drew the poster, not the playing video; fix not finished; paused 2026-10-23 (API limit); log F4.md                                                                                                                                    |
-| F5  | ADR 0019 (slim render entry measured first) and R1c on the production image under VM 103's limits                                 | renderer (render page) | built 2026-10-23, in review (Log): ADR 0019 measured and closed; render page captures halved; R1c PDF of 30 −28 %                                                                                                                                                                  |
-| F6  | `media.url` 404 for forbidden; `tools/list` trimmed under budget                                                                  | ai-integration         | done 2026-10-23: one 404 for every refusal on url / video-info / font-url / delete (readers without the role keep 403), malformed `share_token` refused at the boundary, own rate limit; `tools/list` 199,999 → 189,572 B (link); security-reviewed                                |
-| F7  | E6 overlays per key, E4 autofit per key, B3 300+ slide opens                                                                      | editor-ui              | in progress — WebKit E6 A/B queued; paused 2026-10-23 (API limit); log F7.md                                                                                                                                                                                                       |
-| F8  | Release prep: `METRICS_TOKEN`, compose (L4 volume, `INSTANCE_MARKER_PATH`), D3 boot timing on the deploy, old images, V4 dev loop | infra                  | done 2026-10-23: METRICS_TOKEN wired (compose + SOPS, Caddy 404 on /api/metrics), L4 marker deploy order fixed (restore-marker.sh), boot-timing / availability probes, prune --drop, V4 measured (TS7 / vitest related rejected), CHANGELOG draft; runbook docs/deploy.md → 0.16.0 |
-| F9  | E3 the editor's slide switch — after F1, whose text path it depends on                                                            | renderer               | after F1                                                                                                                                                                                                                                                                           |
-| F10 | Tauri presenter window + cold opens; Low Power Mode run (Petr switches LPM on); Linux / Windows driver input (handover)           | desktop                | after F1                                                                                                                                                                                                                                                                           |
-| F11 | Verify, document, commit, merge, release, deploy                                                                                  | session                | last                                                                                                                                                                                                                                                                               |
+| Id  | What                                                                                                                              | Owner                  | Status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1  | ADR 0018 port: canvas text from the browser layout, behind a flag, pixel parity in Chromium + WebKit, then the switch             | renderer               | done — runs the default everywhere 2026-10-26 (Petr, option B); position gates against the edit overlay, transitions, PNG/PDF export and imported decks 2026-10-27 (ADR 0018 → Placement, Position gates); timing-pass regressions fixed 2026-10-30 and confirmed on AC 2026-10-31 (WebKit run-raster uploader registration, staging on a slow page, exact-size run textures: crowded 400 % 1.93 GB → 563 MB); parity gates Chromium DPR 1/2 0 rows over, WebKit DPR 1/2 5 / 33 = the accepted residue; logs F1.md, F1b-state, regress-fix-2026-10-30, verify-2026-10-31, texmem-2026-10-31 |
+| F2  | Present residuals: WebKit swap-frame misses, Chromium `build.steps` first-entry gap; MSAA-at-2× pixel comparison                  | renderer (present)     | done — build.steps gap explained (browser code page-ins, not ours); MSAA stays on at 2× (pixel comparison, Chromium + WebKit); after-frame idle turns in WebKit; present mode follows a density change: the handover is the canvas's only density owner under ADR 0020's region (Petr, option B, 2026-11-01), its standby set placed on the new device grid (pixel-equal to a fresh presentation, 2026-11-01); open: WebKit swap-frame misses at 2× (re-measure on AC) — Log 2026-10-26 and Final round wrap-up, F2.md, present-density-2026-11-01                                          |
+| F3  | E8 heap / GPU growth across slide switches (CDP heap after GC, texture counts); the +22 `react.commits` per present run (bisect)  | perf                   | done 2026-10-26 — +22 react.commits removed (useSlideNotes); growth benches memory.* budgeted at 0; three leaks fixed (editor kept per reopen, Graphics contexts, HTMLText pool SVGs); Chromium + WebKit; Log, F3.md                                                                                                                                                                                                                                                                                                                                                                        |
+| F4  | P3 the 4K source in `present.video`                                                                                               | media                  | done 2026-10-26 (media) — present mode draws the playing video, not its poster (uploads = decoded frames); the 1080p rendition where the display shows no more, a trial playback decides whether the 4K original plays smoothly (Tauri 2× `video.4k` 189 → 4 dropped); budgets / baselines accepted; log F4.md, AC-2026-10-26.md §1                                                                                                                                                                                                                                                         |
+| F5  | ADR 0019 (slim render entry measured first) and R1c on the production image under VM 103's limits                                 | renderer (render page) | built 2026-10-23, in review (Log): ADR 0019 measured and closed; render page captures halved; R1c PDF of 30 −28 %                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| F6  | `media.url` 404 for forbidden; `tools/list` trimmed under budget                                                                  | ai-integration         | done 2026-10-23: one 404 for every refusal on url / video-info / font-url / delete (readers without the role keep 403), malformed `share_token` refused at the boundary, own rate limit; `tools/list` 199,999 → 189,572 B (link); security-reviewed                                                                                                                                                                                                                                                                                                                                         |
+| F7  | E6 overlays per key, E4 autofit per key, B3 300+ slide opens                                                                      | editor-ui              | done 2026-10-26 (editor-ui) — WebKit typing input p50 75 → 29.5 ms, 300-slide Chromium open pass; WebKit 300 slides did not settle in 90 s then, settled after F10 (~6.4 s); log F7.md, AC-2026-10-26.md §3                                                                                                                                                                                                                                                                                                                                                                                 |
+| F8  | Release prep: `METRICS_TOKEN`, compose (L4 volume, `INSTANCE_MARKER_PATH`), D3 boot timing on the deploy, old images, V4 dev loop | infra                  | done 2026-10-23: METRICS_TOKEN wired (compose + SOPS, Caddy 404 on /api/metrics), L4 marker deploy order fixed (restore-marker.sh), boot-timing / availability probes, prune --drop, V4 measured (TS7 / vitest related rejected), CHANGELOG draft; runbook docs/deploy.md → 0.16.0                                                                                                                                                                                                                                                                                                          |
+| F9  | E3 the editor's slide switch — after F1, whose text path it depends on                                                            | renderer               | open — not started this round (the editor's slide switch keeps its 12 text rasters per switch; F1's run engine made them cheaper)                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| F10 | Tauri presenter window + cold opens; Low Power Mode run (Petr switches LPM on); Linux / Windows driver input (handover)           | desktop                | cold opens done 2026-10-27 (renderer, Log: WebKit 100 slides 55 s → 2.5 s); open: the Tauri presenter window, the Low Power Mode run (Petr), Linux / Windows driver input (handover)                                                                                                                                                                                                                                                                                                                                                                                                        |
+| F11 | Verify, document, commit, merge, release, deploy                                                                                  | session                | in progress 2026-11-01: full e2e, counter budgets and baselines accepted (Final round wrap-up); commit, merge, release, deploy are Petr's word                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ## Log
 
@@ -2859,3 +2861,353 @@ shownId`, both null), so the cache's plan kept the deck of `prepare()`
     help the editor and present mode on machines whose Chrome falls back to
     SwiftShader (no GPU) — not done: it touches every page, so a decision
     with a measurement of its own.
+
+- 2026-10-23, **F3: E8 heap / GPU growth measured, three leaks fixed; the
+  +22 `react.commits` of a present pass removed** (MacBook M3 Pro, Chromium
+  headless + ANGLE Metal unless noted; every number in
+  `~/.cache/narrative-perf/round-logs/F3.md`).
+  - **`react.commits` 44 → 66** (`present.advance.text`, Chromium and
+    WebKit, `react.renders` unchanged at 154): `just perf-bisect
+present.advance.text 2a3171c6 HEAD --metric react.commits` named
+    95a59e33 (fix(state): read the document after subscribing). 22 = the
+    pass's advances: `useSlideNotes` re-read the notes after subscribing and
+    `setText` with the string just set — React renders the component again,
+    bails out and commits nothing. Fix: `state/useSlideNotes.ts` sets the text
+    only when it differs (`useSlideNotes.test.tsx`: a slide change renders
+    twice, the old hook three times). After: 66 → **44** in Chromium and
+    WebKit prod, dropped 0, hitches 0, work after ready 0. The bisect
+    harness gained `--metric m[,m…]` (only those metrics stop it; any time
+    metric's chance regression would otherwise send it the wrong way),
+    `--runs` / `--warmup` through the recipe, and worktree installs that
+    survive an older revision's ignored build script
+    (`--config.strict-dep-builds=false`, a success marker).
+  - **The growth benches** `memory.slide.switch` (the 100-slide deck, down
+    and up from the panel's keys, 198 switches a pass), `memory.zoom.cycle`
+    (five zoom commits), `memory.deck.reopen` (the 10-slide deck closed to
+    its folder and opened again, five times), `memory.present.loop` (the
+    photo deck forward and back twice): one session per run, the same pass
+    three times, a snapshot after each — the retained heap after two full
+    GCs through CDP (`usedSize + embedderHeapUsedSize + backingStorageSize`),
+    `Memory.getDOMCounters`, the GL context's textures and their bytes
+    (`apps/web/src/perf/glResidency.ts`), the WebGL contexts alive, object URLs. Budgeted:
+    `mem.leak.*`, the growth both repeated passes show (heap over a 2 MB
+    bound), all 0 (`perf/budgets/memory.*.json`; `packages/perf/README.md`
+    → Growth benches). `PERF_HEAP_SNAPSHOTS=<dir>` writes V8 heap snapshots
+    for a retained-size diff.
+  - **Leak 1, every deck closed kept the whole editor** (~600 nodes, ~90
+    listeners, ~1.4 MB a reopen, its WebGL context and canvas): Pixi's
+    page-wide `Texture.EMPTY` source kept `update` / `resize` listeners of
+    every destroyed renderer's texture system — `patchHTMLTextRace`
+    replaced the system's `onSourceUpdate` after the context had bound
+    EMPTY to every unit, so Pixi's removal, by the new function, matched
+    nothing. Fix: `rebindSourceListeners` moves those listeners to the
+    patched function. Pass 2 of `memory.deck.reopen`: nodes +3,018 → 0,
+    listeners +455 → 0, heap +7.0 → +1.1 MB. Present ↔ editor navigation
+    takes the same path.
+  - **Leak 2, Graphics contexts**: pixi.js 8.22 `Graphics.destroy(options)`
+    destroys the context it made only when called with no options;
+    `container.destroy({ children: true })` hands options to every child, so
+    an image object's placeholder and mask left two live contexts (GPU
+    batches, buffers) a switch: 403 → 789 after a pass. Pixi's GC unloads
+    them a minute after their last draw; present mode runs without the GC.
+    Fix: `renderer/graphicsContextRelease.ts` (installed with each
+    renderer): a Graphics destroyed with options releases its own context
+    unless `context: false` (nothing here shares contexts). Upstream it
+    belongs in `Graphics.destroy`.
+  - **Retention 3, Pixi's HTMLText render-data pool**: one pooled
+    `HTMLTextRenderData` per raster in flight, never shrunk, each `<img>`
+    holding its last SVG as a Blink document of its own (146 alive, nodes
+    and listeners differing run to run). Fix: once a raster is copied to its
+    texture's canvas a still-pooled image drops its SVG and DOM
+    (`followRenderDataPool` / `releasePooledRaster`, Pixi's own Pool
+    `reset` / `init` hooks). `memory.slide.switch` pass 2: heap +5.0 →
+    +1.5 MB, nodes +906 → 0–390. What still comes and goes is the pool's
+    high-water mark itself: an emptied entry is ~10 nodes (svg,
+    foreignObject, style, div, two `<img>`, their `onload`), 39 more after a
+    pass with more rasters in flight at once (heap snapshots) — bounded by
+    the most rasters ever in flight, so the budget takes the growth both
+    repeated passes show (0).
+  - **Not a leak, bounded**: the zoom cycle ends at the fitted zoom with
+    238 textures, ~569 MB, against 129 / 126 MB at open — the page-wide
+    `TexturePool` keeps the high-resolution text textures (flat over
+    passes). Worth trimming once F1's text path lands (it replaces the
+    rasters); not done here. Done 2026-10-31 (ADR 0020 → texture memory): run
+    rasters are exact-size textures of their own, freed when replaced, and
+    the pool is unloaded after a staging — the cycle ends at 129 textures,
+    149 MB (DPR 1, dev). Pixi's managed hashes also grow by null keys
+    (compacted at 10,000) — upstream, small. The Chromium inspector's
+    `NetworkResourcesData` grows under Playwright only.
+  - WebKit (2026-10-26, headless, dev; no heap or listeners there): all
+    four flat in textures, elements and URLs, every leak count 0.
+  - Present mode after ready: `memory.present.loop` flat (heap +0.2 MB a
+    pass, 29 textures / 298 MB, nodes and listeners 0).
+  - Open: the remaining 22 commits a present pass are `useSlideNotes`
+    deriving its fragment in an effect (one commit after each advance); it
+    could read it during render (`useSyncExternalStore`) — not needed for
+    smoothness (0 dropped frames), left.
+
+- 2026-10-26, **F2: present residuals, MSAA at 2×, density changes** (renderer;
+  MacBook M3 Pro; every measurement in `~/.cache/narrative-perf/round-logs/F2.md`;
+  the timed runs 2026-10-23 on AC with Low Power Mode off, nothing timed since — on battery).
+  - **Chromium `present.build.steps`, the first entry's 29–40 ms gap: not
+    ours.** Instruments' System Trace of a fresh pass: the renderer's main
+    thread took 238 file-backed page-ins of the headless shell's own binary
+    (61 ms of disk wait) at the start of `BeginMainFrame` — the first
+    execution in a fresh process of a code path whose pages the swapping
+    machine had evicted. Once per process (stored runs, after warm-ups, never
+    had it); with the binary kept in the page cache 1 of 4 fresh browsers
+    instead of 3 of 3. Nothing changed for it.
+  - **MSAA stays on at 2×.** `e2e/msaa-edges.spec.ts` presents 14 shapes at
+    devicePixelRatio 2 with and without `antialias`: in Chromium and WebKit
+    alike 408–2493 edge pixels per shape differ by ≥ 56 levels, and without
+    MSAA no edge pixel is blended — a staircase on every slanted, curved or
+    fractional edge, rotated pictures' quads included. The spec also fails
+    if MSAA-on edges stop being smooth. **Rendering at the displayed density
+    instead (fewer backbuffer pixels at zoom < 1 or present mode's fit):
+    decided no (Petr, 2026-10-26)** — present mode keeps drawing at full
+    resolution; closed.
+  - **WebKit present mode**: WebKit has no `requestIdleCallback` (Safari,
+    Playwright's WebKit, the Tauri window): keep-warm and the slide cache's
+    idle builds ran on a 0-ms timer anywhere in the frame, often just before
+    the next rendering update, which then waited for their GPU work. They now
+    run right after a rendered frame (`presentKeepWarm.ts → whenPresentIdle`):
+    Tauri 2× slow frames 17 → 6 over four benches (sequential runs, to confirm
+    interleaved). Rejected by measurement: keep-warm without its canvas frame
+    (text 5 → 42 slow frames), keep-warm into a larger target (no gain).
+    The present benches' input fence is off by default now (it made the main
+    thread wait for the GPU in the very frame measured: one 66 ms wait in a
+    145 ms frame). Open: single swap-frame misses at Tauri 2× (24–35 ms
+    main-thread waits in WebKit's rendering update, our render 0–1 ms) and
+    hold misses with nothing of ours drawn — the idle control
+    (`PERF_IDLE_CONTROL_MS`) to attribute them still to run on AC.
+  - **Present mode follows a density change** (Petr, 2026-10-26: build it).
+    `renderer/devicePixelRatioWatch.ts` watches the `resolution` media query
+    (re-armed per change; WKWebView too); `present/densityHandover.ts`
+    prepares a standby set of slides for the new density
+    (`PresentSlideCache({ density, standby })`: pictures choose for it, texts
+    pinned to it, own resident keys, no keep-warm, idle-time builds) while the
+    old set presents, and hands over once the slides around the one shown and
+    the plan are ready — at once on a still slide (no build run, nothing
+    moving, no video), else at the next advance, in one task with the canvas's
+    resize and a render (no blank frame); a second change cancels and starts
+    over; the old set is freed at the swap; the video pool chooses its
+    rendition again for the new density (off stage, as before). Gradient
+    backgrounds' textures are keyed by the density they were painted at. The
+    steady-state path is unchanged. The watch also listens to `resize`
+    (Chromium re-evaluates the media query for an emulated density only at
+    the next viewport change). Tests: `present/densityHandover.test.ts` (state
+    machine, the watch), `presentation.test.ts` (swap now / at the boundary /
+    not without the target), `e2e/present-density-change.spec.ts` (CDP 1× →
+    2× on the text deck: 13 slides prepared again, the old 12 freed, one
+    backbuffer reallocation drawn in its own task, no empty frame among 44–46,
+    the slide afterwards pixel-identical to a presentation opened at 2× — mean
+    difference 0.00, edge energy 1.000 — and the next advance rasterises
+    nothing). Passed together with present-smooth, present-layout and
+    present-video-rendition (7/7); web units 587/587.
+  - **Under ADR 0020's region the density has one owner (2026-11-01, Petr:
+    option B).** Present mode's canvas draws through the region since ADR
+    0020 (backing 2400 / 4800 px at 1600 × 900, not the slide's 1920 /
+    3840), and the canvas's own pixel-ratio watch restaged the shown slide's
+    texts on stage at a change (the first advance after it rasterised 8),
+    while `setCanvasResolution` was wrong under a region. Now present mode
+    turns the canvas's watch off (`Canvas followPixelRatio={false}`) and the
+    handover switches the canvas through the region in the swap's task
+    (`CanvasInstance.setPixelRatio` → `CanvasRegionController.switchPixelRatio`:
+    texts on stage pinned, the region laid out for the ratio, no restage,
+    drawn before the task ends via `RenderScheduler.renderBeforeTaskEnds`);
+    a slide-sized canvas without the region for present mode (option A) was
+    rejected — one render path. `present-density-change` asserts the
+    region's backing, the on-stage rasters kept to the swap, zero rasters and
+    uploads from the swap on and over three advances, no empty frame, and the
+    slide equal to a fresh 2× presentation (0.00 / 1.000). ADR 0020 →
+    Present mode; log `~/.cache/narrative-perf/round-logs/present-density-2026-11-01.md`.
+
+- 2026-10-27, **F10: WebKit cold opens — the offscreen thumbnail renderer**
+  (renderer; MacBook M3 Pro on AC, Low Power Mode off; every measurement in
+  `~/.cache/narrative-perf/round-logs/F10.md`).
+  - **Root cause of the 55 s / 100 slides (AC-2026-10-26 §3c): the HTMLText
+    engine in WebKit**, per text and growing with the page: Pixi's
+    `measureHtmlText` appends its SVG root to `document.body` and reads
+    `scrollWidth` (a style + layout of the whole document: 206 ms per slide at
+    100 slides, 78 at 20 — the slide panel grows with the deck), and Pixi's
+    `loadSVGImage` waits 100 ms per raster in Safari before the
+    foreignObject SVG is even loaded (287 ms per slide). Measured with User
+    Timing spans the thumbnail renderer now writes under `?perf=1`
+    (`thumb.mount`, `.ready`, `.frame1`, `.text`, `.frame2`, `.extract`,
+    `.destroy`, `.readEncode`). The run engine (F1, the default since
+    2026-10-26) has neither: WebKit 100 slides 59.8 → 7.5 s before F10. The
+    HTMLText fallback keeps its cost (~55 s per 100 slides in WebKit).
+  - **Then, in both engines**, every thumbnail was read back at 1920 × 1080:
+    `extract.canvas(slideContainer)` reads a container's local bounds, before
+    its scale, so the "200 px" renderer produced a 2 Mpx PNG (~520 kB) that
+    the panel shrank to its ~224 CSS px row — read back synchronously and
+    encoded per thumbnail, ~50 MB of blobs for 100 slides. And it drew 1.27 Mpx
+    of uploads (with mip chains) per thumbnail: text rasterised at slide size
+    and shown at 1/9.6, every photo fetched, decoded and uploaded again per
+    thumbnail (`net.imgproxy` 70 for 6 photos), an image background's texture
+    never freed; `extract.canvas` drew a third time into a new render texture
+    and read it with a synchronous `readPixels` (7.8 s of a 16.7 s Chromium
+    open); the store mounted the next thumbnail only after the last PNG; and
+    WebKit's idle fallback was a fixed 16 ms timer per thumbnail.
+  - **Fix** (renderer, plus the panel's measurement; nothing in `runText/`):
+    the panel's thumbnails are drawn at the size its rows show them
+    (`ui/useThumbnailPixelWidth.ts`: the row's frame × devicePixelRatio, in
+    32 px steps, again after a panel resize or a display change, each width
+    part of the store's keys) — the same look as the browser's downscale of
+    the 1920 px picture, ~1/40 of the pixels at 1× and ~1/10 at 2×; the
+    presenter's next-slide preview, the component master and a promoted
+    component's upload keep the slide's own width they always had (their
+    callers say no size; ask editor-ui before shrinking them); the target is
+    anti-aliased (MSAA, as the browser's downscale blended edges); texts
+    rasterise at the scale they are drawn at × 2 (`TEXT_OVERSAMPLE`), never
+    below half their font size (`MIN_TEXT_RESOLUTION`: smaller, strokes came
+    out visibly thinner at 1×), never above the renderer's resolution
+    (`thumbnails.ts → fitTextResolutions`). Sampled against the old pictures
+    shrunk to the row: mean difference 2.5 levels (p99 ~43) at 1×. A
+    per-renderer picture cache (`renderer/thumbnailPictures.ts`: one load per
+    url, refcounted, 8 Mpx of unused kept) for image objects, video posters
+    and image backgrounds (`ArtboardBackground.releaseBackground`, which also
+    ends the leak); frames drawn into one render texture, the read-back
+    queued into a pixel-pack buffer behind a fence
+    (`captureSlide.ts → queueTextureReadback`, shared with the live capture)
+    and read + encoded while the next thumbnail mounts; two renders in flight
+    in the store (still one idle render per idle callback); WebKit's idle
+    fallback runs after the next frame (`runAfterNextFrame`). Per 100-slide
+    open at 1×: `thumb.text.raster.kpx` 50 364 → 12 655, `net.imgproxy`
+    70 → 6.
+  - **A/B** (`just perf-compare`, prod, interleaved, on AC; A = the working
+    tree without the F10 files, a `git commit-tree` snapshot):
+    `deck.open.cold.100` Chromium 4 695 → 2 370 ms (−50 %), WebKit 7 066 →
+    2 469 ms (−65 %); `deck.open.warm.100` Chromium 4 272 → 2 282 ms (−47 %),
+    WebKit 6 764 → 2 288 ms (−66 %); 300 slides cold (4 runs) WebKit 18 974 →
+    6 357 ms (−67 %), Chromium 12 880 → 5 836 ms (−55 %). `open.firstPaint` /
+    `open.mounted` unchanged. `gl.thumb.texUploadKpx` 127 474 → 22 472 (the
+    pictures now 224 px at 1×), `net.imgproxy` 70 → 6. The counter verdict's
+    "regressions" (`thumb.live` 0 → 1, `gl.draw` +50, `gl.mipmap` +2,
+    `render.count` +1) are one thing: the active slide's picture now comes
+    from the editor's canvas (`liveThumbnail.ts`, the B2 design) instead of a
+    full offscreen render — in A it was rendered before the canvas could be
+    read. WebKit now settles a 300-slide open in ~6.4 s (the 90 s timeout
+    had failed before F1's run engine), at Chromium's pace. Stored runs
+    (`just perf`, first version): Chromium cold 2 374 / warm 2 259 ms against
+    a 6 067 / 6 100 baseline; WebKit 2 491 / 2 327 ms (no WebKit baseline on
+    this machine yet — `just perf-accept` is the session's call).
+  - Tests: `thumbnailPictures.test.ts` (one load per url, refcounts, the
+    pixel budget, a failed load not kept, destroy), `thumbnails.test.ts →
+fitTextResolutions`, `thumbnailStore.test.ts` (two in flight, one idle
+    render per callback; `runAfterNextFrame`), `useSlideThumbnails.test.tsx`
+    (nothing rendered before the width is known; the live capture and the
+    renders at the width), `useThumbnailPixelWidth.test.ts`; web units
+    1256/1256. e2e: `renderer-visual|thumbnail|inspector-flows` 19/19
+    (Chromium) and `renderer-visual|thumbnail` 11/11 (WebKit), the slide
+    panel's specs, `present-layout`, `folder-tokens`, and with the render
+    worker running `deck-card` + `render-export` 11/11 (the render page's
+    capture goes through the shared read-back). `thumbnail-live.spec.ts` read
+    the editor's pictures as exactly 200 px wide: now any width under the
+    slide's. Not F10: `table-raster-pixels` (its grouped-raster count assumes
+    the HTMLText engine, the default is runs now) and `text-runs-artboard`
+    (artboard rows fail by 70–87 k pixels, F1's work in progress); that spec's
+    thumbnail rows moved with the smaller text rasters (families 328 / budget
+    180, sizes 352 / 300, runs 56 / 0, spacing 12 / 0 — html vs runs both at
+    the new resolution): F1's budgets to re-take.
+- 2026-10-28 → 11-01, **Final round wrap-up** (renderer and the session;
+  MacBook M3 Pro on AC, Low Power Mode off, the dongle `en14` absent, load
+  gated; logs in `~/.cache/narrative-perf/round-logs/`: `F1b-state-2026-10-28`,
+  `timing-2026-10-30`, `regress-fix-2026-10-30`, `verify-2026-10-31`,
+  `texmem-2026-10-31`, `present-density-2026-11-01`, `final-2026-11-01`).
+  - **Decisions.** ADR 0018 option B: the run engine is the default
+    everywhere (2026-10-26), canvas text placed where the page rounds it.
+    The WebKit export difference is accepted (2026-10-31): exports are drawn
+    by the render worker's headless Chromium, a WebKit editor lays text out
+    its own way (`text-export-parity` skips WebKit; ADR 0018 → The residue).
+    Present density, option B (2026-11-01): under ADR 0020's region the
+    `DensityHandover` is the only owner of the present canvas's density
+    (ADR 0020 → Present mode). Rejected with numbers: a table-cell atlas
+    (+0.35 ms a frame for one raster per cell, Pixi batches the cells
+    already; 10-30).
+  - **Fixed in the round.** The timing pass (10-30) found five regressions of
+    the tree, fixed and confirmed on AC 10-31: present `ready` waited out the
+    video pool's display timer on decks without video; the placement watch
+    re-rasterised every text of a no-op zoom gesture, a dragged table's cells
+    and a build's texts in present mode (`holdPlacementRepaints`, whole-texel
+    moves keep their raster); the commit's upload burst (frames of 33–100 ms
+    on the GPU; staging fed by frame gaps); WebKit's run-raster uploader
+    (registered in a wrapper Pixi took for the extension: WebKit drew no run
+    text at all until 10-31); a slow page's staging budget (the median frame
+    interval, not the shortest). Texture memory (10-31): exact-size run
+    textures, mipmaps only where a raster is resampled, the full-resolution
+    budget of 64 Mpx — crowded slide at 544 % 1.93 GB → 563 MB GL (HEAD 571),
+    after Fit 1.97 GB → 178 MB (HEAD 580). Present mode (11-01): the density
+    switch goes through the region in the task the standby set takes over
+    (no blank frame, no work after the swap), and the standby set's texts are
+    placed on the device grid the canvas will have at the new density — they
+    were painted off it (134 680 px of the slide differed from a fresh 2×
+    presentation; 0 after). The full e2e run (F11, 11-01) found the texture-memory
+    pool release (10-31) breaking filters: it unloaded Pixi's idle pooled
+    textures and kept them, and an idle filter render target handed out
+    again drew into a framebuffer without its GL texture — after any zoom,
+    a drop shadow or blur drawn again drew nothing. Idle render targets are
+    destroyed now, idle rasters unloaded and kept (Pixi hands an HTMLText's
+    texture back while the text still draws it; destroying those made the
+    batcher throw). `present-video-rendition`'s 400 ms screenshot pair was
+    test synchronisation: under load the looping video's seek back to its
+    start took seconds while the canvas rightly kept its last frame (probe:
+    the video advancing, the canvas moving within three polls); it polls
+    now.
+  - **Final numbers** (prod, 10 runs, against the baselines of 10-18…10-26;
+    `final-2026-11-01.md`). Chromium: `viewport.zoom.commit` frame.max
+    158 → 16.8 ms, longTask 385 → 0, settle 572 → 481; `.commit.table`
+    frame.max 158 → 16.8, settle 481 → 383; `deck.open.cold.100` settled
+    6067 → 2375 ms, `warm.100` 6100 → 2238, `cold.10` 1348 → 827;
+    `present.advance.text` ready 1198 → 904 (HEAD 1172 → 891 interleaved),
+    `present.build.steps` 2925 → 2496; `table.mount.styled` frame.max 83 →
+    16.7, input 37.8 → 24.4; `table.cell.type` input.p90 34.3 → 26.0
+    (render.ms 31 → 49: one raster per cell). WebKit: `viewport.zoom.commit`
+    frame.max 1641 → 37 (HEAD, 10-31) and settle 625; `.commit.table` frame.max
+    1216 → 27, settle 1504 → 461; `table.cell.type` settle 1573 → 49;
+    `table.mount.styled` input 986 → 34; `deck.open.cold.100` 54 s → 2.5 s;
+    `present.advance.text` ready 3458 → 1929. Counters (`just perf --layer C`
+    and `just perf-counters`): only improvements and the per-cell rasters
+    (`table.mount.styled` raster.started 2 → 96); budgets accepted.
+  - **Accepted** (`perf-accept --series`, new: only the series measured on
+    the final tree become baselines; a plain accept also took week-old Tauri
+    and headed results): budgets `deck.open.{cold,warm}.{10,100}`,
+    `slide.switch.100`, `table.mount.styled`; baselines prod Chromium +
+    WebKit `viewport.zoom.commit`, `.commit.table`, `deck.open.cold.100`,
+    `deck.open.warm.10`, `deck.open.warm.100`, `table.cell.type`,
+    `table.mount.styled`; prod Chromium `deck.open.cold.10`,
+    `present.advance.text`, `present.build.steps`; dev `memory.zoom.cycle`.
+  - **Not accepted — open regressions.** `transform.move.text` / `.multi`:
+    render.ms 31 → 53 / 35 → 56 ms per 90-move drag, settle +4 / +6 ms
+    against the 10-20 baseline, the same as HEAD in an interleaved compare
+    (already in HEAD's history, unattributed; the profile shows no render-path
+    hotspot). `transform.move.table` input.max 36.8 → 41.0 against HEAD (CI
+    0.35…6.1). `viewport.zoom.wheel` settle 17.6 → 22.3 against the baseline
+    (HEAD the same); WebKit frame.max 39 → 48.5 against HEAD (the region
+    drawn during the live zoom). `viewport.zoom.wheel.light` input.max
+    24.6 → 31.3 against HEAD (two compares of three). `slide.switch.100`
+    settle 72 → 100–122 against the baseline (HEAD the same). WebKit
+    `present.advance.text` advance.p50 57 → 63, advance.max 61.5 → 70, and
+    frame.p99 18 → 19 (`present.build.steps` too).
+  - **Still open.** F9 (the editor's slide switch); F10's Tauri presenter
+    window, Low Power Mode run and Linux / Windows driver input; F2's WebKit
+    swap-frame misses at 2×; whole rasters of texts partly in view at high
+    zoom (55.7 of 129.7 Mpx shown, ADR 0020); a window resize during a
+    presentation (analysed, not measured): it moves the device grid's phase,
+    and the presenting set's rasters, held by the placement watch, stay
+    painted for the old one — sub-device-px from a fresh presentation, as
+    before this round; the WebKit parity residue (5 rows at DPR 1, 33 at
+    DPR 2, ADR 0018 → The residue); ADR 0020 is still "Proposed" (the
+    tech-lead's review); `apps/server` `serverHost.test.ts` → "sees a change
+    an editor makes in the loaded folder document" timed out once under
+    `just check` (load ~12; 3 / 3 alone, the next `just check` green).
+  - **e2e** (F11, 11-01, `just e2e --project=chromium --project=serial`:
+    the recipe's default also runs the Electron projects, left out — the
+    desktop app is Tauri): first run 255 passed, 4 failed — the pool
+    release above (`folder-tokens`), two specs reading run-engine textures
+    or the off-screen cap as wrong (`htmltext-texture-isolation` now runs
+    under both engines, `text-align-reraster` accepts the cap) and fixed
+    sleeps (`thumbnails-after-slide-switch` waits for its thumbnails now);
+    final run **262 passed, 0 failed, 17 skipped** (opt-in and diagnostic
+    specs), 35 min. `present-video-rendition` 20 / 20 under load
+    (`--repeat-each 10`), `present-density-change` with the new grid test.

@@ -337,7 +337,7 @@ suite a file that needs no DOM says so on its first line:
 It then runs without jsdom, which vitest otherwise builds afresh for every
 file (per-file isolation), and the setup file (`apps/web/src/test-setup.ts`)
 skips Testing Library and the jest-dom matchers. Building jsdom was about
-half the web suite's time on 2026-10-23; 63 of its 135 files run in Node
+half the web suite's time on 2026-10-23; 68 of its 140 files run in Node
 since (V4 in `docs/plans/performance.md`).
 
 **Give a new web test `node` only when all of this holds:**

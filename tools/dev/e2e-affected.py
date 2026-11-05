@@ -49,16 +49,19 @@ RENDER = [
     "inspector-flows",
     "canvas-sharpness-final",
     "text-align-reraster",
+    "text-raster-oversize",
     "htmltext-live-update",
     "htmltext-texture-isolation",
     "text-glyph-overhang",
     "text-overflow-clip",
     "thumbnails-after-slide-switch",
+    "text-edit-transition",
     "folder-tokens",
     "share-link-folder-tokens",
 ]
 TEXT = [
     "text-edit-commands",
+    "text-edit-transition",
     "text-edit-position",
     "text-edit-screenshots",
     "text-edit-underline",
@@ -166,6 +169,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/state/frozenRenderDoc.ts", ["query-render"]),
     ("apps/web/src/pages/renderLook.ts", ["query-render", "deck-card"]),
     ("apps/web/src/pages/renderSlide.ts", ["render-page"]),
+    # The render page's timings (renderTimings → DeckRender's capture phases).
+    ("apps/web/src/pages/renderTimings.ts", ["render-page", "render-export"]),
     # The toolbar's PowerPoint download goes through it too.
     ("apps/web/src/lib/download.ts", ["render-export", "pptx-roundtrip"] + SLIDES_PANEL),
     # The editor's in-browser "Export as PNG" (a hidden frame on the render page).
@@ -195,6 +200,7 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/ui/CropOverlay.tsx", MEDIA + ["fill-mode-switch"]),
     ("apps/web/src/ui/Table*", ["table-commands"]),
     ("apps/web/src/ui/TextEditOverlay.tsx", TEXT),
+    ("apps/web/src/ui/textEditOverlayLook.ts", TEXT),
     ("apps/web/src/ui/AutofitHeights.tsx", ["text-autofit", "text-edit-undo"]),
     ("apps/web/src/ui/useTextLayoutTick.ts", CANVAS_TOOLS + ["text-autofit"]),
     ("apps/web/src/ui/textEditDom.ts", TEXT),
@@ -209,6 +215,8 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/ui/AnimationTimeline.tsx", PRESENT),
     ("apps/web/src/ui/animationTriggers.ts", PRESENT),
     ("apps/web/src/ui/Slide*", SLIDES_PANEL),
+    ("apps/web/src/ui/useThumbnailPixelWidth.ts", SLIDES_PANEL),
+    ("apps/web/src/ui/useVisibleSlideRows.ts", SLIDES_PANEL),
     ("apps/web/src/ui/Toolbar.tsx", CANVAS_TOOLS + ["keyboard-shortcuts"]),
     ("apps/web/src/ui/ShortcutsCheatsheet.tsx", ["keyboard-shortcuts"]),
     ("apps/web/src/ui/*Component*", COMPONENTS),
@@ -382,6 +390,14 @@ AREAS: list[tuple[str, list[str]]] = [
     ("apps/web/src/desktop/*", DESKTOP),
     # Presenting on a chosen display (Window Management API).
     ("apps/web/src/present/*", PRESENT + ["desktop-present"]),
+    # Present mode's density change: the handover, and the canvas's switch through
+    # its region (ADR 0020 → Present mode).
+    ("apps/web/src/present/densityHandover.ts", ["present-density-change"]),
+    ("apps/web/src/present/presentation.ts", ["present-density-change"]),
+    ("apps/web/src/components/PresentLayout.tsx", ["present-density-change"]),
+    ("apps/web/src/renderer/Canvas.tsx", ["present-density-change"]),
+    ("apps/web/src/renderer/canvasRegion*", ["present-density-change"]),
+    ("apps/web/src/renderer/devicePixelRatioWatch.ts", ["present-density-change"]),
     # Browser and desktop sign-in; the MCP OAuth pages share the page headers
     # and the strict form parser.
     ("apps/server/src/routes/desktopAuth.ts", ACCESS),
@@ -446,6 +462,11 @@ NO_E2E = [
     "apps/server/src/scripts/*",
     # Performance drivers (`just perf-pptx`), run by hand against the services.
     "apps/server/perf/*",
+    # Ambient type declarations: nothing in them runs.
+    "*.d.ts",
+    # The Prometheus metrics endpoint (/api/metrics, METRICS_TOKEN): no page
+    # reads it; its unit tests cover it (metricsEndpoint.test.ts).
+    "apps/server/src/metrics/*",
 ]
 
 SOURCE = ["apps/*/src/*", "packages/*/src/*", "apps/web/index.html", "apps/web/vite.config.ts"]

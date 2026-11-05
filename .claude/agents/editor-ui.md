@@ -240,3 +240,35 @@ in `docs/plans/a2-extraction.md` (A2.11).
   (`textFormatUndo.test.ts` → `packages/commands/src/commands/typography.test.ts`);
   e2e `apps/web/e2e/typography-commands.spec.ts` and
   `text-edit-commands.spec.ts`.
+
+## Text edit overlay = the canvas text, in place (ADR 0018, 2026-10-27)
+
+Entering or leaving edit mode must not move or change a text (Petr's hard
+requirement). The canvas draws text from the page's own layout, so the
+overlay (`ui/TextEditOverlay.tsx`) is the reference the canvas is gated
+against (`e2e/text-edit-parity.spec.ts`, `text-edit-transition.spec.ts`).
+
+- **Draw what the canvas draws, from the same values** —
+  `ui/textEditOverlayLook.ts`: colours through the canvas's resolver
+  (`renderer/colourResolver.ts`) with `colorAlpha` and a token's alpha as
+  `#rrggbbaa` (Pixi's `toHexa` rounding), the glyph stroke as Pixi's
+  `strokeToCSS` writes it (`paint-order: stroke`), the object's opacity
+  (on the editor element), shadow and blur (a CSS filter: close, not the
+  same kernel as Pixi's filters).
+- **Three boxes**: the rig (rotated and flipped about the box centre, as
+  the container's pivot; carries the outline), the look (filters), the
+  frame (layout box, vertical alignment, clip). Never rotate about the
+  top-left again (rotated boxes jumped 30–450 px).
+- **A shrunk autofit box is a scaled frame** (`1 / scale` as large,
+  `transform: scale(scale)`), not CSS `zoom`: the canvas lays the text out
+  at full size and scales it, so the layout numbers are the same.
+- **Clip like the mask**: a wrapping box at its sides only (overflowing
+  lines and tight-line ascenders stay visible), unwrapped / growing boxes
+  not at all, a table cell at the cell's edge (`clipMargin`). `clip-path`
+  with negative insets, not `overflow`.
+- **`focus({ preventScroll: true })`** everywhere the overlay focuses: a
+  focus scrolled the stage to the caret of an unwrapped line (−1400 px).
+- The table cell editor feeds the overlay a box centred on the cell's
+  inner centre turned about the table's, with the table's opacity, the
+  cell's underline and paragraph spacing, and the renderer's token colour
+  fallback.
