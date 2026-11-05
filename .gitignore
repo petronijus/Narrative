@@ -70,3 +70,6 @@ tests/fixtures/pptx/*.pptx
 
 # Private overlay (clone of github.com/petronijus/Narrative-private)
 /private/
+
+# Python bytecode (tools/dev hooks)
+__pycache__/
