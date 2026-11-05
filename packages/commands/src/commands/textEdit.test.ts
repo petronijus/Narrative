@@ -51,6 +51,23 @@ describe('text.edit', () => {
     ])
   })
 
+  it('keeps a single "\\n" as a line break inside the paragraph', () => {
+    const h = harness()
+    // Mid-paragraph (Shift+Enter in the overlay): one paragraph, a break in it.
+    h.run('text.edit', { target: T1, edits: [{ at: 9, insert: '\n' }] })
+    expect(getParagraphs(h.text('s1', 't1')).map((p) => p.text)).toEqual(['Quarterly\n results'])
+    // At the paragraph's end: still one paragraph, ending in its break.
+    h.run('text.edit', { target: T1, edits: [{ at: 18, insert: '\n' }] })
+    expect(getParagraphs(h.text('s1', 't1')).map((p) => p.text)).toEqual(['Quarterly\n results\n'])
+  })
+
+  it('turns a plain-string body into rich text on a "\\n" insert', () => {
+    const h = harness()
+    h.run('text.set', { target: T1, text: 'Plain body' })
+    h.run('text.edit', { target: T1, edits: [{ at: 5, insert: '\n' }] })
+    expect(getParagraphs(h.text('s1', 't1')).map((p) => p.text)).toEqual(['Plain\n body'])
+  })
+
   it("applies the editor's Enter rules", () => {
     const h = harness()
     h.run('text.set', {

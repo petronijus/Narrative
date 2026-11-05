@@ -863,8 +863,9 @@ export function paragraphFontSizePx(p: ParagraphDelta, frameFontSize: number): n
  *
  * Markers are wrapped in `<span data-marker="1" contenteditable="false">`
  * so the editor can exclude them from the text projection and keep the
- * caret out of them. Empty paragraphs emit `<br data-empty="1">` for
- * height; the editor ignores those when reconstructing the body string.
+ * caret out of them. Empty paragraphs, and the line after a paragraph's
+ * closing soft break, emit `<br data-empty="1">` for height; the editor
+ * ignores those when reconstructing the body string.
  */
 export function buildListedHtml(paras: ParagraphDelta[], o: ListedHtmlOptions): string {
   const indentEm = o.indentPerLevelEm ?? 1.5
@@ -973,7 +974,19 @@ export function buildListedHtml(paras: ParagraphDelta[], o: ListedHtmlOptions): 
     if (look?.color !== undefined) paraDefaults.color = look.color
     if (ownSize !== undefined && paraFrame !== undefined) paraDefaults.fontSize = paraFrame
     const inner = toHtml(p.ops, paraDefaults)
-    const body = inner.length > 0 ? inner : '<br data-empty="1">'
+    // A soft break at the end of a paragraph starts a line of its own, as in
+    // PowerPoint and Keynote (the paragraph's end sits on it): an empty line,
+    // the caret's after Shift+Enter. A `<br>` that ends its block draws no
+    // line in HTML, so the line gets a placeholder, as an empty paragraph
+    // does — zero characters for the editor (ui/textEditDom.ts).
+    const lastOp = p.ops[p.ops.length - 1]
+    const endsWithBreak = lastOp !== undefined && lastOp.insert.endsWith('\n')
+    const body =
+      inner.length === 0
+        ? '<br data-empty="1">'
+        : endsWithBreak
+          ? `${inner}<br data-empty="1">`
+          : inner
     const style = styleBits.length > 0 ? ` style="${styleBits.join(';')}"` : ''
     out.push(`<div data-pb="1"${style}>${markerHtml}${body}</div>`)
   }

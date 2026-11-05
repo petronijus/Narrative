@@ -282,6 +282,16 @@ describe('buildListedHtml', () => {
     const html = buildListedHtml(getParagraphDeltas(yt), {})
     expect(html).toContain('<br data-empty="1">')
   })
+
+  it("holds the line after a paragraph's closing soft break open", () => {
+    const { yt } = attach(`one\n${PARAGRAPH_SEP}two\nthree${PARAGRAPH_SEP}four\n\n`)
+    const html = buildListedHtml(getParagraphDeltas(yt), { underline: true })
+    expect(html).toBe(
+      '<div data-pb="1"><u>one<br></u><br data-empty="1"></div>' +
+        '<div data-pb="1"><u>two<br>three</u></div>' +
+        '<div data-pb="1"><u>four<br><br></u><br data-empty="1"></div>',
+    )
+  })
 })
 
 describe('blockAttrsToInsertAttrs', () => {
