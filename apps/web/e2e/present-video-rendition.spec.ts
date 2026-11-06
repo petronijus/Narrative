@@ -31,7 +31,8 @@ function source4k(): string {
   mkdirSync(dir, { recursive: true })
   const file = path.join(dir, 'testsrc2-2160p-2s.mp4')
   if (!existsSync(file)) {
-    const partial = `${file}.partial.mp4`
+    // A file of this worker's: parallel workers may make the source at once.
+    const partial = `${file}.${process.pid}.partial.mp4`
     execFileSync('ffmpeg', [
       ...['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=3840x2160:rate=30:duration=2'],
       ...['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'ultrafast', '-crf', '32'],
