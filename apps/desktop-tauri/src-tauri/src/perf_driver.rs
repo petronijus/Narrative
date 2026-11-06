@@ -21,6 +21,12 @@
 //!
 //! `NARRATIVE_PERF_INIT_SCRIPTS` (paths, `:`-separated) adds scripts that run
 //! before the page's own, as Playwright's `addInitScript` (the React hook).
+//!
+//! `NARRATIVE_DRIVER_SHARED=1` is the window a person and an agent use together
+//! (`just desktop-tauri`, apps/web/e2e/perf/lib/tauriDrive.ts): the same driver
+//! in an ordinary window. A bench's window is borderless, always on top, stands
+//! apart from the person's app, ignores the person's mouse and quits with its
+//! driver; a shared one does none of that.
 
 #[cfg(not(debug_assertions))]
 compile_error!("the perf-driver feature is for debug builds only");
@@ -39,6 +45,8 @@ pub struct PerfConfig {
     init_scripts: Vec<String>,
     /// The window's inner size at start, logical px.
     pub viewport: Option<(f64, f64)>,
+    /// An ordinary window that a person uses too, not a bench's.
+    pub shared: bool,
 }
 
 impl PerfConfig {
@@ -68,6 +76,7 @@ impl PerfConfig {
             port,
             init_scripts,
             viewport,
+            shared: std::env::var("NARRATIVE_DRIVER_SHARED").is_ok_and(|v| v == "1"),
         })
     }
 
@@ -218,8 +227,9 @@ fn answer(id: &Value, result: Result<Value, String>) {
     let _ = out.flush();
 }
 
-/// Read commands from stdin until it closes (the driver went away: quit).
-pub fn start(app: AppHandle) {
+/// Read commands from stdin until it closes. The driver went away: a bench's
+/// window quits with it, a shared one stays with the person (`quit` still quits).
+pub fn start(app: AppHandle, shared: bool) {
     std::thread::spawn(move || {
         let stdin = std::io::stdin();
         for line in stdin.lock().lines() {
@@ -236,27 +246,33 @@ pub fn start(app: AppHandle) {
             let result = match serde_json::from_value::<Command>(raw) {
                 Ok(Command::Quit) => {
                     answer(&id, Ok(Value::Null));
-                    break;
+                    app.exit(0);
+                    return;
                 }
-                Ok(cmd) => run(&app, cmd),
+                Ok(cmd) => run(&app, cmd, shared),
                 Err(e) => Err(format!("bad command: {e}")),
             };
             answer(&id, result);
         }
-        app.exit(0);
+        if !shared {
+            app.exit(0);
+        }
     });
 }
 
-fn run(app: &AppHandle, cmd: Command) -> Result<Value, String> {
+fn run(app: &AppHandle, cmd: Command, shared: bool) -> Result<Value, String> {
     let window = app.get_webview_window("main").ok_or("no main window")?;
     match cmd {
         Command::Resize { width, height } => {
             window
                 .set_size(LogicalSize::new(width, height))
                 .map_err(|e| e.to_string())?;
-            window
-                .set_position(LogicalPosition::new(0.0, 0.0))
-                .map_err(|e| e.to_string())?;
+            // A shared window stays where the person put it.
+            if !shared {
+                window
+                    .set_position(LogicalPosition::new(0.0, 0.0))
+                    .map_err(|e| e.to_string())?;
+            }
             Ok(Value::Null)
         }
         Command::Navigate { url } => {
@@ -267,7 +283,7 @@ fn run(app: &AppHandle, cmd: Command) -> Result<Value, String> {
         Command::Focus => {
             window.show().map_err(|e| e.to_string())?;
             window.set_focus().map_err(|e| e.to_string())?;
-            native::focus(&window)
+            native::focus(&window, shared)
         }
         Command::Quit => Ok(Value::Null),
         other => native::input(&window, other),
@@ -350,15 +366,15 @@ mod native {
     }
 
     /// The window in front and key, the WKWebView its first responder (keys go there).
-    pub fn focus(window: &WebviewWindow) -> Result<Value, String> {
-        on_main(window, |win, view, _| {
+    pub fn focus(window: &WebviewWindow, shared: bool) -> Result<Value, String> {
+        on_main(window, move |win, view, _| {
             win.makeKeyAndOrderFront(None);
             win.makeFirstResponder(Some(view));
             // The person's own mouse passes through the window to what lies
             // behind it (the driver's events come through sendEvent:, which
             // this does not stop): a cursor crossing it must not add hovers
-            // and moves to a measurement.
-            win.setIgnoresMouseEvents(true);
+            // and moves to a measurement. A shared window is the person's too.
+            win.setIgnoresMouseEvents(!shared);
             Ok(Value::Null)
         })
     }
@@ -401,13 +417,18 @@ mod native {
 
     /// A page point (CSS px from the WKWebView's top left) in window coordinates.
     fn in_window(view: &NSView, x: f64, y: f64) -> NSPoint {
+        // A titled window draws its title bar over the WKWebView, whose page starts
+        // below it (a bench's borderless window has none: 0).
+        let title_bar = view.window().map_or(0.0, |win| {
+            win.frame().size.height - win.contentLayoutRect().size.height
+        });
         // WKWebView is flipped: its own coordinates run from the top left, as the page's do.
         let p = NSPoint::new(
             x,
             if view.isFlipped() {
-                y
+                title_bar + y
             } else {
-                view.frame().size.height - y
+                view.frame().size.height - title_bar - y
             },
         );
         view.convertPoint_toView(p, None)
@@ -673,6 +694,7 @@ mod tests {
             port: 41234,
             init_scripts: vec!["/* hook */".into()],
             viewport: None,
+            shared: false,
         };
         let scripts = config.scripts();
         assert_eq!(scripts.len(), 2);

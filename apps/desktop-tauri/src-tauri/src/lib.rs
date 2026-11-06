@@ -319,7 +319,7 @@ pub fn run() {
         eprintln!("[shell] perf driver on (stdin input, page scripts)");
     }
     #[cfg(feature = "perf-driver")]
-    let driven = perf.is_some();
+    let driven = perf.as_ref().is_some_and(|p| !p.shared);
     #[cfg(not(feature = "perf-driver"))]
     let driven = false;
 
@@ -385,7 +385,9 @@ pub fn run() {
                 // Borderless at the screen's top left: the content gets the
                 // bench's whole viewport (a title bar would take 32 px of it on
                 // a 14-inch screen, where macOS keeps windows below the menu bar).
-                window = window.position(0.0, 0.0).decorations(false).always_on_top(true);
+                if !p.shared {
+                    window = window.position(0.0, 0.0).decorations(false).always_on_top(true);
+                }
                 for script in p.scripts() {
                     window = window.initialization_script(script);
                 }
@@ -403,8 +405,8 @@ pub fn run() {
                 })
                 .build()?;
             #[cfg(feature = "perf-driver")]
-            if perf.is_some() {
-                perf_driver::start(app.handle().clone());
+            if let Some(p) = perf.as_ref() {
+                perf_driver::start(app.handle().clone(), p.shared);
             }
             Ok(())
         })

@@ -58,6 +58,16 @@ Prerequisites: Xcode Command Line Tools and Rust (`rustup`, from rustup.rs).
 macOS draws with the system WKWebView — the engine this prototype is mostly
 about.
 
+`just desktop-tauri` against the dev stack on macOS opens the window a person
+and an agent share: an ordinary window (move it, hide it, click in it) with the
+perf harness's driver behind a socket, so `just tauri <command>` can act in the
+same window (`just tauri help`: `goto`, `click`, `drag`, `type`, `press`, `eval`,
+`shot`, …). The driver's input is native; nothing takes the window from the
+person unless asked. While the window is covered WebKit reports the page hidden
+and stops painting: input and scripts arrive, so run `just tauri focus` first
+when the result has to be drawn. Linux and Windows have no native input in the
+driver yet: there the recipe is a plain `cargo run`.
+
 ```bash
 git switch feat/desktop && pnpm install
 just desktop-tauri-dist       # src-tauri/target/release/bundle/macos/Narrative.app (+ dmg/)

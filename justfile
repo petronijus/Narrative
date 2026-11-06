@@ -281,13 +281,22 @@ desktop-dist target="linux":
 desktop-publish target:
     infra/scripts/desktop-publish.sh "{{ target }}"
 
-# The Tauri prototype (apps/desktop-tauri) against a server: dev (default), prod or an https origin; needs Rust
+# The Tauri prototype (apps/desktop-tauri) against a server: dev (default), prod or an https origin; needs Rust. On macOS against dev, `just tauri` drives the same window
 desktop-tauri server="dev":
     #!/usr/bin/env bash
     set -euo pipefail
     command -v cargo >/dev/null || { echo "desktop-tauri: needs Rust (rustup.rs)" >&2; exit 1; }
+    if [ "{{ server }}" = "dev" ] && [ "$(uname -s)" = "Darwin" ]; then
+      (cd apps/desktop-tauri/src-tauri && cargo build --features perf-driver)
+      exec pnpm exec tsx apps/web/e2e/perf/lib/tauriDrive.ts serve
+    fi
     cd apps/desktop-tauri/src-tauri
     exec cargo run -- "--server={{ server }}"
+
+# Drive the running `just desktop-tauri` window, which stays yours too: `just tauri help`
+[positional-arguments]
+tauri *args:
+    @pnpm exec tsx apps/web/e2e/perf/lib/tauriDrive.ts "$@"
 
 # Package the Tauri prototype for this OS (deb/rpm/AppImage, or an unsigned .app + .dmg; loads production)
 desktop-tauri-dist:

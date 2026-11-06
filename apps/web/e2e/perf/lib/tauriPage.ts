@@ -224,6 +224,7 @@ class TauriApp {
   /** Input commands waiting for their DOM event: its type, sent no earlier than `after` (epoch ms). */
   private readonly seenWaiters: Array<{ type: string; after: number; resolve: () => void }> = []
   private exited = false
+  private readonly exitListeners: Array<() => void> = []
 
   private constructor(
     private readonly child: ChildProcess,
@@ -235,6 +236,8 @@ class TauriApp {
     baseURL: string
     viewport: { width: number; height: number }
     initScripts: string[]
+    /** An ordinary window a person uses too (perf_driver.rs); its log goes to this terminal. */
+    shared?: boolean
   }): Promise<TauriApp> {
     if (process.platform !== 'darwin')
       throw new Error('the Tauri perf driver takes native input on macOS only (perf_driver.rs)')
@@ -252,14 +255,16 @@ class TauriApp {
       writeFileSync(f, src)
       return f
     })
-    const child = spawn(bin, [`--server=${origin}`], {
+    // A shared window is the dev stack's, as `just desktop-tauri` has always opened it.
+    const child = spawn(bin, [`--server=${o.shared === true ? 'dev' : origin}`], {
       env: {
         ...process.env,
         NARRATIVE_PERF_DRIVER_PORT: String(ws.port),
         NARRATIVE_PERF_VIEWPORT: `${o.viewport.width}x${o.viewport.height}`,
         NARRATIVE_PERF_INIT_SCRIPTS: files.join(':'),
+        ...(o.shared === true ? { NARRATIVE_DRIVER_SHARED: '1' } : {}),
       },
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', o.shared === true ? 'inherit' : 'pipe'],
     })
     app = new TauriApp(child, ws, origin)
     app.listen()
@@ -282,12 +287,14 @@ class TauriApp {
       if (msg.ok === true) p.resolve(msg.value)
       else p.reject(new Error(`tauri: ${msg.error ?? 'failed'}`))
     })
-    createInterface({ input: this.child.stderr! }).on('line', (line) => {
-      if (process.env['PERF_VERBOSE'] === '1' || /error|panic/i.test(line))
-        console.log(`PERF tauri ${line}`)
-    })
+    if (this.child.stderr !== null)
+      createInterface({ input: this.child.stderr }).on('line', (line) => {
+        if (process.env['PERF_VERBOSE'] === '1' || /error|panic/i.test(line))
+          console.log(`PERF tauri ${line}`)
+      })
     this.child.on('exit', (code) => {
       this.exited = true
+      for (const l of this.exitListeners) l()
       const err = new Error(`the Tauri app exited (${code})`)
       for (const p of [...this.acks.values(), ...this.scripts.values()]) p.reject(err)
       this.acks.clear()
@@ -357,6 +364,10 @@ class TauriApp {
 
   get href(): string {
     return this.pageHref
+  }
+
+  onExit(listener: () => void): void {
+    this.exitListeners.push(listener)
   }
 
   /**
@@ -851,6 +862,36 @@ export async function tauriPage(
   })
   return page as unknown as Page
 }
+
+/**
+ * The window a person and an agent use together (tauriDrive.ts): the driver in
+ * an ordinary window. Nothing here takes the window from the person: it is not
+ * focused, resized or moved unless asked. `onExit` runs when the window closes.
+ */
+export async function sharedTauriPage(baseURL: string): Promise<{
+  page: TauriSharedPage
+  command: <T = unknown>(cmd: Record<string, unknown>) => Promise<T>
+  onExit: (listener: () => void) => void
+}> {
+  const app = await TauriApp.launch({
+    baseURL,
+    viewport: { width: 1440, height: 900 },
+    initScripts: [],
+    shared: true,
+  })
+  const context = new Proxy({} as BrowserContext, {
+    get(): never {
+      throw new Error('a shared Tauri window has no Playwright context')
+    },
+  })
+  return {
+    page: new TauriPageImpl(app, context, baseURL),
+    command: (cmd) => app.command(cmd),
+    onExit: (listener) => app.onExit(listener),
+  }
+}
+
+export type TauriSharedPage = TauriPageImpl
 
 /** Whether `page` is the Tauri window (what it cannot do: a second window, a fresh context, request events). */
 export function isTauriPage(page: Page): boolean {
