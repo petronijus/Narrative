@@ -580,7 +580,16 @@ function DeckCard({
       {/* Thumbnail */}
       <div className="mb-3 aspect-video overflow-hidden rounded-md bg-surface-2 flex items-center justify-center">
         {thumbnail !== undefined ? (
-          <img src={thumbnail} alt="" className="h-full w-full object-cover" draggable={false} />
+          // Lazy: a folder of hundreds would otherwise fetch every thumbnail up
+          // front, and that queue holds up the editor's own requests after a click.
+          <img
+            src={thumbnail}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            className="h-full w-full object-cover"
+            draggable={false}
+          />
         ) : (
           <span className="text-xs text-muted-foreground/60">No preview</span>
         )}
