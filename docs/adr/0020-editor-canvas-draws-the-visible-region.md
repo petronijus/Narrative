@@ -1,9 +1,8 @@
 # ADR 0020 — The editor canvas draws the region the window shows
 
-**Status**: Proposed by the renderer agent (2026-10-27), built on
-`perf/crowded-slide` at the coordinator's request (F1 follow-up); needs the
-tech-lead's review — it is the render-architecture change the renderer's
-"Zoom commits" note named.
+**Status**: Accepted (Petr, 2026-11-06; proposed 2026-10-27 by the renderer
+agent, built on `perf/crowded-slide` as the F1 follow-up). It is the
+render-architecture change the renderer's "Zoom commits" note named.
 **Scope**: `apps/web/src/renderer/Canvas.tsx`, `CanvasInstanceContext.tsx`, `canvasRegion.ts`,
 `canvasRegionController.ts`, `stageRender.ts`, `RenderScheduler.ts`, the text
 staging in `SceneGraph.ts` (`restageTextResolution`'s off-screen cap);

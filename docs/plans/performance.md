@@ -3197,8 +3197,7 @@ fitTextResolutions`, `thumbnailStore.test.ts` (two in flight, one idle
     and the presenting set's rasters, held by the placement watch, stay
     painted for the old one — sub-device-px from a fresh presentation, as
     before this round; the WebKit parity residue (5 rows at DPR 1, 33 at
-    DPR 2, ADR 0018 → The residue); ADR 0020 is still "Proposed" (the
-    tech-lead's review); `apps/server` `serverHost.test.ts` → "sees a change
+    DPR 2, ADR 0018 → The residue); `apps/server` `serverHost.test.ts` → "sees a change
     an editor makes in the loaded folder document" timed out once under
     `just check` (load ~12; 3 / 3 alone, the next `just check` green).
   - **e2e** (F11, 11-01, `just e2e --project=chromium --project=serial`:

@@ -702,8 +702,8 @@ with this reason; a WebKit render worker is not planned.
 
 ### Line breaks and the edit overlay (2026-10-28)
 
-- **A soft break that ends a paragraph starts a line**, as in PowerPoint
-  and Keynote (the paragraph's end sits on it). `a<br>` ending its block
+- **A soft break that ends a paragraph starts a line** (confirmed by Petr,
+  2026-11-06), as in PowerPoint and Keynote (the paragraph's end sits on it). `a<br>` ending its block
   draws no line in HTML, so the canvas and the overlay drew `"a\n"` as one
   line; `buildListedHtml` now holds that line open with a placeholder
   `<br data-empty="1">`. The model is unchanged (the PPTX writer and
