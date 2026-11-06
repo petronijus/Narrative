@@ -18,9 +18,10 @@
  */
 
 import { trackRenderWork } from '../renderer/renderWork.js'
-import { useEffect, useId, useRef, useCallback } from 'react'
+import { useEffect, useId, useMemo, useRef, useCallback } from 'react'
 import { useFolderFonts } from './useFolderFonts.js'
 import { useDeckFontsOptional } from './useDeckFonts.js'
+import { useDeckRole } from './DeckRoleContext.js'
 import {
   clearHtmlTextFacePending,
   markHtmlTextFacePending,
@@ -75,21 +76,27 @@ export function FolderFontLoader(): null {
   // they install through the same Pixi cache pipeline. Outside a deck
   // (e.g. folder grid preload), useDeckFontsOptional returns null.
   const deckCtx = useDeckFontsOptional()
-  const fonts: FolderFontSummary[] =
-    deckCtx === null ? folderFonts : [...folderFonts, ...deckCtx.fonts]
+  const deckFonts = deckCtx?.fonts
+  // Stable across re-renders: the install effect below cancels and restarts
+  // its downloads whenever this changes.
+  const fonts = useMemo<FolderFontSummary[]>(
+    () => (deckFonts === undefined ? folderFonts : [...folderFonts, ...deckFonts]),
+    [folderFonts, deckFonts],
+  )
   const installedRef = useRef<Map<string, InstalledFont>>(new Map())
 
   // Until the font lists are here, canvas text in a family that is neither
   // registered nor on the system holds its first raster: it may be one of
   // them (renderer/fontChanges.ts → setFontListPending). A deck's folder is
-  // unknown for a moment after the editor mounts — that counts as on its way.
+  // unknown for a moment after the editor mounts — that counts as on its way
+  // only while the deck is being fetched: a failed fetch leaves it null for
+  // good, and no list will come.
+  const { isLoading: folderIdLoading } = useDeckRole()
   const listToken = useId()
   const listsPending =
-    folderId === null || folderFontsLoading || (deckCtx !== null && deckCtx.loading)
-  useEffect(() => {
-    setFontListPending(listToken, listsPending)
-  }, [listToken, listsPending])
-  useEffect(() => () => setFontListPending(listToken, false), [listToken])
+    (folderId === null && folderIdLoading) ||
+    folderFontsLoading ||
+    (deckCtx !== null && deckCtx.loading)
 
   // MEDIA-1: font `url`s are short-TTL presigned MinIO URLs. If a FontFace
   // load fails (most likely an expired URL on a deck left open > the URL TTL
@@ -120,6 +127,13 @@ export function FolderFontLoader(): null {
     // === true` (a stale placeholder with face=undefined), skips the font
     // entirely, and the load that was cancelled never gets retried.
     const pendingIds = new Set<string>()
+
+    // This run's load of a face was cancelled: still awaited only if a later
+    // run of this effect took the slot again (its own load registers or
+    // clears it).
+    const releaseCancelled = (assetId: string): void => {
+      if (!installed.has(assetId)) clearHtmlTextFacePending(assetId)
+    }
 
     // Install new fonts
     for (const font of fonts) {
@@ -172,9 +186,7 @@ export function FolderFontLoader(): null {
             // The cleanup will have already deleted the placeholder slot, so
             // the next effect invocation will retry.
             if (cancelled) {
-              // Still awaited only if a later run of this effect took the
-              // slot again (its own load registers or clears it).
-              if (!installed.has(font.assetId)) clearHtmlTextFacePending(font.assetId)
+              releaseCancelled(font.assetId)
               return
             }
 
@@ -203,6 +215,12 @@ export function FolderFontLoader(): null {
               bytes,
             })
           } catch (err) {
+            // A cancelled load says nothing about the face: the slot may be
+            // a newer load's by now, in flight or installed.
+            if (cancelled) {
+              releaseCancelled(font.assetId)
+              return
+            }
             // Drop the placeholder so a future re-emit retries
             installed.delete(font.assetId)
             pendingIds.delete(font.assetId)
@@ -216,7 +234,7 @@ export function FolderFontLoader(): null {
             throw err
           }
         })(),
-        { font: { key: font.assetId, family: font.family } },
+        { font: { key: font.assetId, family: font.family, superseded: () => cancelled } },
       )
     }
 
@@ -247,6 +265,14 @@ export function FolderFontLoader(): null {
       pendingIds.clear()
     }
   }, [fonts])
+
+  // After the install effect: the commit that brings a list also marks its
+  // faces, so a text held for the list goes on waiting for its face instead
+  // of waking in between and painting the fallback.
+  useEffect(() => {
+    setFontListPending(listToken, listsPending)
+  }, [listToken, listsPending])
+  useEffect(() => () => setFontListPending(listToken, false), [listToken])
 
   return null
 }

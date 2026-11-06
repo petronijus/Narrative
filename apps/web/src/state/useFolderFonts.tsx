@@ -108,16 +108,23 @@ interface FolderFontsProviderProps {
 export function FolderFontsProvider({ folderId, children }: FolderFontsProviderProps) {
   const api = useApi()
   const [fonts, setFonts] = useState<FolderFontSummary[]>(() => getCached(folderId) ?? NO_FONTS)
-  const [loading, setLoading] = useState<boolean>(
-    () => folderId !== null && getCached(folderId) === null,
+  const [fetching, setFetching] = useState(false)
+  // The folder the list has settled for (arrived or failed). Derived rather
+  // than set from the fetch effect: the commit that brings a new folder id
+  // must already read as loading, or a text waiting for the list wakes in
+  // the gap before the effect runs.
+  const [settledFor, setSettledFor] = useState<string | null>(() =>
+    getCached(folderId) === null ? null : folderId,
   )
+  const loading = fetching || (folderId !== null && settledFor !== folderId)
   const [error, setError] = useState<string | null>(null)
 
   const doFetch = useCallback(
     async (invalidate: boolean) => {
       if (folderId === null) {
         setFonts(NO_FONTS)
-        setLoading(false)
+        setFetching(false)
+        setSettledFor(null)
         setError(null)
         return
       }
@@ -127,11 +134,12 @@ export function FolderFontsProvider({ folderId, children }: FolderFontsProviderP
       const cached = getCached(folderId)
       if (cached !== null && !invalidate) {
         setFonts(cached)
-        setLoading(false)
+        setFetching(false)
+        setSettledFor(folderId)
         return
       }
 
-      setLoading(true)
+      setFetching(true)
       setError(null)
       try {
         const result = await api.listFolderFonts(folderId)
@@ -140,7 +148,8 @@ export function FolderFontsProvider({ folderId, children }: FolderFontsProviderP
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load folder fonts')
       } finally {
-        setLoading(false)
+        setFetching(false)
+        setSettledFor(folderId)
       }
     },
     [api, folderId],

@@ -35,11 +35,13 @@ function notifyIfIdle(): void {
  * Count `promise` as render work until it settles; returns it unchanged.
  * `font`: the face it loads (`key` identifies the face, `family` names it) —
  * a failure is then a failed font, not a failed load, and a later successful
- * load of the same face (a retry with a fresh URL) clears it.
+ * load of the same face (a retry with a fresh URL) clears it. `superseded`:
+ * asked when it settles; a load replaced by a newer one reports nothing about
+ * the face.
  */
 export function trackRenderWork<T>(
   promise: Promise<T>,
-  opts?: { font?: { key: string; family: string } },
+  opts?: { font?: { key: string; family: string; superseded?: () => boolean } },
 ): Promise<T> {
   pending.add(promise)
   const font = opts?.font
@@ -51,7 +53,7 @@ export function trackRenderWork<T>(
   }
   promise.then(
     () => {
-      if (font !== undefined) failedFaces.delete(font.key)
+      if (font !== undefined && font.superseded?.() !== true) failedFaces.delete(font.key)
       done()
     },
     () => {

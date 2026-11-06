@@ -518,9 +518,13 @@ const GENERIC_FAMILIES = new Set([
   'unset',
 ])
 
-/** A face of `family` is being downloaded under `key` (registered later with `setHtmlTextFace`). */
+/**
+ * A face of `family` is being downloaded under `key` (registered later with
+ * `setHtmlTextFace`). A face already registered under `key` keeps drawing, so
+ * its download (a remounted loader's) holds no text.
+ */
 export function markHtmlTextFacePending(key: string, family: string): void {
-  if (!isEmbeddableFamilyName(family)) return
+  if (!isEmbeddableFamilyName(family) || faces.has(key)) return
   facesOnTheWay.set(key, family)
 }
 
