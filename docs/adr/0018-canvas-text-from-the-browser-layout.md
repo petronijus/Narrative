@@ -433,10 +433,11 @@ from the paint model by 0.1–0.9 px) — and are painted as that layer is
 rot15 0.53 → 0.02, rot90 0.68 → 0.12, rot180 0.79 → 0.01, the tall-font
 autofit box 1.02 → within, every shrunk box within.
 
-Open: Playwright's WebKit screenshots are the page painted flat (a
-compositing trigger changes nothing in them); Safari on screen composites
-the turned rig with Core Animation, which may turn an upright backing
-instead — to be checked by eye in Safari. (A WebKit box at exactly half a
+Playwright's WebKit screenshots are the page painted flat (a compositing
+trigger changes nothing in them); WebKit on screen composites the turned rig
+with Core Animation, which could turn an upright backing instead. Checked by
+eye on 2026-11-06 (Petr, the corpus's transformed slide on the MacBook): the
+rotated boxes work. (A WebKit box at exactly half a
 px, which kept its baseline where the model moved it by a px, is resolved:
 the baseline from the font's unrounded ascent, The residue below.)
 

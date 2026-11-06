@@ -36,9 +36,10 @@ Each with the recommendation.
 4. ~~**Paragraph-final soft break.**~~ Confirmed 2026-11-06 (Petr). Shift+Enter
    at the end of a paragraph opens an empty line with the caret on it (as
    Keynote / Google Slides), carried by a placeholder `<br data-empty="1">`.
-5. **Manual checks (need the MacBook).** Rotated text in Safari (~2 min);
-   headed WebKit present benches with the window in front (~15–20 min).
-   Recommended: Safari before the release, the WebKit benches after.
+5. **Manual checks (need the MacBook).** Rotated text on screen in WebKit:
+   done 2026-11-06, works (Petr, by eye). Still open: headed WebKit present
+   benches with the window in front (~15–20 min). Recommended: after the
+   release.
 6. ~~**State-sync review of `FolderFontLoader` / `bundledFonts`.**~~ Done
    2026-11-06, verdict "fix first"; fixed, with the loader's first unit tests
    (`state/FolderFontLoader.test.tsx`): a failed deck fetch held text for the
