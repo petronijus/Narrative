@@ -4,6 +4,86 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.16.0 — The performance programme (2026-11-08)
+
+The editor, present mode, the server and the workers got measured and made
+faster, with a harness that keeps them so (`docs/plans/performance.md`). Canvas
+text is now drawn from the browser's own layout in every engine (ADR 0018), and
+the editor canvas draws only the visible region (ADR 0020).
+
+Numbers from production builds, 10 runs on a MacBook M3 Pro, against the
+baselines of 2026-10-18…26:
+
+| Bench                                | Before  | After   |
+| ------------------------------------ | ------- | ------- |
+| Open a 100-slide deck, Chromium      | 6067 ms | 2375 ms |
+| Open a 100-slide deck, WebKit        | 54 s    | 2.5 s   |
+| Worst frame of a zoom, Chromium      | 158 ms  | 16.8 ms |
+| Worst frame of a zoom, WebKit        | 1641 ms | 37 ms   |
+| Input while mounting a table, WebKit | 986 ms  | 34 ms   |
+
+### Added
+
+- **A local copy of each document**, guarded by the document's epoch, so a deck
+  opens from what the browser already has (ADR 0017).
+- **Real sessions report their boot, long tasks and INP**, joined by boot timing
+  and availability probes.
+- **A performance harness** (`just perf`, `just perf-counters`, `packages/perf`):
+  work counters and budgets, interaction benches in Chromium, WebKit and the
+  Tauri window, per-frame budgets, retained heap.
+- **A Tauri window a person and an agent share** (macOS, development):
+  `just desktop-tauri` opens an ordinary window and `just tauri <command>` acts
+  in it.
+
+### Changed
+
+- **Text on the canvas comes from the browser's layout** in Chromium and WebKit
+  (ADR 0018); a WebKit editor may sit up to about 1 px from an export, which the
+  render worker's Chromium draws.
+- **Texture memory:** a crowded slide at 544 % went from 1.93 GB to 563 MB of GL
+  memory, and from 1.97 GB to 178 MB after Fit.
+- **Present mode** prepares its slides up front, so an advance only composites,
+  and hands density over with no blank frame (ADR 0020).
+- **First paint is split by route**, with lazy editor parts and no layout shift
+  on open. Static assets are precompressed and immutable at the edge.
+- **Faster exports and imports:** the PPTX package is streamed, PDF export runs
+  asynchronously, and render jobs batch textures per draw.
+- **A deck's media** is fetched in one batch, with pictures drawn from a 1280 px
+  variant; videos show a poster while processing and present at 1080p.
+- **Docker images are smaller**, and the server boots without jsdom.
+
+### Fixed
+
+- **Opening a deck from a large folder** no longer waits behind every thumbnail
+  of the folder, which now load lazily.
+- **Shift+Enter at the end of a paragraph** opens an empty line with the caret
+  on it, as Keynote and Google Slides do.
+- A slide without a background paints the default one in present mode.
+- Fonts a folder brings: a failed deck fetch no longer holds text for the life
+  of the page, and a cancelled load no longer tramples the live one.
+- The component picker lists a component promoted a moment ago.
+- The second prefix sweep of a deleted owner survives a server restart.
+
+### Security
+
+- Media is hidden from people who cannot read it, and malformed share tokens are
+  refused.
+- PPTX entry heads are bounded, with one decode budget per process; year-0
+  cursors are refused.
+- The metrics endpoint refuses a guessable token, see Deploying.
+
+### Known
+
+- Two WebKit benches got slower in this release, with no hitches or dropped
+  frames: `viewport.zoom.wheel` frame.max 39 → 48.5 ms and
+  `present.advance.text` advance.p50 57 → 63 ms. They go to the next round.
+
+### Deploying
+
+- **A weak `METRICS_TOKEN` stops the server from booting:** one shorter than 32
+  characters, or the placeholder from `.env.prod.example`. Without a token,
+  `/metrics` is left out. Set 64 hex characters (`docs/deploy.md`).
+
 ## 0.15.0 — The desktop app's sign-in on the server (2026-10-16)
 
 The desktop work (D0) merged: the server and the editor now speak to a
