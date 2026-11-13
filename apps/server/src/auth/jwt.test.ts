@@ -194,10 +194,22 @@ describe('isAllowedByEnv', () => {
     ).toBe(false)
   })
 
-  it('accepts exact-match email (case-insensitive); does NOT require email_verified', () => {
+  it('accepts a verified exact-match email (case-insensitive)', () => {
     const cfg = { allowedEmails: ['KNOWN@EXAMPLE.COM'], allowedDomain: undefined }
-    expect(isAllowedByEnv({ sub: 'u', email: 'known@example.com' }, cfg)).toBe(true)
-    expect(isAllowedByEnv({ sub: 'u', email: 'unknown@example.com' }, cfg)).toBe(false)
+    expect(isAllowedByEnv({ sub: 'u', email: 'known@example.com', emailVerified: true }, cfg)).toBe(
+      true,
+    )
+    expect(
+      isAllowedByEnv({ sub: 'u', email: 'unknown@example.com', emailVerified: true }, cfg),
+    ).toBe(false)
+  })
+
+  it('rejects an exact-match email when emailVerified is missing or false', () => {
+    const cfg = { allowedEmails: ['known@example.com'], allowedDomain: undefined }
+    expect(isAllowedByEnv({ sub: 'u', email: 'known@example.com' }, cfg)).toBe(false)
+    expect(
+      isAllowedByEnv({ sub: 'u', email: 'known@example.com', emailVerified: false }, cfg),
+    ).toBe(false)
   })
 
   it('accepts a domain-matched email when emailVerified=true', () => {

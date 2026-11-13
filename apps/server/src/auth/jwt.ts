@@ -121,9 +121,13 @@ export interface AllowlistConfig {
 }
 
 /**
- * Returns true when the JWT's email satisfies the env-configured allowlist:
+ * Returns true when the JWT's email satisfies the env-configured allowlist.
+ * Either rule needs `email_verified` to be true: an unverified address is
+ * one the account holder merely typed in, so matching it (exactly or by
+ * domain) would let anyone claim a listed address. Same rule as the admin
+ * and database grants (signInPolicy.ts).
  *   - exact match in `allowedEmails`, or
- *   - ends with `@${allowedDomain}` AND `email_verified` is true.
+ *   - ends with `@${allowedDomain}`.
  *
  * When none of `allowedEmails`, `allowedDomain` and `adminEmails` is
  * configured, returns true unconditionally (open-deployment mode — only
@@ -136,8 +140,8 @@ export function isAllowedByEnv(payload: JwtPayload, config: AllowlistConfig): bo
   // admins (ADMIN_EMAILS) and lets them manage the allowed list has a gate.
   if (emails.length === 0 && !domain && (config.adminEmails ?? []).length === 0) return true
   const email = payload.email?.toLowerCase()
-  if (!email) return false
+  if (!email || payload.emailVerified !== true) return false
   if (emails.includes(email)) return true
-  if (domain && payload.emailVerified === true && email.endsWith(`@${domain}`)) return true
+  if (domain && email.endsWith(`@${domain}`)) return true
   return false
 }
