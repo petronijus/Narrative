@@ -4,6 +4,18 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.16.1 — Verified addresses only (2026-11-13)
+
+### Security
+
+- **An exact `OIDC_ALLOWED_EMAILS` match now needs a verified e-mail.** An
+  unverified address is one the account holder merely typed in, so matching it
+  admitted anyone who claimed a listed address. The domain rule, `ADMIN_EMAILS`
+  and the database grants already required `email_verified`; the exact match
+  now does too. Personal access tokens follow the same rule through the
+  verification stored at the owner's last sign-in: an owner who has not signed
+  in since 0.10.0 (stored as NULL) signs in once in the browser.
+
 ## 0.16.0 — The performance programme (2026-11-08)
 
 The editor, present mode, the server and the workers got measured and made

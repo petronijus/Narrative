@@ -1,6 +1,6 @@
 {
   "name": "@narrative/desktop-tauri",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "private": true,
   "description": "Narrative desktop app — Tauri prototype beside the Electron shell (README.md)",
   "scripts": {
