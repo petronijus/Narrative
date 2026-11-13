@@ -15,11 +15,22 @@ const byEmail = { allowedEmails: ['petr@example.com'], allowedDomain: undefined 
 const byDomain = { allowedEmails: [], allowedDomain: 'example.com' }
 
 describe('signInGrant', () => {
-  it('admits an env-allowlisted email without touching the database', async () => {
+  it('admits a verified env-allowlisted email without touching the database', async () => {
     const db = scriptedDb()
     await expect(
-      signInGrant(db.db, byEmail, { email: 'Petr@Example.com', emailVerified: false }),
+      signInGrant(db.db, byEmail, { email: 'Petr@Example.com', emailVerified: true }),
     ).resolves.toBe('env')
+    expect(db.remaining().selects).toBe(0)
+  })
+
+  it('does not admit an env-allowlisted email that is not verified', async () => {
+    // Anyone can type a listed address into an account; only a verified
+    // one proves the mailbox. The database admits no unverified email
+    // either, so it is not even asked.
+    const db = scriptedDb()
+    await expect(
+      signInGrant(db.db, byEmail, { email: 'petr@example.com', emailVerified: false }),
+    ).resolves.toBeNull()
     expect(db.remaining().selects).toBe(0)
   })
 
