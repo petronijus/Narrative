@@ -2,7 +2,7 @@
  * db/migrate.ts
  *
  * Applies the migrations in apps/server/drizzle/ (db/runMigrations.ts).
- * Usage: `pnpm --filter @narrative/server db:migrate`; production runs the
+ * Usage: `bun run --cwd apps/server db:migrate`; production runs the
  * compiled file as a deploy step (infra/scripts/deploy.sh). The dev server
  * runs the same migrator on start (src/index.ts).
  *

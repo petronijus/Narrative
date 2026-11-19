@@ -184,16 +184,16 @@ GPU, but code requests and React's StrictMode renders differ by mode.
 
 `just perf-compare <revA> <revB> [ids…]` checks each revision out as a
 detached worktree under `~/.cache/narrative-perf/worktrees/` (`.` is this
-working tree, uncommitted changes included), installs it from the pnpm store,
+working tree, uncommitted changes included), installs it with its own lockfile's package manager (Bun, or pnpm for a revision from before the switch),
 builds and serves both, and runs them interleaved A B A B on two pages;
 verdicts per time metric (bootstrap CI and threshold) and the counter diff
 are printed, and the exit code is 1 on a regression or a changed counter.
 `--browser webkit` runs both sides in Playwright WebKit (`perf-bisect` takes
 it too; `perf-profile` refuses it, the profile comes over CDP). Both revisions must have the harness (step 2 onwards); the old side talks to
 the current dev backend. A worktree's install runs the build scripts its own
-`allowBuilds` allows and ignores the rest (`--config.strict-dep-builds=false`:
-a revision older than its decline of a script would otherwise fail today's
-pnpm); a marker in its `node_modules` says the install finished.
+`trustedDependencies` (Bun) or `allowBuilds` (pnpm) allows and ignores the rest
+(pnpm with `--config.strict-dep-builds=false`: a revision older than its decline
+of a script would otherwise fail today's pnpm); a marker in its `node_modules` says the install finished.
 `just perf-bisect <id> <good> <bad> [--runs N] [--warmup N] [--metric m[,m…]]`
 searches `good..bad` (first parent) for the first commit that regresses
 against `good`, never touching this checkout. Without `--metric` any time

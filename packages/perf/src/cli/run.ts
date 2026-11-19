@@ -134,9 +134,9 @@ function playwright(root: string, o: PlaywrightRun): Promise<number> {
   const project = o.browser === 'webkit' && o.shell !== 'tauri' ? 'perf-webkit' : 'perf'
   return new Promise((resolve, reject) => {
     const child = spawn(
-      'pnpm',
+      'bun',
       [
-        'exec',
+        'run',
         'playwright',
         'test',
         'e2e/perf',

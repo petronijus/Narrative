@@ -3,7 +3,7 @@ import base from './vitest.config.js'
 
 /**
  * Integration tests (`*.integration.test.ts`) against the real local Postgres
- * (POSTGRES_URL from the repo .env). Not part of `pnpm test`. Usage:
+ * (POSTGRES_URL from the repo .env). Not part of `bun run test`. Usage:
  *   node --env-file=../../.env ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.ts
  */
 export default defineConfig({

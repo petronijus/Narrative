@@ -2,32 +2,39 @@
 #
 # Two stages (performance plan D2): the builder installs the workspace,
 # compiles, and assembles the runtime tree in /out
-# (infra/docker/runtime-tree.sh: `pnpm deploy --prod`, the workspace packages
+# (infra/docker/runtime-tree.sh: a production install filtered to the app, the workspace packages
 # as compiled JavaScript, no declarations, sources or maps); the runtime
-# stage is Node and /out plus the migrations — no pnpm, no package store, no
+# stage is Node and /out plus the migrations — no Bun, no package cache, no
 # dev dependencies.
 
 # ── Stage 1: builder ─────────────────────────────────────────────────────────
 FROM node:24-alpine AS builder
 
-RUN corepack enable && corepack prepare pnpm@12.11.2 --activate
+# Bun (package.json `packageManager`) installs the workspace and runs the
+# build; the tools themselves run on Node.
+COPY --from=oven/bun:1.4.5-alpine /usr/local/bin/bun /usr/local/bin/bun
 
 WORKDIR /app
 
 # Workspace manifests first, so a source change keeps the install layer.
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
-# pnpm-workspace.yaml names patches (patchedDependencies); install refuses without them
+# bunfig.toml carries the install settings (the hoisted linker), package.json
+# the patches (patchedDependencies), which the install refuses to go without.
+COPY bun.lock bunfig.toml package.json ./
 COPY patches ./patches
+# Every workspace these depend on, dev dependencies included (@narrative/perf
+# and what it needs): Bun refuses a pruned workspace that misses one.
 COPY apps/server/package.json            apps/server/package.json
 COPY packages/shared/package.json        packages/shared/package.json
 COPY packages/slide-model/package.json   packages/slide-model/package.json
 COPY packages/commands/package.json      packages/commands/package.json
+COPY packages/perf/package.json          packages/perf/package.json
 
-# The package store is a build cache, never a layer (it doubled every image).
-# --ignore-scripts: no lifecycle scripts of the workspace or its dependencies in the image build
-ENV PNPM_STORE=/pnpm/store
-RUN --mount=type=cache,id=narrative-pnpm-store,target=/pnpm/store,sharing=locked \
-  pnpm install --frozen-lockfile --ignore-scripts --store-dir "$PNPM_STORE"
+# Bun's package cache is a build cache, never a layer (pnpm's store doubled
+# every image). --ignore-scripts: no lifecycle scripts of the workspace or its
+# dependencies in the image build.
+ENV BUN_INSTALL_CACHE_DIR=/bun-cache
+RUN --mount=type=cache,id=narrative-bun-cache-musl,target=/bun-cache,sharing=locked \
+  bun install --frozen-lockfile --ignore-scripts
 
 COPY apps/server/   apps/server/
 COPY packages/      packages/
@@ -39,13 +46,13 @@ COPY infra/docker/runtime-tree.sh /usr/local/bin/runtime-tree
 ARG NODE_OPTIONS
 # tsc emits with workspace-root rootDir (cross-package imports pull files from
 # outside apps/server): dist/apps/server/src/*.js and dist/packages/<pkg>/src/*.js.
-RUN pnpm --filter @narrative/server build
+RUN bun run --cwd apps/server build
 
 # /out: apps/server/{package.json,dist} and node_modules with the production
 # dependencies; @narrative/{shared,slide-model,commands} compiled, the
 # commands package with its playbooks (Markdown the MCP server serves; the
 # compiled loader reads them from ../../playbooks).
-RUN --mount=type=cache,id=narrative-pnpm-store,target=/pnpm/store,sharing=locked \
+RUN --mount=type=cache,id=narrative-bun-cache-musl,target=/bun-cache,sharing=locked \
   sh /usr/local/bin/runtime-tree server /out
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────

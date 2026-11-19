@@ -10,7 +10,7 @@
  *     public command API, with headless Claude Code as the agent;
  *   - the memory world (lib/memoryWorld.ts): the command registry on
  *     in-memory Yjs documents, with a recorded transcript replayed as the
- *     agent (lib/replay.ts) — the free smoke subset `pnpm -r test` runs.
+ *     agent (lib/replay.ts) — the free smoke subset `bun run test` runs.
  *
  * Graders must therefore only use `World` methods, never HTTP or the
  * registry directly.

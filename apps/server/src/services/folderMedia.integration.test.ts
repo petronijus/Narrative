@@ -27,7 +27,7 @@
  *   - the PowerPoint export embeds the linked picture the deck shows and
  *     nothing it merely names.
  *
- * Excluded from `pnpm test`; run with `just integration` (the docker services
+ * Excluded from `bun run test`; run with `just integration` (the docker services
  * up). It creates its own users, folders, decks and components under random
  * ids and removes them, and the files it stored, afterwards.
  */

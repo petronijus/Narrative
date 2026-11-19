@@ -9,7 +9,7 @@
  * expires unexchanged authorizations). The in-memory store (store.ts)
  * mirrors these semantics for the HTTP tests.
  *
- * Excluded from `pnpm test`; run with
+ * Excluded from `bun run test`; run with
  *   node --env-file=../../.env ../../node_modules/vitest/vitest.mjs run \
  *     --config vitest.integration.config.ts src/mcp/oauth/store.integration.test.ts
  *

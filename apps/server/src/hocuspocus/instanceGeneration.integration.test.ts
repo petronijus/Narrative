@@ -3,7 +3,7 @@
  * in a real Postgres (ADR 0017, migration 0042): what backup.sh does after a
  * dump (advance the generation only) and what a boot after a restore does
  * (raise generation and floor past the marker), read back the way the sync
- * server reads them. Restores the row afterwards. Excluded from `pnpm test`;
+ * server reads them. Restores the row afterwards. Excluded from `bun run test`;
  * run with `just integration`.
  */
 

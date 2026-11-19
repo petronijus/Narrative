@@ -1,7 +1,7 @@
 /**
  * media/ownerSweeps.integration.test.ts — the second sweep of a deleted
  * owner, against the Postgres and the MinIO the stack runs (migration 0040
- * applied). Excluded from `pnpm test`; run with `just integration`. Its rows
+ * applied). Excluded from `bun run test`; run with `just integration`. Its rows
  * and objects use random ids; what a test leaves is removed afterwards.
  */
 

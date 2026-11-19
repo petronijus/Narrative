@@ -15,10 +15,10 @@ import { test, expect } from './fixtures/test'
  * step and the assertions are intentionally loose. Run it on demand:
  *
  *   # full path: upload + parse + capture (slow, 5+ min on 52 MB)
- *   pnpm --filter web test:e2e pptx-import-fidelity
+ *   bun run --cwd apps/web test:e2e pptx-import-fidelity
  *
  *   # fast path: reuse an already-imported deck (just capture)
- *   FIDELITY_DECK_ID=c99uHzklHl83 pnpm --filter web test:e2e pptx-import-fidelity
+ *   FIDELITY_DECK_ID=c99uHzklHl83 bun run --cwd apps/web test:e2e pptx-import-fidelity
  *
  * Requires the dev stack (web + server + worker) to be up.
  */

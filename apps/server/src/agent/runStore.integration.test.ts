@@ -1,8 +1,8 @@
 /**
  * agent/runStore.integration.test.ts — the Drizzle RunStore against a real
- * Postgres (migrations 0016 + 0017 applied). Excluded from `pnpm test`
+ * Postgres (migrations 0016 + 0017 applied). Excluded from `bun run test`
  * (vitest.config.ts excludes *.integration.test.ts); run it against the
- * local dev database with `pnpm --filter @narrative/server test:integration`.
+ * local dev database with `bun run --cwd apps/server test:integration`.
  *
  * It creates its own folder, deck, user and runs under random ids and
  * deletes them afterwards (runs and ops cascade with the deck). Note that

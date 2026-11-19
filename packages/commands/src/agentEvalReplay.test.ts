@@ -1,13 +1,13 @@
 /**
  * The free smoke subset of the agent eval suite (tests/agent-eval,
- * docs/plans/agentic-layer.md §9.3), run by `pnpm -r test` with no model:
+ * docs/plans/agentic-layer.md §9.3), run by `bun run test` with no model:
  *
  *   - every replayable scenario builds its fixture in the memory world
  *     (the real registry on in-memory Yjs docs), and its grader FAILS on
  *     that untouched fixture — a grader that passes without the agent
  *     doing anything tests nothing;
  *   - every recording in tests/agent-eval/recordings (tool calls captured
- *     from a real `pnpm agent:eval --record` run) replays against the
+ *     from a real `bun run agent:eval --record` run) replays against the
  *     commands with the same outcome per call, and the grader then PASSES.
  *
  * Lives here because this package's vitest run already resolves the
@@ -64,7 +64,7 @@ describe('agent eval: recorded transcripts replay and pass', () => {
   it('has a recording for every replayable scenario', () => {
     const recorded = new Set(recordings.map((r) => r.scenario))
     const missing = replayable.map((s) => s.id).filter((id) => !recorded.has(id))
-    expect(missing, 'record them with pnpm agent:eval --filter <id> --record').toEqual([])
+    expect(missing, 'record them with bun run agent:eval --filter <id> --record').toEqual([])
   })
 
   it.each(recordings.map((r) => [r.scenario, r] as const))('%s', async (id, recording) => {

@@ -18,4 +18,4 @@ Third-party dependencies
   (https://creativecommons.org/licenses/by/4.0/).
 - All other dependencies are under permissive open-source licenses (MIT,
   Apache-2.0, BSD-2/3-Clause, ISC, 0BSD, OFL-1.1, Unlicense). Run
-  `pnpm licenses list --prod` for the authoritative list.
+  `bun pm licenses --prod` for the authoritative list.

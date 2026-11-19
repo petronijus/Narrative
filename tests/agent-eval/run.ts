@@ -1,8 +1,8 @@
 /**
- * tests/agent-eval/run.ts — `pnpm agent:eval`: the agent eval suite
+ * tests/agent-eval/run.ts — `bun run agent:eval`: the agent eval suite
  * (docs/plans/agentic-layer.md §9.3) against the LOCAL dev stack.
  *
- *   pnpm agent:eval [--filter <id>[,<id>…]] [--keep] [--model <alias>] [--record]
+ *   bun run agent:eval [--filter <id>[,<id>…]] [--keep] [--model <alias>] [--record]
  *                   [--retries <n>] [--max-budget-usd <n>] [--verbose] [--list]
  *
  * For each scenario: build a fresh fixture through the command API, run
@@ -321,7 +321,7 @@ async function main(): Promise<number> {
 
   if (!(await reachable(`${opts.apiUrl}/health`))) {
     console.error(
-      `The API at ${opts.apiUrl} is not reachable. Start the dev stack (pnpm dev) first; the eval never starts or restarts it.`,
+      `The API at ${opts.apiUrl} is not reachable. Start the dev stack (bun run dev) first; the eval never starts or restarts it.`,
     )
     return 2
   }

@@ -6,8 +6,8 @@
  * deck (client decks stay out of the repo, so they are checked here rather
  * than in the test suite).
  *
- *   pnpm --filter server exec tsx src/scripts/pptxRoundtrip.ts <deck.pptx> [--out exported.pptx] [--detail]
- *   pnpm --filter server exec tsx src/scripts/pptxRoundtrip.ts --matrix [--out exported.pptx] [--detail]
+ *   bun run --cwd apps/server tsx src/scripts/pptxRoundtrip.ts <deck.pptx> [--out exported.pptx] [--detail]
+ *   bun run --cwd apps/server tsx src/scripts/pptxRoundtrip.ts --matrix [--out exported.pptx] [--detail]
  *
  * `--matrix` runs the other direction on the test suite's feature matrix
  * (`pptx/roundtripMatrix.ts`): model → export → import.

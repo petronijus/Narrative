@@ -5,7 +5,7 @@
  * the folder's tokens and fonts in the editor, so for the commands that read
  * exactly that (`folderReaders: 'content'`: token.list, folder.fonts.list,
  * media.fontUrl) their agent is a viewer too. A share link never counts.
- * Against a real Postgres; excluded from `pnpm test`, run with
+ * Against a real Postgres; excluded from `bun run test`, run with
  * `just integration`.
  */
 

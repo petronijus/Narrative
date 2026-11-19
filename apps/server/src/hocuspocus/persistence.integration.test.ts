@@ -5,7 +5,7 @@
  * store can run after the delete; it used to fail with a foreign-key error
  * logged as "FAILED to store snapshot". The store now checks its owner under
  * `FOR KEY SHARE` and stores nothing when it is gone. Excluded from
- * `pnpm test`; run with `just integration`.
+ * `bun run test`; run with `just integration`.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'

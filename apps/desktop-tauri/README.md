@@ -69,7 +69,7 @@ when the result has to be drawn. Linux and Windows have no native input in the
 driver yet: there the recipe is a plain `cargo run`.
 
 ```bash
-git switch feat/desktop && pnpm install
+git switch feat/desktop && bun install
 just desktop-tauri-dist       # src-tauri/target/release/bundle/macos/Narrative.app (+ dmg/)
 open apps/desktop-tauri/src-tauri/target/release/bundle/macos/Narrative.app
 ```

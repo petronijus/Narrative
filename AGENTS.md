@@ -63,7 +63,7 @@ the desktop app (Electron, offline work) in `docs/plans/desktop-app.md`
 ## Commands
 
 `just` is the only entry point; `just` alone lists every recipe. The recipes
-wrap the pnpm scripts and add what the machine needs (the tsx loader for
+wrap the package.json scripts (run by Bun) and add what the machine needs (the tsx loader for
 ESLint on Ubuntu's Node, the system Chrome for Playwright on Ubuntu 26.04).
 
 | Command                                          | What it does                                                                                                                                                                              |
@@ -175,7 +175,7 @@ tools/dev/          formatter, docs check, git hook scripts, toolchain doctor
   and reads the diff in the terminal. Never `--no-verify`, never force-push.
 - **Commit only when Petr says so** ("commit", "push", "ship", "merge",
   "hotovo", "nasaď"); approval to build something is not approval to commit.
-- Toolchain: Node ≥ 24.15 (the 24 LTS line the images run), pnpm 12.11.2 (`packageManager`; its settings live in `pnpm-workspace.yaml`), Docker with
+- Toolchain: Node ≥ 24.15 (the 24 LTS line the images run), Bun ≥ 1.4.5 (package manager and script runner; `packageManager`, install settings in `bunfig.toml`; `bun test` is not the test suite, `just test` is), Docker with
   compose, xmllint (PPTX schema tests), python3 ≥ 3.9 (hooks, docs check).
   `just doctor` checks them.
 - Formatting is automatic (pre-commit hook): Prettier (`.prettierrc`) and

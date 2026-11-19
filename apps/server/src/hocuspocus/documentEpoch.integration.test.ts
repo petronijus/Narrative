@@ -3,7 +3,7 @@
  * real Postgres (ADR 0017, migration 0041): every document starts at 1, a
  * bump advances one document only, inside the caller's transaction (rolled
  * back with it), and a missing owner reads as null. Excluded from
- * `pnpm test`; run with `just integration`.
+ * `bun run test`; run with `just integration`.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'

@@ -1,2 +1,2 @@
-# Per-run reports of `pnpm agent:eval` (transcripts, costs); never committed.
+# Per-run reports of `bun run agent:eval` (transcripts, costs); never committed.
 results/

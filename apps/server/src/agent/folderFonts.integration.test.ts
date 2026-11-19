@@ -2,7 +2,7 @@
  * agent/folderFonts.integration.test.ts — the production folder-font reader
  * against a real Postgres: the folder is found through the deck's
  * `folder_id`, and its font assets give family and weight. Excluded from
- * `pnpm test`; run with `pnpm --filter @narrative/server test:integration`
+ * `bun run test`; run with `bun run --cwd apps/server test:integration`
  * against the local dev database. Creates its own rows under random ids and
  * deletes them after.
  */

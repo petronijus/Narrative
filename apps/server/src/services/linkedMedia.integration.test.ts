@@ -4,7 +4,7 @@
  * MinIO: a master's picture used within its folder is linked, never copied;
  * taken into another folder it is copied; a deck moving to another folder
  * takes its linked pictures along; a deleted component's pictures stay with
- * the folder, files and all. Excluded from `pnpm test`; run with
+ * the folder, files and all. Excluded from `bun run test`; run with
  * `just integration` (the docker services up).
  *
  * It creates its own user, folders, decks and components under random ids

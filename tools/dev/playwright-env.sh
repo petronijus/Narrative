@@ -49,7 +49,7 @@ if [[ -z "${PLAYWRIGHT_USE_SYSTEM_CHROME:-}${PLAYWRIGHT_CHROME_EXECUTABLE:-}" ]]
     if [[ -n "$found" ]]; then
       echo "export PLAYWRIGHT_CHROME_EXECUTABLE=$found"
     else
-      echo "echo 'no browser for Playwright: pnpm --filter web exec playwright install chromium, or install Google Chrome or Chromium' >&2; exit 1"
+      echo "echo 'no browser for Playwright: bun run --cwd apps/web playwright install chromium, or install Google Chrome or Chromium' >&2; exit 1"
       exit 0
     fi
   fi

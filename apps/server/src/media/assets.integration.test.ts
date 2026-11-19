@@ -3,7 +3,7 @@
  * real Postgres (migrations 0027 and 0028 applied): the database keeps a
  * media row to one owner and a new component id to the storage-safe
  * alphabet, `keysStillReferenced` tells which stored files a row still
- * names, and deleting a master cascades its rows. Excluded from `pnpm test`;
+ * names, and deleting a master cascades its rows. Excluded from `bun run test`;
  * run with `just integration` against the local dev database. It creates its
  * own user, folder, deck and components under random ids and deletes them
  * afterwards (the deck first; components and their media cascade with the

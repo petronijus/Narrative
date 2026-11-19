@@ -1,10 +1,10 @@
 # Narrative — Testing Strategy
 
 > Last updated 2026-09-30, after A2.13 (A2 closed; the counts table below is still the A2.11 measurement; see "Added in A2.13" and "Added in A2.12b"). Was 2026-09-30 after A2.12b, 2026-09-30 after A2.11, 2026-09-29 after A2.10 and after A2.9; before that 2026-09-28, 2026-09-27, 2026-09-26, 2026-09-09 and 2026-05-09.
-> Current state, **measured** with `pnpm -r test` on 2026-09-30 (the A2.11
+> Current state, **measured** with `bun run test` on 2026-09-30 (the A2.11
 > tree, uncommitted at the time, on top of `92cead3` / v0.10.12), all green
-> in the docs sweep's run. `pnpm typecheck` re-run by the sweep: exit 0.
-> `pnpm lint` re-run by the sweep: 0 errors, 221 warnings (animation 2,
+> in the docs sweep's run. `bun run typecheck` re-run by the sweep: exit 0.
+> `bun run lint` re-run by the sweep: 0 errors, 221 warnings (animation 2,
 > server 7, web 212) — **only with `NODE_OPTIONS="--import=tsx"`** on
 > `petronijus-PC`, whose Ubuntu 26.04 Node cannot strip types (SETUP.md,
 > "Common first-run failures"):
@@ -154,7 +154,7 @@
 > `photo-animations-hand-over`.
 >
 > (2026-09-27, A1 working tree on top of `c4f8a5f`: 223 files, 3,192 passed —
-> server 79 / 1,126, commands 20 / 639; `pnpm typecheck` + `pnpm lint` exit 0,
+> server 79 / 1,126, commands 20 / 639; `bun run typecheck` + `bun run lint` exit 0,
 > lint 0 errors, 218 warnings in `apps/web`.)
 >
 > (At A0 close, 2026-09-26: 167 files, 2,188 passed — server 36 / 497,
@@ -167,9 +167,9 @@
 > A2.10 `table-commands`, in A2.11 `typography-commands` and
 > `text-edit-commands`),
 > **6 server integration test files** against a real Postgres
-> (`pnpm --filter @narrative/server test:integration`, not part of
-> `pnpm test`; 3 at A1, then `uploadSessions` (A2.7a), `folderTokens` (A2.8) and in A2.11
-> `folderFonts`), and the **agent eval suite** (`pnpm agent:eval`, 39
+> (`bun run --cwd apps/server test:integration`, not part of
+> `bun run test`; 3 at A1, then `uploadSessions` (A2.7a), `folderTokens` (A2.8) and in A2.11
+> `folderFonts`), and the **agent eval suite** (`bun run agent:eval`, 39
 > scenarios, 33 of them replayed for free; the last full live run recorded
 > here is 39/39 on 2026-09-30 for $4.77 (10 min, recordings refreshed) — earlier
 > 14/14 on 2026-09-28, when the suite had 14 scenarios; A2.9's three animation
@@ -188,7 +188,7 @@
 > (2026-09-26; 30 and 28 since 0.10.2) — the long-standing "23 web skips"
 > figure is stale, and 7 skips accumulated without being triaged into the
 > tables below.
-> Bundle budgets enforced via `size-limit` (`pnpm size`). Property-based CRDT convergence,
+> Bundle budgets enforced via `size-limit` (`bun run size`). Property-based CRDT convergence,
 > server lifecycle/leak coverage, multi-client e2e collab, destructive-
 > flow coverage, sampled-thumbnail visual regression all active.
 > Lighthouse + Stryker mutation testing wired in (opt-in). Stryker was
@@ -260,12 +260,12 @@
 > Fastify route table (45 routes at A0, 69 at A1 per the plan) and fails on any route no command,
 > known-missing entry or allowlist entry claims; **zod schema
 > tests** in `packages/shared/src/schema/` plus a compile-time coverage check
-> (`coverage.typecheck.ts`, fails `pnpm typecheck`, not a test run); a
+> (`coverage.typecheck.ts`, fails `bun run typecheck`, not a test run); a
 > **table-structure property test** (`tableMutations.property.test.ts`);
 > and e2e for crop-carrying moves, "viewing never writes", duplicate/undo
 > and the context-menu layer labels.
 >
-> ⚠️ Red as of 2026-09-26, all pre-existing at `cc38918`: `pnpm size`
+> ⚠️ Red as of 2026-09-26, all pre-existing at `cc38918`: `bun run size`
 > (Tiptap chunk 132.64 kB gz vs a 120 kB budget — still exactly that on
 > 2026-09-27 at A1; 120.89 kB on 2026-10-14 once the vendor groups got
 > priorities: Rolldown's manualChunks let `@tiptap/y-tiptap` pull yjs and
@@ -312,8 +312,8 @@
 | Unit (pure logic)          | `packages/{slide-model,animation,shared}`                                                                                                                             | Yjs mutations, CRDT, GSAP DSL compiler, schema validators                                                                                                                                                                                                                                                                                                  | Strong (402 + 149 + 199)                                                                                     |
 | Command contract + parity  | `packages/commands/src/{contract,parity/parity,run,registry}.test.ts`, `apps/server/src/routes/agentParity.test.ts`, `apps/web/src/{actions/catalog,oneDoor}.test.ts` | Every command example runs (server commands against fakes); missing ids leave the doc untouched; every slide-model writer and every server route claimed; every shortcut / menu item / toolbar button named in the action catalog (since A2.13); atomic batches; manifest current                                                                          | Strong (1,005 + route guard)                                                                                 |
 | Server (unit + in-process) | `apps/server/src/{routes,hocuspocus,media,auth,agent,mcp,services,http,net}`                                                                                          | Fastify routes, Hocuspocus auth/persistence, the ServerHost, the MCP server and OAuth over real HTTP, SSRF guard, rate limits                                                                                                                                                                                                                              | Strong (1,193)                                                                                               |
-| Integration (Postgres)     | `apps/server/src/**/*.integration.test.ts` (`pnpm --filter @narrative/server test:integration`)                                                                       | Drizzle stores against the real local Postgres: run store, list paging, OAuth store, folder tokens / fonts, upload sessions                                                                                                                                                                                                                                | Since A1 (6 files, opt-in)                                                                                   |
-| Agent eval                 | `tests/agent-eval/` (`pnpm agent:eval`); replay in `packages/commands/src/agentEvalReplay.test.ts`                                                                    | Headless Claude Code drives the real MCP server; deterministic graders read the resulting document. Replay subset: recorded transcripts in memory, no model                                                                                                                                                                                                | Since A1 (44 scenarios, 36 replayed)                                                                         |
+| Integration (Postgres)     | `apps/server/src/**/*.integration.test.ts` (`bun run --cwd apps/server test:integration`)                                                                             | Drizzle stores against the real local Postgres: run store, list paging, OAuth store, folder tokens / fonts, upload sessions                                                                                                                                                                                                                                | Since A1 (6 files, opt-in)                                                                                   |
+| Agent eval                 | `tests/agent-eval/` (`bun run agent:eval`); replay in `packages/commands/src/agentEvalReplay.test.ts`                                                                 | Headless Claude Code drives the real MCP server; deterministic graders read the resulting document. Replay subset: recorded transcripts in memory, no model                                                                                                                                                                                                | Since A1 (44 scenarios, 36 replayed)                                                                         |
 | Hook / state (React)       | `apps/web/src/state/*.test.tsx`                                                                                                                                       | Pure data hooks (`useMediaUpload`, `useSlideThumbnails`, `useVideoInfo`)                                                                                                                                                                                                                                                                                   | OK                                                                                                           |
 | Component contract (React) | `apps/web/src/{ui,components}/*.test.tsx`                                                                                                                             | ONLY for components with non-trivial logic (state machines, conditional branches) — not "does it render this label"                                                                                                                                                                                                                                        | Was bloated; cleaned up                                                                                      |
 | Round trip (PowerPoint)    | `apps/server/src/pptx/{roundtrip.test.ts,ooxml/validate.test.ts}`                                                                                                     | model → .pptx → model is exact for every object type and field (feature matrix); every exported part is ECMA-376-valid (`xmllint`); real decks via `just pptx-roundtrip <deck>`                                                                                                                                                                            | Strong (ADR 0009)                                                                                            |
@@ -361,7 +361,7 @@ since (V4 in `docs/plans/performance.md`).
   a path no browser takes. That is why every `packages/animation` test stays
   on jsdom (the whole suite is 1.8 s).
 
-Then run the file both ways (`pnpm vitest run <file>` with and without the
+Then run the file both ways (`bun run vitest run <file>` with and without the
 docblock): the same tests must pass and none may be skipped. A wrong `node`
 usually fails loudly (`document is not defined`); the silent case is the
 feature detection above. Node also resolves a package's `node` export where
@@ -459,7 +459,7 @@ All six items landed in commits on `main`:
 3. ✅ **3 `useMediaUpload.test.tsx` skips fixed** — switched mock from `getHeader` to `getBody` (server now returns assetId in JSON body, browser CORS strips custom headers). All transcode-poll lifecycle assertions green.
 4. ✅ **5 `Inspector.componentInstance.test.tsx` skips replaced** — original tests asserted obsolete UX (one row per master leaf). Replaced with 4 tests against current contract (rows only for _modified_ leaves; clear-entry button dispatches mutation).
 5. ✅ **12 dead DOM-presence skips deleted** — Inspector × 8 (label-presence section assertions), Toolbar × 3 (button presence + click), SlidesPanel × 1 (CSS class).
-6. ✅ **`size-limit` wired in** at `apps/web/package.json`. Per-chunk + total-first-paint budgets. Run via `pnpm size`. Current floor:
+6. ✅ **`size-limit` wired in** at `apps/web/package.json`. Per-chunk + total-first-paint budgets. Run via `bun run size`. Current floor:
    - Main app chunk: ≤ 210 KB gz (currently 188)
    - Pixi: ≤ 180 KB (currently 162)
    - React: ≤ 130 KB (currently 118)
@@ -499,14 +499,14 @@ All six items landed:
 ### Playwright has no browsers for Ubuntu 26.04
 
 ```
-$ npx playwright install chromium
+$ bun run playwright install chromium
 Failed to install browsers
 Error: ERROR: Playwright does not support chromium on ubuntu26.04-x64
 ```
 
 The ffmpeg download (needed for video capture) fails the same way. Verified on
 `petronijus-PC` (Ubuntu 26.04.1 LTS) on 2026-09-09; `~/.cache/ms-playwright`
-does not exist there. **A plain `pnpm --filter web test:e2e` therefore fails on
+does not exist there. **A plain `bun run --cwd apps/web test:e2e` therefore fails on
 that machine.**
 
 `apps/web/playwright.config.ts` carries the escape hatch, and `just e2e`
@@ -514,7 +514,7 @@ uses it by itself since 2026-09-30 (`tools/dev/playwright-env.sh`: system
 Chrome and no video where Playwright's own Chromium is missing). By hand:
 
 ```bash
-PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1 pnpm --filter web test:e2e
+PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1 bun run --cwd apps/web test:e2e
 # or pin the binary:
 PLAYWRIGHT_CHROME_EXECUTABLE=/usr/bin/google-chrome PLAYWRIGHT_NO_VIDEO=1 …
 ```
@@ -554,7 +554,7 @@ re-run a disturbed sample instead (`packages/perf/README.md` → Run validity).
 
 - `apps/server/src/services/editor.test.ts` — "ignores a state another
   user's connection forged under the caller's client id" failed once with
-  "condition not met in time" during a full `pnpm -r test` on 2026-09-28,
+  "condition not met in time" during a full `bun run test` on 2026-09-28,
   while the web and server suites ran in parallel. It passed 5/5 alone and
   in a full server-suite rerun (1,133 passed / 1 skipped). A wait-for timeout
   under load, not a regression. Seen again on 2026-10-14 at a load of 30–40;
@@ -610,7 +610,7 @@ verify the current state_ in the 0.9.x handoff note.
   (or listed in `src/parity/knownMissing.ts` for an unfinished phase) — the
   parity test fails otherwise. A new command needs a ≥ 40-character model
   description, at least one example (the contract suite runs it), and the
-  regenerated manifest (`pnpm capabilities`). The `agent-parity` agent
+  regenerated manifest (`bun run capabilities`). The `agent-parity` agent
   reviews the rest (ADR 0010).
 - New keyboard shortcuts, menu items and toolbar buttons MUST name an
   action of `apps/web/src/actions/catalog.ts` (`action` on the binding or
@@ -643,21 +643,21 @@ or retire an existing one. Examples of the policy:
 - Touch Yjs mutations → also run the property-based CRDT test +
   `multi-client-collab` e2e.
 - Touch `packages/commands`, slide-model exports, or a UI write path → run
-  `pnpm --filter @narrative/commands test` (parity + contract + manifest).
-  Add or change a server route → `pnpm --filter server test` (route guard).
+  `bun run --cwd packages/commands test` (parity + contract + manifest).
+  Add or change a server route → `bun run --cwd apps/server test` (route guard).
   (the policy has carried this row since A0 — in CLAUDE.md until 2026-09-30, AGENTS.md since; was noted here as missing.)
 - Touch playbooks, MCP prompts/instructions or a command's description,
-  schema or examples → `pnpm agent:eval` (real headless Claude Code, costs
+  schema or examples → `bun run agent:eval` (real headless Claude Code, costs
   subscription usage: $1.62 list-price equivalent for a full run on
   2026-09-28 with ToolSearch on, was ≈ 2 USD without it); refresh recordings with
-  `pnpm agent:eval --record` when a scenario or command behaviour changes on
+  `bun run agent:eval --record` when a scenario or command behaviour changes on
   purpose. The policy has this row as of A1 (AGENTS.md since 2026-09-30).
-- Touch bundle entry points / dynamic imports → also run `pnpm size`.
-- Touch perf-sensitive paths → also run `pnpm load:all` (compares
+- Touch bundle entry points / dynamic imports → also run `bun run size`.
+- Touch perf-sensitive paths → also run `bun run load:all` (compares
   against a local `tests/load/` `baselines.json` when there is one).
 
-The slow gates (`pnpm lighthouse`, Stryker `mutate`, the full
-`pnpm agent:eval`) are NOT auto-run per change — they belong before a
+The slow gates (`bun run lighthouse`, Stryker `mutate`, the full
+`bun run agent:eval`) are NOT auto-run per change — they belong before a
 release (and `agent:eval` after the guidance changes above).
 
 Nothing runs any of this automatically: **there is no CI** (was GitHub Actions

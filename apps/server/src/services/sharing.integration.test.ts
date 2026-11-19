@@ -3,7 +3,7 @@
  * against a real Postgres: someone who already uses Narrative gets access at
  * once AND an email saying so (with the deck's thumbnail when there is one);
  * the same role again sends nothing, a new role sends again.
- * Excluded from `pnpm test`; run with `just integration`.
+ * Excluded from `bun run test`; run with `just integration`.
  *
  * It creates its own users and deck under random ids and deletes them
  * afterwards. The email client is mocked: nothing is sent.

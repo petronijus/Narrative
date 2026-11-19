@@ -10,9 +10,9 @@
  * lossless) remux repopulates `playback_key` + poster + thumbnail.
  *
  * Usage (run from the deploy host so it reaches the prod DB + Redis):
- *   pnpm --filter @narrative/server db:backfill-video            # dry run
- *   pnpm --filter @narrative/server db:backfill-video --apply    # enqueue
- *   pnpm --filter @narrative/server db:backfill-video --apply --all
+ *   bun run --cwd apps/server db:backfill-video            # dry run
+ *   bun run --cwd apps/server db:backfill-video --apply    # enqueue
+ *   bun run --cwd apps/server db:backfill-video --apply --all
  *       --all also re-enqueues videos that already HAVE a playback_key
  *       (e.g. to regenerate after a worker change). Default targets only
  *       rows missing playback_key.

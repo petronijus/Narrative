@@ -3,9 +3,9 @@
  * tool that appears mid-session (`notifications/tools/list_changed`), and
  * what does a Narrative-sized tool list cost it in context?
  *
- *   pnpm agent:probe:list-changed                 # the full matrix (~12 runs)
- *   pnpm agent:probe:list-changed --model sonnet  # default: haiku (client behaviour, not model quality)
- *   pnpm agent:probe:list-changed --only "no-toolsearch" --repeat 3
+ *   bun run agent:probe:list-changed                 # the full matrix (~12 runs)
+ *   bun run agent:probe:list-changed --model sonnet  # default: haiku (client behaviour, not model quality)
+ *   bun run agent:probe:list-changed --only "no-toolsearch" --repeat 3
  *
  * It answers the question the A1 handoff left open before A2 ("defer the
  * table tools and announce them with list_changed?"). Findings from the first

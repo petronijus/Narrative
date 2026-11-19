@@ -54,7 +54,7 @@ at runtime** — they exist only for drizzle-kit codegen, which we don't use.
    [`../src/db/schema.ts`](../src/db/schema.ts) so the ORM model stays accurate.
    The schema file is the source of truth for drizzle's _types_; the SQL +
    journal are the source of truth for the _database_.
-5. Apply: `pnpm --filter @narrative/server db:migrate` (also runs automatically
+5. Apply: `bun run --cwd apps/server db:migrate` (also runs automatically
    on dev server start, and as a step in `infra/scripts/deploy.sh`).
 
 ## Do NOT

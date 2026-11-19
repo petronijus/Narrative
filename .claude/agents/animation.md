@@ -117,7 +117,7 @@ See `docs/plans/a2-extraction.md`, the A2.9 entry, for the full decisions.
 - DSL schema change → bump the schema version, migration, ADR.
 - Before a big engine change → ask the tech lead.
 - Handoff after a milestone.
-- Tests: DSL → GSAP compile snapshot tests, timing tests with the virtual clock; `pnpm --filter @narrative/animation test`, and `pnpm --filter @narrative/shared test` when the layout changes.
+- Tests: DSL → GSAP compile snapshot tests, timing tests with the virtual clock; `bun run --cwd packages/animation test`, and `bun run --cwd packages/shared test` when the layout changes.
 
 ## When you are stuck
 

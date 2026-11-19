@@ -3,7 +3,7 @@
  *   packages/commands/capabilities.json
  *   docs/capabilities.md
  *
- * Usage: pnpm --filter @narrative/commands capabilities [--check]
+ * Usage: bun run --cwd packages/commands capabilities [--check]
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -28,6 +28,6 @@ for (const file of await capabilityFiles()) {
   }
 }
 if (stale) {
-  console.error('Run `pnpm --filter @narrative/commands capabilities` and commit the result.')
+  console.error('Run `bun run --cwd packages/commands capabilities` and commit the result.')
   process.exit(1)
 }

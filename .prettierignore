@@ -1,2 +1,2 @@
-# pnpm writes its lockfile in its own format; lint-staged used to reformat it (until 2026-09-30).
-pnpm-lock.yaml
+# Bun writes its lockfile in its own format (JSONC with trailing commas); never reformat it.
+bun.lock

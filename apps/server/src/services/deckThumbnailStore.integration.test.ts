@@ -5,7 +5,7 @@
  * an object that exists and nothing else behind; a deck deleted meanwhile
  * keeps nothing; bytes that are not the declared image are refused.
  *
- * Excluded from `pnpm test`; run with `just integration` (the docker services
+ * Excluded from `bun run test`; run with `just integration` (the docker services
  * up). It creates its own user and deck under random ids and removes them,
  * and the files it stored, afterwards.
  */

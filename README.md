@@ -104,7 +104,7 @@ The rules every change keeps are in [`AGENTS.md`](AGENTS.md) → Hard rules.
 
 ## 🚀 Quick start
 
-You need Node ≥ 24.15 with type stripping, pnpm 12.11.2, Docker with Compose
+You need Node ≥ 24.15 with type stripping, Bun ≥ 1.4.5, Docker with Compose
 (logged in to GHCR once for the MinIO mirror), `just`, `lefthook`,
 `gitleaks`, `xmllint` and python3 — `just doctor` checks all of it and prints
 the fix. [SETUP.md](SETUP.md) is the full first-run guide.
@@ -112,7 +112,7 @@ the fix. [SETUP.md](SETUP.md) is the full first-run guide.
 ```bash
 git clone https://github.com/petronijus/Narrative.git && cd Narrative
 git clone https://github.com/petronijus/Narrative-private.git private   # secrets overlay (team only)
-just setup                       # pnpm install, git hooks, just doctor
+just setup                       # bun install, git hooks, just doctor
 scripts/secrets-decrypt.sh dev   # .env from the overlay — without it: cp .env.example .env (SETUP.md §2–3)
 just services                    # Postgres, MinIO + bucket, imgproxy, Redis
 just dev                         # web :5173 · API :3001 · WebSocket :3002 · video + render workers

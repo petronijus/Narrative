@@ -7,7 +7,7 @@
  *   - making someone an admin tells them, and so does taking it away;
  *   - allowing a new address welcomes it;
  *   - a kind an admin turned off is not sent at all.
- * Excluded from `pnpm test`; run with `just integration`.
+ * Excluded from `bun run test`; run with `just integration`.
  *
  * It creates its own users and folders under random ids and deletes them
  * afterwards. The email client is mocked: nothing is sent.

@@ -1,0 +1,12 @@
+# Bun settings for the workspace (they replace pnpm-workspace.yaml's).
+[install]
+# A flat node_modules: the Windows symlink issue (ADR 0001), and scripts that
+# reach into the root node_modules (apps/web's `node
+# ../../node_modules/vitest/vitest.mjs`, the Stryker sandbox, the eval's
+# browser lookup).
+linker = "hoisted"
+
+# Supply-chain guard: a version is installed only once it is a day old (in
+# seconds). A dependency sweep that lands on something fresher waits a day or
+# pins the previous release.
+minimumReleaseAge = 86400

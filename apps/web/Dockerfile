@@ -2,26 +2,33 @@
 # Sestaví Vite produkční build (výstup do apps/web/dist/)
 FROM node:24-alpine AS builder
 
-RUN corepack enable && corepack prepare pnpm@12.11.2 --activate
+# Bun (package.json `packageManager`) installs the workspace and runs the
+# build; the tools themselves run on Node.
+COPY --from=oven/bun:1.4.5-alpine /usr/local/bin/bun /usr/local/bin/bun
 
 WORKDIR /app
 
 # Workspace manifesty pro cache
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
-# pnpm-workspace.yaml names patches (patchedDependencies); install refuses without them
+# bunfig.toml carries the install settings (the hoisted linker), package.json
+# the patches (patchedDependencies), which the install refuses to go without.
+COPY bun.lock bunfig.toml package.json ./
 COPY patches ./patches
+# Every workspace these depend on, dev dependencies included (@narrative/perf
+# and what it needs): Bun refuses a pruned workspace that misses one.
 COPY apps/web/package.json               apps/web/package.json
 COPY packages/shared/package.json        packages/shared/package.json
 COPY packages/slide-model/package.json   packages/slide-model/package.json
 COPY packages/animation/package.json     packages/animation/package.json
 COPY packages/commands/package.json      packages/commands/package.json
+COPY packages/perf/package.json          packages/perf/package.json
 
 # --ignore-scripts skips esbuild's postinstall (just verifies platform binary
-# exists — not needed since @esbuild/* platform packages bundle the binary).
-# Also keeps pnpm's strict build check (allowBuilds in pnpm-workspace.yaml)
-# out of the image build. The package store is a build cache, never a layer.
-RUN --mount=type=cache,id=narrative-pnpm-store,target=/pnpm/store,sharing=locked \
-  pnpm install --frozen-lockfile --ignore-scripts --store-dir /pnpm/store
+# exists — not needed since @esbuild/* platform packages bundle the binary),
+# and every other lifecycle script with it. Bun's package cache is a build
+# cache, never a layer.
+ENV BUN_INSTALL_CACHE_DIR=/bun-cache
+RUN --mount=type=cache,id=narrative-bun-cache-musl,target=/bun-cache,sharing=locked \
+  bun install --frozen-lockfile --ignore-scripts
 
 COPY apps/web/    apps/web/
 COPY packages/    packages/
@@ -42,7 +49,7 @@ ENV VITE_BUILD_VERSION=$VITE_BUILD_VERSION
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_HOCUSPOCUS_URL=$VITE_HOCUSPOCUS_URL
 
-RUN pnpm --filter @narrative/web build
+RUN bun run --cwd apps/web build
 
 # The build's hidden source maps (vite.config.ts `sourcemap: 'hidden'`, kept
 # for a Sentry upload from the builder) stay out of the served files: nothing

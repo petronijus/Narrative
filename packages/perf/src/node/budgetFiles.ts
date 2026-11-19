@@ -9,13 +9,13 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import path from 'node:path'
 import { parseBudget, serializeBudget, type CounterBudget } from '../budgets.js'
 
-/** The repo root: the nearest directory up from `from` holding pnpm-workspace.yaml. */
+/** The repo root: the nearest directory up from `from` holding the workspace's bun.lock. */
 export function repoRoot(from = process.cwd()): string {
   let dir = path.resolve(from)
   for (;;) {
-    if (existsSync(path.join(dir, 'pnpm-workspace.yaml'))) return dir
+    if (existsSync(path.join(dir, 'bun.lock'))) return dir
     const parent = path.dirname(dir)
-    if (parent === dir) throw new Error(`no pnpm-workspace.yaml above ${from}`)
+    if (parent === dir) throw new Error(`no bun.lock above ${from}`)
     dir = parent
   }
 }

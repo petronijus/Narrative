@@ -2,7 +2,8 @@
  * node/worktrees.ts — a checkout of another revision to build and serve for
  * `just perf-compare` / `just perf-bisect` (docs/plans/perf-harness.md →
  * Commands): a detached git worktree per commit under the harness's cache
- * directory, its dependencies installed from the pnpm store. The working tree
+ * directory, its dependencies installed by the package manager that revision
+ * used (Bun from bun.lock, pnpm before the switch). The working tree
  * of this checkout is never touched (no `git checkout`, no `git bisect` in it).
  *
  * The special revision `.` is this checkout as it is, uncommitted changes
@@ -52,16 +53,21 @@ export async function checkout(
   // A marker, not node_modules: a failed install leaves node_modules behind.
   const installed = path.join(dir, 'node_modules', INSTALLED_MARKER)
   if (!existsSync(installed)) {
-    log(`pnpm install in ${dir}`)
-    // An older revision may not yet decline a dependency's build script that
-    // today's pnpm refuses to leave unapproved (strictDepBuilds: electron-
-    // winstaller before 989163a5): a measured checkout needs the scripts its
-    // own allowBuilds runs, never a failed install over one it ignores.
-    await run(
-      'pnpm',
-      ['install', '--frozen-lockfile', '--prefer-offline', '--config.strict-dep-builds=false'],
-      { cwd: dir, env: { ...process.env, CI: '1' } },
-    )
+    // A revision from before the switch to Bun has only pnpm-lock.yaml: it is
+    // installed with pnpm as it was then (the measurement compares builds, so
+    // each side keeps its own lockfile's versions).
+    const [pm, args] = existsSync(path.join(dir, 'bun.lock'))
+      ? ['bun', ['install', '--frozen-lockfile', '--prefer-offline']]
+      : // An older revision may not yet decline a dependency's build script that
+        // today's pnpm refuses to leave unapproved (strictDepBuilds: electron-
+        // winstaller before 989163a5): a measured checkout needs the scripts its
+        // own allowBuilds runs, never a failed install over one it ignores.
+        [
+          'pnpm',
+          ['install', '--frozen-lockfile', '--prefer-offline', '--config.strict-dep-builds=false'],
+        ]
+    log(`${pm} install in ${dir}`)
+    await run(pm, args, { cwd: dir, env: { ...process.env, CI: '1' } })
     writeFileSync(installed, `${new Date().toISOString()}\n`)
   }
   return { rev, sha, root: dir, webDir: path.join(dir, 'apps', 'web') }

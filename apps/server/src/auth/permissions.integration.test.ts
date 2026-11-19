@@ -5,7 +5,7 @@
  * shared alone gives only that deck (plus read access to its folder's
  * tokens, fonts and component media), and services/shared.ts turns the
  * roles into 404 / 403 per operation. A deck's creator column grants
- * nothing; migration 0031 wrote it as an owner row. Excluded from `pnpm test`; run with
+ * nothing; migration 0031 wrote it as an owner row. Excluded from `bun run test`; run with
  * `just integration`.
  *
  * It creates its own users, folders, decks, components and share links

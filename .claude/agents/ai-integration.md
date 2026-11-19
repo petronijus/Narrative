@@ -88,10 +88,10 @@ them existed.)_
 - The **`narrative` Claude Code skill**, shipped from THIS repo as the
   plugin `claude-plugin/narrative/` (root `.claude-plugin/marketplace.json`;
   install with `/plugin marketplace add petronijus/Narrative`). Generated
-  from the playbook files by `pnpm --filter @narrative/commands skill`; a
+  from the playbook files by `bun run --cwd packages/commands skill`; a
   test fails when it is stale. Everything Narrative stays in this repo —
   never put it into an internal plugin repo or another internal repo (Petr, 2026-09-27).
-- **The agent eval suite** (`tests/agent-eval/`, `pnpm agent:eval`): scenario
+- **The agent eval suite** (`tests/agent-eval/`, `bun run agent:eval`): scenario
   prompts through headless Claude Code, deterministic graders, recordings for
   the free replay in `packages/commands/src/agentEvalReplay.test.ts`.
 - The model-facing quality of tool descriptions: you review them as a model
@@ -155,7 +155,7 @@ editor's UndoManager track remote origins.
 
 - New command in the registry → it appears in MCP automatically; check its
   annotations and read its description as a model would.
-- Change to a playbook, prompt or tool description → run `pnpm agent:eval`
+- Change to a playbook, prompt or tool description → run `bun run agent:eval`
   (headless Claude Code with ToolSearch on against the local stack, plan
   §9.3; $1.62 for a full run on 2026-09-28, was ≈ 2 USD without ToolSearch)
   and report the graded results; `--record` refreshes the replay
@@ -207,6 +207,6 @@ editor's UndoManager track remote origins.
   and replay. Without ToolSearch the whole tool list rides on every request
   (≈ 100k tokens measured 2026-09-28) and a tool added mid-session via
   `list_changed` is usable in the same turn only 4/10 times
-  (`pnpm agent:probe:list-changed`).
+  (`bun run agent:probe:list-changed`).
 - A playbook needs a capability the registry lacks → ask the
   `packages/commands` owner for a command; do not script around it.

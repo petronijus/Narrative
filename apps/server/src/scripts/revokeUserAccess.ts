@@ -9,7 +9,7 @@
  * take that away — the operator has to (docs/deploy.md, "Revoking a user").
  *
  * Usage:
- *   dev:  pnpm --filter @narrative/server db:revoke-user <email|sub> [--dry-run]
+ *   dev:  bun run --cwd apps/server db:revoke-user <email|sub> [--dry-run]
  *   prod: docker exec narrative-server \
  *           node apps/server/dist/apps/server/src/scripts/revokeUserAccess.js <email|sub> [--dry-run]
  *

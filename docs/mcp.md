@@ -35,7 +35,7 @@ Code: `apps/server/src/mcp/`. Endpoint: **`https://<domain>/api/mcp`** (dev:
    `/plugin marketplace add petronijus/Narrative`, then
    `/plugin install narrative@narrative`. It is generated from the same files
    the server serves (see "Prompts" below) with
-   `pnpm --filter @narrative/commands skill`, and a test fails when the
+   `bun run --cwd packages/commands skill`, and a test fails when the
    committed copy is stale. Without it, the server's prompts and
    `narrative://playbooks/*` resources carry the same text.
 
@@ -480,7 +480,7 @@ The production image ships the playbook files (`apps/server/Dockerfile` copies
 - `apps/server/src/mcp/oauth/{clientMetadata,redirects}.test.ts`, `mcp/config.test.ts` —
   the CIMD resolver and cache, the redirect allowlist, the public URLs.
 - `apps/server/src/mcp/oauth/store.integration.test.ts` — the Drizzle store against
-  Postgres (`vitest.integration.config.ts`, not part of `pnpm test`).
+  Postgres (`vitest.integration.config.ts`, not part of `bun run test`).
 - `packages/commands/src/playbooks/playbooks.test.ts` — playbook frontmatter,
   placeholders and command mentions.
 - `apps/server/src/mcp/toolListBudget.test.ts` — `tools/list` ≤ 175,000 bytes in every
@@ -504,12 +504,12 @@ The production image ships the playbook files (`apps/server/Dockerfile` copies
   command's description, every description repeated on ≥ 3 tools at ≥ 100 bytes saved
   is in the vocabulary, the instructions carry every note, and no tool in any
   confirmation mode carries a shared description.
-- `pnpm agent:eval` — real headless Claude Code against `pnpm dev`, 39 graded scenarios
+- `bun run agent:eval` — real headless Claude Code against `bun run dev`, 39 graded scenarios
   on 2026-09-30 after A2.11 (36 after A2.10, 34 after A2.9; 14 at A1: 14/14 on
   2026-09-27, and on 2026-09-28 with ToolSearch on and the compacted list; the
   39-scenario suite has not been run in full); 33 of them replay without a model in
   `packages/commands/src/agentEvalReplay.test.ts`. See `tests/agent-eval/README.md`.
-- End to end with the real CLI against `pnpm dev` (BYPASS_AUTH off or on):
+- End to end with the real CLI against `bun run dev` (BYPASS_AUTH off or on):
   create a PAT, `claude mcp add --transport http narrative-local http://localhost:3001/mcp
 --header "Authorization: Bearer <token>" --scope local`, then
   `claude -p "…" --allowedTools "mcp__narrative-local__*"`.

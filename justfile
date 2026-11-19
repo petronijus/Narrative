@@ -2,7 +2,8 @@
 # The fast lane (`just check`, ~40 s) is what the pre-push hook and the
 # Claude Code Stop hook run; `just ci` is the full gate. There is no hosted
 # CI: these recipes are the CI, run on the Linux desktop, the MacBook or the
-# Omarchy desktop. The recipes only wrap the pnpm scripts in package.json and
+# Omarchy desktop. The recipes only wrap the scripts in package.json (run by
+# Bun, the package manager: `bun run`) and
 # the per-package scripts, adding what each machine needs to run them (the
 # tsx loader, the browser for Playwright), so there is one way to run each.
 
@@ -25,7 +26,7 @@ default:
 
 # One-time setup of a clone on a new machine (idempotent)
 setup:
-    pnpm install
+    bun install --frozen-lockfile
     # husky (until 2026-09-30) pointed git at .husky/_; lefthook installs into .git/hooks.
     if [[ "$(git config --get core.hooksPath || true)" == .husky* ]]; then git config --unset core.hooksPath; fi
     lefthook install
@@ -54,20 +55,17 @@ fmt-check:
 typecheck *filters:
     #!/usr/bin/env bash
     set -euo pipefail
-    if (($# == 0)); then exec pnpm -r --no-sort typecheck; fi
-    args=()
-    for f in "$@"; do args+=(--filter "$f"); done
-    exec pnpm "${args[@]}" --no-sort typecheck
+    # Four packages at a time, none waits for another (they read each other's
+    # sources, not builds): tools/dev/workspace-run.mjs, which also maps `web`
+    # to @narrative/web.
+    exec tools/dev/workspace-run.mjs typecheck "$@"
 
 # ESLint in every package (incl. the one-door rule); `just lint web` (workspace filters) for some
 lint *filters:
     #!/usr/bin/env bash
     set -euo pipefail
     export NODE_OPTIONS="{{ eslint_node_options }}"
-    if (($# == 0)); then exec pnpm -r --no-sort lint; fi
-    args=()
-    for f in "$@"; do args+=(--filter "$f"); done
-    exec pnpm "${args[@]}" --no-sort lint
+    exec tools/dev/workspace-run.mjs lint "$@"
 
 # The fast lane narrowed to what changed since the last content that passed (what the Claude Code Stop hook runs;
 # tools/dev/check-affected.sh); pre-push still runs `just check`
@@ -83,25 +81,24 @@ lint-docs:
 test *filters:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Worker budget: pnpm runs up to four packages at once and each vitest
-    # would start a worker per core, so the tests asked for four times the
-    # machine; beside tsc and ESLint in `just check` that timed out tests on
-    # the 12-thread MacBook (load 85, 2026-10-07). Each vitest gets its share
-    # of the cores instead; an explicit VITEST_MAX_WORKERS wins.
-    concurrency=4
-    if (($# > 0 && $# < concurrency)); then concurrency=$#; fi
+    # Worker budget: tools/dev/workspace-run.mjs runs up to four packages at
+    # once and each vitest would start a worker per core, so the tests asked
+    # for four times the machine; beside tsc and ESLint in `just check` that
+    # timed out tests on the 12-thread MacBook (load 85, 2026-10-07). Each
+    # vitest gets its share of the cores instead; an explicit
+    # VITEST_MAX_WORKERS wins. (Not `bun run --parallel`: it starts every
+    # package at once, and a share of the cores per package left the server's
+    # tests one worker and three minutes, 2026-11-20.)
+    concurrency="$(tools/dev/workspace-run.mjs --count test "$@")"
     cores=$(node -p 'require("os").availableParallelism()')
     export VITEST_MAX_WORKERS="${VITEST_MAX_WORKERS:-$((cores / concurrency > 1 ? cores / concurrency : 1))}"
-    # --no-sort: the packages' tests read each other's sources, not builds, so none waits for another
-    if (($# == 0)); then exec pnpm -r --no-sort --workspace-concurrency="$concurrency" test; fi
-    args=()
-    for f in "$@"; do args+=(--filter "$f"); done
-    exec pnpm "${args[@]}" --workspace-concurrency="$concurrency" test
+    # The packages' tests read each other's sources, not builds, so none waits for another
+    exec tools/dev/workspace-run.mjs test "$@"
 
 # Fail if the capability manifest or the plugin is stale (fix: `just capabilities`)
 capabilities-check:
-    pnpm --filter @narrative/commands capabilities --check
-    pnpm --filter @narrative/commands skill --check
+    bun run --cwd packages/commands capabilities --check
+    bun run --cwd packages/commands skill --check
 
 # ── full gate ────────────────────────────────────────────────────────────
 
@@ -111,23 +108,23 @@ ci: check integration e2e perf-gate
 
 # Drizzle stores and migrations against the dev Postgres (writes rows there)
 integration: _services
-    pnpm --filter server test:integration
+    bun run --cwd apps/server test:integration
 
 # Playwright against the running dev stack; args go to Playwright (`just e2e -g "folder-tokens"`)
 e2e *args: _stack
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(tools/dev/playwright-env.sh)"
-    exec pnpm --filter web test:e2e "$@"
+    exec bun run --cwd apps/web test:e2e "$@"
 
 # The e2e specs in WebKit — Safari's and macOS WKWebView's engine, what a Tauri shell would draw with (`just e2e-webkit -g "x"`).
-# macOS runs Playwright's WebKit natively (`pnpm exec playwright install webkit` once); Linux runs it in Playwright's
+# macOS runs Playwright's WebKit natively (`bun run --cwd apps/web playwright install webkit` once); Linux runs it in Playwright's
 # own image, whose Ubuntu has the libraries that WebKit build needs, against the dev stack on the host.
 e2e-webkit *args: _stack
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ "$(uname)" == Darwin ]]; then
-      PW_WEBKIT=1 exec pnpm --filter web test:e2e --project=webkit "$@"
+      PW_WEBKIT=1 exec bun run --cwd apps/web test:e2e --project=webkit "$@"
     fi
     version="$(node -p "require('./node_modules/@playwright/test/package.json').version")"
     exec docker run --rm --network host --ipc host --user "$(id -u):$(id -g)" \
@@ -147,40 +144,40 @@ e2e-affected *args:
 # with (React's development bundle, ~75 kB more first paint).
 # Bundle budgets (size-limit) on a production build
 size:
-    NODE_ENV=production pnpm size
+    NODE_ENV=production bun run size
 
 # Agent eval: headless Claude Code against the dev stack — costs subscription usage (`--filter`, `--record`, `--keep`)
 eval *args: _stack
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(tools/dev/playwright-env.sh)"
-    exec pnpm agent:eval "$@"
+    exec bun run agent:eval "$@"
 
 # Load tests; warns on drift from tests/load/baselines.json when that local file exists
 load:
-    pnpm load:all
+    bun run load:all
 
 # What an agent command costs on the server, per phase, on a seeded deck in the dev Postgres
 # (apps/server/perf/commands.ts: `--slides 100 --commands 200 --batches 10 --folder-live --json out.json`)
 perf-commands *args: _services
-    LOG_LEVEL="${LOG_LEVEL:-warn}" pnpm --filter server run perf:commands "$@"
+    LOG_LEVEL="${LOG_LEVEL:-warn}" bun run --cwd apps/server perf:commands "$@"
 
 # The same over real HTTP against the running dev server: the command API and MCP with a token made for the run,
 # per phase (Server-Timing / the tool result's _meta), cold and warm, query.render's queue wait and worker time, on
 # the 10- and 100-slide scenes; stored as layer S benches `command.*` (apps/server/perf/agentLatency.ts:
 # `--sizes 10,100 --surfaces api,mcp --runs 15 --cold 8 --no-render --only <id part> --no-store --json out.json`)
 perf-agent *args: _stack
-    pnpm --silent --filter server run perf:agent "$@"
+    bun run --silent --cwd apps/server perf:agent "$@"
 
 # Lighthouse (desktop) on a seeded deck's /deck/:id of a production build in front of the dev backend, 5 runs,
 # compared with this machine's baseline: a regression fails (bench deck.open.lighthouse; nothing is uploaded)
 lighthouse *args: _stack
-    pnpm --silent --filter @narrative/perf run perf lighthouse "$@"
+    bun run --silent --cwd packages/perf perf lighthouse "$@"
 
 # Performance harness, layer C (packages/perf, docs/plans/perf-harness.md): the coverage guard, the committed budgets
 # against the benches, and each budget against this machine's latest measured counters
 perf-counters:
-    pnpm --silent --filter @narrative/perf run perf counters
+    bun run --silent --cwd packages/perf perf counters
 
 # Benches against this machine's baselines (packages/perf, docs/plans/perf-harness.md): `just perf [ids…] [--mode
 # prod (default)|dev|profiling] [--layer I|C] [--runs N] [--browser webkit] [--swiftshader]`; prod and profiling build into
@@ -189,14 +186,14 @@ perf *args: _stack
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(tools/dev/playwright-env.sh)"
-    exec pnpm --silent --filter @narrative/perf run perf run "$@"
+    exec bun run --silent --cwd packages/perf perf run "$@"
 
 # Two revisions (`.` = the working tree) built in worktrees, run interleaved ABAB, verdicts with CIs and counter diffs
 perf-compare revA revB *ids: _stack
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(tools/dev/playwright-env.sh)"
-    exec pnpm --silent --filter @narrative/perf run perf compare "$@"
+    exec bun run --silent --cwd packages/perf perf compare "$@"
 
 # The first commit in good..bad whose bench regresses against good (perf-compare as the predicate; no git bisect here):
 # `[--runs N] [--warmup N] [--metric m[,m…]]` — with --metric only those metrics' regressions or counter changes count
@@ -204,14 +201,14 @@ perf-bisect id good bad *args: _stack
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(tools/dev/playwright-env.sh)"
-    exec pnpm --silent --filter @narrative/perf run perf bisect "$@"
+    exec bun run --silent --cwd packages/perf perf bisect "$@"
 
 # One run of a bench with a CPU profile (CDP), profiling build by default; the .cpuprofile goes next to the results
 perf-profile id *args: _stack
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(tools/dev/playwright-env.sh)"
-    exec pnpm --silent --filter @narrative/perf run perf profile "$@"
+    exec bun run --silent --cwd packages/perf perf profile "$@"
 
 # The counter gate of `just ci` (layer C): every bench with work counters, twice, in dev, then the budgets. Not in
 # `just check`: the scenarios need the dev stack and take minutes (docs/plans/perf-harness.md → Log)
@@ -223,15 +220,15 @@ perf-gate: _stack
 # is the review) and its baseline (~/.cache/narrative-perf/<machine>/baselines.json); `--series mode/runtime[,…]` takes the
 # baselines of those series only (`prod/chromium-browser`; `none`: the budget only)
 perf-accept +ids:
-    pnpm --silent --filter @narrative/perf run perf accept "$@"
+    bun run --silent --cwd packages/perf perf accept "$@"
 
 # Stryker mutation run on slide-model (slow; AGENTS.md has its state)
 mutate:
-    pnpm --filter @narrative/slide-model mutate
+    bun run --cwd packages/slide-model mutate
 
 # PowerPoint round trip of a real deck (target: 0 differences); the path is absolute or relative to where you run just
 pptx-roundtrip deck:
-    cd apps/server && npx tsx src/scripts/pptxRoundtrip.ts "{{ absolute_path(join(invocation_directory(), deck)) }}"
+    cd apps/server && bun run tsx src/scripts/pptxRoundtrip.ts "{{ absolute_path(join(invocation_directory(), deck)) }}"
 
 # PowerPoint import + export time and peak RSS per phase, p50/p95 over runs (`--runs N`, `--deck x.pptx`, `--json f`, `--cpu-prof`; needs the docker services)
 perf-pptx *args: _services
@@ -239,29 +236,29 @@ perf-pptx *args: _services
 
 # A brand's style pack (or all), built from its sources by the brands the private overlay defines (private/bootstrap), written to private/packs (A4.7)
 style-pack brand="all" sources="":
-    cd apps/server && npx tsx src/stylePacks/bootstrap/cli.ts {{ brand }} "{{ sources }}"
+    cd apps/server && bun run tsx src/stylePacks/bootstrap/cli.ts {{ brand }} "{{ sources }}"
 
 # Put a bootstrapped pack into a folder through the command API (NARRATIVE_TOKEN: a personal access token, scope api); api defaults to the dev stack
 style-pack-import pack folder api="":
-    cd apps/server && npx tsx src/stylePacks/bootstrap/importPack.ts "{{ absolute_path(join(invocation_directory(), pack)) }}" {{ folder }} "{{ api }}"
+    cd apps/server && bun run tsx src/stylePacks/bootstrap/importPack.ts "{{ absolute_path(join(invocation_directory(), pack)) }}" {{ folder }} "{{ api }}"
 
 # ── everyday ─────────────────────────────────────────────────────────────
 
 # Web :5173 + server :3001 (WebSocket :3002) + video worker (the docker services must be up: `just services`)
 dev: _services
-    pnpm dev
+    bun run dev
 
 # The dev stack without the video worker (faster start)
 dev-lite: _services
-    pnpm dev:no-worker
+    bun run dev:no-worker
 
 # The desktop shell (apps/desktop, ADR 0015) against a server: `just desktop` (the dev stack),
 # `just desktop prod`, or any origin (`just desktop https://narrative.example.com`)
 desktop server="dev":
     #!/usr/bin/env bash
     set -euo pipefail
-    pnpm --filter @narrative/desktop run build
-    node -e 'require("electron")' 2>/dev/null || pnpm --filter @narrative/desktop run electron:install
+    bun run --cwd apps/desktop build
+    node -e 'require("electron")' 2>/dev/null || bun run --cwd apps/desktop electron:install
     exec node_modules/.bin/electron apps/desktop "--server={{ server }}"
 
 # Package the desktop app into apps/desktop/release/: `just desktop-dist` (Linux deb + AppImage),
@@ -288,7 +285,7 @@ desktop-tauri server="dev":
     command -v cargo >/dev/null || { echo "desktop-tauri: needs Rust (rustup.rs)" >&2; exit 1; }
     if [ "{{ server }}" = "dev" ] && [ "$(uname -s)" = "Darwin" ]; then
       (cd apps/desktop-tauri/src-tauri && cargo build --features perf-driver)
-      exec pnpm exec tsx apps/web/e2e/perf/lib/tauriDrive.ts serve
+      exec bun run tsx apps/web/e2e/perf/lib/tauriDrive.ts serve
     fi
     cd apps/desktop-tauri/src-tauri
     exec cargo run -- "--server={{ server }}"
@@ -296,11 +293,11 @@ desktop-tauri server="dev":
 # Drive the running `just desktop-tauri` window, which stays yours too: `just tauri help`
 [positional-arguments]
 tauri *args:
-    @pnpm exec tsx apps/web/e2e/perf/lib/tauriDrive.ts "$@"
+    @bun run tsx apps/web/e2e/perf/lib/tauriDrive.ts "$@"
 
 # Package the Tauri prototype for this OS (deb/rpm/AppImage, or an unsigned .app + .dmg; loads production)
 desktop-tauri-dist:
-    pnpm --filter @narrative/desktop-tauri build
+    bun run --cwd apps/desktop-tauri build
 
 # Ubuntu 26.04 only: the AppArmor profile that lets this checkout's Electron use its sandbox (asks for sudo)
 desktop-apparmor:
@@ -324,8 +321,8 @@ services:
 
 # Regenerate the capability manifest and the Claude Code plugin after a command change
 capabilities:
-    pnpm capabilities
-    pnpm --filter @narrative/commands skill
+    bun run capabilities
+    bun run --cwd packages/commands skill
 
 # Set every workspace version (and the plugin's) for a release: `just bump 0.10.15`
 bump version:
@@ -335,7 +332,7 @@ bump version:
     for f in package.json apps/*/package.json packages/*/package.json; do
       node -e 'const fs=require("fs"),f=process.argv[1],p=JSON.parse(fs.readFileSync(f));p.version=process.argv[2];fs.writeFileSync(f,JSON.stringify(p,null,2)+"\n")' "$f" "{{ version }}"
     done
-    pnpm --filter @narrative/commands skill
+    bun run --cwd packages/commands skill
     # The README's release badge (perl: the same in-place edit on GNU and BSD).
     perl -pi -e 's#(img\.shields\.io/badge/release-)\d+\.\d+\.\d+#${1}{{ version }}#' README.md
     grep -q "badge/release-{{ version }}-" README.md || { echo "bump: the README release badge was not updated" >&2; exit 1; }

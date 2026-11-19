@@ -1,7 +1,7 @@
 # Narrative — Docker Compose (dev + prod-like local)
 #
 # Workflow:
-#   dev (native):      docker compose up postgres minio media-redis  → then pnpm dev
+#   dev (native):      docker compose up postgres minio media-redis  → then bun run dev
 #                      (auth in dev runs with BYPASS_AUTH=true; no IdP container needed)
 #   prod-like local:   docker compose up            → all services in containers
 #   prod deploy:       docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
@@ -229,7 +229,7 @@ services:
   # ─── Render worker (agentic A3) ──────────────────────────────────────────────
   # Headless Chromium on the real web app's render page: slide PNGs for
   # deck.exportPng and, later, the agent's query.render
-  # (docs/plans/a3-render-worker.md). Development runs it with `pnpm dev`
+  # (docs/plans/a3-render-worker.md). Development runs it with `bun run dev`
   # instead; the production overlay sets where the page is opened.
   #
   # It renders content other people wrote, so it is boxed in:

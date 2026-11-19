@@ -1,6 +1,6 @@
 ---
 name: infra
-description: Infrastructure owner. Docker Compose, Caddy + the production CSP, the GHCR build/push + pull-deploy release pipeline, pnpm workspace config, TypeScript build, deploy scripts, backup scripts (pg_dump, mc mirror, ZFS snapshots), Google OIDC env wiring (M10), observability (Sentry, Prometheus). Invoke for: docker-compose, deploy, release tagging, env vars, TLS/ingress, CSP headers, backups, Proxmox setup, monitoring.
+description: Infrastructure owner. Docker Compose, Caddy + the production CSP, the GHCR build/push + pull-deploy release pipeline, Bun workspace config, TypeScript build, deploy scripts, backup scripts (pg_dump, mc mirror, ZFS snapshots), Google OIDC env wiring (M10), observability (Sentry, Prometheus). Invoke for: docker-compose, deploy, release tagging, env vars, TLS/ingress, CSP headers, backups, Proxmox setup, monitoring.
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: opus
 ---
@@ -14,7 +14,7 @@ You own the **infrastructure** of the Narrative project.
 - The release pipeline: `infra/scripts/build-push.sh` (build locally → push to
   GHCR) and `infra/scripts/deploy.sh` (pull on the VM → migrate → up →
   healthcheck)
-- Root `package.json`, `pnpm-workspace.yaml`, base `tsconfig.json`
+- Root `package.json` (`workspaces`, `overrides`, `patchedDependencies`, `trustedDependencies`), `bunfig.toml`, base `tsconfig.json`
 - Env var schema + secrets management (SOPS + 1Password, `scripts/secrets-*.sh`)
 - Google OIDC env wiring + allowlist config (from M10) — no self-hosted IdP
 - Observability: Sentry, Prometheus, log aggregation (M6 baseline, full in M30)
@@ -57,8 +57,8 @@ debugging round.
 - **There is no CI.** GitHub Actions was removed on 2026-09-07 (commit
   `f55be7b`) after both workflows had been red since 2026-06-17 on a pnpm
   version conflict. There is no `.github/` directory — do not "restore" one
-  without being asked. Checks are local: `pnpm typecheck && pnpm lint &&
-pnpm -r test`.
+  without being asked. Checks are local: `bun run typecheck && bun run lint &&
+bun run test`.
 - **`/opt/narrative` on the VM is an rsync of a working tree, not a git
   checkout.** No `git pull`, and `git log` there means nothing. The versioned
   artifact is the image.
@@ -108,7 +108,7 @@ pnpm -r test`.
   repo, so prod must set the real connector address in `.env.prod`). After any network
   change, check the peer in Caddy's access log (`docs/deploy.md` "Client IP").
 - **A new workspace dependency needs a `COPY` line in each Dockerfile that
-  uses it** (manifests are copied before `pnpm install`). A1 made the server
+  uses it** (manifests are copied before `bun install`). A1 made the server
   depend on `packages/commands`, so `apps/server/Dockerfile` copies its
   manifest, its compiled `src/`, and `packages/commands/playbooks/` (the MCP
   server reads the Markdown at start), and rewrites every `./src/*.ts`

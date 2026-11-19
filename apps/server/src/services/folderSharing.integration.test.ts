@@ -15,7 +15,7 @@
  *     gave them stays); a demoted owner's pending invites are withdrawn;
  *     two owners removing each other at once leave the folder an owner;
  *     two first invites to one address at once make one invite.
- * Excluded from `pnpm test`; run with `just integration`.
+ * Excluded from `bun run test`; run with `just integration`.
  *
  * It creates its own users, folders and decks under random ids and deletes
  * them afterwards. The email client is mocked: nothing is sent.

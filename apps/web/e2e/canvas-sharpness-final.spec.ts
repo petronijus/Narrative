@@ -13,7 +13,7 @@
  * (SceneGraph.restageTextResolution, docs/plans/canvas-performance.md step
  * 3). The last test checks that every text still ends up drawn at it.
  *
- * Run: PLAYWRIGHT_USE_SYSTEM_CHROME=1 npx playwright test --config apps/web/playwright.config.ts canvas-sharpness-final
+ * Run: PLAYWRIGHT_USE_SYSTEM_CHROME=1 bun run playwright test --config apps/web/playwright.config.ts canvas-sharpness-final
  */
 
 import { test, expect } from './fixtures/test'

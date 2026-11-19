@@ -47,7 +47,7 @@ changed). Run lanes yourself only as far as you need to prove your change
 1. Read the screenshot in `apps/web/test-results/<test>/` (the Read tool
    opens PNGs) and the `error-context.md` next to it.
 2. Capture what you need yourself — `page.on('console' | 'pageerror' |
-'response')`, `page.screenshot()`, the trace (`npx playwright show-trace`);
+'response')`, `page.screenshot()`, the trace (`bun run playwright show-trace`);
    never ask the user for console output.
 3. A bug in product code goes back to the main thread with the repro; a bug
    in the test (selector, timing, assertion) you fix.

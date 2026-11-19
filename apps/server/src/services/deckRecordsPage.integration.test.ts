@@ -4,7 +4,7 @@
  * are exactly `list` — same records, same order (created, then id), decks
  * created in the same microsecond included — for every page size, with and
  * without a folder filter, through deck grants and folder membership; a
- * malformed key is refused. Excluded from `pnpm test`; run with
+ * malformed key is refused. Excluded from `bun run test`; run with
  * `just integration`. Creates its own rows under random ids and deletes them.
  */
 

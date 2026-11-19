@@ -4,7 +4,7 @@
  * real Postgres: a guest of a deck gets its own pictures, its folder's
  * component and folder pictures, never another deck's; a share link to the
  * deck gets the same; an outsider gets nothing — and each answer agrees with
- * the single `url` read, asset by asset. Excluded from `pnpm test`; run with
+ * the single `url` read, asset by asset. Excluded from `bun run test`; run with
  * `just integration` (the docker services up).
  *
  * Creates its own users, folders, decks, component, share link and media rows

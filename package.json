@@ -3,22 +3,22 @@
   "version": "0.16.1",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@12.11.2",
+  "packageManager": "bun@1.4.5",
   "engines": {
     "node": ">=24.15.0",
-    "pnpm": ">=12.11.2"
+    "bun": ">=1.4.5"
   },
   "scripts": {
-    "dev": "concurrently --kill-others-on-fail -n web,server,worker,render -c blue,green,magenta,cyan \"pnpm --filter web dev\" \"pnpm --filter server dev\" \"pnpm --filter @narrative/video-worker dev\" \"pnpm --filter @narrative/render-worker dev\"",
-    "dev:no-worker": "concurrently --kill-others-on-fail -n web,server -c blue,green \"pnpm --filter web dev\" \"pnpm --filter server dev\"",
-    "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm -r lint",
-    "test": "pnpm -r test",
-    "size": "NARRATIVE_BUILD_MANIFEST=1 pnpm --filter web build && pnpm --filter web size",
-    "lighthouse": "pnpm --silent --filter @narrative/perf run perf lighthouse",
+    "dev": "concurrently --kill-others-on-fail -n web,server,worker,render -c blue,green,magenta,cyan \"bun run --filter web dev\" \"bun run --filter server dev\" \"bun run --filter @narrative/video-worker dev\" \"bun run --filter @narrative/render-worker dev\"",
+    "dev:no-worker": "concurrently --kill-others-on-fail -n web,server -c blue,green \"bun run --filter web dev\" \"bun run --filter server dev\"",
+    "build": "bun run --filter '*' build",
+    "typecheck": "bun run --filter '*' typecheck",
+    "lint": "bun run --filter '*' lint",
+    "test": "bun run --filter '*' test",
+    "size": "NARRATIVE_BUILD_MANIFEST=1 bun run --filter web build && bun run --filter web size",
+    "lighthouse": "bun run --silent --filter @narrative/perf perf lighthouse",
     "format": "tools/dev/format.sh --all",
-    "capabilities": "pnpm --filter @narrative/commands capabilities",
+    "capabilities": "bun run --filter @narrative/commands capabilities",
     "load:all": "node tests/load/runAll.mjs",
     "load:hotedit": "tsx tests/load/hotEdit.ts",
     "load:awareness": "tsx tests/load/awarenessFlood.ts",
@@ -40,5 +40,20 @@
     "prettier": "^3.9.10",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3"
-  }
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "overrides": {
+    "undici-types@>=7.28.0": "7.27.2"
+  },
+  "patchedDependencies": {
+    "@stryker-mutator/vitest-runner@10.0.0": "patches/@stryker-mutator__vitest-runner@10.0.0.patch"
+  },
+  "trustedDependencies": [
+    "esbuild",
+    "@swc/core",
+    "msgpackr-extract"
+  ]
 }

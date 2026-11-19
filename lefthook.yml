@@ -15,7 +15,7 @@ pre-commit:
         - '*.{ts,tsx,js,cjs,mjs}'
         - '*.{json,md,yaml,yml}'
       exclude:
-        - pnpm-lock.yaml
+        - bun.lock
       run: tools/dev/format.sh {staged_files}
       stage_fixed: true
     - name: secrets

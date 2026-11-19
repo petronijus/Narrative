@@ -6,7 +6,7 @@ const files = await capabilityFiles()
 
 describe('committed capability manifest', () => {
   for (const file of files) {
-    it(`${file.path.split('/').slice(-2).join('/')} is up to date (run pnpm --filter @narrative/commands capabilities)`, () => {
+    it(`${file.path.split('/').slice(-2).join('/')} is up to date (run bun run --cwd packages/commands capabilities)`, () => {
       let current = ''
       try {
         current = readFileSync(file.path, 'utf8')

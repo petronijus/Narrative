@@ -38,10 +38,10 @@ reconnect MCP servers), or start a new session.
 prompts. Do not edit it by hand: change the playbook and run
 
 ```bash
-pnpm --filter @narrative/commands skill
+bun run --cwd packages/commands skill
 ```
 
 The same command writes `.claude-plugin/plugin.json` with the release
 version from the root `package.json`. A test in
-`pnpm --filter @narrative/commands test` fails when the committed skill or
+`bun run --cwd packages/commands test` fails when the committed skill or
 manifest is stale — after a version bump, too.

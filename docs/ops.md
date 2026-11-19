@@ -273,15 +273,15 @@ For stress-testing the server locally:
 
 ```bash
 # Start the server (dev or a prod build)
-pnpm --filter server dev
+bun run --cwd apps/server dev
 
 # All load scenarios
-pnpm load:all
+bun run load:all
 
 # Individual scenarios
-pnpm load:hotedit    # 5 clients × 200 mutations
-pnpm load:awareness  # 15 clients × 30 Hz × 30 s
-pnpm load:growth     # 1000 objects, initial sync
+bun run load:hotedit    # 5 clients × 200 mutations
+bun run load:awareness  # 15 clients × 30 Hz × 30 s
+bun run load:growth     # 1000 objects, initial sync
 ```
 
 **Expected numbers** (from spike B, 2026-04-19, localhost):
@@ -329,9 +329,9 @@ See `infra/docker-compose.yml` for the details.
 
 ```bash
 # Dev migrations (run automatically when the server starts in dev mode)
-pnpm --filter server db:migrate
+bun run --cwd apps/server db:migrate
 
-# Manual migration (prod) — normally run by deploy.sh. The VM has no pnpm and
+# Manual migration (prod) — normally run by deploy.sh. The VM has no Bun and
 # no source checkout; run the compiled migrator in the server image:
 cd /opt/narrative/infra && docker compose -f docker-compose.yml \
   -f docker-compose.prod.yml -f docker-compose.prod.shared-tunnel.yml \
@@ -339,7 +339,7 @@ cd /opt/narrative/infra && docker compose -f docker-compose.yml \
   node apps/server/dist/apps/server/src/db/migrate.js
 ```
 
-(Was documented here as `pnpm --filter server db:migrate` for prod too, which
+(Was documented here as `bun run --cwd apps/server db:migrate` for prod too, which
 cannot work on the VM; corrected 2026-09-27 to what `infra/scripts/deploy.sh`
 runs.)
 

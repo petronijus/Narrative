@@ -27,9 +27,9 @@
  * here: stop dev, run, restart.
  *
  * Usage:
- *   pnpm --filter @narrative/server db:purge-components               # all decks
- *   pnpm --filter @narrative/server db:purge-components <deck-id>     # single deck
- *   pnpm --filter @narrative/server db:purge-components <deck-id> --dry-run
+ *   bun run --cwd apps/server db:purge-components               # all decks
+ *   bun run --cwd apps/server db:purge-components <deck-id>     # single deck
+ *   bun run --cwd apps/server db:purge-components <deck-id> --dry-run
  *
  * Idempotent: a deck with no componentInstance entries is left untouched
  * (no row rewrite, no log compaction — keeps history honest).

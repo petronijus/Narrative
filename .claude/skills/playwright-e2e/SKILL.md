@@ -22,7 +22,7 @@ node node_modules/@playwright/test/cli.js show-trace apps/web/test-results/<test
 `just e2e` picks the browser (Playwright's own Chromium, or the system Chrome
 with video off where Playwright ships none — Ubuntu 26.04;
 `tools/dev/playwright-env.sh`). Install Playwright's browser where it is
-supported: `pnpm --filter web exec playwright install chromium`.
+supported: `bun run --cwd apps/web playwright install chromium`.
 
 `.env` needs `BYPASS_AUTH=true`, `VITE_BYPASS_AUTH=true`,
 `MINIO_ENDPOINT=http://localhost:9100`, `MINIO_PUBLIC_URL=/storage`,

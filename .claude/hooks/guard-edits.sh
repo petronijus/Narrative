@@ -66,8 +66,8 @@ while IFS=$'\t' read -r kind path; do
   # Everything below guards the repo's own files against being written.
   if [[ "$kind" == R ]] || ! $inside; then continue; fi
   case "$base" in
-    pnpm-lock.yaml | package-lock.json | *.lock)
-      decide deny "$rel is a lockfile; change the package.json and let \`pnpm install\` rewrite it." ;;
+    bun.lock | bun.lockb | pnpm-lock.yaml | package-lock.json | *.lock)
+      decide deny "$rel is a lockfile; change the package.json and let \`bun install\` rewrite it." ;;
   esac
   # Leading slash so top-level directories match too.
   case "/$rel" in

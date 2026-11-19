@@ -17,7 +17,7 @@ at the end of agentic-layer phase A0. Was Czech.)_
 - `packages/shared/` — typed slide/deck interfaces, discriminated unions, and
   the zod runtime schemas in `src/schema/` (with the compile-time coverage
   check `coverage.typecheck.ts`: a property added to `slide.ts` without its
-  schema fails `pnpm typecheck`).
+  schema fails `bun run typecheck`).
 - `packages/commands/` — the registry core: `types.ts`, `registry.ts`,
   `run.ts` (role/host/input/output validation, one transaction per command,
   atomic batches on a fork), `ops.apply`, the manifest generator, and the
@@ -139,8 +139,8 @@ at the end of agentic-layer phase A0. Was Czech.)_
 - New or changed slide-model export → classify it in
   `packages/commands/src/parity/slideModelExports.ts`; a writer must be used
   by a command (or be on `knownMissing.ts` for an unfinished phase), then
-  `pnpm --filter @narrative/commands capabilities` and
-  `pnpm --filter @narrative/commands test`.
+  `bun run --cwd packages/commands capabilities` and
+  `bun run --cwd packages/commands test`.
 - Before a big refactor of the state layer → ask the tech-lead.
 - Handoff contribution after a milestone.
 - Tests: property-based tests for CRDT convergence (clients, random ops, must

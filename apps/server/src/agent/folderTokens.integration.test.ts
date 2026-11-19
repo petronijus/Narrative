@@ -2,8 +2,8 @@
  * agent/folderTokens.integration.test.ts — the production folder-token
  * reader against a real Postgres: the folder is found through the deck's
  * and the component's `folder_id`, and its stored document (no Hocuspocus
- * loaded) gives the snapshot. Excluded from `pnpm test`; run with
- * `pnpm --filter @narrative/server test:integration` against the local dev
+ * loaded) gives the snapshot. Excluded from `bun run test`; run with
+ * `bun run --cwd apps/server test:integration` against the local dev
  * database. Creates its own rows under random ids and deletes them after.
  */
 

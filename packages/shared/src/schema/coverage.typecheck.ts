@@ -2,7 +2,7 @@
  * shared/src/schema/coverage.typecheck.ts
  *
  * Schema coverage check (agentic-layer plan §9.1 item 3). Enforced by
- * `tsc` — i.e. `pnpm --filter @narrative/shared typecheck` — not by vitest:
+ * `tsc` — i.e. `bun run --cwd packages/shared typecheck` — not by vitest:
  * this module has no runtime content and nothing imports it.
  *
  * For every schema below, the schema's OUTPUT type must be *identical* to

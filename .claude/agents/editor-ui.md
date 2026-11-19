@@ -59,13 +59,13 @@ Diagnosed while fixing the survey's bugs; each cost a debugging round. See
   `tryRun` (a `not_found` / `conflict` race with a collaborator returns
   `null`), `group` (several commands as one change and one undo step),
   `batch` (atomic). Since A2.1 (2026-09-28) the one-door lint rule
-  (`apps/web/eslint.one-door.js`) fails `pnpm lint` on a slide-model writer
+  (`apps/web/eslint.one-door.js`) fails `bun run lint` on a slide-model writer
   import or a `.transact()` call anywhere in `apps/web/src`, except in the
   files listed in `ONE_DOOR_PENDING` (6 after A2.11 on 2026-09-30 — all
   A2.12–A2.13; 10 after A2.10, 13 after A2.9) — that list only
   shrinks. A capability with no command yet gets one in
   `packages/commands`; it never gets a direct write. (Was, at A0: a
-  recommendation, with the lint rule still to come.) A `pnpm lint` that
+  recommendation, with the lint rule still to come.) A `bun run lint` that
   dies with `ERR_UNKNOWN_FILE_EXTENSION` on `slideModelExports.ts` before
   linting anything is a Node without type stripping (Ubuntu 26.04's distro
   Node, 2026-09-29), not a one-door hit; `just lint` loads tsx for it

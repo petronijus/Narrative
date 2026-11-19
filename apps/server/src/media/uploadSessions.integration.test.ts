@@ -1,7 +1,7 @@
 /**
  * media/uploadSessions.integration.test.ts — the Drizzle UploadSessionStore
- * against a real Postgres (migration 0024 applied). Excluded from `pnpm test`;
- * run with `pnpm --filter @narrative/server test:integration` against the
+ * against a real Postgres (migration 0024 applied). Excluded from `bun run test`;
+ * run with `bun run --cwd apps/server test:integration` against the
  * local dev database. It creates its own user, folder and deck under random
  * ids and deletes them afterwards (sessions cascade with the deck).
  */

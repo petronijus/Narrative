@@ -5,7 +5,7 @@
  * document stores, microsecond keys, literal (escaped) title search, access
  * through deck_permissions and through folder membership (folder_permissions,
  * the higher role winning), and the BYPASS_AUTH owner set. Excluded from
- * `pnpm test`; run with `pnpm --filter @narrative/server test:integration`.
+ * `bun run test`; run with `bun run --cwd apps/server test:integration`.
  *
  * It creates its own users, folders and decks under random ids and deletes
  * them afterwards.

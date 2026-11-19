@@ -7,7 +7,8 @@
 #
 # - formatting: the changed files only;
 # - typecheck, lint, unit tests: the workspace packages a changed file
-#   belongs to and every package that depends on them (pnpm `...{dir}`);
+#   belongs to and every package that depends on them (`...{dir}`, resolved by
+#   tools/dev/workspace-run.mjs);
 # - the docs check: always (seconds);
 # - the capability manifest and the plugin: when a package under packages/,
 #   the playbooks, the plugin or the eval scenarios changed.
@@ -56,7 +57,7 @@ while IFS= read -r f; do
       add_dir "$dir"
       [[ "$dir" == packages/* ]] && manifest=1
       # The perf coverage guard reads the action catalog by path (an app is
-      # not a dependency of a package, so pnpm's dependents miss it).
+      # not a dependency of a package, so its dependents miss it).
       [[ "$f" == apps/web/src/actions/catalog.ts ]] && add_dir packages/perf
       ;;
     # The committed counter budgets are checked by the perf package's tests.

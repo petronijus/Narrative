@@ -51,17 +51,21 @@ if has node; then
   ts="$(node -p 'process.features.typescript ?? false' 2>/dev/null)"
   [[ "$ts" != false ]] && ok "Node type stripping ($ts)" ||
     warn "this Node build has no TypeScript support (Ubuntu's distro package)" \
-      "nothing to do for just recipes (they load tsx); raw \`pnpm lint\` needs NODE_OPTIONS=--import=tsx"
+      "nothing to do for just recipes (they load tsx); raw \`bun run lint\` needs NODE_OPTIONS=--import=tsx"
 else
   bad "Node missing" "install Node ≥ 24.15"
 fi
-want_pnpm="$(node -p 'require("./package.json").packageManager.split("@")[1]' 2>/dev/null)"
-if has pnpm; then
-  v="$(pnpm -v)"
-  [[ "$v" == "$want_pnpm" ]] && ok "pnpm $v" ||
-    bad "pnpm $v (packageManager pins $want_pnpm)" "corepack enable && corepack prepare pnpm@$want_pnpm --activate"
+# Bun installs the workspace and runs its scripts (the tools themselves run on
+# Node). package.json `packageManager` records the version that wrote bun.lock;
+# corepack does not manage Bun, so any release at least that new will do.
+want_bun="$(node -p 'require("./package.json").packageManager.split("@")[1]' 2>/dev/null)"
+bun_fix="$(if has brew; then echo "brew install oven-sh/bun/bun"; elif has pacman; then echo "sudo pacman -S bun"; else echo "curl -fsSL https://bun.sh/install | bash"; fi)"
+if has bun; then
+  v="$(bun --version)"
+  if [[ "$(printf '%s\n%s\n' "$want_bun" "$v" | sort -V | head -n1)" == "$want_bun" ]]; then ok "Bun $v"; else
+    bad "Bun $v (want ≥ $want_bun: package.json packageManager)" "$bun_fix"; fi
 else
-  bad "pnpm missing" "corepack enable && corepack prepare pnpm@$want_pnpm --activate"
+  bad "Bun missing (want ≥ $want_bun)" "$bun_fix"
 fi
 has docker && docker compose version >/dev/null 2>&1 && ok "Docker + compose (dev services)" ||
   bad "Docker with the compose plugin missing" "install Docker (SETUP.md → Boot the storage / image stack)"
@@ -111,7 +115,7 @@ elif [[ "$env_out" == *PLAYWRIGHT_CHROME_EXECUTABLE=* ]]; then
   ok "${bin%%$'\n'*} for e2e and the render worker (Playwright has no Chromium here)"
 else
   warn "no browser for e2e or the render worker" \
-    "pnpm --filter web exec playwright install chromium  (Ubuntu 26.04 / Arch: install Google Chrome or Chromium)"
+    "bun run --cwd apps/web playwright install chromium  (Ubuntu 26.04 / Arch: install Google Chrome or Chromium)"
 fi
 
 echo "Project"

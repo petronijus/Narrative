@@ -12,7 +12,7 @@ service commands). No LLM judges anything. See
 > names and loads a tool's schema when it needs it, instead of the whole
 > tool list riding on every request (≈ 177 KB on 2026-09-30 during A2.11,
 > ≈ 169 KB on 2026-09-29 after A2.10, ≈ 129 KB on 2026-09-28; without ToolSearch the 129 KB list was ~100k tokens a request,
-> measured 2026-09-28 with `pnpm agent:probe:list-changed`). A full run is
+> measured 2026-09-28 with `bun run agent:probe:list-changed`). A full run is
 > 39 sessions (2026-09-30 after A2.11; 36 after A2.10, 34 after A2.9, 14 on
 > 2026-09-28); the
 > report shows the cost Claude Code reports (list-price equivalent): $1.62
@@ -40,13 +40,13 @@ service commands). No LLM judges anything. See
 
 ## How to run
 
-The dev stack must be running (`pnpm dev`: web on :5173, API on :3001). The
+The dev stack must be running (`bun run dev`: web on :5173, API on :3001). The
 harness never starts or restarts it.
 
 Run it as `just eval [args]`: on Ubuntu 26.04, where Playwright cannot
 install its bundled browser, the recipe points `selected-slide-context` (the
 one scenario that opens an editor tab) at the system Chrome — a bare
-`pnpm agent:eval` errors on that scenario instead of running it
+`bun run agent:eval` errors on that scenario instead of running it
 (2026-09-28 and again 2026-09-30: `browserType.launch: Executable doesn't
 exist at ~/.cache/ms-playwright/chromium_headless_shell-1223/…`).
 
@@ -259,7 +259,7 @@ Environment notes:
   (`just eval` sets `PLAYWRIGHT_USE_SYSTEM_CHROME=1` where Playwright has no
   Chromium, `tools/dev/playwright-env.sh`).
 
-## The free smoke subset (`pnpm -r test`)
+## The free smoke subset (`bun run test`)
 
 `packages/commands/src/agentEvalReplay.test.ts` runs in the commands
 package's normal vitest run. It lives there because that run already
@@ -281,7 +281,7 @@ command's behaviour changes on purpose: `just eval --record` (all
 scenarios) or `--filter <id> --record`. Signed URLs are redacted before a
 recording is written.
 
-## Probe: tool-list changes and size (`pnpm agent:probe:list-changed`)
+## Probe: tool-list changes and size (`bun run agent:probe:list-changed`)
 
 Not a scenario — a client-behaviour probe. It drives headless Claude Code
 against a tiny in-process MCP server with Narrative's transport shape and
@@ -317,5 +317,5 @@ recordings/*.json      recorded transcripts (committed)
 results/               per-run reports (gitignored)
 ```
 
-Typecheck the harness: `npx tsc -p tests/agent-eval`. The replayable parts
-are also typechecked by `pnpm typecheck`, through the commands package.
+Typecheck the harness: `bun run tsc -p tests/agent-eval`. The replayable parts
+are also typechecked by `bun run typecheck`, through the commands package.

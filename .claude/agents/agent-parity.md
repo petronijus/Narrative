@@ -125,7 +125,7 @@ for the record (superseded by the block above where they differ):
   (`conflict`), never guessed. The font-weight rules live in
   `packages/commands/src/text/fontWeights.ts` (moved from `apps/web`).
 - **The one-door lint rule is on** (`apps/web/eslint.one-door.js`, since
-  A2.1): `pnpm lint` fails on any slide-model writer import (the `writer`
+  A2.1): `bun run lint` fails on any slide-model writer import (the `writer`
   entries of `parity/slideModelExports.ts`) or `.transact()` call in
   `apps/web/src`, except in the 6 files of `ONE_DOOR_PENDING` (A2.12:
   `Toolbar`, `UploadDropZone`, `DeckShell`, `FolderDocProvider`,
@@ -177,7 +177,7 @@ State at the end of A1 (2026-09-27, released in 0.10.0), kept for the record
   `FINISHED_PHASES = ['A0', 'A1']`; `allowlist.ts` 18; the route guard sees
   69 routes, all claimed. The ServerHost (`apps/server/src/agent/`), the MCP
   server (`apps/server/src/mcp/`, tools generated from the registry),
-  `POST /api/commands`, `packages/commands/playbooks/`, and **`pnpm
+  `POST /api/commands`, `packages/commands/playbooks/`, and **`bun run
 agent:eval`** (`tests/agent-eval/`, 14 scenarios, 14/14 on 2026-09-27;
   11 replay free in `packages/commands/src/agentEvalReplay.test.ts`).
 - **New registry rules** (enforced by `registry.test.ts` / the registry
@@ -192,7 +192,7 @@ agent:eval`** (`tests/agent-eval/`, 14 scenarios, 14/14 on 2026-09-27;
 - **An eval scenario is now a real check**, not a placeholder: a new
   command should come with a scenario in `tests/agent-eval/scenarios/`
   (listed in `scenarios/index.ts`) and, if replayable, a recording from a
-  passing live run (`pnpm agent:eval --filter <id> --record`). Report a
+  passing live run (`bun run agent:eval --filter <id> --record`). Report a
   missing scenario with its intended prompt and grader.
 - **`tools/list` has a byte budget** (`apps/server/src/mcp/toolListBudget.test.ts`,
   132,000 bytes; ≈ 128–129 KB on 2026-09-28, so a new command has only
@@ -219,7 +219,7 @@ block above where they differ):
   (`apps/server/src/routes/agentParity.test.ts`: builds the production route
   table, 45 routes, and fails on any route not claimed by `CommandDef.routes`,
   a known-missing entry's `routes` or an allowlist entry's `routes`, and on
-  claims for routes that no longer exist). Run `pnpm --filter server test`
+  claims for routes that no longer exist). Run `bun run --cwd apps/server test`
   for it — the commands suite alone does not see the server.
 - **Locks are UI-only; agents ignore them** (Petr, 2026-09-26). `locked`
   stops canvas drag/resize/nudge/delete for a person; no command checks it
@@ -228,9 +228,9 @@ block above where they differ):
   removed the same day. A lock difference between editor and agent is
   therefore expected, not a parity gap.
 - **Does not exist yet:** the ESLint `no-restricted-imports` rule (so
-  `pnpm lint` catches no second door — review UI writes by hand); shortcut
+  `bun run lint` catches no second door — review UI writes by hand); shortcut
   and menu-action enumeration (A2); `apps/server/src/mcp/`;
-  `packages/commands/playbooks/`; `pnpm agent:eval`.
+  `packages/commands/playbooks/`; `bun run agent:eval`.
 - **No component calls `useCommand()` yet.** Until A2, "the UI dispatches the
   command" cannot be satisfied; report whether the command exists and whether
   the UI path and the command share the same slide-model writer.
@@ -268,9 +268,9 @@ spans two):
 | **Input schema**             | zod, validated at the host boundary. Takes ids or selectors, never "the current selection". Units stated (degrees in, radians stored; px on the 1920×1080 canvas).                                                                                                                                                                                            |
 | **Examples**                 | At least one, exercising the changed behaviour, not a trivial case.                                                                                                                                                                                                                                                                                           |
 | **Contract test**            | Each example runs against a fixture doc; the result is compared structurally via `listSlides()`, never by CRDT bytes.                                                                                                                                                                                                                                         |
-| **Eval scenario**            | A scenario prompt with a deterministic grader over the resulting document, in the `pnpm agent:eval` suite (plan §9.3; `tests/agent-eval/scenarios/`, since A1). If none exists, report it as missing with its intended prompt and grader.                                                                                                                     |
+| **Eval scenario**            | A scenario prompt with a deterministic grader over the resulting document, in the `bun run agent:eval` suite (plan §9.3; `tests/agent-eval/scenarios/`, since A1). If none exists, report it as missing with its intended prompt and grader.                                                                                                                  |
 | **Action catalog**           | Every new shortcut, menu item and toolbar button names a `catalog.ts` action; `commands` lists what its handler really dispatches (or, for a mode, what its write goes through); an `editorOnly` reason is true (no document write, no route call). A hand-rolled menu outside the Radix wrappers or the toolbar is not caught by the test: check it by hand. |
-| **Manifest**                 | `packages/commands/capabilities.json` and `docs/capabilities.md` regenerated with `pnpm --filter @narrative/commands capabilities` and part of the same change; never hand-edited.                                                                                                                                                                            |
+| **Manifest**                 | `packages/commands/capabilities.json` and `docs/capabilities.md` regenerated with `bun run --cwd packages/commands capabilities` and part of the same change; never hand-edited.                                                                                                                                                                              |
 | **Schema coverage**          | A new property exists in its zod schema in `packages/shared/src/schema/`; the `z.infer` equality check typechecks.                                                                                                                                                                                                                                            |
 | **Style-pack representable** | If it affects appearance, a pack can express it (for example a new text property must be representable in the pack's `textStyles`, per level if it is a list property).                                                                                                                                                                                       |
 | **PPTX round-trip**          | If it is a model field, it is in `roundtripMatrix.ts` in a non-default state and the server suite passes (ADR 0009).                                                                                                                                                                                                                                          |
@@ -281,17 +281,17 @@ Run them; do not infer their result. If a command does not exist yet or fails
 to start, say so explicitly in the ledger.
 
 ```bash
-pnpm --filter @narrative/commands test                       # parity test + command contract tests + manifest staleness test
-pnpm typecheck                                               # schema coverage (z.infer equality) lives in the typecheck
-pnpm lint                                                    # no-restricted-imports: UI must not import slide-model writers
-pnpm --filter @narrative/commands capabilities --check       # manifest freshness, without rewriting it
-pnpm --filter server test                                    # the route guard; also when a PPTX-relevant model field changed
-pnpm --filter @narrative/web exec vitest run src/actions/catalog.test.ts src/oneDoor.test.ts   # action catalog + one-door list
+bun run --cwd packages/commands test                       # parity test + command contract tests + manifest staleness test
+bun run typecheck                                               # schema coverage (z.infer equality) lives in the typecheck
+bun run lint                                                    # no-restricted-imports: UI must not import slide-model writers
+bun run --cwd packages/commands capabilities --check       # manifest freshness, without rewriting it
+bun run --cwd apps/server test                                    # the route guard; also when a PPTX-relevant model field changed
+bun run --cwd apps/web vitest run src/actions/catalog.test.ts src/oneDoor.test.ts   # action catalog + one-door list
 ```
 
 Quote the failing test name and message verbatim in the ledger.
 
-`pnpm lint` failing with `ERR_UNKNOWN_FILE_EXTENSION` for
+`bun run lint` failing with `ERR_UNKNOWN_FILE_EXTENSION` for
 `packages/commands/src/parity/slideModelExports.ts` before any file is
 linted is the environment, not a parity finding: the Node in use cannot
 strip types (as Ubuntu 26.04's distro Node 22.22.1 on `petronijus-PC` did,

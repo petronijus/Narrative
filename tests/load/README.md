@@ -11,8 +11,8 @@ just dev     # the dev stack, BYPASS_AUTH on (the default .env)
 just load    # every scenario, one after another (runAll.mjs)
 ```
 
-One scenario: `pnpm load:hotedit`, `pnpm load:awareness`, `pnpm load:growth`,
-`pnpm load:deckscale` from the repo root.
+One scenario: `bun run load:hotedit`, `bun run load:awareness`, `bun run load:growth`,
+`bun run load:deckscale` from the repo root.
 
 `tests/load` is not a workspace package: its `package.json` lists what the
 harness imports, all of it hoisted to the root `node_modules` by the apps

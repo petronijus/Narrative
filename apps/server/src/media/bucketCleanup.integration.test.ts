@@ -4,7 +4,7 @@
  * delete was refused with `MissingContentMD5` (the SDK no longer sends an
  * MD5, this MinIO wants one — media/s3Client.ts) and only logged, so deleted
  * decks, components and folders left all their files behind. Excluded from
- * `pnpm test`; run with `just integration` (the docker services up).
+ * `bun run test`; run with `just integration` (the docker services up).
  */
 
 import { describe, expect, it } from 'vitest'

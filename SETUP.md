@@ -6,8 +6,8 @@ something's broken — file an issue, don't paper over it.
 
 ## Prerequisites
 
-- **Node.js ≥ 24.15 built with TypeScript support** (`node -v`; `engines` in `package.json`). Node 24 is the Active LTS and the line the Docker images run (`node:24-alpine`); 24.4 added `fs.promises.mkdtempDisposable`, which the server's URL downloads use, and 24.15 is jsdom 30's floor (the SVG sanitizer, the web tests; since 2026-10-14). `pnpm lint` loads the TypeScript parity table through Node's built-in type stripping, on by default in every Node 24. Was ≥ 22.18 from A2.1 (2026-09-28) until 2026-10-09, ≥ 22 before. The version alone is not enough: check `node -p process.features.typescript` prints `strip` (or `transform`), not `false` — a distro build can leave type stripping out (see "`pnpm lint` fails with `ERR_UNKNOWN_FILE_EXTENSION`" below)
-- **pnpm 12.11.2** (the `packageManager` pin; settings in `pnpm-workspace.yaml`, `.npmrc` is for registry auth only) — via Corepack: `corepack enable && corepack prepare pnpm@12.11.2 --activate`
+- **Node.js ≥ 24.15 built with TypeScript support** (`node -v`; `engines` in `package.json`). Node 24 is the Active LTS and the line the Docker images run (`node:24-alpine`); 24.4 added `fs.promises.mkdtempDisposable`, which the server's URL downloads use, and 24.15 is jsdom 30's floor (the SVG sanitizer, the web tests; since 2026-10-14). `bun run lint` loads the TypeScript parity table through Node's built-in type stripping, on by default in every Node 24. Was ≥ 22.18 from A2.1 (2026-09-28) until 2026-10-09, ≥ 22 before. The version alone is not enough: check `node -p process.features.typescript` prints `strip` (or `transform`), not `false` — a distro build can leave type stripping out (see "`bun run lint` fails with `ERR_UNKNOWN_FILE_EXTENSION`" below)
+- **Bun ≥ 1.4.5**, the package manager and script runner (`packageManager` in `package.json` records the version that wrote `bun.lock`; install settings in `bunfig.toml`). Corepack does not manage Bun: macOS `brew install oven-sh/bun/bun`, Arch `sudo pacman -S bun`, elsewhere `curl -fsSL https://bun.sh/install | bash`. The tools themselves (Vite, vitest, tsc, ESLint, tsx) still run on Node, so both are needed. `bun test` is Bun's own test runner, not this repo's tests: use `just test` or `bun run test`
 - **Docker** with the Compose plugin (`docker compose version`), logged in to GHCR once: `docker login ghcr.io -u petronijus` with a token that has `read:packages`. MinIO's official images are gone, and the dev stack's MinIO is a private mirror there ([docs/storage.md → MinIO image](docs/storage.md#minio-image))
 - **just, lefthook, gitleaks** — the task runner and the git hooks (macOS: `brew install just lefthook gitleaks`; Linux: the distro packages or the projects' release binaries). **xmllint** for the PPTX schema tests (`libxml2`). **python3 ≥ 3.9** for the Claude Code hooks and the docs check (standard library only). For secrets: **sops, age** and the 1Password CLI `op`.
 
@@ -26,7 +26,7 @@ something's broken — file an issue, don't paper over it.
 git clone https://github.com/petronijus/Narrative.git
 cd Narrative
 git clone https://github.com/petronijus/Narrative-private.git private   # secrets overlay
-just setup     # pnpm install, git hooks (lefthook), just doctor
+just setup     # bun install, git hooks (lefthook), just doctor
 ```
 
 The dev `.env` comes from the overlay: `scripts/secrets-decrypt.sh dev`
@@ -85,7 +85,7 @@ What this brings up (`infra/docker-compose.yml`):
 ## 5. DB migrations
 
 The dev server applies pending migrations when it starts (step 6) with the
-same migrator production runs (`pnpm --filter server db:migrate`,
+same migrator production runs (`bun run --cwd apps/server db:migrate`,
 `apps/server/src/db/runMigrations.ts`), so there is nothing to run, a fresh
 database included. (Until 2026-09-30 the dev server used drizzle's own
 migrator, which could not get a fresh database past the enum migrations.)
@@ -168,7 +168,7 @@ Dev notes:
 - `AGENT_PRINCIPAL_KEY_SECRET` is optional in dev (a built-in dev-only key is
   used); production refuses to start without it.
 - Under `BYPASS_AUTH=true` the Access tokens page works as the dev user; that
-  is also what `pnpm agent:eval` relies on to mint its own tokens
+  is also what `bun run agent:eval` relies on to mint its own tokens
   ([`tests/agent-eval/README.md`](./tests/agent-eval/README.md)).
 - A confirmation link (`/confirm/<id>`, for deletes, sharing and URL
   downloads from a client that cannot ask) opens in the web app on :5173.
@@ -253,34 +253,34 @@ the whole lane and skips a tree that already passed it. Subagents in
 - **`ENOSPC: System limit for number of file watchers reached`** — Linux only. See prerequisites; raise inotify limits.
 - **Server won't start, `IMGPROXY_KEY env required`** — Run `openssl rand -hex 32` twice and put the two values in `.env`. Both must be 64 hex characters.
 - **`Bucket ready` never logs** — `minio` container failed health check. `docker compose logs minio` — usually `MINIO_ROOT_PASSWORD` < 8 chars.
-- **Image upload renders gray** — `IMGPROXY_ENDPOINT` is still pointing at `127.0.0.1:8080` direct. Set it to `http://localhost:5173/imgproxy` in `.env` and restart `pnpm dev`.
+- **Image upload renders gray** — `IMGPROXY_ENDPOINT` is still pointing at `127.0.0.1:8080` direct. Set it to `http://localhost:5173/imgproxy` in `.env` and restart `bun run dev`.
 - **`/decks` returns empty in incognito** — `BYPASS_AUTH=true` returns dev-user-owned decks only; create one from the home page first.
-- **Server, web or tests fail to resolve a package right after a `git pull`** — the range added a workspace package or a dependency (agentic-layer A0 added `packages/commands` and `zod`; A1 added `@modelcontextprotocol/sdk`, `@fastify/rate-limit` and `yaml`, and made the server depend on `@narrative/commands`; a 0.9.x range added `sharp`, which killed the dev server until installed). Run `pnpm install`, then restart `pnpm dev`. New migrations (A1: `0016`–`0023`) apply on the next dev server start.
-- **Vite serves stale code after a `git pull`** — `touch` the affected file, or stop+start `pnpm dev`. Vite occasionally caches transformed modules across hard reloads.
+- **Server, web or tests fail to resolve a package right after a `git pull`** — the range added a workspace package or a dependency (agentic-layer A0 added `packages/commands` and `zod`; A1 added `@modelcontextprotocol/sdk`, `@fastify/rate-limit` and `yaml`, and made the server depend on `@narrative/commands`; a 0.9.x range added `sharp`, which killed the dev server until installed). Run `bun install`, then restart `bun run dev`. New migrations (A1: `0016`–`0023`) apply on the next dev server start.
+- **Vite serves stale code after a `git pull`** — `touch` the affected file, or stop+start `bun run dev`. Vite occasionally caches transformed modules across hard reloads.
 - **Editor logs `Hocuspocus: authentication token required`** — `VITE_BYPASS_AUTH` differs from `BYPASS_AUTH`. Set both to the same value.
-- **Pre-commit hooks fail with permission errors** — you ran `pnpm install` as root. Re-clone, install as a normal user.
+- **Pre-commit hooks fail with permission errors** — you ran `bun install` as root. Re-clone, install as a normal user.
 - **`minio` (or `minio-init`) cannot pull `ghcr.io/petronijus/minio`** — `denied` / `unauthorized`: this machine is not logged in to GHCR, where the MinIO image is a private mirror (MinIO deleted its own images from Docker Hub in 2026-09). `docker login ghcr.io -u petronijus` with a `read:packages` token, then `just services` again. A compose override that swapped in other MinIO images before 2026-10 can go.
 - **`minio` exits with `Unable to write to the backend`** — its data is not owned by user `65532`. `minio-perms` fixes that before every start; if it did not run (a `docker run` by hand, or `--no-deps`), `docker compose --env-file ../.env up minio-perms` in `infra/`.
 - **A second dev stack on the same machine (another clone, a worktree) breaks the first** — the compose services have fixed `container_name`s (`narrative-postgres`, …) and the project is always `narrative`, so `just services` from another checkout _recreates_ the running containers with that checkout's `.env` (other ports, other passwords) and the first stack loses its database mid-run. Run one stack per machine; a second checkout uses the first one's services and only starts its own `just dev` (Vite moves to the next free port by itself; `API_PORT` / `HOCUSPOCUS_PORT` / `VITE_API_URL` / `VITE_HOCUSPOCUS_URL` in the environment move the server). Seen on 2026-10-14.
 - **Two compose projects (`infra-*` and `narrative-*` containers)** — the compose file has been named `narrative` since 2026-08; containers started before that belong to a project called `infra`, with its own volumes, and hold the ports `just services` needs. Back up what you need, then `cd infra && docker compose -p infra --env-file ../.env down -v` (the Linux desktop was moved on 2026-09-30; its old data is in `backups/2026-09-30-infra-project/`, gitignored).
 - **`docs-check` names a path or recipe that is right in context** (another repo's file, a file a plan will create, a file that was moved) — write the reference so it cannot be misread (a moved file: its old place in plain text), or put `<!-- docs-check: ignore -->` on that line (above a code fence: the whole block). Docs that record history (handoffs, finished plans) are listed in `EXCLUDE` in `tools/dev/docs-check.py`; never exclude a living doc to make the check pass.
 - **Git hooks do not run after pulling the lefthook change (2026-09-30)** — husky had set `core.hooksPath=.husky/_`, which still points git at the deleted husky hooks. `just setup` (unsets it and runs `lefthook install`); `just doctor` reports it.
-- **`npx playwright install` fails on Ubuntu 26.04** — `ERROR: Playwright does not support chromium on ubuntu26.04-x64` (same for the ffmpeg download that video capture needs). Playwright ships no managed build for this OS release yet, so a plain `pnpm --filter web test:e2e` fails. Install Google Chrome and use `just e2e` / `just eval`, which switch to it by themselves (`tools/dev/playwright-env.sh`); by hand:
+- **`bun run playwright install` fails on Ubuntu 26.04** — `ERROR: Playwright does not support chromium on ubuntu26.04-x64` (same for the ffmpeg download that video capture needs). Playwright ships no managed build for this OS release yet, so a plain `bun run --cwd apps/web test:e2e` fails. Install Google Chrome and use `just e2e` / `just eval`, which switch to it by themselves (`tools/dev/playwright-env.sh`); by hand:
   ```bash
-  PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1 pnpm --filter web test:e2e
+  PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1 bun run --cwd apps/web test:e2e
   # or: PLAYWRIGHT_CHROME_EXECUTABLE=/usr/bin/google-chrome PLAYWRIGHT_NO_VIDEO=1 …
   ```
   Verified on `petronijus-PC`, Ubuntu 26.04.1 LTS, 2026-09-09.
 - **Many e2e specs fail with `Target crashed` on the Omarchy desktop** — the browser log shows `Invalid message: VALIDATION_ERROR_DESERIALIZATION_FAILED` on `viz.mojom.CopyOutputResultSender`, then `GPU process exited unexpectedly`: a screenshot crashes the browser. `tools/dev/playwright-env.sh` falls back to a system browser whenever Playwright's own Chromium _at the revision its version expects_ is missing — on Arch that was `/usr/bin/chromium` 152 against Playwright 1.60 (which wants revision 1223, Chromium 148), silently, since a Playwright upgrade. Playwright's builds do run on Arch: install them and the fallback stops (`bash tools/dev/playwright-env.sh` then prints nothing):
   ```bash
-  pnpm --filter web exec playwright install chromium chromium-headless-shell
+  bun run --cwd apps/web playwright install chromium chromium-headless-shell
   ```
   Measured on the Omarchy desktop, 2026-10-11: the full suite went from 42 failures (most of them `Target crashed`) to 13 — `canvas-sharpness-final` still crashes when its zoomed DPR-2 canvases run in parallel with other specs and passes with `--workers=1`; the rest passed on rerun. (`playwright install` also deletes revisions no installed Playwright names — another project's browser comes back with its own `playwright install`.)
-- **`pnpm lint` fails with `ERR_UNKNOWN_FILE_EXTENSION` on Ubuntu 26.04's own Node** — `TypeError [ERR_UNKNOWN_FILE_EXTENSION]: Unknown file extension ".ts" for …/packages/commands/src/parity/slideModelExports.ts`, before a single file is linted (`eslint.config.js` imports that file through `apps/web/eslint.one-door.js`). The distro package `nodejs` (`/usr/bin/node`, v22.22.1) is built without TypeScript support: `node -p process.features.typescript` prints `false`, and `node --experimental-strip-types file.ts` throws `ERR_NO_TYPESCRIPT`. That version predates the Node 24 move (2026-10-09), so `engines` and `just doctor` now refuse it outright; the entry stays for any Node build without type stripping, which `just doctor` warns about. Working around it by loading `tsx` as the loader:
+- **`bun run lint` fails with `ERR_UNKNOWN_FILE_EXTENSION` on Ubuntu 26.04's own Node** — `TypeError [ERR_UNKNOWN_FILE_EXTENSION]: Unknown file extension ".ts" for …/packages/commands/src/parity/slideModelExports.ts`, before a single file is linted (`eslint.config.js` imports that file through `apps/web/eslint.one-door.js`). The distro package `nodejs` (`/usr/bin/node`, v22.22.1) is built without TypeScript support: `node -p process.features.typescript` prints `false`, and `node --experimental-strip-types file.ts` throws `ERR_NO_TYPESCRIPT`. That version predates the Node 24 move (2026-10-09), so `engines` and `just doctor` now refuse it outright; the entry stays for any Node build without type stripping, which `just doctor` warns about. Working around it by loading `tsx` as the loader:
   ```bash
-  NODE_OPTIONS="--import=tsx" pnpm lint
+  NODE_OPTIONS="--import=tsx" bun run lint
   ```
-  exits 0 with 0 errors (219 warnings). Measured on `petronijus-PC`, Ubuntu 26.04, 2026-09-29. Since 2026-09-30 `just lint` and `tools/dev/format.sh` (the pre-commit hook) add the loader themselves when Node lacks type stripping; only a raw `pnpm lint` still needs it. A Node with type stripping (the Omarchy desktop runs 26.8 via mise, the MacBook 26.5) needs nothing.
+  exits 0 with 0 errors (219 warnings). Measured on `petronijus-PC`, Ubuntu 26.04, 2026-09-29. Since 2026-09-30 `just lint` and `tools/dev/format.sh` (the pre-commit hook) add the loader themselves when Node lacks type stripping; only a raw `bun run lint` still needs it. A Node with type stripping (the Omarchy desktop runs 26.8 via mise, the MacBook 26.5) needs nothing.
 - **e2e specs fail at random on macOS with the "This page couldn't load" card** — the browser console has `RouteLoadError … Failed to fetch dynamically imported module …` (often `DeckShell.tsx`), the failed requests end in `net::ERR_NETWORK_CHANGED`, and Vite logs nothing. A network interface is flapping: Chrome aborts every request in flight, `localhost` included, each time macOS reports a network change. Find the interface and unplug or fix it before e2e or perf runs (a perf bench is skewed the same way):
   ```bash
   log show --last 30m --predicate 'process == "configd"' | grep -i "State:/Network"
@@ -292,7 +292,7 @@ the whole lane and skips a tree that already passed it. Subagents in
 ## Dev is not production
 
 Nine of the ten defects fixed between 2026-09-07 and 2026-09-09 were invisible
-in `pnpm dev`, because four things exist only in production:
+in `bun run dev`, because four things exist only in production:
 
 | Only in prod      | Consequence                                                                                                |
 | ----------------- | ---------------------------------------------------------------------------------------------------------- |

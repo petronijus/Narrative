@@ -5,7 +5,7 @@
  * (docs/plans/agentic-layer.md §4.4). Never edit the generated skill by hand.
  *
  * Usage:
- *   pnpm --filter @narrative/commands skill [-- --out <skill dir>] [--api-url <url>] [--check]
+ *   bun run --cwd packages/commands skill [-- --out <skill dir>] [--api-url <url>] [--check]
  *
  *   --out      the skill directory; default: the plugin in this repo,
  *              claude-plugin/narrative/skills/narrative
@@ -33,7 +33,7 @@ function args(argv: string[]): { out: string; apiUrl: string; check: boolean } {
   const out = value('--out')
   if (out !== undefined && out.startsWith('--')) {
     console.error(
-      'usage: pnpm --filter @narrative/commands skill [-- --out <skill dir>] [--api-url <url>] [--check]',
+      'usage: bun run --cwd packages/commands skill [-- --out <skill dir>] [--api-url <url>] [--check]',
     )
     process.exit(2)
   }
@@ -73,7 +73,7 @@ for (const orphan of orphans) {
   stale = true
 }
 if (check && stale) {
-  console.error('The narrative skill is stale: run `pnpm --filter @narrative/commands skill`.')
+  console.error('The narrative skill is stale: run `bun run --cwd packages/commands skill`.')
   process.exit(1)
 }
 if (!check && orphans.length > 0) process.exit(1)

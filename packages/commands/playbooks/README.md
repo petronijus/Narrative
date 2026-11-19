@@ -46,7 +46,7 @@ skill, every mention is rewritten to the tool name the model sees
 
 The loader is `@narrative/commands/playbooks` (Node only). The `narrative`
 Claude Code skill is regenerated with
-`pnpm --filter @narrative/commands skill` into the plugin that ships from
+`bun run --cwd packages/commands skill` into the plugin that ships from
 this repo, `claude-plugin/narrative/` (see `packages/commands/scripts/skill.ts`); never edit
 the generated skill by hand — a test fails when it is stale.
 

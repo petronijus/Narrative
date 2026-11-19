@@ -1057,7 +1057,7 @@ ssh petr@192.0.2.147 'docker exec narrative-server \
   node apps/server/dist/apps/server/src/scripts/revokeUserAccess.js friend@gmail.com --dry-run'
 ssh petr@192.0.2.147 'docker exec narrative-server \
   node apps/server/dist/apps/server/src/scripts/revokeUserAccess.js friend@gmail.com'
-# dev: pnpm --filter @narrative/server db:revoke-user <email|sub> [--dry-run]
+# dev: bun run --cwd apps/server db:revoke-user <email|sub> [--dry-run]
 ```
 
 - It accepts an email or a Google `sub`, prints what it revoked, and exits
@@ -1207,19 +1207,22 @@ wherever a `*_DATA_PATH` is not set to a host path.
 ### `build-push.sh` fails to resolve a workspace package
 
 Each Dockerfile copies the workspace `package.json` files it needs **before**
-`pnpm install`, by an explicit list. A new workspace package that an image
+`bun install`, by an explicit list. A new workspace package that an image
 depends on has to be added to that image's list, or the install inside the
 build cannot link it.
 
 ### How the Node images are put together (since 2026-10-20)
 
 The server, video-worker and render-worker images are two stages
-(performance plan D2). The builder installs the workspace (the pnpm package
-store is a BuildKit cache mount, never a layer), compiles the app with `tsc`,
-and runs `infra/docker/runtime-tree.sh <app> /out`:
+(performance plan D2). The builder installs the workspace with Bun (since
+2026-11-20; pnpm before) from the manifests of the app and every workspace it
+depends on, dev dependencies included (Bun refuses a pruned workspace that
+misses one; Bun's package cache is a BuildKit cache mount, never a layer),
+compiles the app with `tsc`, and runs `infra/docker/runtime-tree.sh <app> /out`:
 
-- `pnpm deploy --prod` of the app: `node_modules` with its production
-  dependencies only;
+- a second, production-only install filtered to the app (`bun install
+--production --filter @narrative/<app>`, real files, no links into the
+  cache): `node_modules` with its production dependencies only;
 - each workspace package in it (`node_modules/@narrative/*`) gets the
   compiled JavaScript the app's `tsc` emitted under `dist/packages/<pkg>/src`
   instead of its TypeScript, its `main`/`exports` pointed at `.js`, and
@@ -1231,7 +1234,7 @@ and runs `infra/docker/runtime-tree.sh <app> /out`:
   removed from third-party packages.
 
 The runtime stage is the base image (plus ffmpeg, or Chromium) and `/out`
-copied to `/app`: no pnpm, no corepack, no store, no package metadata cache.
+copied to `/app`: no Bun, no package cache, no package metadata.
 The entry points (`apps/<app>/dist/apps/<app>/src/index.js`, the server's
 `db/migrate.js`) are where they were. The web image keeps its build's
 hidden source maps out of `/srv/web`.
@@ -1239,7 +1242,7 @@ hidden source maps out of `/srv/web`.
 Sizes (linux/amd64, sum of the uncompressed layers, built on the MacBook
 2026-10-20): server 1182 → 340 MB, video-worker 874 → 345 MB, render-worker
 1369 → 900 MB (Chromium and its fonts are ~600 MB of it), web 99 → 74 MB.
-What went: the pnpm package store and its metadata cache (`/root/.cache`,
+What went (with pnpm then): the pnpm package store and its metadata cache (`/root/.cache`,
 `/root/.local`: 400–660 MB per image), dev dependencies, declarations and
 maps. On a build machine with
 Docker Desktop's default 2 GB VM, the server's `tsc` runs out of heap: pass

@@ -8,7 +8,7 @@
  *   - the allowed list admits a verified address to sign in;
  *   - `ADMIN_EMAILS` makes an admin at sign-in, a verified email only;
  *   - two admins demoting each other at once leave one.
- * Excluded from `pnpm test`; run with `just integration`.
+ * Excluded from `bun run test`; run with `just integration`.
  *
  * It creates its own users, folders and decks under random ids and deletes
  * them afterwards.

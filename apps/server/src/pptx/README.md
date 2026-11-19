@@ -46,14 +46,14 @@ imported deck is laid out again with `slide.applyLayout` /
 ## Checking changes
 
 ```bash
-pnpm --filter server test                    # includes the three below
-npx vitest run src/pptx/roundtrip.test.ts    # model → export → import = model (feature matrix)
-npx vitest run src/pptx/ooxml/validate.test.ts   # every part against ECMA-376 (needs xmllint)
+bun run --cwd apps/server test                    # includes the three below
+bun run vitest run src/pptx/roundtrip.test.ts    # model → export → import = model (feature matrix)
+bun run vitest run src/pptx/ooxml/validate.test.ts   # every part against ECMA-376 (needs xmllint)
 
 # A real deck (client decks stay out of the repo): import → export → import
-npx tsx src/scripts/pptxRoundtrip.ts deck.pptx [--out exported.pptx] [--detail]
+bun run tsx src/scripts/pptxRoundtrip.ts deck.pptx [--out exported.pptx] [--detail]
 # The feature matrix, with the exported file to inspect
-npx tsx src/scripts/pptxRoundtrip.ts --matrix --out matrix.pptx
+bun run tsx src/scripts/pptxRoundtrip.ts --matrix --out matrix.pptx
 ```
 
 ## Speed and memory

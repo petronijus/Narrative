@@ -150,7 +150,7 @@ function renderHtml({ deckName, importedAvailable, rows, refRel, impRel }) {
         <span><span class="swatch" style="background: #c2c8d1"></span>Reference (LibreOffice render of original .pptx)</span>
         <span><span class="swatch" style="background: var(--accent)"></span>Imported (Narrative editor in present mode)</span>
         <span>${rows.length} slides</span>
-        ${importedAvailable ? '' : '<span style="color: var(--bad)">⚠️ no imported screenshots yet — run pnpm --filter web test:e2e pptx-import-fidelity</span>'}
+        ${importedAvailable ? '' : '<span style="color: var(--bad)">⚠️ no imported screenshots yet — run bun run --cwd apps/web test:e2e pptx-import-fidelity</span>'}
       </span>
     </div>
   </header>

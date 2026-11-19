@@ -7,7 +7,7 @@
  * Měří total time a porovnává obě cesty.
  *
  * Spuštění:
- *   pnpm --filter @narrative/web exec vitest bench applyChanges.bench.ts
+ *   bun run --cwd apps/web vitest bench applyChanges.bench.ts
  *
  * Pokud vitest bench není dostupný, výsledky jsou logovány přes console.time.
  *

@@ -41,7 +41,7 @@ script=() prettier=()
 for f in ${files[@]+"${files[@]}"}; do
   [[ -f "$f" ]] || continue
   case "$f" in
-    pnpm-lock.yaml | */dist/* | */node_modules/* | private/*) ;; # generated / not ours
+    bun.lock | */dist/* | */node_modules/* | private/*) ;; # generated / not ours
     *.ts | *.tsx) script+=("$f"); prettier+=("$f") ;;
     *.js | *.cjs | *.mjs | *.json | *.md | *.yaml | *.yml) prettier+=("$f") ;;
   esac
