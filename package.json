@@ -9,13 +9,13 @@
     "bun": ">=1.4.5"
   },
   "scripts": {
-    "dev": "concurrently --kill-others-on-fail -n web,server,worker,render -c blue,green,magenta,cyan \"bun run --filter web dev\" \"bun run --filter server dev\" \"bun run --filter @narrative/video-worker dev\" \"bun run --filter @narrative/render-worker dev\"",
-    "dev:no-worker": "concurrently --kill-others-on-fail -n web,server -c blue,green \"bun run --filter web dev\" \"bun run --filter server dev\"",
+    "dev": "concurrently --kill-others-on-fail -n web,server,worker,render -c blue,green,magenta,cyan \"bun run --filter @narrative/web dev\" \"bun run --filter @narrative/server dev\" \"bun run --filter @narrative/video-worker dev\" \"bun run --filter @narrative/render-worker dev\"",
+    "dev:no-worker": "concurrently --kill-others-on-fail -n web,server -c blue,green \"bun run --filter @narrative/web dev\" \"bun run --filter @narrative/server dev\"",
     "build": "bun run --filter '*' build",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "bun run --filter '*' lint",
     "test": "bun run --filter '*' test",
-    "size": "NARRATIVE_BUILD_MANIFEST=1 bun run --filter web build && bun run --filter web size",
+    "size": "NARRATIVE_BUILD_MANIFEST=1 bun run --filter @narrative/web build && bun run --filter @narrative/web size",
     "lighthouse": "bun run --silent --filter @narrative/perf perf lighthouse",
     "format": "tools/dev/format.sh --all",
     "capabilities": "bun run --filter @narrative/commands capabilities",
